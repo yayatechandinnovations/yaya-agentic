@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: yaya-agentic
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+  # M1: Postgres + Flyway are now required. Redis stays excluded until M2.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+
+  # Local dev: Spring Boot's docker-compose integration registers a
+  # ServiceConnection from compose.yaml automatically — no datasource
+  # block needed. Production: set DB_URL / DB_USERNAME / DB_PASSWORD via
+  # env vars and the standard SPRING_DATASOURCE_* mapping picks them up.
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      chat:
+        options:
+          model: claude-sonnet-4-6
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  tracing:
+    sampling:
+      probability: 1.0
+
+yaya:
+  agentic:
+    default-personality: default
+    default-tenant: default
+    llm:
+      provider: ${YAYA_LLM_PROVIDER:stub}   # stub | anthropic
+    cors:
+      allowed-origins:
+        - "http://localhost:*"
+        - "http://127.0.0.1:*"
+    http-tools:
+      # Hostnames or "host:port" patterns allowed as HTTP tool egress
+      # targets. Empty list = no outbound HTTP tools allowed. M5 will
+      # source the per-tenant list from DB; M1 reads this global list.
+      egress-allowlist: []
+      # SSRF guard. Default refuses RFC1918 / loopback / link-local /
+      # multicast / any-local. Tests can override per call.
+      allow-private-networks: ${YAYA_HTTP_TOOLS_ALLOW_PRIVATE:false}
+      default-timeout: PT10S
+    auth:
+      # Dev default: anonymous sessions allowed when no other authenticator
+      # recognises the request. Production deploys MUST set this to false.
+      allow-anonymous: ${YAYA_AUTH_ALLOW_ANONYMOUS:true}
+      oidc:
+        issuers: []
+        jwks-cache-ttl: PT10M
+        clock-skew: PT30S
+      service-token:
+        # Map<tenantId, secret>. Secret is an HMAC key, NOT a bearer token.
+        tenant-secrets: {}
+      delegated-host:
+        # Base64-encoded raw Ed25519 public key (32 bytes). Empty disables.
+        public-key-pem: ""
+
+logging:
+  level:
+    com.yayatechandinnovations.yayaagentic: INFO

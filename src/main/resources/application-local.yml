@@ -1,0 +1,4 @@
+logging:
+  level:
+    com.yayatechandinnovations.yayaagentic: DEBUG
+    org.springframework.ai: DEBUG
