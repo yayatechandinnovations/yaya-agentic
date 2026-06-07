@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.llm.LlmClient;
+import com.yayatechandinnovations.yayaagentic.llm.LlmClient.StopReason;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
@@ -144,10 +145,10 @@ class AgenticLoopTest {
             requests.add(request);
             LlmEvent.ToolUseProposal pending = scripted.getAndSet(null);
             if (pending != null) {
-                return Flux.just((LlmEvent) pending, new LlmEvent.Done("tool_use"));
+                return Flux.just((LlmEvent) pending, new LlmEvent.Done(StopReason.TOOL_USE));
             }
             return Flux.<LlmEvent>just(new LlmEvent.TokenChunk("Hi from the test LLM."))
-                    .concatWith(Mono.just(new LlmEvent.Done("end_turn")));
+                    .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
         }
     }
 }

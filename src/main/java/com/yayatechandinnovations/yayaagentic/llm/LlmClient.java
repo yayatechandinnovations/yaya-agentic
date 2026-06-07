@@ -70,9 +70,25 @@ public interface LlmClient {
                                String toolName,
                                Map<String, Object> args) implements LlmEvent {}
 
-        /** Terminal signal. {@code stopReason} mirrors the wire-level
-         *  reason from Anthropic ({@code end_turn} | {@code tool_use} | …)
-         *  so the engine knows whether to loop. */
-        record Done(String stopReason) implements LlmEvent {}
+        /** Terminal signal. {@link StopReason} is provider-agnostic — each
+         *  {@link LlmClient} implementation translates its wire-level
+         *  reason (Anthropic's {@code end_turn}/{@code tool_use}, OpenAI's
+         *  {@code stop}/{@code tool_calls}, …) into this enum so the
+         *  engine doesn't need to know which provider it's talking to. */
+        record Done(StopReason stopReason) implements LlmEvent {}
+    }
+
+    /** Why the model stopped producing tokens. The engine loops on
+     *  {@link #TOOL_USE}; everything else terminates the turn. */
+    enum StopReason {
+        /** The model proposed at least one tool call and is waiting for results. */
+        TOOL_USE,
+        /** The model finished its reply cleanly. */
+        END_TURN,
+        /** The model was cut off by the response token limit. */
+        MAX_TOKENS,
+        /** Provider-specific reason we don't have a first-class mapping for
+         *  yet. The engine treats this the same as END_TURN. */
+        OTHER
     }
 }

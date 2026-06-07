@@ -30,20 +30,23 @@ spring:
         options:
           model: claude-sonnet-4-6
     openai:
-      # Embeddings only — chat goes to Anthropic. Without a key the
-      # embedding bean is absent and we fall back to the deterministic
-      # stub so the app boots without OpenAI.
+      # Used for embeddings always and for chat when YAYA_LLM_PROVIDER=openai.
+      # Without a key the embedding bean is absent and we fall back to the
+      # deterministic stub so the app boots without OpenAI.
       api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
       embedding:
         options:
           model: text-embedding-3-small
-    # `spring.ai.model.*` is the global provider switch. We use Anthropic
-    # for chat and (optionally) OpenAI for embeddings; image / audio /
-    # moderation are off because the OpenAI auto-configs that ship those
-    # demand a key on startup and we don't use them.
-    # Setting `chat: none` would also disable Anthropic — that was a bug.
+    # `spring.ai.model.*` is the global provider switch. We tie chat to
+    # YAYA_LLM_PROVIDER so flipping that env var alone selects which chat
+    # autoconfig fires (anthropic, openai, …). Image / audio / moderation
+    # stay off because we don't use them and their auto-configs demand a
+    # key on startup.
     model:
-      chat: anthropic
+      chat: ${YAYA_LLM_PROVIDER:anthropic}
       image: none
       audio:
         speech: none

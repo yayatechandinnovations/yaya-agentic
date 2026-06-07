@@ -74,10 +74,12 @@ services:
       # OpenAI key (the deterministic-hash stub serves). Flip to `openai`
       # in .env alongside OPENAI_API_KEY for real embeddings.
       YAYA_EMBEDDING_PROVIDER: ${YAYA_EMBEDDING_PROVIDER:-none}
-      # Chat LLM provider. Default `anthropic` — if ANTHROPIC_API_KEY is
-      # unset, the Anthropic client bails on its @ConditionalOnBean guard
-      # and the stub takes over so boot still succeeds.
+      # Chat LLM provider. Default `anthropic`; flip to `openai` to route
+      # chat through OpenAiLlmClient (set OPENAI_API_KEY too). `stub` skips
+      # the real LLM entirely — useful for offline / no-key dev.
       YAYA_LLM_PROVIDER: ${YAYA_LLM_PROVIDER:-anthropic}
+      # Optional: override the OpenAI chat model. Defaults to gpt-4o-mini.
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
       # In dev we let anonymous sessions in so the playground works
       # without operator JWT plumbing.
       YAYA_AUTH_ALLOW_ANONYMOUS: ${YAYA_AUTH_ALLOW_ANONYMOUS:-true}

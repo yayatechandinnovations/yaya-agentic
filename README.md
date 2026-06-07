@@ -41,17 +41,28 @@ Open http://localhost:3000, pick the `hello-world` profile, and try:
 - `echo hello` — proves the tool-dispatch path (Bean handler, Authorizer chain).
 - `what is Yaya?` — proves RAG: a citation footnote appears under the answer; the right-side inspector shows the retrieved chunks with scores.
 
-To turn on real Anthropic / OpenAI:
+### Pick a chat provider
+
+The engine talks to a provider-agnostic `LlmClient` SPI. Two real implementations ship today:
 
 ```bash
-# .env
+# .env — Anthropic (default)
 ANTHROPIC_API_KEY=sk-ant-...
 YAYA_LLM_PROVIDER=anthropic
+
+# …or OpenAI
 OPENAI_API_KEY=sk-...
+YAYA_LLM_PROVIDER=openai
+OPENAI_CHAT_MODEL=gpt-4o-mini   # optional override
+
+# Embeddings (OpenAI's text-embedding-3-small; falls back to a
+# deterministic-hash stub when no key is set)
 YAYA_EMBEDDING_PROVIDER=openai
 ```
 
-…then `docker compose up --build backend web`.
+Flip `YAYA_LLM_PROVIDER` and restart `backend`; the engine doesn't know which provider answered. The agnostic contract is pinned in `LlmClientAgnosticContractTest`: a single mocked Spring AI `ChatModel` stream produces an identical `LlmEvent` sequence through both wrappers.
+
+Adding a third provider (Bedrock / Gemini / …) is implementing one interface — about a day, not a refactor. See `src/main/java/com/yayatechandinnovations/yayaagentic/llm/` for the two existing implementations.
 
 ---
 

@@ -3,13 +3,13 @@ package com.yayatechandinnovations.yayaagentic.llm;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -24,54 +24,48 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Real Anthropic adapter built on Spring AI 1.0's {@code ChatModel} and
- * the {@code AnthropicChatOptions.toolCallbacks(...)} pathway with
- * {@code internalToolExecutionEnabled(false)} — Spring AI passes our
- * tool definitions to Anthropic but does NOT auto-execute them; the
- * engine handles dispatch through its own AuthZ / schema / confirmable
- * pipeline.
+ * OpenAI adapter, structurally identical to {@link AnthropicLlmClient}.
+ * Builds on Spring AI 1.0's {@code ChatModel} + {@code OpenAiChatOptions
+ * .toolCallbacks(...)} pathway with {@code internalToolExecutionEnabled(false)}
+ * — Spring AI passes our tool definitions to OpenAI but does NOT execute
+ * them. The engine handles dispatch through its AuthZ + schema + confirmable
+ * pipeline, same as for Anthropic.
  *
- * <p>{@code history} is translated to the {@code UserMessage} /
- * {@code AssistantMessage(text, toolCalls)} / {@code ToolResponseMessage}
- * triplet Anthropic expects for tool-result rounds. The stream is scanned
- * for text tokens (forwarded as {@link LlmEvent.TokenChunk}) and final
- * tool calls (emitted at stream end as {@link LlmEvent.ToolUseProposal}s).
- * The terminating {@link LlmEvent.Done} carries {@code stop_reason} so
- * the engine knows whether to loop.</p>
+ * <p>The fact that this class is structurally identical to the Anthropic
+ * one is the point: the engine's {@link LlmClient} SPI hides the provider,
+ * so adding a third (Bedrock, Gemini, …) is implementing this same shape
+ * once more.</p>
+ *
+ * <p>OpenAI's wire-level {@code finish_reason} can be {@code stop},
+ * {@code tool_calls}, {@code length}, etc. — but Spring AI doesn't surface
+ * it on the streamed response. We infer the same way the Anthropic client
+ * does: if the assistant produced any tool_calls, the model paused for
+ * dispatch ({@link StopReason#TOOL_USE}); otherwise it ended its reply
+ * ({@link StopReason#END_TURN}). MAX_TOKENS would require a deeper hook
+ * into the response metadata; it's not load-bearing for the engine loop.</p>
  */
 @Component
 @org.springframework.context.annotation.Primary
-@ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "anthropic")
-public class AnthropicLlmClient implements LlmClient {
-    // NOTE: an earlier version added @ConditionalOnBean(ChatModel.class) so
-    // boot would fall back to the stub if the Anthropic autoconfig couldn't
-    // produce a ChatModel. That doesn't work for @Component classes —
-    // ConditionalOnBean is evaluated during component scanning, before the
-    // autoconfig has registered its beans, so the check always fails and
-    // Anthropic silently never loads. We rely on @ConditionalOnProperty
-    // alone; if YAYA_LLM_PROVIDER=anthropic but the key is unset the boot
-    // fails fast with a clear "no qualifying bean of type ChatModel" — the
-    // operator then sets the key or flips provider=stub.
+@ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "openai")
+public class OpenAiLlmClient implements LlmClient {
 
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
 
-    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AnthropicLlmClient.class);
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(OpenAiLlmClient.class);
 
     private final ChatModel chatModel;
     private final ObjectMapper json;
 
-    public AnthropicLlmClient(ChatModel chatModel, ObjectMapper json) {
+    public OpenAiLlmClient(ChatModel chatModel, ObjectMapper json) {
         this.chatModel = chatModel;
         this.json = json;
-        LOG.info("AnthropicLlmClient instantiated — backed by ChatModel={}", chatModel.getClass().getSimpleName());
+        LOG.info("OpenAiLlmClient instantiated — backed by ChatModel={}", chatModel.getClass().getSimpleName());
     }
 
     @Override
     public Flux<LlmEvent> stream(LlmRequest request) {
         Prompt prompt = buildPrompt(request);
 
-        // Spring AI populates ToolCalls as the assistant message materialises;
-        // collect them deduped by id and emit at the end.
         LinkedHashMap<String, AssistantMessage.ToolCall> seenCalls = new LinkedHashMap<>();
 
         Flux<LlmEvent> tokens = chatModel.stream(prompt)
@@ -96,9 +90,6 @@ public class AnthropicLlmClient implements LlmClient {
             for (var tc : seenCalls.values()) {
                 out.add(new LlmEvent.ToolUseProposal(tc.id(), tc.name(), parseArgs(tc.arguments())));
             }
-            // Spring AI doesn't expose the raw Anthropic stop_reason on the
-            // streamed response, so we infer it: any captured tool_use means
-            // the model paused for tools, otherwise it ended its reply.
             StopReason stop = seenCalls.isEmpty() ? StopReason.END_TURN : StopReason.TOOL_USE;
             out.add(new LlmEvent.Done(stop));
             return out;
@@ -109,19 +100,6 @@ public class AnthropicLlmClient implements LlmClient {
 
     // ---- Prompt translation -------------------------------------------
 
-    /*
-     * NOTE on explicit prompt caching (Anthropic cache_control:ephemeral):
-     * Spring AI 1.0 GA does NOT expose per-block cache_control on the
-     * high-level SystemMessage / AnthropicChatOptions surface. Wiring the
-     * explicit hint requires dropping to AnthropicApi.ChatCompletionRequest
-     * and building the content block list ourselves, which is a substantial
-     * refactor for one feature. The prefix is still cacheable in practice:
-     * the cacheable-prefix system block is byte-stable per
-     * (tenant, profile, profile_version), so Anthropic's content cache will
-     * pick it up within the 5-minute TTL even without the explicit hint.
-     * Followup: drop to raw AnthropicApi when this becomes a measurable
-     * cost concern; until then content-cache is the floor.
-     */
     private Prompt buildPrompt(LlmRequest request) {
         List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
         String prefix = request.cacheablePrefix();
@@ -130,7 +108,7 @@ public class AnthropicLlmClient implements LlmClient {
         if (suffix != null && !suffix.isEmpty()) messages.add(new SystemMessage(suffix));
         messages.addAll(historyToMessages(request.history()));
 
-        AnthropicChatOptions options = AnthropicChatOptions.builder()
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .toolCallbacks(toCallbacks(request.availableTools()))
                 .internalToolExecutionEnabled(false)
                 .build();
@@ -170,9 +148,6 @@ public class AnthropicLlmClient implements LlmClient {
                 .map(td -> (ToolCallback) FunctionToolCallback
                         .builder(td.name(), (Map<String, Object> args,
                                              org.springframework.ai.chat.model.ToolContext ctx) -> {
-                            // internalToolExecutionEnabled=false means Spring AI
-                            // should never call this. If it does, our integration
-                            // is broken — fail loudly so the issue surfaces.
                             throw new IllegalStateException(
                                     "Spring AI attempted to auto-execute tool '" + td.name()
                                     + "' — internalToolExecutionEnabled flag did not take effect");

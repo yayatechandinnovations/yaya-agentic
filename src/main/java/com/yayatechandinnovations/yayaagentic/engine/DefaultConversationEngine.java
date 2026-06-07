@@ -373,8 +373,8 @@ public class DefaultConversationEngine implements ConversationEngine {
         StringBuilder roundText = new StringBuilder();
         java.util.List<LlmClient.ToolCallSpec> roundCalls = new java.util.ArrayList<>();
         java.util.List<LlmClient.ToolResultSpec> roundResults = new java.util.ArrayList<>();
-        java.util.concurrent.atomic.AtomicReference<String> stopReason =
-                new java.util.concurrent.atomic.AtomicReference<>("end_turn");
+        java.util.concurrent.atomic.AtomicReference<LlmClient.StopReason> stopReason =
+                new java.util.concurrent.atomic.AtomicReference<>(LlmClient.StopReason.END_TURN);
 
         return llmClient.stream(request)
                 .concatMap(event -> switch (event) {
@@ -412,7 +412,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                         });
                     }
                     case LlmClient.LlmEvent.Done done -> {
-                        stopReason.set(done.stopReason() == null ? "end_turn" : done.stopReason());
+                        stopReason.set(done.stopReason() == null
+                                ? LlmClient.StopReason.END_TURN : done.stopReason());
                         yield Flux.<TurnEvent>empty();
                     }
                 })
@@ -421,7 +422,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                     // result actually came back. Elicitation and confirm flows
                     // emit NO ToolResult — they are user-pause states; ending
                     // the turn there is correct.
-                    boolean continueLoop = "tool_use".equals(stopReason.get())
+                    boolean continueLoop = stopReason.get() == LlmClient.StopReason.TOOL_USE
                             && !roundCalls.isEmpty()
                             && !roundResults.isEmpty();
                     if (continueLoop) {

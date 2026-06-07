@@ -46,7 +46,7 @@ public class StubLlmClient implements LlmClient {
                     ? "That didn't work: " + first.value()
                     : "Done. Result: " + first.value();
             return Flux.<LlmEvent>just(new LlmEvent.TokenChunk(summary))
-                    .concatWith(Mono.just(new LlmEvent.Done("end_turn")));
+                    .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
         }
 
         String userMessage = lastUserMessage(history);
@@ -59,19 +59,19 @@ public class StubLlmClient implements LlmClient {
         if (echoAvailable && (lower.equals("/echo") || lower.equals("echo"))) {
             return Flux.just(
                     (LlmEvent) new LlmEvent.ToolUseProposal(callId(), "echo", Map.of()),
-                    new LlmEvent.Done("tool_use"));
+                    new LlmEvent.Done(StopReason.TOOL_USE));
         }
         if (echoAvailable && (lower.startsWith("/echo ") || lower.startsWith("echo "))) {
             String arg = trimmed.substring(lower.startsWith("/") ? 6 : 5).trim();
             return Flux.just(
                     (LlmEvent) new LlmEvent.ToolUseProposal(callId(), "echo", Map.of("text", arg)),
-                    new LlmEvent.Done("tool_use"));
+                    new LlmEvent.Done(StopReason.TOOL_USE));
         }
 
         return Flux.fromIterable(scriptFor(trimmed))
                 .delayElements(Duration.ofMillis(40))
                 .<LlmEvent>map(LlmEvent.TokenChunk::new)
-                .concatWith(Mono.just(new LlmEvent.Done("end_turn")));
+                .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
     }
 
     private static String lastUserMessage(List<HistoryEntry> history) {

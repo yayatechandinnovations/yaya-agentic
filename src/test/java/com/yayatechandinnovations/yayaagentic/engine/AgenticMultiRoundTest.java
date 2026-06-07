@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.llm.LlmClient;
+import com.yayatechandinnovations.yayaagentic.llm.LlmClient.StopReason;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
@@ -49,10 +50,10 @@ class AgenticMultiRoundTest {
         llm.scriptRounds(
                 // Round 1: propose the echo tool
                 List.of(new LlmClient.LlmEvent.ToolUseProposal("call-1", "echo", Map.of("text", "agentic-D")),
-                        new LlmClient.LlmEvent.Done("tool_use")),
+                        new LlmClient.LlmEvent.Done(StopReason.TOOL_USE)),
                 // Round 2: summarise the result
                 List.of(new LlmClient.LlmEvent.TokenChunk("Done — echoed agentic-D for you."),
-                        new LlmClient.LlmEvent.Done("end_turn"))
+                        new LlmClient.LlmEvent.Done(StopReason.END_TURN))
         );
         Ids.SessionId sid = startSession();
 
@@ -161,11 +162,11 @@ class AgenticMultiRoundTest {
             if (infinite) {
                 return Flux.<LlmEvent>just(
                                 new LlmEvent.ToolUseProposal("call-" + callIdx++, "echo", Map.of("text", "again")),
-                                new LlmEvent.Done("tool_use"));
+                                new LlmEvent.Done(StopReason.TOOL_USE));
             }
             List<LlmEvent> events = callIdx < roundScripts.size()
                     ? roundScripts.get(callIdx++)
-                    : List.of(new LlmEvent.TokenChunk("(no more script)"), new LlmEvent.Done("end_turn"));
+                    : List.of(new LlmEvent.TokenChunk("(no more script)"), new LlmEvent.Done(StopReason.END_TURN));
             return Flux.fromIterable(events).concatWith(Mono.empty());
         }
     }

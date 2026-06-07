@@ -9,6 +9,7 @@ import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.RetailCustomerBootstrap;
 import com.yayatechandinnovations.yayaagentic.llm.LlmClient;
+import com.yayatechandinnovations.yayaagentic.llm.LlmClient.StopReason;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,9 +72,9 @@ class RetailCustomerScenariosTest {
         llm.scriptRounds(
                 List.of(new LlmClient.LlmEvent.ToolUseProposal("call-1", "track_shipment",
                                 Map.of("orderId", "ORD-1041")),
-                        new LlmClient.LlmEvent.Done("tool_use")),
+                        new LlmClient.LlmEvent.Done(StopReason.TOOL_USE)),
                 List.of(new LlmClient.LlmEvent.TokenChunk("Your order is on its way."),
-                        new LlmClient.LlmEvent.Done("end_turn")));
+                        new LlmClient.LlmEvent.Done(StopReason.END_TURN)));
 
         List<TurnEvent> events = drain("where is ORD-1041?");
 
@@ -89,7 +90,7 @@ class RetailCustomerScenariosTest {
         llm.scriptRounds(
                 List.of(new LlmClient.LlmEvent.ToolUseProposal("call-2", "track_shipment",
                                 Map.of("orderId", "ORD-9001")),
-                        new LlmClient.LlmEvent.Done("tool_use"))
+                        new LlmClient.LlmEvent.Done(StopReason.TOOL_USE))
                 // No round-2 script — the stub's continuation-round behavior
                 // detects the DENIED tool_result and paraphrases automatically.
         );
@@ -116,7 +117,7 @@ class RetailCustomerScenariosTest {
         llm.scriptRounds(
                 List.of(new LlmClient.LlmEvent.ToolUseProposal("call-3", "start_return",
                                 Map.of("orderId", "ORD-1042", "reason", "doesn't fit")),
-                        new LlmClient.LlmEvent.Done("tool_use")));
+                        new LlmClient.LlmEvent.Done(StopReason.TOOL_USE)));
 
         List<TurnEvent> events = drain("return ORD-1042 — it doesn't fit");
 
@@ -237,10 +238,10 @@ class RetailCustomerScenariosTest {
                 String text = first.isError()
                         ? "That didn't work: " + first.value()
                         : "Here you go: " + first.value();
-                return List.of(new LlmEvent.TokenChunk(text), new LlmEvent.Done("end_turn"));
+                return List.of(new LlmEvent.TokenChunk(text), new LlmEvent.Done(StopReason.END_TURN));
             }
             return List.of(new LlmEvent.TokenChunk("(no more script)"),
-                    new LlmEvent.Done("end_turn"));
+                    new LlmEvent.Done(StopReason.END_TURN));
         }
     }
 }
