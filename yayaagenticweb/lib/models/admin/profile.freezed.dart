@@ -28,6 +28,7 @@ mixin _$ProfileRequest {
   String get systemPromptFragment => throw _privateConstructorUsedError;
   List<String> get capabilities => throw _privateConstructorUsedError;
   String? get authBindingId => throw _privateConstructorUsedError;
+  String get language => throw _privateConstructorUsedError;
   Map<String, dynamic> get metadata => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileRequest to a JSON map.
@@ -55,6 +56,7 @@ abstract class $ProfileRequestCopyWith<$Res> {
     String systemPromptFragment,
     List<String> capabilities,
     String? authBindingId,
+    String language,
     Map<String, dynamic> metadata,
   });
 }
@@ -81,6 +83,7 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
     Object? systemPromptFragment = null,
     Object? capabilities = null,
     Object? authBindingId = freezed,
+    Object? language = null,
     Object? metadata = null,
   }) {
     return _then(
@@ -113,6 +116,10 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
                 ? _value.authBindingId
                 : authBindingId // ignore: cast_nullable_to_non_nullable
                       as String?,
+            language: null == language
+                ? _value.language
+                : language // ignore: cast_nullable_to_non_nullable
+                      as String,
             metadata: null == metadata
                 ? _value.metadata
                 : metadata // ignore: cast_nullable_to_non_nullable
@@ -140,6 +147,7 @@ abstract class _$$ProfileRequestImplCopyWith<$Res>
     String systemPromptFragment,
     List<String> capabilities,
     String? authBindingId,
+    String language,
     Map<String, dynamic> metadata,
   });
 }
@@ -165,6 +173,7 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
     Object? systemPromptFragment = null,
     Object? capabilities = null,
     Object? authBindingId = freezed,
+    Object? language = null,
     Object? metadata = null,
   }) {
     return _then(
@@ -197,6 +206,10 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
             ? _value.authBindingId
             : authBindingId // ignore: cast_nullable_to_non_nullable
                   as String?,
+        language: null == language
+            ? _value.language
+            : language // ignore: cast_nullable_to_non_nullable
+                  as String,
         metadata: null == metadata
             ? _value._metadata
             : metadata // ignore: cast_nullable_to_non_nullable
@@ -217,6 +230,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     required this.systemPromptFragment,
     final List<String> capabilities = const <String>[],
     this.authBindingId,
+    this.language = 'en',
     final Map<String, dynamic> metadata = const <String, dynamic>{},
   }) : _capabilities = capabilities,
        _metadata = metadata;
@@ -245,6 +259,9 @@ class _$ProfileRequestImpl implements _ProfileRequest {
 
   @override
   final String? authBindingId;
+  @override
+  @JsonKey()
+  final String language;
   final Map<String, dynamic> _metadata;
   @override
   @JsonKey()
@@ -256,7 +273,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
 
   @override
   String toString() {
-    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, metadata: $metadata)';
+    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata)';
   }
 
   @override
@@ -278,6 +295,8 @@ class _$ProfileRequestImpl implements _ProfileRequest {
             ) &&
             (identical(other.authBindingId, authBindingId) ||
                 other.authBindingId == authBindingId) &&
+            (identical(other.language, language) ||
+                other.language == language) &&
             const DeepCollectionEquality().equals(other._metadata, _metadata));
   }
 
@@ -292,6 +311,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     systemPromptFragment,
     const DeepCollectionEquality().hash(_capabilities),
     authBindingId,
+    language,
     const DeepCollectionEquality().hash(_metadata),
   );
 
@@ -321,6 +341,7 @@ abstract class _ProfileRequest implements ProfileRequest {
     required final String systemPromptFragment,
     final List<String> capabilities,
     final String? authBindingId,
+    final String language,
     final Map<String, dynamic> metadata,
   }) = _$ProfileRequestImpl;
 
@@ -341,6 +362,8 @@ abstract class _ProfileRequest implements ProfileRequest {
   List<String> get capabilities;
   @override
   String? get authBindingId;
+  @override
+  String get language;
   @override
   Map<String, dynamic> get metadata;
 
@@ -366,6 +389,7 @@ mixin _$ProfileResponse {
   String get systemPromptFragment => throw _privateConstructorUsedError;
   List<String> get capabilities => throw _privateConstructorUsedError;
   String? get authBindingId => throw _privateConstructorUsedError;
+  String get language => throw _privateConstructorUsedError;
   Map<String, dynamic> get metadata => throw _privateConstructorUsedError;
   String? get status => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
@@ -396,6 +420,7 @@ abstract class $ProfileResponseCopyWith<$Res> {
     String systemPromptFragment,
     List<String> capabilities,
     String? authBindingId,
+    String language,
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
@@ -425,6 +450,7 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
     Object? systemPromptFragment = null,
     Object? capabilities = null,
     Object? authBindingId = freezed,
+    Object? language = null,
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
@@ -463,6 +489,10 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
                 ? _value.authBindingId
                 : authBindingId // ignore: cast_nullable_to_non_nullable
                       as String?,
+            language: null == language
+                ? _value.language
+                : language // ignore: cast_nullable_to_non_nullable
+                      as String,
             metadata: null == metadata
                 ? _value.metadata
                 : metadata // ignore: cast_nullable_to_non_nullable
@@ -499,6 +529,7 @@ abstract class _$$ProfileResponseImplCopyWith<$Res>
     String systemPromptFragment,
     List<String> capabilities,
     String? authBindingId,
+    String language,
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
@@ -527,6 +558,7 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
     Object? systemPromptFragment = null,
     Object? capabilities = null,
     Object? authBindingId = freezed,
+    Object? language = null,
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
@@ -565,6 +597,10 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
             ? _value.authBindingId
             : authBindingId // ignore: cast_nullable_to_non_nullable
                   as String?,
+        language: null == language
+            ? _value.language
+            : language // ignore: cast_nullable_to_non_nullable
+                  as String,
         metadata: null == metadata
             ? _value._metadata
             : metadata // ignore: cast_nullable_to_non_nullable
@@ -594,6 +630,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     required this.systemPromptFragment,
     final List<String> capabilities = const <String>[],
     this.authBindingId,
+    this.language = 'en',
     final Map<String, dynamic> metadata = const <String, dynamic>{},
     this.status,
     this.createdAt,
@@ -626,6 +663,9 @@ class _$ProfileResponseImpl implements _ProfileResponse {
 
   @override
   final String? authBindingId;
+  @override
+  @JsonKey()
+  final String language;
   final Map<String, dynamic> _metadata;
   @override
   @JsonKey()
@@ -642,7 +682,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
 
   @override
   String toString() {
-    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, metadata: $metadata, status: $status, createdAt: $createdAt)';
+    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt)';
   }
 
   @override
@@ -665,6 +705,8 @@ class _$ProfileResponseImpl implements _ProfileResponse {
             ) &&
             (identical(other.authBindingId, authBindingId) ||
                 other.authBindingId == authBindingId) &&
+            (identical(other.language, language) ||
+                other.language == language) &&
             const DeepCollectionEquality().equals(other._metadata, _metadata) &&
             (identical(other.status, status) || other.status == status) &&
             (identical(other.createdAt, createdAt) ||
@@ -683,6 +725,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     systemPromptFragment,
     const DeepCollectionEquality().hash(_capabilities),
     authBindingId,
+    language,
     const DeepCollectionEquality().hash(_metadata),
     status,
     createdAt,
@@ -715,6 +758,7 @@ abstract class _ProfileResponse implements ProfileResponse {
     required final String systemPromptFragment,
     final List<String> capabilities,
     final String? authBindingId,
+    final String language,
     final Map<String, dynamic> metadata,
     final String? status,
     final String? createdAt,
@@ -739,6 +783,8 @@ abstract class _ProfileResponse implements ProfileResponse {
   List<String> get capabilities;
   @override
   String? get authBindingId;
+  @override
+  String get language;
   @override
   Map<String, dynamic> get metadata;
   @override

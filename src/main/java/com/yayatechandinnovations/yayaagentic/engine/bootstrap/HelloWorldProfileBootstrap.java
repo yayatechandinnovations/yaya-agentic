@@ -135,6 +135,7 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
                 List.of(SAY_HELLO, KnowledgeBootstrap.SEARCH_KNOWLEDGE_CAP),
                 List.of(KnowledgeBootstrap.YAYA_FAQ_SOURCE),
                 DEV_NOOP_AUTH,
+                "en",
                 Map.of("introQuickReplies",
                         List.of("echo hello", "what is Yaya?", "what can you do?"))));
     }

@@ -45,6 +45,9 @@ public class ProfileEntity {
     @Column(nullable = false, length = 16)
     private String status = "ACTIVE";
 
+    @Column(nullable = false, length = 16)
+    private String language = "en";
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -75,6 +78,7 @@ public class ProfileEntity {
     public String getAuthBindingId() { return authBindingId; }
     public String getMetadataJson() { return metadataJson; }
     public String getStatus() { return status; }
+    public String getLanguage() { return language; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getDeprecatedAt() { return deprecatedAt; }
 
@@ -85,6 +89,7 @@ public class ProfileEntity {
     public void setAuthBindingId(String v) { this.authBindingId = v; }
     public void setMetadataJson(String v) { this.metadataJson = v; }
     public void setStatus(String v) { this.status = v; }
+    public void setLanguage(String v) { this.language = (v == null || v.isBlank()) ? "en" : v; }
 
     // --- composite key ----------------------------------------------------
 

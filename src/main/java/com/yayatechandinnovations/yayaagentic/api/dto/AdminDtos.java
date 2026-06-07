@@ -23,6 +23,7 @@ public final class AdminDtos {
             String systemPromptFragment,
             List<String> capabilities,
             String authBindingId,
+            String language,
             Map<String, Object> metadata
     ) {}
 
@@ -30,6 +31,7 @@ public final class AdminDtos {
             String id, int version, String tenant, String displayName,
             String introOneLiner, String systemPromptFragment,
             List<String> capabilities, String authBindingId,
+            String language,
             Map<String, Object> metadata, String status, OffsetDateTime createdAt
     ) {}
 

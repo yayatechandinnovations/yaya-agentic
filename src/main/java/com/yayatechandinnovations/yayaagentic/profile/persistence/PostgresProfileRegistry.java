@@ -69,6 +69,7 @@ public class PostgresProfileRegistry implements ProfileRegistry {
                 profile.capabilities().stream().map(Ids.CapabilityId::value).toList()));
         entity.setMetadataJson(writeJson(profile.metadata()));
         entity.setAuthBindingId(profile.authBinding() == null ? null : profile.authBinding().value());
+        entity.setLanguage(profile.language());
         repo.save(entity);
     }
 
@@ -84,6 +85,7 @@ public class PostgresProfileRegistry implements ProfileRegistry {
                 capIds.stream().map(Ids.CapabilityId::new).toList(),
                 List.of(),                                              // knowledge bindings join in M2.5
                 e.getAuthBindingId() == null ? null : new Ids.AuthBindingId(e.getAuthBindingId()),
+                e.getLanguage(),
                 metadata);
     }
 

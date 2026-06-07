@@ -102,6 +102,7 @@ public class AdminController {
         entity.setCapabilitiesJson(writeJson(safeList(req.capabilities())));
         entity.setMetadataJson(writeJson(req.metadata() == null ? Map.of() : req.metadata()));
         entity.setAuthBindingId(req.authBindingId());
+        entity.setLanguage(req.language());
         profiles.save(entity);
         return ResponseEntity.status(HttpStatus.CREATED).body(toProfileResponse(entity));
     }
@@ -353,6 +354,7 @@ public class AdminController {
                 e.getDisplayName(), e.getIntro(), e.getSystemPrompt(),
                 readJson(e.getCapabilitiesJson(), new TypeReference<List<String>>() {}),
                 e.getAuthBindingId(),
+                e.getLanguage(),
                 readJson(e.getMetadataJson(), MAP_REF),
                 e.getStatus(), e.getCreatedAt());
     }

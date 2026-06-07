@@ -13,6 +13,7 @@ class ProfileRequest with _$ProfileRequest {
     required String systemPromptFragment,
     @Default(<String>[]) List<String> capabilities,
     String? authBindingId,
+    @Default('en') String language,
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
   }) = _ProfileRequest;
 
@@ -31,6 +32,7 @@ class ProfileResponse with _$ProfileResponse {
     required String systemPromptFragment,
     @Default(<String>[]) List<String> capabilities,
     String? authBindingId,
+    @Default('en') String language,
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
     String? status,
     String? createdAt,

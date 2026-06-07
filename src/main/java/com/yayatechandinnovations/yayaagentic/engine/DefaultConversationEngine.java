@@ -546,7 +546,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             case ToolExecutor.Outcome.NeedsInput ni ->
                     elicitationFlow(toolDescriptor, args, ni, personality, session, exec, recorder, turnId, message);
             case ToolExecutor.Outcome.Dispatched(var result) ->
-                    dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message);
+                    dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message, llmDriven);
         };
     }
 
@@ -589,18 +589,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                                            ExecutionContext exec,
                                            ConversationRecorder recorder,
                                            Ids.TurnId turnId,
-                                           UserMessage message) {
+                                           UserMessage message,
+                                           boolean llmDriven) {
         Turn.ToolCall call = new Turn.ToolCall(result.callId(), toolDescriptor.id(), args);
 
-        String spoken = switch (result.status()) {
-            case OK -> "You said: \""
-                    + String.valueOf(args.getOrDefault("text", "")) + "\". Anything else?";
-            case DENIED -> "I can't echo that.";
-            case FAILED -> "Sorry — that didn't work (" + result.error() + ").";
-        };
-
-        // B2.7 — after a clean tool dispatch, surface the capability's
-        // follow-up hints as a quick-reply UiHint so the UI can render chips.
         List<String> followUps = (result.status() == Turn.ToolResult.Status.OK)
                 ? followUpHintsForTool(profile, toolDescriptor.id())
                 : List.of();
@@ -608,6 +600,29 @@ public class DefaultConversationEngine implements ConversationEngine {
         List<TurnEvent> events = new java.util.ArrayList<>(4);
         events.add(new TurnEvent.ToolCall(call.callId(), toolDescriptor.id(), args));
         events.add(new TurnEvent.ToolResult(call.callId(), result.status(), result.value(), result.error()));
+
+        if (llmDriven) {
+            // The continuation LLM round paraphrases the tool result in the
+            // profile's language. Don't emit a hardcoded English Token here
+            // — that bypasses the language directive in the prompt prefix.
+            // Follow-up quick replies are still useful as UI affordances.
+            if (!followUps.isEmpty()) {
+                events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
+            }
+            return Flux.fromIterable(events)
+                    .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, "",
+                            List.of(call), List.of(result)));
+        }
+
+        // Resumed (confirm / elicit) paths don't get a fresh LLM round, so
+        // they still need a fallback reply. Hardcoded English here matches
+        // the equivalent denialFlow branch.
+        String spoken = switch (result.status()) {
+            case OK -> "You said: \""
+                    + String.valueOf(args.getOrDefault("text", "")) + "\". Anything else?";
+            case DENIED -> "I can't echo that.";
+            case FAILED -> "Sorry — that didn't work (" + result.error() + ").";
+        };
         events.add(new TurnEvent.Token(spoken));
         if (!followUps.isEmpty()) {
             events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));

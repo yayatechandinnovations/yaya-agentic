@@ -35,8 +35,17 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   final _promptCtrl = TextEditingController();
   final _capsSelected = <String>{};
   String? _authBinding;
+  String _language = 'en';
   bool _saving = false;
   int? _cloningFromVersion;
+
+  /// Languages we surface in the dropdown. The backend accepts any BCP 47
+  /// tag — operators with niche needs can extend the dropdown later. Until
+  /// then, two covers 99% of demo use.
+  static const _languageOptions = {
+    'en': 'English',
+    'es': 'Spanish',
+  };
 
   void _cloneEditFrom(ProfileResponse p) {
     setState(() {
@@ -48,6 +57,8 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         ..clear()
         ..addAll(p.capabilities);
       _authBinding = p.authBindingId;
+      _language =
+          _languageOptions.containsKey(p.language) ? p.language : 'en';
       _cloningFromVersion = p.version;
     });
     showSnack(context,
@@ -63,6 +74,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _promptCtrl.clear();
       _capsSelected.clear();
       _authBinding = null;
+      _language = 'en';
     });
   }
 
@@ -91,6 +103,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         systemPromptFragment: _promptCtrl.text.trim(),
         capabilities: _capsSelected.toList(),
         authBindingId: _authBinding,
+        language: _language,
       ));
       ref.invalidate(profilesProvider);
       if (!mounted) return;
@@ -102,6 +115,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       setState(() {
         _capsSelected.clear();
         _authBinding = null;
+        _language = 'en';
         _cloningFromVersion = null;
       });
       showSnack(context,
@@ -197,6 +211,21 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                   onChanged: (v) => setState(() => _authBinding = v),
                 ),
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _language,
+                decoration: const InputDecoration(
+                  labelText: 'response language',
+                  helperText: 'the LLM responds in this language regardless of user input',
+                ),
+                items: _languageOptions.entries
+                    .map((e) => DropdownMenuItem(
+                          value: e.key,
+                          child: Text('${e.value}  (${e.key})'),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _language = v ?? 'en'),
+              ),
             ],
           ),
           actions: [
@@ -263,6 +292,7 @@ class _ProfileTile extends StatelessWidget {
             label: 'authBindingId',
             value: profile.authBindingId ?? '(none)',
           ),
+          DetailRow(label: 'language', value: profile.language),
         ],
       ),
     );

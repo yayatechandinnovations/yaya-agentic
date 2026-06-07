@@ -19,6 +19,7 @@ _$ProfileRequestImpl _$$ProfileRequestImplFromJson(Map<String, dynamic> json) =>
               .toList() ??
           const <String>[],
       authBindingId: json['authBindingId'] as String?,
+      language: json['language'] as String? ?? 'en',
       metadata:
           json['metadata'] as Map<String, dynamic>? ??
           const <String, dynamic>{},
@@ -34,6 +35,7 @@ Map<String, dynamic> _$$ProfileRequestImplToJson(
   'systemPromptFragment': instance.systemPromptFragment,
   'capabilities': instance.capabilities,
   'authBindingId': instance.authBindingId,
+  'language': instance.language,
   'metadata': instance.metadata,
 };
 
@@ -52,6 +54,7 @@ _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
           .toList() ??
       const <String>[],
   authBindingId: json['authBindingId'] as String?,
+  language: json['language'] as String? ?? 'en',
   metadata:
       json['metadata'] as Map<String, dynamic>? ?? const <String, dynamic>{},
   status: json['status'] as String?,
@@ -69,6 +72,7 @@ Map<String, dynamic> _$$ProfileResponseImplToJson(
   'systemPromptFragment': instance.systemPromptFragment,
   'capabilities': instance.capabilities,
   'authBindingId': instance.authBindingId,
+  'language': instance.language,
   'metadata': instance.metadata,
   'status': instance.status,
   'createdAt': instance.createdAt,

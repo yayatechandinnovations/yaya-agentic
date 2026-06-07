@@ -228,6 +228,7 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
                         KnowledgeBootstrap.SEARCH_KNOWLEDGE_CAP),
                 List.of(RETURN_POLICY_SOURCE, SHIPPING_FAQ_SOURCE),
                 HelloWorldProfileBootstrap.DEV_NOOP_AUTH,
+                "en",
                 Map.of("introQuickReplies", List.of(
                         "track my order ORD-1041",
                         "start a return for ORD-1042",

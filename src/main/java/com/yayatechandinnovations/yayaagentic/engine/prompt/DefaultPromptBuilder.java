@@ -102,6 +102,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
         sb.append("Role:\n").append(profile.displayName()).append(" — ")
                 .append(profile.introOneLiner()).append('\n')
                 .append(profile.systemPromptFragment()).append("\n\n");
+        // 2a — Language. Placed inside the cacheable prefix because it's
+        // stable per (tenant, profile, profile_version). Phrased as a hard
+        // rule rather than a hint so the model doesn't drift into the
+        // user's input language.
+        sb.append(languageRule(profile.language())).append("\n\n");
         // 3 — Capability catalog
         sb.append("Capabilities (what the user can ask for):\n");
         for (var capRef : profile.capabilities()) {
@@ -121,6 +126,34 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // 5 — Safety
         sb.append(SAFETY_RULES);
         return sb.toString();
+    }
+
+    /**
+     * Translates a BCP 47 code into a one-line prompt directive. Phrased
+     * with an explicit "even if the user writes in another language" so the
+     * model doesn't mirror the user — without this, models tend to switch
+     * to whatever language the last user message used.
+     */
+    static String languageRule(String code) {
+        String name = languageDisplayName(code);
+        return "Language: respond exclusively in " + name
+                + ", even when the user writes in another language. "
+                + "If the user's message is not in " + name
+                + ", answer in " + name + " without translating their text back.";
+    }
+
+    private static String languageDisplayName(String code) {
+        if (code == null || code.isBlank()) return "English";
+        // Java's Locale.forLanguageTag + getDisplayLanguage covers BCP 47
+        // (en, es, en-US, …) and renders the label in English so the LLM
+        // gets a stable, unambiguous instruction.
+        try {
+            var locale = java.util.Locale.forLanguageTag(code);
+            String name = locale.getDisplayLanguage(java.util.Locale.ENGLISH);
+            return (name == null || name.isBlank()) ? code : name;
+        } catch (RuntimeException ex) {
+            return code;
+        }
     }
 
     private String formatCapability(Capability c) {

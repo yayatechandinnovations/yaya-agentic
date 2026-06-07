@@ -128,7 +128,7 @@ class AdminControllerTest {
         var profile = new AdminDtos.ProfileRequest(
                 TENANT, "test-profile", "Test profile",
                 "Hi I'm test.", "You are a test bot.",
-                List.of("do-noop"), "dev-noop", Map.of());
+                List.of("do-noop"), "dev-noop", "en", Map.of());
         var res = client.post().uri("/v1/admin/profiles")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(profile)
@@ -140,6 +140,7 @@ class AdminControllerTest {
         assertThat(res.version()).isEqualTo(1);
         assertThat(res.capabilities()).containsExactly("do-noop");
         assertThat(res.authBindingId()).isEqualTo("dev-noop");
+        assertThat(res.language()).isEqualTo("en");
     }
 
     @Test @Order(6)
@@ -147,7 +148,7 @@ class AdminControllerTest {
         var profile = new AdminDtos.ProfileRequest(
                 TENANT, "test-profile", "Test profile v2",
                 "Hi I'm test.", "You are a test bot, version 2.",
-                List.of("do-noop"), "dev-noop", Map.of());
+                List.of("do-noop"), "dev-noop", "es", Map.of());
         var res = client.post().uri("/v1/admin/profiles")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(profile)
@@ -157,13 +158,16 @@ class AdminControllerTest {
                 .returnResult().getResponseBody();
         assertThat(res).isNotNull();
         assertThat(res.version()).isEqualTo(2);
+        assertThat(res.language())
+                .as("language should follow the request body")
+                .isEqualTo("es");
     }
 
     @Test @Order(7)
     void rejects_profile_with_unknown_auth_binding() {
         var profile = new AdminDtos.ProfileRequest(
                 TENANT, "broken", "X", "X", "X",
-                List.of("do-noop"), "no-such-binding", Map.of());
+                List.of("do-noop"), "no-such-binding", "en", Map.of());
         client.post().uri("/v1/admin/profiles")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(profile)
