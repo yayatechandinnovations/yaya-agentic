@@ -64,6 +64,12 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                           ],
                         ),
                       ),
+                      TextButton.icon(
+                        onPressed: () =>
+                            ref.read(playgroundProvider.notifier).endSession(),
+                        icon: const Icon(Icons.swap_horiz),
+                        label: const Text('Switch profile'),
+                      ),
                     ],
                   ),
                 ),

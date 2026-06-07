@@ -6,6 +6,7 @@ import '../../api/sessions_api.dart';
 import '../../models/inspector_snapshot.dart';
 import '../../models/start_session.dart';
 import '../../models/turn_event.dart';
+import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 
 class ChatMessage {
   ChatMessage({
@@ -116,6 +117,28 @@ class PlaygroundController extends Notifier<PlaygroundState> {
     } catch (e) {
       state = state.copyWith(error: 'Failed to start session: $e');
     }
+  }
+
+  /// Ends the current session server-side and resets local state so the
+  /// playground returns to the profile picker. Operators use this to switch
+  /// from hello-world to retail-customer without reloading the page.
+  Future<void> endSession() async {
+    final sid = state.session?.sessionId;
+    await _sub?.cancel();
+    _sub = null;
+    if (sid != null) {
+      try {
+        final api = await ref.read(sessionsApiProvider.future);
+        await api.end(sid);
+      } catch (_) {
+        // Best-effort — server-side TTL eventually reaps the session even
+        // if the explicit POST /end couldn't reach the backend.
+      }
+    }
+    // Re-fetch the profile list so the picker shows anything the operator
+    // added (or any bootstraps that ran on restart) while a session was open.
+    ref.invalidate(profilesProvider);
+    state = PlaygroundState();
   }
 
   Future<void> sendMessage(String text) async {
