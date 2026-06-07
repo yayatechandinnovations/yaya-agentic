@@ -25,16 +25,20 @@ services:
     labels:
       org.springframework.boot.service-connection: postgres
     environment:
-      POSTGRES_DB: yaya_agentic
-      POSTGRES_USER: yaya
-      POSTGRES_PASSWORD: yaya
+      # Defaults are throwaway values for a localhost-only dev stack —
+      # the Postgres port is mapped to 5433 on host, not exposed publicly.
+      # Override in .env (POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB)
+      # before exposing this stack on any non-loopback interface.
+      POSTGRES_DB: ${POSTGRES_DB:-yaya_agentic}
+      POSTGRES_USER: ${POSTGRES_USER:-yaya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yaya}
     ports:
       # 5433 on host so a system Postgres on 5432 doesn't clash.
       - "5433:5432"
     volumes:
       - yaya_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U yaya -d yaya_agentic"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-yaya} -d $${POSTGRES_DB:-yaya_agentic}"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -66,6 +70,11 @@ services:
       - .env
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      # Postgres credentials threaded through to Spring so both ends use
+      # the same overridden values when set in .env.
+      POSTGRES_DB: ${POSTGRES_DB:-yaya_agentic}
+      POSTGRES_USER: ${POSTGRES_USER:-yaya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yaya}
       # LLM credentials. Set in .env (see .env.example). The app boots
       # without them but tool calls and LLM responses will be no-ops.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

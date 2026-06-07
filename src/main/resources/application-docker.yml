@@ -9,9 +9,12 @@ spring:
       enabled: false
 
   datasource:
-    url: jdbc:postgresql://postgres:5432/yaya_agentic
-    username: yaya
-    password: yaya
+    # POSTGRES_* env vars are set by docker compose (which reads .env or
+    # falls back to the throwaway dev defaults). The same values feed both
+    # this datasource and the postgres service so they stay in sync.
+    url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:yaya_agentic}
+    username: ${POSTGRES_USER:yaya}
+    password: ${POSTGRES_PASSWORD:yaya}
     hikari:
       maximum-pool-size: 10
 

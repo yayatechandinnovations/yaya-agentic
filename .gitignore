@@ -16,13 +16,11 @@ yayaagenticweb/.dart_tool/
 yayaagenticweb/.flutter-plugins
 yayaagenticweb/.flutter-plugins-dependencies
 
-### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+### IntelliJ IDEA + IDE metadata (entire dir, not per-file) ###
+.idea/
 *.iws
 *.iml
+.vscode/
 *.ipr
 
 ### Eclipse ###
