@@ -13,10 +13,14 @@ import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalPolicy;
 import com.yayatechandinnovations.yayaagentic.knowledge.SourceLocation;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionOrchestrator;
 import com.yayatechandinnovations.yayaagentic.knowledge.tool.SearchKnowledgeToolHandler;
+import com.yayatechandinnovations.yayaagentic.persistence.CapabilityEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.CapabilityRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileKnowledgeBindingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileKnowledgeBindingRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.ToolEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ToolRepository;
 import com.yayatechandinnovations.yayaagentic.profile.Capability;
 import com.yayatechandinnovations.yayaagentic.profile.Profile;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
@@ -80,6 +84,8 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
     private final ProfileRegistry profileRegistry;
     private final KnowledgeSourceRepository sourceRepo;
     private final ProfileKnowledgeBindingRepository bindingRepo;
+    private final ToolRepository toolRepo;
+    private final CapabilityRepository capabilityRepo;
     private final IngestionOrchestrator ingestion;
     private final ObjectMapper json;
 
@@ -87,12 +93,16 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
                                    ProfileRegistry profileRegistry,
                                    KnowledgeSourceRepository sourceRepo,
                                    ProfileKnowledgeBindingRepository bindingRepo,
+                                   ToolRepository toolRepo,
+                                   CapabilityRepository capabilityRepo,
                                    IngestionOrchestrator ingestion,
                                    ObjectMapper json) {
         this.catalog = catalog;
         this.profileRegistry = profileRegistry;
         this.sourceRepo = sourceRepo;
         this.bindingRepo = bindingRepo;
+        this.toolRepo = toolRepo;
+        this.capabilityRepo = capabilityRepo;
         this.ingestion = ingestion;
         this.json = json;
     }
@@ -115,31 +125,23 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
     // ---- tools + capabilities ------------------------------------------
 
     private void registerToolsAndCapabilities() {
-        catalog.registerTool(new ToolDescriptor(
-                FIND_ORDER,
-                FindOrderToolHandler.INPUT_SCHEMA,
-                FindOrderToolHandler.OUTPUT_SCHEMA,
-                PermissionRequirement.none(),
-                new ToolHandlerRef.Bean("findOrderTool"),
-                ToolPolicy.defaults()));
+        // Tools — persist to PG so the admin Tools screen lists them, and
+        // mirror into the runtime M0Catalog so the engine's lookup path
+        // doesn't have to round-trip.
+        registerTool(FIND_ORDER,
+                FindOrderToolHandler.INPUT_SCHEMA, FindOrderToolHandler.OUTPUT_SCHEMA,
+                "findOrderTool", ToolPolicy.defaults());
 
-        catalog.registerTool(new ToolDescriptor(
-                TRACK_SHIPMENT,
-                TrackShipmentToolHandler.INPUT_SCHEMA,
-                TrackShipmentToolHandler.OUTPUT_SCHEMA,
-                PermissionRequirement.none(),
-                new ToolHandlerRef.Bean("trackShipmentTool"),
-                ToolPolicy.defaults()));
+        registerTool(TRACK_SHIPMENT,
+                TrackShipmentToolHandler.INPUT_SCHEMA, TrackShipmentToolHandler.OUTPUT_SCHEMA,
+                "trackShipmentTool", ToolPolicy.defaults());
 
-        catalog.registerTool(new ToolDescriptor(
-                START_RETURN,
-                StartReturnToolHandler.INPUT_SCHEMA,
-                StartReturnToolHandler.OUTPUT_SCHEMA,
-                PermissionRequirement.none(),
-                new ToolHandlerRef.Bean("startReturnTool"),
-                new ToolPolicy(Duration.ofSeconds(10), 0, false, /* confirmable */ true)));
+        registerTool(START_RETURN,
+                StartReturnToolHandler.INPUT_SCHEMA, StartReturnToolHandler.OUTPUT_SCHEMA,
+                "startReturnTool",
+                new ToolPolicy(Duration.ofSeconds(10), 0, false, /* confirmable */ true));
 
-        catalog.registerCapability(new Capability(
+        registerCapability(new Capability(
                 ORDER_MANAGEMENT,
                 "Manage my orders",
                 "Find my orders, check shipment status, or start a return.",
@@ -152,7 +154,7 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
                 List.of("track another order", "start a return", "find an order"),
                 PermissionRequirement.none()));
 
-        catalog.registerCapability(new Capability(
+        registerCapability(new Capability(
                 BROWSE_POLICIES,
                 "Read our policies",
                 "Look up return and shipping policy details and cite where the answer comes from.",
@@ -163,6 +165,44 @@ public class RetailCustomerBootstrap implements ApplicationRunner {
                 List.of(new Ids.ToolId(SearchKnowledgeToolHandler.TOOL_ID)),
                 List.of("what's the return window?", "do you ship internationally?"),
                 PermissionRequirement.none()));
+    }
+
+    private void registerTool(Ids.ToolId id, String inputSchema, String outputSchema,
+                              String beanName, ToolPolicy policy) {
+        ToolEntity.PK pk = new ToolEntity.PK(DEFAULT_TENANT.value(), id.value(), 1);
+        if (!toolRepo.existsById(pk)) {
+            ToolEntity entity = new ToolEntity(
+                    DEFAULT_TENANT.value(), id.value(), 1,
+                    inputSchema, outputSchema, "BEAN");
+            entity.setHandlerBeanName(beanName);
+            entity.setPolicyJson(writeJson(policy));
+            entity.setRequiresJson(writeJson(PermissionRequirement.none()));
+            toolRepo.save(entity);
+        }
+        catalog.registerTool(new ToolDescriptor(
+                id, inputSchema, outputSchema,
+                PermissionRequirement.none(),
+                new ToolHandlerRef.Bean(beanName),
+                policy));
+    }
+
+    private void registerCapability(Capability cap) {
+        CapabilityEntity.PK pk = new CapabilityEntity.PK(
+                DEFAULT_TENANT.value(), cap.id().value(), 1);
+        if (!capabilityRepo.existsById(pk)) {
+            CapabilityEntity entity = new CapabilityEntity(
+                    DEFAULT_TENANT.value(), cap.id().value(), 1,
+                    cap.userFacingLabel());
+            entity.setDescription(cap.userFacingDescription());
+            entity.setLlmGuidance(cap.llmGuidance());
+            entity.setToolIdsJson(writeJson(
+                    cap.tools().stream().map(Ids.ToolId::value).toList()));
+            entity.setFollowUpHintsJson(writeJson(
+                    cap.followUpHints() == null ? List.of() : cap.followUpHints()));
+            entity.setRequiresJson(writeJson(PermissionRequirement.none()));
+            capabilityRepo.save(entity);
+        }
+        catalog.registerCapability(cap);
     }
 
     // ---- profile -------------------------------------------------------

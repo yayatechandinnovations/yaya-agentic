@@ -10,10 +10,14 @@ import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalPolicy;
 import com.yayatechandinnovations.yayaagentic.knowledge.SourceLocation;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionOrchestrator;
 import com.yayatechandinnovations.yayaagentic.knowledge.tool.SearchKnowledgeToolHandler;
+import com.yayatechandinnovations.yayaagentic.persistence.CapabilityEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.CapabilityRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileKnowledgeBindingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileKnowledgeBindingRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.ToolEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ToolRepository;
 import com.yayatechandinnovations.yayaagentic.profile.Capability;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolHandlerRef;
@@ -54,17 +58,23 @@ public class KnowledgeBootstrap implements ApplicationRunner {
     private final M0Catalog catalog;
     private final KnowledgeSourceRepository sourceRepo;
     private final ProfileKnowledgeBindingRepository bindingRepo;
+    private final ToolRepository toolRepo;
+    private final CapabilityRepository capabilityRepo;
     private final IngestionOrchestrator ingestion;
     private final ObjectMapper json;
 
     public KnowledgeBootstrap(M0Catalog catalog,
                               KnowledgeSourceRepository sourceRepo,
                               ProfileKnowledgeBindingRepository bindingRepo,
+                              ToolRepository toolRepo,
+                              CapabilityRepository capabilityRepo,
                               IngestionOrchestrator ingestion,
                               ObjectMapper json) {
         this.catalog = catalog;
         this.sourceRepo = sourceRepo;
         this.bindingRepo = bindingRepo;
+        this.toolRepo = toolRepo;
+        this.capabilityRepo = capabilityRepo;
         this.ingestion = ingestion;
         this.json = json;
     }
@@ -148,6 +158,24 @@ public class KnowledgeBootstrap implements ApplicationRunner {
     }
 
     private void registerToolAndCapability() {
+        // Persist to PG so the admin Tools / Capabilities screens list it,
+        // then mirror into the runtime catalog so the engine can resolve it
+        // without a round-trip.
+        ToolEntity.PK toolPk = new ToolEntity.PK(
+                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                SEARCH_KNOWLEDGE_TOOL.value(), 1);
+        if (!toolRepo.existsById(toolPk)) {
+            ToolEntity entity = new ToolEntity(
+                    HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                    SEARCH_KNOWLEDGE_TOOL.value(), 1,
+                    SearchKnowledgeToolHandler.INPUT_SCHEMA,
+                    SearchKnowledgeToolHandler.OUTPUT_SCHEMA,
+                    "BEAN");
+            entity.setHandlerBeanName("searchKnowledgeTool");
+            entity.setPolicyJson(writeJson(ToolPolicy.defaults()));
+            entity.setRequiresJson(writeJson(PermissionRequirement.none()));
+            toolRepo.save(entity);
+        }
         catalog.registerTool(new ToolDescriptor(
                 SEARCH_KNOWLEDGE_TOOL,
                 SearchKnowledgeToolHandler.INPUT_SCHEMA,
@@ -156,6 +184,23 @@ public class KnowledgeBootstrap implements ApplicationRunner {
                 new ToolHandlerRef.Bean("searchKnowledgeTool"),
                 ToolPolicy.defaults()));
 
+        CapabilityEntity.PK capPk = new CapabilityEntity.PK(
+                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                SEARCH_KNOWLEDGE_CAP.value(), 1);
+        if (!capabilityRepo.existsById(capPk)) {
+            CapabilityEntity entity = new CapabilityEntity(
+                    HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                    SEARCH_KNOWLEDGE_CAP.value(), 1,
+                    "Search knowledge");
+            entity.setDescription("I can search what I know and cite where the answer came from.");
+            entity.setLlmGuidance("Use search_knowledge for any factual question about Yaya itself "
+                    + "or any topic covered by an attached knowledge source. "
+                    + "Cite the chunk you grounded on.");
+            entity.setToolIdsJson(writeJson(List.of(SEARCH_KNOWLEDGE_TOOL.value())));
+            entity.setFollowUpHintsJson(writeJson(List.of("what is Yaya?", "what can you do?")));
+            entity.setRequiresJson(writeJson(PermissionRequirement.none()));
+            capabilityRepo.save(entity);
+        }
         catalog.registerCapability(new Capability(
                 SEARCH_KNOWLEDGE_CAP,
                 "Search knowledge",
