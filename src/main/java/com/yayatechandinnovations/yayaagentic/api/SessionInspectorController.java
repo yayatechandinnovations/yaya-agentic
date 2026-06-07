@@ -48,7 +48,8 @@ public class SessionInspectorController {
         var wm = workingMemory.get(sid);
         var prompt = engine.lastPrompt(sid).orElse(null);
         var denial = latestDenial(id);
-        return Mono.just(InspectorDtos.InspectorSnapshot.of(intent, wm, prompt, denial, json));
+        var retrieval = engine.lastRetrieval(sid).orElse(null);
+        return Mono.just(InspectorDtos.InspectorSnapshot.of(intent, wm, prompt, denial, retrieval, json));
     }
 
     private AuditAuthzEntity latestDenial(String sessionId) {

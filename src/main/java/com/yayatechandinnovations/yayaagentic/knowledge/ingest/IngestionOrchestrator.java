@@ -46,6 +46,7 @@ public class IngestionOrchestrator {
     private final KnowledgeSourceRepository sourceRepo;
     private final KnowledgeDocumentRepository documentRepo;
     private final KnowledgeChunkRepository chunkRepo;
+    private final ContentSanitizer sanitizer;
     private final ObjectMapper json;
 
     public IngestionOrchestrator(List<KnowledgeLoader> loaders,
@@ -54,6 +55,7 @@ public class IngestionOrchestrator {
                                  KnowledgeSourceRepository sourceRepo,
                                  KnowledgeDocumentRepository documentRepo,
                                  KnowledgeChunkRepository chunkRepo,
+                                 ContentSanitizer sanitizer,
                                  ObjectMapper json) {
         this.loaders = loaders;
         this.chunker = chunker;
@@ -61,6 +63,7 @@ public class IngestionOrchestrator {
         this.sourceRepo = sourceRepo;
         this.documentRepo = documentRepo;
         this.chunkRepo = chunkRepo;
+        this.sanitizer = sanitizer;
         this.json = json;
     }
 
@@ -138,11 +141,17 @@ public class IngestionOrchestrator {
         List<Chunker.Chunk> chunks = chunker.chunk(raw, policy);
         if (chunks.isEmpty()) return new IngestCounts(true, 0);
 
-        List<float[]> vectors = embeddings.embedBatch(
-                chunks.stream().map(Chunker.Chunk::text).toList());
+        // Sanitize chunk-by-chunk: chunking already split the doc on
+        // structural boundaries, so per-chunk patterns are cheap and the
+        // marker stays localized.
+        List<String> sanitizedTexts = chunks.stream()
+                .map(c -> sanitizer.sanitize(c.text()))
+                .toList();
+        List<float[]> vectors = embeddings.embedBatch(sanitizedTexts);
 
         for (int i = 0; i < chunks.size(); i++) {
             Chunker.Chunk chunk = chunks.get(i);
+            String text = sanitizedTexts.get(i);
             float[] embedding = vectors.get(i);
             Map<String, Object> meta = new java.util.HashMap<>(chunk.metadata());
             meta.put("documentId", doc.getId().toString());
@@ -151,7 +160,7 @@ public class IngestionOrchestrator {
             meta.put("embeddingModel", embeddings.modelId());
             chunkRepo.insertChunk(
                     source.tenant().value(), source.id().value(), source.version(),
-                    doc.getId(), chunk.index(), chunk.text(), embedding, writeJson(meta));
+                    doc.getId(), chunk.index(), text, embedding, writeJson(meta));
         }
         return new IngestCounts(true, chunks.size());
     }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
+import '../models/admin/knowledge_source.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tool.dart';
@@ -101,6 +102,30 @@ class AdminApi {
       if (e.response?.statusCode == 404) return null;
       rethrow;
     }
+  }
+
+  // ---- Knowledge sources ---------------------------------------------
+
+  Future<List<KnowledgeSourceResponse>> listKnowledgeSources({String tenant = 'default'}) async {
+    final res = await _dio.get('/v1/admin/knowledge-sources',
+        queryParameters: {'tenant': tenant});
+    final items = (res.data['items'] as List? ?? const []);
+    return items
+        .map((e) => KnowledgeSourceResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<KnowledgeSourceResponse> createKnowledgeSource(
+      CreateKnowledgeSourceRequest req) async {
+    final res = await _dio.post('/v1/admin/knowledge-sources', data: req.toJson());
+    return KnowledgeSourceResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ReindexResponse> reindexKnowledgeSource(
+      {String tenant = 'default', required String id}) async {
+    final res = await _dio.post('/v1/admin/knowledge-sources/$id/reindex',
+        queryParameters: {'tenant': tenant});
+    return ReindexResponse.fromJson(_asMap(res.data));
   }
 
   // ---- Audit ---------------------------------------------------------

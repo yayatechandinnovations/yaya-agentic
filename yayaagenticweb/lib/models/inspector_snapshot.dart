@@ -7,12 +7,14 @@ class InspectorSnapshot {
     this.workingMemory = const {},
     this.lastPrompt,
     this.lastDenial,
+    this.lastRetrieval,
   });
 
   final IntentSnapshot? intent;
   final Map<String, dynamic> workingMemory;
   final PromptSnapshot? lastPrompt;
   final DenialSnapshot? lastDenial;
+  final RetrievalSnapshot? lastRetrieval;
 
   factory InspectorSnapshot.fromJson(Map<String, dynamic> json) => InspectorSnapshot(
         intent: json['intent'] == null
@@ -27,6 +29,63 @@ class InspectorSnapshot {
         lastDenial: json['lastDenial'] == null
             ? null
             : DenialSnapshot.fromJson(Map<String, dynamic>.from(json['lastDenial'])),
+        lastRetrieval: json['lastRetrieval'] == null
+            ? null
+            : RetrievalSnapshot.fromJson(Map<String, dynamic>.from(json['lastRetrieval'])),
+      );
+}
+
+class RetrievalSnapshot {
+  RetrievalSnapshot({
+    this.sourcesConsidered = const [],
+    this.sourcesDenied = const [],
+    this.rewrittenQuery,
+    this.latencyMs = 0,
+    this.chunks = const [],
+  });
+  final List<String> sourcesConsidered;
+  final List<String> sourcesDenied;
+  final String? rewrittenQuery;
+  final int latencyMs;
+  final List<ChunkSnapshot> chunks;
+
+  factory RetrievalSnapshot.fromJson(Map<String, dynamic> json) => RetrievalSnapshot(
+        sourcesConsidered: (json['sourcesConsidered'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        sourcesDenied: (json['sourcesDenied'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        rewrittenQuery: json['rewrittenQuery'] as String?,
+        latencyMs: (json['latencyMs'] as num?)?.toInt() ?? 0,
+        chunks: (json['chunks'] as List? ?? const [])
+            .map((e) => ChunkSnapshot.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
+}
+
+class ChunkSnapshot {
+  ChunkSnapshot({
+    required this.chunkId,
+    required this.source,
+    required this.score,
+    required this.snippet,
+    this.metadata = const {},
+  });
+  final String chunkId;
+  final String source;
+  final double score;
+  final String snippet;
+  final Map<String, dynamic> metadata;
+
+  factory ChunkSnapshot.fromJson(Map<String, dynamic> json) => ChunkSnapshot(
+        chunkId: (json['chunkId'] ?? '') as String,
+        source: (json['source'] ?? '') as String,
+        score: (json['score'] as num?)?.toDouble() ?? 0,
+        snippet: (json['snippet'] ?? '') as String,
+        metadata: json['metadata'] == null
+            ? const {}
+            : Map<String, dynamic>.from(json['metadata']),
       );
 }
 

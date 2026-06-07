@@ -8,18 +8,34 @@ import '../../models/start_session.dart';
 import '../../models/turn_event.dart';
 
 class ChatMessage {
-  ChatMessage({required this.role, required this.text, this.toolCalls = const [], this.toolResults = const []});
+  ChatMessage({
+    required this.role,
+    required this.text,
+    this.toolCalls = const [],
+    this.toolResults = const [],
+    this.citations = const [],
+  });
   final Role role;
   final String text;
   final List<ToolCallEvent> toolCalls;
   final List<ToolResultEvent> toolResults;
 
-  ChatMessage copyWith({String? text, List<ToolCallEvent>? toolCalls, List<ToolResultEvent>? toolResults}) =>
+  /// Citation footnotes attached to this turn. Order matches arrival on the
+  /// SSE stream; the playground renders them as numbered footnote markers.
+  final List<CitationEvent> citations;
+
+  ChatMessage copyWith({
+    String? text,
+    List<ToolCallEvent>? toolCalls,
+    List<ToolResultEvent>? toolResults,
+    List<CitationEvent>? citations,
+  }) =>
       ChatMessage(
         role: role,
         text: text ?? this.text,
         toolCalls: toolCalls ?? this.toolCalls,
         toolResults: toolResults ?? this.toolResults,
+        citations: citations ?? this.citations,
       );
 }
 
@@ -167,7 +183,7 @@ class PlaygroundController extends Notifier<PlaygroundState> {
       TokenEvent(:final text) => last.copyWith(text: last.text + text),
       ToolCallEvent _ => last.copyWith(toolCalls: [...last.toolCalls, event]),
       ToolResultEvent _ => last.copyWith(toolResults: [...last.toolResults, event]),
-      CitationEvent _ => last,
+      CitationEvent _ => last.copyWith(citations: [...last.citations, event]),
       UiHintEvent _ => last,   // already handled above
       EndEvent _ => last,
     };

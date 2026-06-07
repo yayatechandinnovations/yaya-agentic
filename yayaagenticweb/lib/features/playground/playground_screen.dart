@@ -147,8 +147,54 @@ class _MessageBubble extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         constraints: const BoxConstraints(maxWidth: 520),
         decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-        child: Text(message.text.isEmpty ? '…' : message.text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message.text.isEmpty ? '…' : message.text),
+            if (message.citations.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _CitationFootnotes(citations: message.citations),
+            ],
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// Numbered footnote markers under an assistant message. Tap to open the
+/// citation's source URL in a new tab; long-press / hover shows the title.
+class _CitationFootnotes extends StatelessWidget {
+  const _CitationFootnotes({required this.citations});
+  final List<CitationEvent> citations;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 4,
+      children: List.generate(citations.length, (i) {
+        final c = citations[i];
+        final label = '${i + 1}';
+        final tooltip = (c.title?.isNotEmpty ?? false)
+            ? '${c.source}  ·  ${c.title}'
+            : c.source;
+        return Tooltip(
+          message: (c.url?.isNotEmpty ?? false) ? '$tooltip\n${c.url}' : tooltip,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: scheme.tertiaryContainer,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    color: scheme.onTertiaryContainer,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700)),
+          ),
+        );
+      }),
     );
   }
 }
@@ -173,6 +219,8 @@ class _InspectorPanel extends StatelessWidget {
           Text('Inspector', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           _IntentSection(intent: insp?.intent),
+          const SizedBox(height: 8),
+          _RetrievalSection(retrieval: insp?.lastRetrieval),
           const SizedBox(height: 8),
           _ToolActivitySection(message: lastAssistant),
           const SizedBox(height: 8),
@@ -264,6 +312,97 @@ class _IntentSection extends StatelessWidget {
                 ],
               ],
             ),
+    );
+  }
+}
+
+class _RetrievalSection extends StatelessWidget {
+  const _RetrievalSection({required this.retrieval});
+  final RetrievalSnapshot? retrieval;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = retrieval;
+    return _SectionCard(
+      title: 'Retrieval',
+      trailing: r == null ? null : _LatencyChip(ms: r.latencyMs),
+      child: r == null
+          ? const Text('not run this turn',
+              style: TextStyle(color: Colors.grey, fontSize: 12))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Considered: ${r.sourcesConsidered.length}',
+                        style: const TextStyle(fontSize: 12)),
+                    const SizedBox(width: 8),
+                    if (r.sourcesDenied.isNotEmpty)
+                      Text('denied: ${r.sourcesDenied.length}',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.error,
+                              fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                if (r.sourcesDenied.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text('  ${r.sourcesDenied.join(", ")}',
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                  ),
+                const SizedBox(height: 6),
+                if (r.chunks.isEmpty)
+                  const Text('no chunks returned',
+                      style: TextStyle(color: Colors.grey, fontSize: 12))
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: List.generate(r.chunks.length, (i) {
+                      final c = r.chunks[i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${i + 1}. ${c.source}  (score ${c.score.toStringAsFixed(3)})',
+                                style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600)),
+                            Text(c.snippet,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _LatencyChip extends StatelessWidget {
+  const _LatencyChip({required this.ms});
+  final int ms;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ms > 500
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.outline;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color),
+      ),
+      child: Text('${ms}ms',
+          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
     );
   }
 }

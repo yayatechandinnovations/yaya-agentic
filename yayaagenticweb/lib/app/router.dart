@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../features/admin/audit/audit_screen.dart';
 import '../features/admin/auth_bindings/auth_bindings_screen.dart';
 import '../features/admin/capabilities/capabilities_screen.dart';
+import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
@@ -20,6 +21,7 @@ final appRouter = GoRouter(
         GoRoute(path: '/admin/profiles', builder: (_, __) => const ProfilesScreen()),
         GoRoute(path: '/admin/capabilities', builder: (_, __) => const CapabilitiesScreen()),
         GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
+        GoRoute(path: '/admin/knowledge-sources', builder: (_, __) => const KnowledgeSourcesScreen()),
         GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
         GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
         GoRoute(path: '/admin/audit', builder: (_, __) => const AuditScreen()),
@@ -42,6 +44,7 @@ const _navItems = <_NavItem>[
   _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
   _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
   _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
+  _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
   _NavItem('Auth bindings', Icons.lock_outlined, Icons.lock, '/admin/auth-bindings'),
   _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
