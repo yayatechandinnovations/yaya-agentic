@@ -37,13 +37,13 @@ spring:
       embedding:
         options:
           model: text-embedding-3-small
-    # The OpenAI starter ships chat / image / audio / moderation / embedding
-    # auto-configs that each demand the key on startup. Default everything
-    # to `none` so a missing key doesn't crash boot. Operators flip
-    # `yaya.agentic.embeddings.provider=openai` to enable real embeddings;
-    # otherwise the deterministic stub takes over.
+    # `spring.ai.model.*` is the global provider switch. We use Anthropic
+    # for chat and (optionally) OpenAI for embeddings; image / audio /
+    # moderation are off because the OpenAI auto-configs that ship those
+    # demand a key on startup and we don't use them.
+    # Setting `chat: none` would also disable Anthropic — that was a bug.
     model:
-      chat: none
+      chat: anthropic
       image: none
       audio:
         speech: none

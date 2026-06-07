@@ -40,7 +40,9 @@ import java.util.Map;
  * the engine knows whether to loop.</p>
  */
 @Component
+@org.springframework.context.annotation.Primary
 @ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "anthropic")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnBean(ChatModel.class)
 public class AnthropicLlmClient implements LlmClient {
 
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};

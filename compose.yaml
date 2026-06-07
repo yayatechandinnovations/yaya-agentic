@@ -62,17 +62,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       SPRING_PROFILES_ACTIVE: docker
       # LLM credentials. Set in .env (see .env.example). The app boots
       # without them but tool calls and LLM responses will be no-ops.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # Real embeddings by default — set OPENAI_API_KEY in .env, or override
-      # YAYA_EMBEDDING_PROVIDER=none to fall back to the deterministic stub.
-      YAYA_EMBEDDING_PROVIDER: ${YAYA_EMBEDDING_PROVIDER:-}
-      # Real Claude by default — set ANTHROPIC_API_KEY in .env, or override
-      # YAYA_LLM_PROVIDER=stub for offline / pattern-matching responses.
+      # Embedding provider. Default `none` keeps boot safe without an
+      # OpenAI key (the deterministic-hash stub serves). Flip to `openai`
+      # in .env alongside OPENAI_API_KEY for real embeddings.
+      YAYA_EMBEDDING_PROVIDER: ${YAYA_EMBEDDING_PROVIDER:-none}
+      # Chat LLM provider. Default `anthropic` — if ANTHROPIC_API_KEY is
+      # unset, the Anthropic client bails on its @ConditionalOnBean guard
+      # and the stub takes over so boot still succeeds.
       YAYA_LLM_PROVIDER: ${YAYA_LLM_PROVIDER:-anthropic}
       # In dev we let anonymous sessions in so the playground works
       # without operator JWT plumbing.

@@ -1,6 +1,5 @@
 package com.yayatechandinnovations.yayaagentic.llm;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -18,9 +17,13 @@ import java.util.UUID;
  * tokens otherwise. After a tool round (history contains a
  * {@link HistoryEntry.ToolResults}), it summarises the result instead of
  * proposing again.
+ * <p>
+ * Loads unconditionally so the engine always has a fallback. When
+ * {@link AnthropicLlmClient} is present, it's {@code @Primary} and wins;
+ * when it can't load (no API key → no {@code ChatModel} bean), this stub
+ * keeps the engine bootable instead of crashing on a missing dependency.
  */
 @Component
-@ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "stub", matchIfMissing = true)
 public class StubLlmClient implements LlmClient {
 
     @Override
