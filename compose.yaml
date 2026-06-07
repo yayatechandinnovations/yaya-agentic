@@ -1,13 +1,27 @@
-# Local dev only. Spring Boot's docker-compose integration starts this on
-# `mvn spring-boot:run` and registers the service connection automatically.
-# CI uses Testcontainers (see src/test/.../TestcontainersConfiguration).
+# Compose stack for local end-to-end development.
+#
+#   docker compose up --build
+#
+# Starts:
+#   postgres:5433 (pgvector)
+#   redis:6380
+#   backend  → http://localhost:8080
+#   web      → http://localhost:3000
+#
+# Configuration via .env (see .env.example). At minimum:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#
+# CI uses Testcontainers (see src/test/.../TestcontainersConfiguration);
+# this file is for human / local-dev paths only.
+
 services:
 
   postgres:
     image: pgvector/pgvector:pg16
     # Spring Boot's docker-compose auto-detection keys off the image name;
     # pgvector/pgvector isn't on the recognized list, so we tell it
-    # explicitly that this is a Postgres service.
+    # explicitly that this is a Postgres service (still useful when the
+    # backend runs from the host via `mvn spring-boot:run`).
     labels:
       org.springframework.boot.service-connection: postgres
     environment:
@@ -16,20 +30,81 @@ services:
       POSTGRES_PASSWORD: yaya
     ports:
       # 5433 on host so a system Postgres on 5432 doesn't clash.
-      # Spring Boot's compose integration auto-detects the actual port.
       - "5433:5432"
     volumes:
       - yaya_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yaya -d yaya_agentic"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   redis:
     # Used by M2's WorkingMemory for ephemeral per-session slot values.
-    # Spring Boot auto-recognises redis:* images and registers the
-    # ServiceConnection for spring.data.redis.{host,port}.
     image: redis:7-alpine
     ports:
       # 6380 on host so a system Redis on 6379 doesn't clash.
       - "6380:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yaya-agentic-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      # LLM credentials. Set in .env (see .env.example). The app boots
+      # without them but tool calls and LLM responses will be no-ops.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Real embeddings by default — set OPENAI_API_KEY in .env, or override
+      # YAYA_EMBEDDING_PROVIDER=none to fall back to the deterministic stub.
+      YAYA_EMBEDDING_PROVIDER: ${YAYA_EMBEDDING_PROVIDER:-}
+      # Real Claude by default — set ANTHROPIC_API_KEY in .env, or override
+      # YAYA_LLM_PROVIDER=stub for offline / pattern-matching responses.
+      YAYA_LLM_PROVIDER: ${YAYA_LLM_PROVIDER:-anthropic}
+      # In dev we let anonymous sessions in so the playground works
+      # without operator JWT plumbing.
+      YAYA_AUTH_ALLOW_ANONYMOUS: ${YAYA_AUTH_ALLOW_ANONYMOUS:-true}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  web:
+    build:
+      context: ./yayaagenticweb
+      dockerfile: Dockerfile
+      args:
+        # The browser running on the host hits the backend at host:8080,
+        # NOT via the docker network. Override here for staging / prod.
+        BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://localhost:8080}
+    image: yaya-agentic-web
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
 volumes:
   yaya_pg_data:

@@ -1,0 +1,24 @@
+.git
+.gitignore
+.github
+.idea
+.vscode
+.env
+.env.*
+*.iml
+
+target/
+out/
+build/
+
+# Flutter app builds in its own image; nothing here needs it
+yayaagenticweb/
+
+# Local notes / scratch
+docs/scratch/
+notes/
+
+# Compose & infra docs aren't needed in the build context
+README.md
+docs/
+compose.yaml

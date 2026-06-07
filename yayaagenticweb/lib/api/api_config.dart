@@ -6,7 +6,15 @@ class ApiConfig {
   final String baseUrl;
 
   static const String _kBaseUrl = 'yaya.backend.base_url';
-  static const String defaultBaseUrl = 'http://localhost:8080';
+
+  /// Default backend URL. Compile-time override:
+  ///   flutter build web --dart-define=BACKEND_BASE_URL=https://api.example
+  /// The compose `web` service uses this to bake in `http://localhost:8080`
+  /// so the browser hits the host-exposed backend port.
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'BACKEND_BASE_URL',
+    defaultValue: 'http://localhost:8080',
+  );
 }
 
 /// Async-loaded config. Persisted to SharedPreferences so the operator can

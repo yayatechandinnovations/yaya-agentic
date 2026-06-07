@@ -1,0 +1,30 @@
+# Profile used by the compose `backend` service. Points at the Postgres
+# and Redis hostnames that compose registers; turns off Spring Boot's
+# docker-compose integration (we're inside a container already, the
+# orchestration is the compose runtime that started us).
+
+spring:
+  docker:
+    compose:
+      enabled: false
+
+  datasource:
+    url: jdbc:postgresql://postgres:5432/yaya_agentic
+    username: yaya
+    password: yaya
+    hikari:
+      maximum-pool-size: 10
+
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+yaya:
+  agentic:
+    cors:
+      # Compose exposes the web app on host port 3000; the playground
+      # may also be opened directly via flutter run -d chrome.
+      allowed-origins:
+        - "http://localhost:*"
+        - "http://127.0.0.1:*"

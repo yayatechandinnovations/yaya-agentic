@@ -3,6 +3,19 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Secrets / local env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+### Flutter build artifacts
+yayaagenticweb/build/
+yayaagenticweb/.dart_tool/
+yayaagenticweb/.flutter-plugins
+yayaagenticweb/.flutter-plugins-dependencies
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml

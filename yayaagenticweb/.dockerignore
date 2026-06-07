@@ -1,0 +1,27 @@
+.git
+.gitignore
+.idea
+.vscode
+.env
+.env.*
+
+# Build outputs
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+*.iml
+
+# Test artifacts
+coverage/
+test/
+integration_test/
+
+# Platform folders we don't ship — web is the only target here
+android/
+ios/
+linux/
+macos/
+windows/
