@@ -21,4 +21,12 @@ public interface AuditAuthzRepository extends JpaRepository<AuditAuthzEntity, Lo
                                   @Param("principal") String principal,
                                   @Param("toolId") String toolId,
                                   Pageable pageable);
+
+    @Query("""
+        select a from AuditAuthzEntity a
+        where a.sessionId = :sessionId and a.decision = 'DENY'
+        order by a.createdAt desc
+        """)
+    Page<AuditAuthzEntity> latestDenialForSession(@Param("sessionId") java.util.UUID sessionId,
+                                                  Pageable pageable);
 }

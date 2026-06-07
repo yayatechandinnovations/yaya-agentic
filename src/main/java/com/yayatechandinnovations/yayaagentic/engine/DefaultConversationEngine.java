@@ -55,6 +55,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, java.util.concurrent.atomic.AtomicInteger> nextTurnIdx = new ConcurrentHashMap<>();
+    private final Map<Ids.SessionId, PromptBuilder.PromptPayload> lastPromptBySession = new ConcurrentHashMap<>();
 
     public DefaultConversationEngine(PersonalityProvider personalityProvider,
                                      ProfileResolverChain resolverChain,
@@ -238,11 +239,22 @@ public class DefaultConversationEngine implements ConversationEngine {
         Session session = active.remove(sessionId);
         activeIntents.remove(sessionId);
         nextTurnIdx.remove(sessionId);
+        lastPromptBySession.remove(sessionId);
         workingMemory.clear(sessionId);
         if (session == null) return;
         ConversationRecorder recorder = recorderRouter.recorderFor(session,
                 new RecorderRouter.RecordingDecisionContext(Map.of()));
         recorder.onSessionEnded(sessionId, new Operations.SessionEndContext(Instant.now(), "client-ended"));
+    }
+
+    @Override
+    public java.util.Optional<IntentFrame> currentIntent(Ids.SessionId sessionId) {
+        return java.util.Optional.ofNullable(activeIntents.get(sessionId));
+    }
+
+    @Override
+    public java.util.Optional<PromptBuilder.PromptPayload> lastPrompt(Ids.SessionId sessionId) {
+        return java.util.Optional.ofNullable(lastPromptBySession.get(sessionId));
     }
 
     // ---- Internals --------------------------------------------------
@@ -293,6 +305,9 @@ public class DefaultConversationEngine implements ConversationEngine {
         List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
         PromptBuilder.PromptPayload payload = promptBuilder.build(
                 personality, profile, session, intent, List.of(), List.of(), message);
+        // Keep the most recent payload so the inspector endpoint can show
+        // exactly what was sent — cacheable prefix vs variable suffix split.
+        lastPromptBySession.put(session.id(), payload);
         LlmClient.LlmRequest request = new LlmClient.LlmRequest(
                 payload.cacheablePrefix(), payload.variableSuffix(), history, available);
 
@@ -316,10 +331,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                         Ids.ToolId toolId = new Ids.ToolId(toolName);
                         // Pass the LLM-assigned call id through so the
                         // dispatched ToolResult carries the same id Anthropic
-                        // expects in continuation rounds.
+                        // expects in continuation rounds. llmDriven=true so a
+                        // denial doesn't emit a hardcoded refusal — the next
+                        // round paraphrases it from the DENIED tool_result.
                         Flux<TurnEvent> dispatched = dispatchByToolId(toolId, args,
                                 profile, personality, session, exec, recorder, turnId, message,
-                                /* skipConfirm */ false, /* callIdHint */ callId);
+                                /* skipConfirm */ false, /* callIdHint */ callId,
+                                /* llmDriven */ true);
                         if (dispatched == null) {
                             yield Flux.<TurnEvent>just(new TurnEvent.Token(
                                     "(unknown tool: " + toolName + ")"));
@@ -402,7 +420,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                              ConversationRecorder recorder, Ids.TurnId turnId,
                                              UserMessage message) {
         return dispatchByToolId(toolId, args, profile, personality, session, exec,
-                recorder, turnId, message, /* skipConfirm */ false, /* callIdHint */ null);
+                recorder, turnId, message, /* skipConfirm */ false,
+                /* callIdHint */ null, /* llmDriven */ false);
     }
 
     private Flux<TurnEvent> dispatchByToolId(Ids.ToolId toolId, Map<String, Object> args,
@@ -411,7 +430,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                              ConversationRecorder recorder, Ids.TurnId turnId,
                                              UserMessage message, boolean skipConfirm) {
         return dispatchByToolId(toolId, args, profile, personality, session, exec,
-                recorder, turnId, message, skipConfirm, /* callIdHint */ null);
+                recorder, turnId, message, skipConfirm,
+                /* callIdHint */ null, /* llmDriven */ false);
     }
 
     private Flux<TurnEvent> dispatchByToolId(Ids.ToolId toolId, Map<String, Object> args,
@@ -419,9 +439,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                                              Session session, ExecutionContext exec,
                                              ConversationRecorder recorder, Ids.TurnId turnId,
                                              UserMessage message, boolean skipConfirm,
-                                             String callIdHint) {
+                                             String callIdHint, boolean llmDriven) {
         if (catalog.tool(toolId).isEmpty()) return null;
-        return runToolDispatch(toolId, args, profile, personality, session, exec, recorder, turnId, message, skipConfirm, callIdHint);
+        return runToolDispatch(toolId, args, profile, personality, session, exec,
+                recorder, turnId, message, skipConfirm, callIdHint, llmDriven);
     }
 
     /**
@@ -440,7 +461,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                             Ids.TurnId turnId,
                                             UserMessage message,
                                             boolean skipConfirm,
-                                            String callIdHint) {
+                                            String callIdHint,
+                                            boolean llmDriven) {
         ToolDescriptor toolDescriptor = catalog.tool(toolId)
                 .orElseThrow(() -> new IllegalStateException("tool descriptor missing: " + toolId.value()));
 
@@ -450,7 +472,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                         Map.of("toolId", toolDescriptor.id().value())));
 
         if (decision instanceof AuthzDecision.Deny deny) {
-            return denialFlow(toolDescriptor, args, deny, personality, session, exec, recorder, turnId, message);
+            return denialFlow(toolDescriptor, args, deny, personality, session, exec,
+                    recorder, turnId, message, callIdHint, llmDriven);
         }
 
         // B2.8 — confirmable tools pause for explicit confirm before dispatch.
@@ -577,7 +600,25 @@ public class DefaultConversationEngine implements ConversationEngine {
                         List.of(), List.of()));
     }
 
-    /** B2.3 — Synthetic tool_result event + personality-templated user-safe reply. */
+    /**
+     * B2.3 — Synthetic tool_result event for an AuthZ denial.
+     * <p>
+     * Two modes:
+     * <ul>
+     *   <li><b>LLM-driven</b> ({@code llmDriven=true}): emit only the
+     *       structured {@code tool_call} + {@code tool_result(DENIED)}. NO
+     *       hardcoded Token. The continuation LLM round sees the DENIED
+     *       result in history and paraphrases naturally — answering the user
+     *       in its own voice while the policy reason still rides in the
+     *       structured payload for audit and UI.</li>
+     *   <li><b>Resumed paths</b> ({@code llmDriven=false}): used when the
+     *       engine resolves a pending elicitation or confirm itself without
+     *       a fresh LLM round. The personality template provides the spoken
+     *       refusal so the user still gets a reply.</li>
+     * </ul>
+     * The {@code callIdHint} preserves the LLM's tool_use id so Anthropic's
+     * continuation round matches results to calls correctly.
+     */
     private Flux<TurnEvent> denialFlow(ToolDescriptor toolDescriptor,
                                        Map<String, Object> args,
                                        AuthzDecision.Deny deny,
@@ -586,21 +627,36 @@ public class DefaultConversationEngine implements ConversationEngine {
                                        ExecutionContext exec,
                                        ConversationRecorder recorder,
                                        Ids.TurnId turnId,
-                                       UserMessage message) {
-        String callId = UUID.randomUUID().toString();
+                                       UserMessage message,
+                                       String callIdHint,
+                                       boolean llmDriven) {
+        String callId = (callIdHint == null || callIdHint.isBlank())
+                ? UUID.randomUUID().toString() : callIdHint;
         Map<String, Object> denialPayload = Map.of(
                 "reason", deny.userSafeReason(),
                 "suggest_alternatives", true);
+
+        Turn.ToolCall recordedCall = new Turn.ToolCall(callId, toolDescriptor.id(), args);
+        Turn.ToolResult recordedResult = new Turn.ToolResult(
+                callId, Turn.ToolResult.Status.DENIED, denialPayload, null);
+
+        if (llmDriven) {
+            // No spoken Token here — the next LLM round will paraphrase the
+            // DENIED tool_result. Record the structured call+result with an
+            // empty assistantText (audit captures what was attempted; the
+            // paraphrased reply belongs to the continuation round).
+            return Flux.<TurnEvent>just(
+                            new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),
+                            new TurnEvent.ToolResult(callId, Turn.ToolResult.Status.DENIED, denialPayload, null))
+                    .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, "",
+                            List.of(recordedCall), List.of(recordedResult)));
+        }
 
         String spoken = (personality != null && personality.refusals() != null
                 && personality.refusals().authorizationDenied() != null
                 ? personality.refusals().authorizationDenied()
                 : "I can't do that with your current access.")
                 + " " + deny.userSafeReason() + ".";
-
-        Turn.ToolCall recordedCall = new Turn.ToolCall(callId, toolDescriptor.id(), args);
-        Turn.ToolResult recordedResult = new Turn.ToolResult(
-                callId, Turn.ToolResult.Status.DENIED, denialPayload, null);
 
         return Flux.<TurnEvent>just(
                         new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),

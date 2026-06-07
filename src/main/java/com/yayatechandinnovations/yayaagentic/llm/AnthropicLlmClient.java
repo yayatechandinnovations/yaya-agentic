@@ -93,6 +93,19 @@ public class AnthropicLlmClient implements LlmClient {
 
     // ---- Prompt translation -------------------------------------------
 
+    /*
+     * NOTE on explicit prompt caching (Anthropic cache_control:ephemeral):
+     * Spring AI 1.0 GA does NOT expose per-block cache_control on the
+     * high-level SystemMessage / AnthropicChatOptions surface. Wiring the
+     * explicit hint requires dropping to AnthropicApi.ChatCompletionRequest
+     * and building the content block list ourselves, which is a substantial
+     * refactor for one feature. The prefix is still cacheable in practice:
+     * the cacheable-prefix system block is byte-stable per
+     * (tenant, profile, profile_version), so Anthropic's content cache will
+     * pick it up within the 5-minute TTL even without the explicit hint.
+     * Followup: drop to raw AnthropicApi when this becomes a measurable
+     * cost concern; until then content-cache is the floor.
+     */
     private Prompt buildPrompt(LlmRequest request) {
         List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
         String prefix = request.cacheablePrefix();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/inspector_snapshot.dart';
 import '../../models/turn_event.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import 'playground_controller.dart';
@@ -121,8 +122,8 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
         ),
         VerticalDivider(width: 1, color: Theme.of(context).dividerColor),
         SizedBox(
-          width: 320,
-          child: _DebugPanel(state: state),
+          width: 380,
+          child: _InspectorPanel(state: state),
         ),
       ],
     );
@@ -152,8 +153,10 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _DebugPanel extends StatelessWidget {
-  const _DebugPanel({required this.state});
+/// Right-side inspector. Sections refresh whenever a turn completes
+/// (controller calls /v1/sessions/{id}/inspector on stream end).
+class _InspectorPanel extends StatelessWidget {
+  const _InspectorPanel({required this.state});
   final PlaygroundState state;
 
   @override
@@ -162,37 +165,24 @@ class _DebugPanel extends StatelessWidget {
       (m) => m.role == Role.assistant,
       orElse: () => ChatMessage(role: Role.assistant, text: ''),
     );
+    final insp = state.inspector;
     return Padding(
       padding: const EdgeInsets.all(12),
       child: ListView(
         children: [
-          Text('Debug', style: Theme.of(context).textTheme.titleMedium),
+          Text('Inspector', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Tool calls', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  if (lastAssistant.toolCalls.isEmpty)
-                    const Text('none', style: TextStyle(color: Colors.grey))
-                  else
-                    ...lastAssistant.toolCalls.map((c) => Text('• ${c.tool}  ${c.args}',
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-                  const SizedBox(height: 8),
-                  Text('Tool results', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  if (lastAssistant.toolResults.isEmpty)
-                    const Text('none', style: TextStyle(color: Colors.grey))
-                  else
-                    ...lastAssistant.toolResults.map((r) => Text('• ${r.status} → ${r.value ?? r.error}',
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-                ],
-              ),
-            ),
-          ),
+          _IntentSection(intent: insp?.intent),
+          const SizedBox(height: 8),
+          _ToolActivitySection(message: lastAssistant),
+          const SizedBox(height: 8),
+          _WorkingMemorySection(wm: insp?.workingMemory ?? const {}),
+          const SizedBox(height: 8),
+          if (insp?.lastDenial != null) ...[
+            _DenialSection(denial: insp!.lastDenial!),
+            const SizedBox(height: 8),
+          ],
+          _PromptSection(prompt: insp?.lastPrompt),
           if (state.error != null) ...[
             const SizedBox(height: 8),
             Card(
@@ -204,6 +194,260 @@ class _DebugPanel extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.title, required this.child, this.color, this.trailing});
+  final String title;
+  final Widget child;
+  final Color? color;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: color,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                    child: Text(title,
+                        style: Theme.of(context).textTheme.titleSmall)),
+                if (trailing != null) trailing!,
+              ],
+            ),
+            const SizedBox(height: 6),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IntentSection extends StatelessWidget {
+  const _IntentSection({required this.intent});
+  final IntentSnapshot? intent;
+
+  @override
+  Widget build(BuildContext context) {
+    final i = intent;
+    return _SectionCard(
+      title: 'Active intent',
+      child: i == null || (i.label == null && i.slots.isEmpty)
+          ? const Text('no intent yet', style: TextStyle(color: Colors.grey))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(i.label ?? '(unlabeled)',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                if (i.slots.isEmpty)
+                  const Text('no slots', style: TextStyle(color: Colors.grey, fontSize: 12))
+                else
+                  ...i.slots.entries.map((e) => Text('• ${e.key} = ${e.value}',
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+                if (i.parkedStack.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('Parked (${i.parkedStack.length})',
+                      style: Theme.of(context).textTheme.labelSmall),
+                  ...i.parkedStack.map((p) => Text(
+                      '↩ ${p.label ?? "(unlabeled)"}  · ${p.reason ?? ""}',
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+class _ToolActivitySection extends StatelessWidget {
+  const _ToolActivitySection({required this.message});
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Tool activity (this turn)',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (message.toolCalls.isEmpty)
+            const Text('no tool calls', style: TextStyle(color: Colors.grey, fontSize: 12))
+          else
+            ...message.toolCalls.map((c) => Text('→ ${c.tool}  ${c.args}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+          if (message.toolResults.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            ...message.toolResults.map((r) => Text('← ${r.status}  ${r.value ?? r.error ?? ""}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkingMemorySection extends StatelessWidget {
+  const _WorkingMemorySection({required this.wm});
+  final Map<String, dynamic> wm;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: 'Working memory',
+      child: wm.isEmpty
+          ? const Text('empty', style: TextStyle(color: Colors.grey, fontSize: 12))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: wm.entries
+                  .map((e) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 1),
+                        child: Text('${e.key}: ${e.value}',
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                      ))
+                  .toList(),
+            ),
+    );
+  }
+}
+
+class _DenialSection extends StatelessWidget {
+  const _DenialSection({required this.denial});
+  final DenialSnapshot denial;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return _SectionCard(
+      title: 'Last denial',
+      color: scheme.errorContainer,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (denial.toolId != null)
+            Text('tool: ${denial.toolId}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+          const SizedBox(height: 4),
+          Text('User-safe',
+              style: Theme.of(context).textTheme.labelSmall),
+          Text(denial.userReason ?? '—',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+          const SizedBox(height: 4),
+          Text('Audit (operator-only)',
+              style: Theme.of(context).textTheme.labelSmall),
+          Text(denial.auditReason ?? '—',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+          if (denial.policyTrace.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('Policy trace',
+                style: Theme.of(context).textTheme.labelSmall),
+            Text(denial.policyTrace.toString(),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PromptSection extends StatefulWidget {
+  const _PromptSection({required this.prompt});
+  final PromptSnapshot? prompt;
+
+  @override
+  State<_PromptSection> createState() => _PromptSectionState();
+}
+
+class _PromptSectionState extends State<_PromptSection> {
+  bool _expandedPrefix = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.prompt;
+    final prefixChars = p?.cacheablePrefix.length ?? 0;
+    return _SectionCard(
+      title: 'Last prompt',
+      trailing: p == null
+          ? null
+          : _CacheBadge(prefixChars: prefixChars),
+      child: p == null
+          ? const Text('no prompt yet', style: TextStyle(color: Colors.grey, fontSize: 12))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Cacheable prefix  ($prefixChars chars)',
+                        style: Theme.of(context).textTheme.labelSmall),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _expandedPrefix = !_expandedPrefix),
+                      child: Text(_expandedPrefix ? 'collapse' : 'expand'),
+                    ),
+                  ],
+                ),
+                if (_expandedPrefix)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: SelectableText(p.cacheablePrefix,
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                  ),
+                const SizedBox(height: 8),
+                Text('Variable suffix  (${p.variableSuffix.length} chars)',
+                    style: Theme.of(context).textTheme.labelSmall),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: SelectableText(p.variableSuffix,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+/// Heuristic cache-hit badge: Anthropic only caches a prefix when it's at
+/// least ~1024 tokens (~4096 chars is a safe lower bound) and stable across
+/// turns. We can't observe a real hit without the AnthropicApi-direct path,
+/// so this is a "cache-eligible" indicator, not a confirmed hit.
+class _CacheBadge extends StatelessWidget {
+  const _CacheBadge({required this.prefixChars});
+  final int prefixChars;
+
+  @override
+  Widget build(BuildContext context) {
+    final eligible = prefixChars >= 4096;
+    final color = eligible
+        ? Colors.green.shade700
+        : Theme.of(context).colorScheme.outline;
+    return Tooltip(
+      message: eligible
+          ? 'Prefix is long enough to be cache-eligible on Anthropic.'
+          : 'Prefix is below Anthropic\'s rough caching threshold (~4k chars).',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color),
+        ),
+        child: Text(
+          eligible ? 'cache-eligible' : 'below cache threshold',
+          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
+        ),
       ),
     );
   }

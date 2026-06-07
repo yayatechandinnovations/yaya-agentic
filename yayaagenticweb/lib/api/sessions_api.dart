@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/inspector_snapshot.dart';
 import '../models/start_session.dart';
 import 'api_client.dart';
 import 'sse_client.dart';
@@ -18,6 +19,11 @@ class SessionsApi {
 
   Future<void> end(String sessionId) async {
     await _dio.post('/v1/sessions/$sessionId/end');
+  }
+
+  Future<InspectorSnapshot> inspect(String sessionId) async {
+    final res = await _dio.get('/v1/sessions/$sessionId/inspector');
+    return InspectorSnapshot.fromJson(Map<String, dynamic>.from(res.data));
   }
 }
 

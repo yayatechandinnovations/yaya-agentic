@@ -73,7 +73,7 @@ class ConversationScenariosTest {
     }
 
     @Test
-    void denial_emits_a_structured_tool_result_and_a_user_safe_token() {
+    void denial_emits_a_structured_tool_result_and_an_llm_paraphrased_token() {
         Ids.SessionId sid = startSession();
         denyOnce.armOnce("that resource isn't linked to your profile");
 
@@ -86,15 +86,22 @@ class ConversationScenariosTest {
 
         assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.DENIED);
         assertThat(result.value().toString())
-                .as("denial payload contains the user-safe reason")
+                .as("denial payload carries the user-safe reason for the audit / UI")
                 .contains("isn't linked to your profile");
 
+        // The LLM continuation round sees the DENIED tool_result in its
+        // history and paraphrases the refusal in its own voice — no hardcoded
+        // refusal template is injected by the engine in the LLM-driven path.
+        // The stub paraphrase format is "That didn't work: <payload>".
         TurnEvent.Token tail = turn.stream()
                 .filter(e -> e instanceof TurnEvent.Token)
                 .map(e -> (TurnEvent.Token) e)
                 .reduce((a, b) -> b).orElseThrow();
         assertThat(tail.text())
-                .as("personality's authorizationDenied template — not the raw audit reason")
+                .as("LLM-paraphrased token — driven by the DENIED tool_result, "
+                        + "not the engine's hardcoded refusal template")
+                .containsIgnoringCase("didn't work")
+                .contains("isn't linked to your profile")
                 .doesNotContain("scope check")
                 .doesNotContain("ownership check");
     }

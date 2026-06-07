@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/sessions_api.dart';
+import '../../models/inspector_snapshot.dart';
 import '../../models/start_session.dart';
 import '../../models/turn_event.dart';
 
@@ -32,6 +33,7 @@ class PlaygroundState {
     this.error,
     this.pendingConfirm,
     this.currentQuickReplies = const [],
+    this.inspector,
   });
 
   final StartSessionResponse? session;
@@ -47,6 +49,10 @@ class PlaygroundState {
   /// replaced when the engine emits a UiHint("quick_replies", …).
   final List<String> currentQuickReplies;
 
+  /// Latest inspector snapshot fetched after a turn — populates the right
+  /// panel (intent, working memory, last prompt, last denial).
+  final InspectorSnapshot? inspector;
+
   PlaygroundState copyWith({
     StartSessionResponse? session,
     List<ChatMessage>? messages,
@@ -56,6 +62,7 @@ class PlaygroundState {
     UiHintEvent? pendingConfirm,
     bool clearPendingConfirm = false,
     List<String>? currentQuickReplies,
+    InspectorSnapshot? inspector,
   }) =>
       PlaygroundState(
         session: session ?? this.session,
@@ -65,6 +72,7 @@ class PlaygroundState {
         pendingConfirm:
             clearPendingConfirm ? null : (pendingConfirm ?? this.pendingConfirm),
         currentQuickReplies: currentQuickReplies ?? this.currentQuickReplies,
+        inspector: inspector ?? this.inspector,
       );
 }
 
@@ -120,8 +128,21 @@ class PlaygroundController extends Notifier<PlaygroundState> {
       },
       onDone: () {
         state = state.copyWith(streaming: false);
+        _refreshInspector();
       },
     );
+  }
+
+  Future<void> _refreshInspector() async {
+    final sid = state.session?.sessionId;
+    if (sid == null) return;
+    try {
+      final api = await ref.read(sessionsApiProvider.future);
+      final snap = await api.inspect(sid);
+      state = state.copyWith(inspector: snap);
+    } catch (_) {
+      // Non-fatal — the inspector panel just keeps the previous snapshot.
+    }
   }
 
   void _onEvent(TurnEventDto event) {
