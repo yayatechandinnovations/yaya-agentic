@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.engine;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.IntentFrame;
+import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalResult;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import reactor.core.publisher.Flux;
 
@@ -26,4 +27,8 @@ public interface ConversationEngine {
     /** Cacheable + variable prompt halves from the most recent LLM round in
      *  this session, for the playground inspector. */
     Optional<PromptBuilder.PromptPayload> lastPrompt(Ids.SessionId sessionId);
+
+    /** Most recent retrieval (sources considered/denied, chunks + scores)
+     *  for this session, for the playground retrieval inspector. */
+    Optional<RetrievalResult> lastRetrieval(Ids.SessionId sessionId);
 }

@@ -128,12 +128,15 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
                 HELLO_WORLD_PROFILE,
                 DEFAULT_TENANT,
                 "Yaya (Hello World)",
-                "I'm Yaya. I can echo what you say.",
-                "You are Yaya, a helpful assistant in M0 demo mode. Keep replies short.",
-                List.of(SAY_HELLO),
-                List.of(),
+                "I'm Yaya. I can echo what you say, or answer questions about myself.",
+                "You are Yaya, a helpful assistant in demo mode. Keep replies short. "
+                        + "When a user asks a factual question about Yaya, ground your "
+                        + "answer in the retrieved context and cite the chunk.",
+                List.of(SAY_HELLO, KnowledgeBootstrap.SEARCH_KNOWLEDGE_CAP),
+                List.of(KnowledgeBootstrap.YAYA_FAQ_SOURCE),
                 DEV_NOOP_AUTH,
-                Map.of("introQuickReplies", List.of("echo hello", "echo world"))));
+                Map.of("introQuickReplies",
+                        List.of("echo hello", "what is Yaya?", "what can you do?"))));
     }
 
     // ---- mirror PG → in-memory runtime catalog (engine lookup path) ------

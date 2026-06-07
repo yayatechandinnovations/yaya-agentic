@@ -146,10 +146,15 @@ class ConversationScenariosTest {
     }
 
     /**
-     * Test-only Authorizer that, when armed, returns one DENY and reverts
-     * to Allow.none() after. Marked {@code @Primary} so the engine consumes
-     * it instead of the real chain (the chain remains constructed and
-     * tested elsewhere). No delegation, no cycles.
+     * Test-only Authorizer that, when armed, returns one DENY for the next
+     * call against the {@code echo} tool and reverts to Allow.none() after.
+     * Scoped to the echo tool so M2.5-onwards retrieval-source AuthZ calls
+     * (every turn iterates each profile-attached source through the chain)
+     * don't accidentally consume the armed deny.
+     * <p>
+     * Marked {@code @Primary} so the engine consumes it instead of the real
+     * chain (the chain remains constructed and tested elsewhere). No
+     * delegation, no cycles.
      */
     static class DenyOnceAuthorizer implements Authorizer {
         private final AtomicBoolean armed = new AtomicBoolean(false);
@@ -163,7 +168,9 @@ class ConversationScenariosTest {
         @Override
         public AuthzDecision authorize(Principal principal, PermissionRequirement requirement,
                                        Object args, AuthzContext ctx) {
-            if (armed.compareAndSet(true, false)) {
+            boolean targetingEcho = ctx != null && ctx.attributes() != null
+                    && "echo".equals(ctx.attributes().get("toolId"));
+            if (targetingEcho && armed.compareAndSet(true, false)) {
                 return new AuthzDecision.Deny(userSafeReason, "test: armed deny");
             }
             return AuthzDecision.Allow.none();

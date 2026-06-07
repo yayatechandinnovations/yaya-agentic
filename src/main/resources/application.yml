@@ -29,6 +29,27 @@ spring:
       chat:
         options:
           model: claude-sonnet-4-6
+    openai:
+      # Embeddings only — chat goes to Anthropic. Without a key the
+      # embedding bean is absent and we fall back to the deterministic
+      # stub so the app boots without OpenAI.
+      api-key: ${OPENAI_API_KEY:}
+      embedding:
+        options:
+          model: text-embedding-3-small
+    # The OpenAI starter ships chat / image / audio / moderation / embedding
+    # auto-configs that each demand the key on startup. Default everything
+    # to `none` so a missing key doesn't crash boot. Operators flip
+    # `yaya.agentic.embeddings.provider=openai` to enable real embeddings;
+    # otherwise the deterministic stub takes over.
+    model:
+      chat: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+      embedding: ${YAYA_EMBEDDING_PROVIDER:none}
 
 management:
   endpoints:

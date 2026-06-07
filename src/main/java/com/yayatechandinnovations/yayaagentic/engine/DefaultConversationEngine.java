@@ -4,6 +4,11 @@ import com.yayatechandinnovations.yayaagentic.auth.*;
 import com.yayatechandinnovations.yayaagentic.core.*;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
+import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalContext;
+import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalQuery;
+import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalResult;
+import com.yayatechandinnovations.yayaagentic.knowledge.RetrievedChunk;
+import com.yayatechandinnovations.yayaagentic.knowledge.Retriever;
 import com.yayatechandinnovations.yayaagentic.llm.LlmClient;
 import com.yayatechandinnovations.yayaagentic.personality.PersonalityFragment;
 import com.yayatechandinnovations.yayaagentic.personality.PersonalityProvider;
@@ -51,11 +56,13 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory;
     private final PromptBuilder promptBuilder;
     private final com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector;
+    private final Retriever retriever;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, java.util.concurrent.atomic.AtomicInteger> nextTurnIdx = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, PromptBuilder.PromptPayload> lastPromptBySession = new ConcurrentHashMap<>();
+    private final Map<Ids.SessionId, RetrievalResult> lastRetrievalBySession = new ConcurrentHashMap<>();
 
     public DefaultConversationEngine(PersonalityProvider personalityProvider,
                                      ProfileResolverChain resolverChain,
@@ -69,7 +76,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      com.yayatechandinnovations.yayaagentic.engine.IntentTracker intentTracker,
                                      com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory,
                                      PromptBuilder promptBuilder,
-                                     com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector) {
+                                     com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector,
+                                     Retriever retriever) {
         this.personalityProvider = personalityProvider;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
@@ -83,6 +91,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.workingMemory = workingMemory;
         this.promptBuilder = promptBuilder;
         this.confirmDetector = confirmDetector;
+        this.retriever = retriever;
     }
 
     @Override
@@ -240,6 +249,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         activeIntents.remove(sessionId);
         nextTurnIdx.remove(sessionId);
         lastPromptBySession.remove(sessionId);
+        lastRetrievalBySession.remove(sessionId);
         workingMemory.clear(sessionId);
         if (session == null) return;
         ConversationRecorder recorder = recorderRouter.recorderFor(session,
@@ -255,6 +265,11 @@ public class DefaultConversationEngine implements ConversationEngine {
     @Override
     public java.util.Optional<PromptBuilder.PromptPayload> lastPrompt(Ids.SessionId sessionId) {
         return java.util.Optional.ofNullable(lastPromptBySession.get(sessionId));
+    }
+
+    @Override
+    public java.util.Optional<RetrievalResult> lastRetrieval(Ids.SessionId sessionId) {
+        return java.util.Optional.ofNullable(lastRetrievalBySession.get(sessionId));
     }
 
     // ---- Internals --------------------------------------------------
@@ -280,8 +295,51 @@ public class DefaultConversationEngine implements ConversationEngine {
         List<LlmClient.HistoryEntry> initial = new java.util.ArrayList<>();
         initial.add(new LlmClient.HistoryEntry.User(message.text()));
         java.util.concurrent.atomic.AtomicBoolean anyDispatch = new java.util.concurrent.atomic.AtomicBoolean(false);
-        return streamLlmRound(personality, profile, session, intent, message,
-                recorder, exec, turnId, initial, 0, anyDispatch);
+
+        // M2.5 — retrieve once at the top of the turn (always-on gating).
+        // The grounded chunks feed every LLM round of this turn so a
+        // multi-round agentic continuation still has the same context.
+        List<RetrievedChunk> retrieved = retrieveForTurn(profile, session, intent, exec, message);
+
+        Flux<TurnEvent> citations = Flux.fromIterable(retrieved)
+                .map(this::toCitationEvent);
+
+        Flux<TurnEvent> body = streamLlmRound(personality, profile, session, intent, message,
+                recorder, exec, turnId, initial, retrieved, 0, anyDispatch);
+
+        return citations.concatWith(body);
+    }
+
+    private List<RetrievedChunk> retrieveForTurn(Profile profile, Session session,
+                                                 IntentFrame intent, ExecutionContext exec,
+                                                 UserMessage message) {
+        var sourceIds = catalog.sourcesForProfile(profile.id());
+        if (sourceIds.isEmpty()) {
+            lastRetrievalBySession.remove(session.id());
+            return List.of();
+        }
+        RetrievalQuery query = new RetrievalQuery(message.text(), sourceIds, Map.of());
+        RetrievalContext rctx = new RetrievalContext(exec, intent);
+        try {
+            RetrievalResult result = retriever.retrieve(query, rctx);
+            lastRetrievalBySession.put(session.id(), result);
+            return result.chunks() == null ? List.of() : result.chunks();
+        } catch (RuntimeException e) {
+            // Retrieval is a best-effort grounding step; never fail the
+            // turn over an embedding hiccup. The LLM will just answer
+            // without grounding and the prompt's grounding rule will
+            // make it refuse facts it can't support.
+            lastRetrievalBySession.remove(session.id());
+            return List.of();
+        }
+    }
+
+    private TurnEvent.Citation toCitationEvent(RetrievedChunk chunk) {
+        Map<String, Object> meta = chunk.metadata() == null ? Map.of() : chunk.metadata();
+        String title = String.valueOf(meta.getOrDefault("documentTitle",
+                meta.getOrDefault("section", chunk.documentId())));
+        String url = String.valueOf(meta.getOrDefault("documentUri", ""));
+        return new TurnEvent.Citation(chunk.chunkId(), chunk.source(), title, url);
     }
 
     private Flux<TurnEvent> streamLlmRound(PersonalityFragment personality,
@@ -293,6 +351,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                                            ExecutionContext exec,
                                            Ids.TurnId turnId,
                                            List<LlmClient.HistoryEntry> history,
+                                           List<RetrievedChunk> retrieved,
                                            int round,
                                            java.util.concurrent.atomic.AtomicBoolean anyDispatch) {
         if (round >= MAX_TOOL_ROUNDS) {
@@ -304,7 +363,7 @@ public class DefaultConversationEngine implements ConversationEngine {
 
         List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
         PromptBuilder.PromptPayload payload = promptBuilder.build(
-                personality, profile, session, intent, List.of(), List.of(), message);
+                personality, profile, session, intent, List.of(), retrieved, message);
         // Keep the most recent payload so the inspector endpoint can show
         // exactly what was sent — cacheable prefix vs variable suffix split.
         lastPromptBySession.put(session.id(), payload);
@@ -373,7 +432,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                             next.add(new LlmClient.HistoryEntry.ToolResults(List.copyOf(roundResults)));
                         }
                         return streamLlmRound(personality, profile, session, intent, message,
-                                recorder, exec, turnId, next, round + 1, anyDispatch);
+                                recorder, exec, turnId, next, retrieved, round + 1, anyDispatch);
                     }
                     // Terminal round.
                     // - If no tool ever fired this user turn, record the
