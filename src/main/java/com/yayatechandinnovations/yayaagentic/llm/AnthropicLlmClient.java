@@ -42,10 +42,20 @@ import java.util.Map;
 @Component
 @org.springframework.context.annotation.Primary
 @ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "anthropic")
-@org.springframework.boot.autoconfigure.condition.ConditionalOnBean(ChatModel.class)
 public class AnthropicLlmClient implements LlmClient {
+    // NOTE: an earlier version added @ConditionalOnBean(ChatModel.class) so
+    // boot would fall back to the stub if the Anthropic autoconfig couldn't
+    // produce a ChatModel. That doesn't work for @Component classes —
+    // ConditionalOnBean is evaluated during component scanning, before the
+    // autoconfig has registered its beans, so the check always fails and
+    // Anthropic silently never loads. We rely on @ConditionalOnProperty
+    // alone; if YAYA_LLM_PROVIDER=anthropic but the key is unset the boot
+    // fails fast with a clear "no qualifying bean of type ChatModel" — the
+    // operator then sets the key or flips provider=stub.
 
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
+
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AnthropicLlmClient.class);
 
     private final ChatModel chatModel;
     private final ObjectMapper json;
@@ -53,6 +63,7 @@ public class AnthropicLlmClient implements LlmClient {
     public AnthropicLlmClient(ChatModel chatModel, ObjectMapper json) {
         this.chatModel = chatModel;
         this.json = json;
+        LOG.info("AnthropicLlmClient instantiated — backed by ChatModel={}", chatModel.getClass().getSimpleName());
     }
 
     @Override

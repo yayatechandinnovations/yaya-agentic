@@ -26,6 +26,13 @@ import java.util.UUID;
 @Component
 public class StubLlmClient implements LlmClient {
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(StubLlmClient.class);
+
+    public StubLlmClient() {
+        LOG.info("StubLlmClient instantiated — engine will use the pattern-matching stub "
+                + "unless AnthropicLlmClient also loads (it's @Primary).");
+    }
+
     @Override
     public Flux<LlmEvent> stream(LlmRequest request) {
         // If the most recent history entry is a ToolResults, treat this as
