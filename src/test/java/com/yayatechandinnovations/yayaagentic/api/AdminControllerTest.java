@@ -90,7 +90,8 @@ class AdminControllerTest {
     void posts_a_capability_referencing_the_tool() {
         var req = new AdminDtos.CapabilityRequest(
                 TENANT, "do-noop", "Do a noop", "test capability",
-                "Use this when the user asks for nothing.", List.of("noop"));
+                "Use this when the user asks for nothing.", List.of("noop"),
+                List.of("do another noop"));
         var res = client.post().uri("/v1/admin/capabilities")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(req)
@@ -105,7 +106,7 @@ class AdminControllerTest {
     @Test @Order(4)
     void rejects_capability_referencing_unknown_tool() {
         var req = new AdminDtos.CapabilityRequest(
-                TENANT, "bad-cap", "x", null, null, List.of("nonexistent"));
+                TENANT, "bad-cap", "x", null, null, List.of("nonexistent"), List.of());
         client.post().uri("/v1/admin/capabilities")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(req)

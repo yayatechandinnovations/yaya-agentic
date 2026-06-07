@@ -37,12 +37,13 @@ public final class AdminDtos {
 
     public record CapabilityRequest(
             String tenant, String id, String label, String description,
-            String llmGuidance, List<String> tools
+            String llmGuidance, List<String> tools, List<String> followUpHints
     ) {}
 
     public record CapabilityResponse(
             String id, int version, String tenant, String label,
             String description, String llmGuidance, List<String> tools,
+            List<String> followUpHints,
             OffsetDateTime createdAt
     ) {}
 

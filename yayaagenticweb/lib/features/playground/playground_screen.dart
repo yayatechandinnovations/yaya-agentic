@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/turn_event.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import 'playground_controller.dart';
 
@@ -66,16 +67,6 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                   ),
                 ),
               ),
-              if (session.quickReplies.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                  child: Wrap(
-                    spacing: 8,
-                    children: session.quickReplies
-                        .map((q) => ActionChip(label: Text(q), onPressed: () => _send(q)))
-                        .toList(),
-                  ),
-                ),
               Expanded(
                 child: ListView.builder(
                   padding: const EdgeInsets.all(12),
@@ -83,6 +74,22 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                   itemBuilder: (_, i) => _MessageBubble(message: state.messages[i]),
                 ),
               ),
+              if (state.pendingConfirm != null)
+                _ConfirmCard(
+                  hint: state.pendingConfirm!,
+                  onConfirm: () => _send('yes'),
+                  onCancel: () => _send('no'),
+                ),
+              if (state.currentQuickReplies.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: Wrap(
+                    spacing: 8,
+                    children: state.currentQuickReplies
+                        .map((q) => ActionChip(label: Text(q), onPressed: () => _send(q)))
+                        .toList(),
+                  ),
+                ),
               SafeArea(
                 top: false,
                 child: Padding(
@@ -276,6 +283,68 @@ class _ProfilePickerState extends ConsumerState<_ProfilePicker> {
                 ],
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmCard extends StatelessWidget {
+  const _ConfirmCard({required this.hint, required this.onConfirm, required this.onCancel});
+  final UiHintEvent hint;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = hint.payload['summary']?.toString() ?? 'Run this action?';
+    final args = hint.payload['args'];
+    final toolId = hint.payload['toolId']?.toString();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Card(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.help_outline, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(summary,
+                        style: Theme.of(context).textTheme.titleSmall),
+                  ),
+                ],
+              ),
+              if (args != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${toolId ?? "tool"}  ·  $args',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: onCancel,
+                    icon: const Icon(Icons.close),
+                    label: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: onConfirm,
+                    icon: const Icon(Icons.check),
+                    label: const Text('Confirm'),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

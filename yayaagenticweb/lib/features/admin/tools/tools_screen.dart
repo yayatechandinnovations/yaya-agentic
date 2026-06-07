@@ -19,6 +19,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
 
   String _kind = 'BEAN';
   final _beanNameCtrl = TextEditingController();
+  bool _confirmable = false;
 
   String _httpMethod = 'GET';
   final _urlCtrl = TextEditingController();
@@ -103,6 +104,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         inputSchemaJson: _inputSchemaCtrl.text,
         outputSchemaJson: _outputSchemaCtrl.text,
         handler: handler,
+        policy: {'confirmable': _confirmable},
       ));
       ref.invalidate(toolsProvider);
       if (!mounted) return;
@@ -182,6 +184,16 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
             )
           else
             _httpForm(context),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            value: _confirmable,
+            onChanged: (v) => setState(() => _confirmable = v),
+            title: const Text('Confirmable'),
+            subtitle: const Text(
+                'Pause for explicit yes/no before dispatch. Use for destructive actions.',
+                style: TextStyle(fontSize: 12)),
+            contentPadding: EdgeInsets.zero,
+          ),
         ],
       ),
       actions: [
@@ -271,10 +283,23 @@ class _Tile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isHttp = t.handler.kind == 'HTTP';
+    final confirmable = t.policy['confirmable'] == true;
     return Card(
       child: ListTile(
         leading: Icon(isHttp ? Icons.cloud_outlined : Icons.memory_outlined),
-        title: Text('${t.id}@${t.version}'),
+        title: Row(
+          children: [
+            Text('${t.id}@${t.version}'),
+            if (confirmable) ...[
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Confirmable: preview → yes/no before dispatch',
+                child: Icon(Icons.priority_high,
+                    size: 16, color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(isHttp
             ? '${t.handler.httpSpec?.method} ${t.handler.httpSpec?.urlTemplate}'
             : 'bean: ${t.handler.beanName}'),

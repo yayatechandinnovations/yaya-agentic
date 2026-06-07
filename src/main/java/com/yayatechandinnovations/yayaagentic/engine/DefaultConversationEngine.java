@@ -47,8 +47,14 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final LlmClient llmClient;
     private final ToolExecutor toolExecutor;
     private final M0Catalog catalog;
+    private final com.yayatechandinnovations.yayaagentic.engine.IntentTracker intentTracker;
+    private final com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory;
+    private final PromptBuilder promptBuilder;
+    private final com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
+    private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
+    private final Map<Ids.SessionId, java.util.concurrent.atomic.AtomicInteger> nextTurnIdx = new ConcurrentHashMap<>();
 
     public DefaultConversationEngine(PersonalityProvider personalityProvider,
                                      ProfileResolverChain resolverChain,
@@ -58,7 +64,11 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      RecorderRouter recorderRouter,
                                      LlmClient llmClient,
                                      ToolExecutor toolExecutor,
-                                     M0Catalog catalog) {
+                                     M0Catalog catalog,
+                                     com.yayatechandinnovations.yayaagentic.engine.IntentTracker intentTracker,
+                                     com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory,
+                                     PromptBuilder promptBuilder,
+                                     com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector) {
         this.personalityProvider = personalityProvider;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
@@ -68,6 +78,10 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.llmClient = llmClient;
         this.toolExecutor = toolExecutor;
         this.catalog = catalog;
+        this.intentTracker = intentTracker;
+        this.workingMemory = workingMemory;
+        this.promptBuilder = promptBuilder;
+        this.confirmDetector = confirmDetector;
     }
 
     @Override
@@ -126,18 +140,105 @@ public class DefaultConversationEngine implements ConversationEngine {
         ExecutionContext exec = new ExecutionContext(
                 principal, sessionId, turnId, UUID.randomUUID().toString(), Map.copyOf(execAttrs));
 
-        Optional<EchoIntent> echo = detectEcho(message.text());
+        Map<String, Object> wm = workingMemory.get(sessionId);
 
-        Flux<TurnEvent> body = echo
-                .map(intent -> dispatchAndStream(intent, profile, personality, session, exec, recorder, turnId, message))
-                .orElseGet(() -> streamLlmReply(personality, profile, session, message, recorder, exec, turnId));
+        // ---- M2-D: confirm/cancel for a pending confirmable dispatch ----
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pendingConfirm = pendingMapOf(wm, "pending_confirm");
+        if (pendingConfirm != null) {
+            var signal = confirmDetector.detect(message.text());
+            switch (signal) {
+                case CONFIRM -> {
+                    String toolId = String.valueOf(pendingConfirm.get("toolId"));
+                    Map<String, Object> args = (Map<String, Object>) pendingConfirm
+                            .getOrDefault("args", Map.of());
+                    workingMemory.remove(sessionId, "pending_confirm");
+                    Flux<TurnEvent> resumed = dispatchByToolId(new Ids.ToolId(toolId), args,
+                            profile, personality, session, exec, recorder, turnId, message,
+                            /* skipConfirm */ true);
+                    if (resumed != null) return resumed.concatWith(Mono.fromCallable(
+                            () -> TurnEvent.End.of(turnId, 0, 0)));
+                }
+                case CANCEL -> {
+                    workingMemory.remove(sessionId, "pending_confirm");
+                    String cancelText = "OK — cancelled.";
+                    Flux<TurnEvent> cancelled = Flux.<TurnEvent>just(new TurnEvent.Token(cancelText))
+                            .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
+                                    cancelText, List.of(), List.of()));
+                    return cancelled.concatWith(Mono.fromCallable(
+                            () -> TurnEvent.End.of(turnId, 0, 0)));
+                }
+                case UNCLEAR -> {
+                    // pivot away from the pending confirm — drop it, let
+                    // the rest of the turn handle the new intent.
+                    workingMemory.remove(sessionId, "pending_confirm");
+                }
+            }
+        }
+
+        // ---- M2-C: if a previous turn left an elicitation pending, the
+        // user's current message fills the requested slot — skip the
+        // intent tracker, jump straight to the dispatch we wanted last time.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pendingElicit = pendingElicitOf(wm);
+        if (pendingElicit != null) {
+            String toolId = String.valueOf(pendingElicit.get("toolId"));
+            String missingField = String.valueOf(pendingElicit.get("missingField"));
+            Map<String, Object> filledArgs = new java.util.HashMap<>(
+                    (Map<String, Object>) pendingElicit.getOrDefault("partialArgs", Map.of()));
+            filledArgs.put(missingField, message.text());
+            workingMemory.remove(sessionId, "pending_elicit");
+
+            Flux<TurnEvent> resumed = dispatchByToolId(new Ids.ToolId(toolId), filledArgs,
+                    profile, personality, session, exec, recorder, turnId, message);
+            if (resumed != null) {
+                return resumed.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+            }
+            // tool descriptor went missing — drop pending and fall through.
+        }
+
+        // ---- M2-A: intent tracking + working memory --------------------
+        IntentFrame previousIntent = activeIntents.getOrDefault(sessionId, session.activeIntent());
+        if (previousIntent == null) previousIntent = IntentFrame.empty();
+        IntentFrame updatedIntent = intentTracker.update(List.of(), message, previousIntent);
+        activeIntents.put(sessionId, updatedIntent);
+        if (updatedIntent.slots() != null && !updatedIntent.slots().isEmpty()) {
+            workingMemory.merge(sessionId, Map.of("intent", updatedIntent.slots()));
+        }
+        workingMemory.merge(sessionId, Map.of(
+                "last_user_message", message.text(),
+                "intent_label", updatedIntent.label() == null ? "" : updatedIntent.label()));
+
+        // Run the agentic loop — the LLM sees the tool catalog and either
+        // proposes a tool_use (which goes through runToolDispatch with full
+        // AuthZ/elicit/confirm semantics) or streams a plain reply.
+        final IntentFrame currentIntent = updatedIntent;
+        Flux<TurnEvent> body = streamLlmTurn(personality, profile, session,
+                currentIntent, message, recorder, exec, turnId);
 
         return body.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> pendingElicitOf(Map<String, Object> wm) {
+        Object raw = wm == null ? null : wm.get("pending_elicit");
+        if (raw instanceof Map<?, ?> m && !m.isEmpty()) return (Map<String, Object>) m;
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> pendingMapOf(Map<String, Object> wm, String key) {
+        Object raw = wm == null ? null : wm.get(key);
+        if (raw instanceof Map<?, ?> m && !m.isEmpty()) return (Map<String, Object>) m;
+        return null;
     }
 
     @Override
     public void end(Ids.SessionId sessionId, AuthContext auth) {
         Session session = active.remove(sessionId);
+        activeIntents.remove(sessionId);
+        nextTurnIdx.remove(sessionId);
+        workingMemory.clear(sessionId);
         if (session == null) return;
         ConversationRecorder recorder = recorderRouter.recorderFor(session,
                 new RecorderRouter.RecordingDecisionContext(Map.of()));
@@ -146,75 +247,367 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     // ---- Internals --------------------------------------------------
 
-    private Flux<TurnEvent> streamLlmReply(PersonalityFragment personality,
+    private static final int MAX_TOOL_ROUNDS = 5;
+
+    /**
+     * The agentic turn loop. Each round calls the LLM once; if the LLM
+     * proposes tools we dispatch (through the same AuthZ / schema /
+     * confirmable pipeline as everything else), append the assistant +
+     * tool-result pair to history, and recurse for the LLM's continuation.
+     * Stops on {@code stop_reason=end_turn}, an empty round, or
+     * {@link #MAX_TOOL_ROUNDS} as a safety net.
+     */
+    private Flux<TurnEvent> streamLlmTurn(PersonalityFragment personality,
+                                          Profile profile,
+                                          Session session,
+                                          IntentFrame intent,
+                                          UserMessage message,
+                                          ConversationRecorder recorder,
+                                          ExecutionContext exec,
+                                          Ids.TurnId turnId) {
+        List<LlmClient.HistoryEntry> initial = new java.util.ArrayList<>();
+        initial.add(new LlmClient.HistoryEntry.User(message.text()));
+        java.util.concurrent.atomic.AtomicBoolean anyDispatch = new java.util.concurrent.atomic.AtomicBoolean(false);
+        return streamLlmRound(personality, profile, session, intent, message,
+                recorder, exec, turnId, initial, 0, anyDispatch);
+    }
+
+    private Flux<TurnEvent> streamLlmRound(PersonalityFragment personality,
                                            Profile profile,
                                            Session session,
+                                           IntentFrame intent,
                                            UserMessage message,
                                            ConversationRecorder recorder,
                                            ExecutionContext exec,
-                                           Ids.TurnId turnId) {
-        StringBuilder accumulated = new StringBuilder();
-        String systemPrompt = renderSystemPrompt(personality, profile);
+                                           Ids.TurnId turnId,
+                                           List<LlmClient.HistoryEntry> history,
+                                           int round,
+                                           java.util.concurrent.atomic.AtomicBoolean anyDispatch) {
+        if (round >= MAX_TOOL_ROUNDS) {
+            String warning = "(stopped — tool-call depth limit reached)";
+            return Flux.<TurnEvent>just(new TurnEvent.Token(warning))
+                    .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
+                            warning, List.of(), List.of()));
+        }
 
-        return llmClient.stream(new LlmClient.LlmRequest(systemPrompt, List.of(), message.text()))
-                .map(chunk -> {
-                    accumulated.append(chunk.text());
-                    return (TurnEvent) new TurnEvent.Token(chunk.text());
+        List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
+        PromptBuilder.PromptPayload payload = promptBuilder.build(
+                personality, profile, session, intent, List.of(), List.of(), message);
+        LlmClient.LlmRequest request = new LlmClient.LlmRequest(
+                payload.cacheablePrefix(), payload.variableSuffix(), history, available);
+
+        StringBuilder roundText = new StringBuilder();
+        java.util.List<LlmClient.ToolCallSpec> roundCalls = new java.util.ArrayList<>();
+        java.util.List<LlmClient.ToolResultSpec> roundResults = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<String> stopReason =
+                new java.util.concurrent.atomic.AtomicReference<>("end_turn");
+
+        return llmClient.stream(request)
+                .concatMap(event -> switch (event) {
+                    case LlmClient.LlmEvent.TokenChunk(String text) -> {
+                        roundText.append(text);
+                        yield Flux.<TurnEvent>just(new TurnEvent.Token(text));
+                    }
+                    case LlmClient.LlmEvent.ToolUseProposal(String callId,
+                                                            String toolName,
+                                                            Map<String, Object> args) -> {
+                        anyDispatch.set(true);
+                        roundCalls.add(new LlmClient.ToolCallSpec(callId, toolName, args));
+                        Ids.ToolId toolId = new Ids.ToolId(toolName);
+                        // Pass the LLM-assigned call id through so the
+                        // dispatched ToolResult carries the same id Anthropic
+                        // expects in continuation rounds.
+                        Flux<TurnEvent> dispatched = dispatchByToolId(toolId, args,
+                                profile, personality, session, exec, recorder, turnId, message,
+                                /* skipConfirm */ false, /* callIdHint */ callId);
+                        if (dispatched == null) {
+                            yield Flux.<TurnEvent>just(new TurnEvent.Token(
+                                    "(unknown tool: " + toolName + ")"));
+                        }
+                        // Tap dispatched events to capture tool_result for the
+                        // continuation history. Other events flow through verbatim.
+                        yield dispatched.doOnNext(ev -> {
+                            if (ev instanceof TurnEvent.ToolResult tr) {
+                                roundResults.add(new LlmClient.ToolResultSpec(
+                                        tr.callId(), tr.value(),
+                                        tr.status() != Turn.ToolResult.Status.OK));
+                            }
+                        });
+                    }
+                    case LlmClient.LlmEvent.Done done -> {
+                        stopReason.set(done.stopReason() == null ? "end_turn" : done.stopReason());
+                        yield Flux.<TurnEvent>empty();
+                    }
                 })
-                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, accumulated.toString(),
-                        List.of(), List.of()));
+                .concatWith(Flux.defer(() -> {
+                    // Only continue the loop when the LLM proposed a tool AND a
+                    // result actually came back. Elicitation and confirm flows
+                    // emit NO ToolResult — they are user-pause states; ending
+                    // the turn there is correct.
+                    boolean continueLoop = "tool_use".equals(stopReason.get())
+                            && !roundCalls.isEmpty()
+                            && !roundResults.isEmpty();
+                    if (continueLoop) {
+                        List<LlmClient.HistoryEntry> next = new java.util.ArrayList<>(history);
+                        next.add(new LlmClient.HistoryEntry.Assistant(
+                                roundText.toString(), List.copyOf(roundCalls)));
+                        if (!roundResults.isEmpty()) {
+                            next.add(new LlmClient.HistoryEntry.ToolResults(List.copyOf(roundResults)));
+                        }
+                        return streamLlmRound(personality, profile, session, intent, message,
+                                recorder, exec, turnId, next, round + 1, anyDispatch);
+                    }
+                    // Terminal round.
+                    // - If no tool ever fired this user turn, record the
+                    //   assistant text turn. (Dispatch flows own their own
+                    //   recording; we don't double-write.)
+                    // - If tools fired AND the LLM produced text after them,
+                    //   that text is in the stream but isn't currently recorded
+                    //   to the conversation log — M3 observability work cleans
+                    //   that up.
+                    if (!anyDispatch.get() && !roundText.toString().isBlank()) {
+                        recordTurns(recorder, session, exec, turnId, message,
+                                roundText.toString(), List.of(), List.of());
+                    }
+                    return Flux.<TurnEvent>empty();
+                }));
     }
 
-    private Flux<TurnEvent> dispatchAndStream(EchoIntent intent,
-                                              Profile profile,
-                                              PersonalityFragment personality,
-                                              Session session,
-                                              ExecutionContext exec,
-                                              ConversationRecorder recorder,
-                                              Ids.TurnId turnId,
-                                              UserMessage message) {
-        ToolDescriptor toolDescriptor = catalog.tool(HelloWorldProfileBootstrap.ECHO)
-                .orElseThrow(() -> new IllegalStateException("echo tool descriptor missing"));
+    /** Projects the profile's reachable tool descriptors into the wire
+     *  shape the LLM consumes. Description = capability llmGuidance. */
+    private List<LlmClient.ToolDefinition> buildAvailableTools(Profile profile) {
+        List<LlmClient.ToolDefinition> out = new java.util.ArrayList<>();
+        if (profile == null || profile.capabilities() == null) return out;
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Ids.CapabilityId capId : profile.capabilities()) {
+            catalog.capability(capId).ifPresent(cap -> {
+                String description = cap.llmGuidance() == null
+                        ? cap.userFacingDescription() : cap.llmGuidance();
+                for (Ids.ToolId toolId : cap.tools()) {
+                    if (!seen.add(toolId.value())) continue;
+                    catalog.tool(toolId).ifPresent(t -> out.add(new LlmClient.ToolDefinition(
+                            t.id().value(),
+                            description == null ? "" : description,
+                            t.inputSchemaJson())));
+                }
+            });
+        }
+        return out;
+    }
+
+    /** Resumes a tool dispatch when a prior elicitation has been satisfied. */
+    private Flux<TurnEvent> dispatchByToolId(Ids.ToolId toolId, Map<String, Object> args,
+                                             Profile profile, PersonalityFragment personality,
+                                             Session session, ExecutionContext exec,
+                                             ConversationRecorder recorder, Ids.TurnId turnId,
+                                             UserMessage message) {
+        return dispatchByToolId(toolId, args, profile, personality, session, exec,
+                recorder, turnId, message, /* skipConfirm */ false, /* callIdHint */ null);
+    }
+
+    private Flux<TurnEvent> dispatchByToolId(Ids.ToolId toolId, Map<String, Object> args,
+                                             Profile profile, PersonalityFragment personality,
+                                             Session session, ExecutionContext exec,
+                                             ConversationRecorder recorder, Ids.TurnId turnId,
+                                             UserMessage message, boolean skipConfirm) {
+        return dispatchByToolId(toolId, args, profile, personality, session, exec,
+                recorder, turnId, message, skipConfirm, /* callIdHint */ null);
+    }
+
+    private Flux<TurnEvent> dispatchByToolId(Ids.ToolId toolId, Map<String, Object> args,
+                                             Profile profile, PersonalityFragment personality,
+                                             Session session, ExecutionContext exec,
+                                             ConversationRecorder recorder, Ids.TurnId turnId,
+                                             UserMessage message, boolean skipConfirm,
+                                             String callIdHint) {
+        if (catalog.tool(toolId).isEmpty()) return null;
+        return runToolDispatch(toolId, args, profile, personality, session, exec, recorder, turnId, message, skipConfirm, callIdHint);
+    }
+
+    /**
+     * Single tool-dispatch path used by intent-driven, elicitation-resumed,
+     * and confirm-resumed flows. Handles AuthZ, ToolPolicy.confirmable,
+     * schema validation, and the three terminal cases:
+     * Dispatched/OK, Dispatched/DENIED, NeedsInput.
+     */
+    private Flux<TurnEvent> runToolDispatch(Ids.ToolId toolId,
+                                            Map<String, Object> args,
+                                            Profile profile,
+                                            PersonalityFragment personality,
+                                            Session session,
+                                            ExecutionContext exec,
+                                            ConversationRecorder recorder,
+                                            Ids.TurnId turnId,
+                                            UserMessage message,
+                                            boolean skipConfirm,
+                                            String callIdHint) {
+        ToolDescriptor toolDescriptor = catalog.tool(toolId)
+                .orElseThrow(() -> new IllegalStateException("tool descriptor missing: " + toolId.value()));
 
         AuthzDecision decision = authorizer.authorize(
-                session.principal(), toolDescriptor.requires(), Map.of("text", intent.text()),
+                session.principal(), toolDescriptor.requires(), args,
                 new AuthzContext(session.id(), turnId, exec.traceId(),
                         Map.of("toolId", toolDescriptor.id().value())));
 
         if (decision instanceof AuthzDecision.Deny deny) {
-            String reply = "I can't do that: " + deny.userSafeReason();
-            return Flux.<TurnEvent>just(new TurnEvent.Token(reply))
-                    .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, reply, List.of(), List.of()));
+            return denialFlow(toolDescriptor, args, deny, personality, session, exec, recorder, turnId, message);
         }
 
-        Map<String, Object> args = Map.of("text", intent.text());
-        Turn.ToolCall call = new Turn.ToolCall(UUID.randomUUID().toString(), toolDescriptor.id(), args);
-        Turn.ToolResult result = toolExecutor.execute(toolDescriptor, args, exec);
+        // B2.8 — confirmable tools pause for explicit confirm before dispatch.
+        if (!skipConfirm && toolDescriptor.policy() != null && toolDescriptor.policy().confirmable()) {
+            return confirmFlow(toolDescriptor, args, personality, session, exec, recorder, turnId, message);
+        }
+
+        ToolExecutor.Outcome outcome = toolExecutor.execute(toolDescriptor, args, exec, callIdHint);
+        return switch (outcome) {
+            case ToolExecutor.Outcome.NeedsInput ni ->
+                    elicitationFlow(toolDescriptor, args, ni, personality, session, exec, recorder, turnId, message);
+            case ToolExecutor.Outcome.Dispatched(var result) ->
+                    dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message);
+        };
+    }
+
+    /** B2.8 — Two-phase preview: stream tool_call + UiHint(confirm) and wait for the next turn. */
+    private Flux<TurnEvent> confirmFlow(ToolDescriptor toolDescriptor,
+                                        Map<String, Object> args,
+                                        PersonalityFragment personality,
+                                        Session session,
+                                        ExecutionContext exec,
+                                        ConversationRecorder recorder,
+                                        Ids.TurnId turnId,
+                                        UserMessage message) {
+        String callId = UUID.randomUUID().toString();
+        String summary = "Run " + toolDescriptor.id().value() + " with " + args + "?";
+        Map<String, Object> hintPayload = Map.of(
+                "toolId", toolDescriptor.id().value(),
+                "callId", callId,
+                "args", args,
+                "summary", summary);
+
+        workingMemory.merge(session.id(), Map.of("pending_confirm", Map.of(
+                "toolId", toolDescriptor.id().value(),
+                "args", args,
+                "callId", callId)));
+
+        String spoken = summary + " (reply yes or no)";
+        return Flux.<TurnEvent>just(
+                        new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),
+                        new TurnEvent.UiHint("confirm", hintPayload),
+                        new TurnEvent.Token(spoken))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
+                        List.of(new Turn.ToolCall(callId, toolDescriptor.id(), args)), List.of()));
+    }
+
+    private Flux<TurnEvent> dispatchedFlow(ToolDescriptor toolDescriptor,
+                                           Map<String, Object> args,
+                                           Turn.ToolResult result,
+                                           Profile profile,
+                                           Session session,
+                                           ExecutionContext exec,
+                                           ConversationRecorder recorder,
+                                           Ids.TurnId turnId,
+                                           UserMessage message) {
+        Turn.ToolCall call = new Turn.ToolCall(result.callId(), toolDescriptor.id(), args);
 
         String spoken = switch (result.status()) {
-            case OK -> "You said: \"" + intent.text() + "\". Anything else?";
+            case OK -> "You said: \""
+                    + String.valueOf(args.getOrDefault("text", "")) + "\". Anything else?";
             case DENIED -> "I can't echo that.";
-            case FAILED -> "Sorry — the echo tool failed (" + result.error() + ").";
+            case FAILED -> "Sorry — that didn't work (" + result.error() + ").";
         };
 
-        return Flux.<TurnEvent>just(
-                        new TurnEvent.ToolCall(call.callId(), toolDescriptor.id(), args),
-                        new TurnEvent.ToolResult(call.callId(), result.status(), result.value(), result.error()),
-                        new TurnEvent.Token(spoken)
-                )
+        // B2.7 — after a clean tool dispatch, surface the capability's
+        // follow-up hints as a quick-reply UiHint so the UI can render chips.
+        List<String> followUps = (result.status() == Turn.ToolResult.Status.OK)
+                ? followUpHintsForTool(profile, toolDescriptor.id())
+                : List.of();
+
+        List<TurnEvent> events = new java.util.ArrayList<>(4);
+        events.add(new TurnEvent.ToolCall(call.callId(), toolDescriptor.id(), args));
+        events.add(new TurnEvent.ToolResult(call.callId(), result.status(), result.value(), result.error()));
+        events.add(new TurnEvent.Token(spoken));
+        if (!followUps.isEmpty()) {
+            events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
+        }
+
+        return Flux.fromIterable(events)
                 .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
                         List.of(call), List.of(result)));
     }
 
-    private String renderSystemPrompt(PersonalityFragment personality, Profile profile) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(personality.voiceAndTone()).append("\n\n");
-        sb.append("Rules:\n");
-        for (var rule : personality.rules()) {
-            sb.append("- ").append(rule.text()).append("\n");
+    /** Finds the first capability the profile references that backs this tool,
+     *  then returns its {@code followUpHints}. Empty list if no match. */
+    private List<String> followUpHintsForTool(Profile profile, Ids.ToolId toolId) {
+        if (profile == null) return List.of();
+        for (Ids.CapabilityId capId : profile.capabilities()) {
+            var maybe = catalog.capability(capId);
+            if (maybe.isEmpty()) continue;
+            var cap = maybe.get();
+            if (cap.tools() == null || !cap.tools().contains(toolId)) continue;
+            return cap.followUpHints() == null ? List.of() : cap.followUpHints();
         }
-        sb.append("\nRole:\n").append(profile.systemPromptFragment());
-        return sb.toString();
+        return List.of();
+    }
+
+    /** B2.2 — Convert missing-required-field into a single focused question. */
+    private Flux<TurnEvent> elicitationFlow(ToolDescriptor toolDescriptor,
+                                            Map<String, Object> partialArgs,
+                                            ToolExecutor.Outcome.NeedsInput ni,
+                                            PersonalityFragment personality,
+                                            Session session,
+                                            ExecutionContext exec,
+                                            ConversationRecorder recorder,
+                                            Ids.TurnId turnId,
+                                            UserMessage message) {
+        String missingField = ni.missingFields().get(0);
+        String missingPrefix = personality != null && personality.refusals() != null
+                && personality.refusals().missingInformation() != null
+                ? personality.refusals().missingInformation() : "I need one more thing — ";
+        String question = missingPrefix + "what's the " + missingField + "?";
+
+        // Stash the partial args + which tool we were trying to call so the
+        // next turn can fill the slot and resume dispatch directly.
+        workingMemory.merge(session.id(), Map.of("pending_elicit", Map.of(
+                "toolId", toolDescriptor.id().value(),
+                "missingField", missingField,
+                "partialArgs", partialArgs)));
+
+        return Flux.<TurnEvent>just(new TurnEvent.Token(question))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, question,
+                        List.of(), List.of()));
+    }
+
+    /** B2.3 — Synthetic tool_result event + personality-templated user-safe reply. */
+    private Flux<TurnEvent> denialFlow(ToolDescriptor toolDescriptor,
+                                       Map<String, Object> args,
+                                       AuthzDecision.Deny deny,
+                                       PersonalityFragment personality,
+                                       Session session,
+                                       ExecutionContext exec,
+                                       ConversationRecorder recorder,
+                                       Ids.TurnId turnId,
+                                       UserMessage message) {
+        String callId = UUID.randomUUID().toString();
+        Map<String, Object> denialPayload = Map.of(
+                "reason", deny.userSafeReason(),
+                "suggest_alternatives", true);
+
+        String spoken = (personality != null && personality.refusals() != null
+                && personality.refusals().authorizationDenied() != null
+                ? personality.refusals().authorizationDenied()
+                : "I can't do that with your current access.")
+                + " " + deny.userSafeReason() + ".";
+
+        Turn.ToolCall recordedCall = new Turn.ToolCall(callId, toolDescriptor.id(), args);
+        Turn.ToolResult recordedResult = new Turn.ToolResult(
+                callId, Turn.ToolResult.Status.DENIED, denialPayload, null);
+
+        return Flux.<TurnEvent>just(
+                        new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),
+                        new TurnEvent.ToolResult(callId, Turn.ToolResult.Status.DENIED, denialPayload, null),
+                        new TurnEvent.Token(spoken))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
+                        List.of(recordedCall), List.of(recordedResult)));
     }
 
     private void recordTurns(ConversationRecorder recorder, Session session, ExecutionContext exec,
@@ -222,13 +615,19 @@ public class DefaultConversationEngine implements ConversationEngine {
                              List<Turn.ToolCall> calls, List<Turn.ToolResult> results) {
         Instant now = Instant.now();
         RecorderContext rc = ctx(session.tenant(), session.principal());
+
+        var counter = nextTurnIdx.computeIfAbsent(session.id(),
+                k -> new java.util.concurrent.atomic.AtomicInteger(0));
+        int userIdx = counter.getAndIncrement();
+        int assistantIdx = counter.getAndIncrement();
+
         recorder.onTurnRecorded(session.id(),
-                new Turn(new Ids.TurnId(UUID.randomUUID().toString()), session.id(), 0,
+                new Turn(new Ids.TurnId(UUID.randomUUID().toString()), session.id(), userIdx,
                         Turn.Role.USER, userMessage.text(), List.of(), List.of(), List.of(),
                         null, Map.of(), now),
                 rc);
         recorder.onTurnRecorded(session.id(),
-                new Turn(turnId, session.id(), 1,
+                new Turn(turnId, session.id(), assistantIdx,
                         Turn.Role.ASSISTANT, assistantText, calls, results, List.of(),
                         new Turn.ModelInfo("stub-or-anthropic", "m0", 0, 0), Map.of(), now),
                 rc);
@@ -237,15 +636,4 @@ public class DefaultConversationEngine implements ConversationEngine {
     private RecorderContext ctx(Ids.TenantId tenant, Principal principal) {
         return new RecorderContext(tenant, principal, UUID.randomUUID().toString(), Map.of());
     }
-
-    private Optional<EchoIntent> detectEcho(String text) {
-        if (text == null) return Optional.empty();
-        String t = text.trim();
-        String lower = t.toLowerCase();
-        if (lower.startsWith("/echo ")) return Optional.of(new EchoIntent(t.substring(6).trim()));
-        if (lower.startsWith("echo ")) return Optional.of(new EchoIntent(t.substring(5).trim()));
-        return Optional.empty();
-    }
-
-    private record EchoIntent(String text) {}
 }

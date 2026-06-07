@@ -12,6 +12,7 @@ class CapabilityRequest with _$CapabilityRequest {
     String? description,
     String? llmGuidance,
     @Default(<String>[]) List<String> tools,
+    @Default(<String>[]) List<String> followUpHints,
   }) = _CapabilityRequest;
 
   factory CapabilityRequest.fromJson(Map<String, dynamic> json) =>
@@ -28,6 +29,7 @@ class CapabilityResponse with _$CapabilityResponse {
     String? description,
     String? llmGuidance,
     @Default(<String>[]) List<String> tools,
+    @Default(<String>[]) List<String> followUpHints,
     String? createdAt,
   }) = _CapabilityResponse;
 

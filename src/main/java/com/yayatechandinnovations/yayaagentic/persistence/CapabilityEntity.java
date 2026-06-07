@@ -39,6 +39,10 @@ public class CapabilityEntity {
     @Column(name = "requires_json", columnDefinition = "jsonb", nullable = false)
     private String requiresJson = "{}";
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "follow_up_hints_json", columnDefinition = "jsonb", nullable = false)
+    private String followUpHintsJson = "[]";
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -59,12 +63,14 @@ public class CapabilityEntity {
     public String getLlmGuidance() { return llmGuidance; }
     public String getToolIdsJson() { return toolIdsJson; }
     public String getRequiresJson() { return requiresJson; }
+    public String getFollowUpHintsJson() { return followUpHintsJson; }
 
     public void setLabel(String v) { this.label = v; }
     public void setDescription(String v) { this.description = v; }
     public void setLlmGuidance(String v) { this.llmGuidance = v; }
     public void setToolIdsJson(String v) { this.toolIdsJson = v; }
     public void setRequiresJson(String v) { this.requiresJson = v; }
+    public void setFollowUpHintsJson(String v) { this.followUpHintsJson = v; }
 
     public static class PK implements Serializable {
         private String tenantId; private String id; private Integer version;

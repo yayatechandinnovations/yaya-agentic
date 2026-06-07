@@ -10,11 +10,14 @@ import java.util.Map;
 public record YayaAgenticProperties(
         String defaultPersonality,
         String defaultTenant,
+        Session session,
         Llm llm,
         Cors cors,
         Auth auth,
         HttpTools httpTools
 ) {
+    public record Session(Duration idleTimeout) {}
+
     public record Llm(String provider) {}
 
     public record Cors(List<String> allowedOrigins) {}

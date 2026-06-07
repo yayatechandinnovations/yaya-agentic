@@ -4,11 +4,6 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 
-  # M1: Postgres + Flyway are now required. Redis stays excluded until M2.
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
-
   # Local dev: Spring Boot's docker-compose integration registers a
   # ServiceConnection from compose.yaml automatically — no datasource
   # block needed. Production: set DB_URL / DB_USERNAME / DB_PASSWORD via
@@ -48,6 +43,10 @@ yaya:
   agentic:
     default-personality: default
     default-tenant: default
+    session:
+      # Idle TTL for ephemeral session state in Redis. Bumped on every
+      # interaction; reaching zero auto-evicts working memory.
+      idle-timeout: PT30M
     llm:
       provider: ${YAYA_LLM_PROVIDER:stub}   # stub | anthropic
     cors:

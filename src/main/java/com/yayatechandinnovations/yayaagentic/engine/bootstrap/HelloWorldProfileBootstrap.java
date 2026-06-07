@@ -118,6 +118,7 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
         entity.setDescription("I'll repeat what you say.");
         entity.setLlmGuidance("Use the echo tool when the user asks to repeat or echo a phrase.");
         entity.setToolIdsJson(writeJson(List.of(ECHO.value())));
+        entity.setFollowUpHintsJson(writeJson(List.of("echo something else", "what else can you do?")));
         capabilities.save(entity);
     }
 
@@ -148,7 +149,9 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
                 SAY_HELLO, "Echo something back",
                 "I'll repeat what you say.",
                 "Use the echo tool when the user asks to repeat or echo a phrase.",
-                List.of(ECHO), PermissionRequirement.none()));
+                List.of(ECHO),
+                List.of("echo something else", "what else can you do?"),
+                PermissionRequirement.none()));
     }
 
     private String writeJson(Object value) {

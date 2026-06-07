@@ -27,6 +27,7 @@ mixin _$CapabilityRequest {
   String? get description => throw _privateConstructorUsedError;
   String? get llmGuidance => throw _privateConstructorUsedError;
   List<String> get tools => throw _privateConstructorUsedError;
+  List<String> get followUpHints => throw _privateConstructorUsedError;
 
   /// Serializes this CapabilityRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -52,6 +53,7 @@ abstract class $CapabilityRequestCopyWith<$Res> {
     String? description,
     String? llmGuidance,
     List<String> tools,
+    List<String> followUpHints,
   });
 }
 
@@ -76,6 +78,7 @@ class _$CapabilityRequestCopyWithImpl<$Res, $Val extends CapabilityRequest>
     Object? description = freezed,
     Object? llmGuidance = freezed,
     Object? tools = null,
+    Object? followUpHints = null,
   }) {
     return _then(
       _value.copyWith(
@@ -103,6 +106,10 @@ class _$CapabilityRequestCopyWithImpl<$Res, $Val extends CapabilityRequest>
                 ? _value.tools
                 : tools // ignore: cast_nullable_to_non_nullable
                       as List<String>,
+            followUpHints: null == followUpHints
+                ? _value.followUpHints
+                : followUpHints // ignore: cast_nullable_to_non_nullable
+                      as List<String>,
           )
           as $Val,
     );
@@ -125,6 +132,7 @@ abstract class _$$CapabilityRequestImplCopyWith<$Res>
     String? description,
     String? llmGuidance,
     List<String> tools,
+    List<String> followUpHints,
   });
 }
 
@@ -148,6 +156,7 @@ class __$$CapabilityRequestImplCopyWithImpl<$Res>
     Object? description = freezed,
     Object? llmGuidance = freezed,
     Object? tools = null,
+    Object? followUpHints = null,
   }) {
     return _then(
       _$CapabilityRequestImpl(
@@ -175,6 +184,10 @@ class __$$CapabilityRequestImplCopyWithImpl<$Res>
             ? _value._tools
             : tools // ignore: cast_nullable_to_non_nullable
                   as List<String>,
+        followUpHints: null == followUpHints
+            ? _value._followUpHints
+            : followUpHints // ignore: cast_nullable_to_non_nullable
+                  as List<String>,
       ),
     );
   }
@@ -190,7 +203,9 @@ class _$CapabilityRequestImpl implements _CapabilityRequest {
     this.description,
     this.llmGuidance,
     final List<String> tools = const <String>[],
-  }) : _tools = tools;
+    final List<String> followUpHints = const <String>[],
+  }) : _tools = tools,
+       _followUpHints = followUpHints;
 
   factory _$CapabilityRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$CapabilityRequestImplFromJson(json);
@@ -214,9 +229,18 @@ class _$CapabilityRequestImpl implements _CapabilityRequest {
     return EqualUnmodifiableListView(_tools);
   }
 
+  final List<String> _followUpHints;
+  @override
+  @JsonKey()
+  List<String> get followUpHints {
+    if (_followUpHints is EqualUnmodifiableListView) return _followUpHints;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_followUpHints);
+  }
+
   @override
   String toString() {
-    return 'CapabilityRequest(tenant: $tenant, id: $id, label: $label, description: $description, llmGuidance: $llmGuidance, tools: $tools)';
+    return 'CapabilityRequest(tenant: $tenant, id: $id, label: $label, description: $description, llmGuidance: $llmGuidance, tools: $tools, followUpHints: $followUpHints)';
   }
 
   @override
@@ -231,7 +255,11 @@ class _$CapabilityRequestImpl implements _CapabilityRequest {
                 other.description == description) &&
             (identical(other.llmGuidance, llmGuidance) ||
                 other.llmGuidance == llmGuidance) &&
-            const DeepCollectionEquality().equals(other._tools, _tools));
+            const DeepCollectionEquality().equals(other._tools, _tools) &&
+            const DeepCollectionEquality().equals(
+              other._followUpHints,
+              _followUpHints,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -244,6 +272,7 @@ class _$CapabilityRequestImpl implements _CapabilityRequest {
     description,
     llmGuidance,
     const DeepCollectionEquality().hash(_tools),
+    const DeepCollectionEquality().hash(_followUpHints),
   );
 
   /// Create a copy of CapabilityRequest
@@ -271,6 +300,7 @@ abstract class _CapabilityRequest implements CapabilityRequest {
     final String? description,
     final String? llmGuidance,
     final List<String> tools,
+    final List<String> followUpHints,
   }) = _$CapabilityRequestImpl;
 
   factory _CapabilityRequest.fromJson(Map<String, dynamic> json) =
@@ -288,6 +318,8 @@ abstract class _CapabilityRequest implements CapabilityRequest {
   String? get llmGuidance;
   @override
   List<String> get tools;
+  @override
+  List<String> get followUpHints;
 
   /// Create a copy of CapabilityRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -310,6 +342,7 @@ mixin _$CapabilityResponse {
   String? get description => throw _privateConstructorUsedError;
   String? get llmGuidance => throw _privateConstructorUsedError;
   List<String> get tools => throw _privateConstructorUsedError;
+  List<String> get followUpHints => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
 
   /// Serializes this CapabilityResponse to a JSON map.
@@ -337,6 +370,7 @@ abstract class $CapabilityResponseCopyWith<$Res> {
     String? description,
     String? llmGuidance,
     List<String> tools,
+    List<String> followUpHints,
     String? createdAt,
   });
 }
@@ -363,6 +397,7 @@ class _$CapabilityResponseCopyWithImpl<$Res, $Val extends CapabilityResponse>
     Object? description = freezed,
     Object? llmGuidance = freezed,
     Object? tools = null,
+    Object? followUpHints = null,
     Object? createdAt = freezed,
   }) {
     return _then(
@@ -395,6 +430,10 @@ class _$CapabilityResponseCopyWithImpl<$Res, $Val extends CapabilityResponse>
                 ? _value.tools
                 : tools // ignore: cast_nullable_to_non_nullable
                       as List<String>,
+            followUpHints: null == followUpHints
+                ? _value.followUpHints
+                : followUpHints // ignore: cast_nullable_to_non_nullable
+                      as List<String>,
             createdAt: freezed == createdAt
                 ? _value.createdAt
                 : createdAt // ignore: cast_nullable_to_non_nullable
@@ -422,6 +461,7 @@ abstract class _$$CapabilityResponseImplCopyWith<$Res>
     String? description,
     String? llmGuidance,
     List<String> tools,
+    List<String> followUpHints,
     String? createdAt,
   });
 }
@@ -447,6 +487,7 @@ class __$$CapabilityResponseImplCopyWithImpl<$Res>
     Object? description = freezed,
     Object? llmGuidance = freezed,
     Object? tools = null,
+    Object? followUpHints = null,
     Object? createdAt = freezed,
   }) {
     return _then(
@@ -479,6 +520,10 @@ class __$$CapabilityResponseImplCopyWithImpl<$Res>
             ? _value._tools
             : tools // ignore: cast_nullable_to_non_nullable
                   as List<String>,
+        followUpHints: null == followUpHints
+            ? _value._followUpHints
+            : followUpHints // ignore: cast_nullable_to_non_nullable
+                  as List<String>,
         createdAt: freezed == createdAt
             ? _value.createdAt
             : createdAt // ignore: cast_nullable_to_non_nullable
@@ -499,8 +544,10 @@ class _$CapabilityResponseImpl implements _CapabilityResponse {
     this.description,
     this.llmGuidance,
     final List<String> tools = const <String>[],
+    final List<String> followUpHints = const <String>[],
     this.createdAt,
-  }) : _tools = tools;
+  }) : _tools = tools,
+       _followUpHints = followUpHints;
 
   factory _$CapabilityResponseImpl.fromJson(Map<String, dynamic> json) =>
       _$$CapabilityResponseImplFromJson(json);
@@ -526,12 +573,21 @@ class _$CapabilityResponseImpl implements _CapabilityResponse {
     return EqualUnmodifiableListView(_tools);
   }
 
+  final List<String> _followUpHints;
+  @override
+  @JsonKey()
+  List<String> get followUpHints {
+    if (_followUpHints is EqualUnmodifiableListView) return _followUpHints;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_followUpHints);
+  }
+
   @override
   final String? createdAt;
 
   @override
   String toString() {
-    return 'CapabilityResponse(id: $id, version: $version, tenant: $tenant, label: $label, description: $description, llmGuidance: $llmGuidance, tools: $tools, createdAt: $createdAt)';
+    return 'CapabilityResponse(id: $id, version: $version, tenant: $tenant, label: $label, description: $description, llmGuidance: $llmGuidance, tools: $tools, followUpHints: $followUpHints, createdAt: $createdAt)';
   }
 
   @override
@@ -548,6 +604,10 @@ class _$CapabilityResponseImpl implements _CapabilityResponse {
             (identical(other.llmGuidance, llmGuidance) ||
                 other.llmGuidance == llmGuidance) &&
             const DeepCollectionEquality().equals(other._tools, _tools) &&
+            const DeepCollectionEquality().equals(
+              other._followUpHints,
+              _followUpHints,
+            ) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt));
   }
@@ -563,6 +623,7 @@ class _$CapabilityResponseImpl implements _CapabilityResponse {
     description,
     llmGuidance,
     const DeepCollectionEquality().hash(_tools),
+    const DeepCollectionEquality().hash(_followUpHints),
     createdAt,
   );
 
@@ -592,6 +653,7 @@ abstract class _CapabilityResponse implements CapabilityResponse {
     final String? description,
     final String? llmGuidance,
     final List<String> tools,
+    final List<String> followUpHints,
     final String? createdAt,
   }) = _$CapabilityResponseImpl;
 
@@ -612,6 +674,8 @@ abstract class _CapabilityResponse implements CapabilityResponse {
   String? get llmGuidance;
   @override
   List<String> get tools;
+  @override
+  List<String> get followUpHints;
   @override
   String? get createdAt;
 

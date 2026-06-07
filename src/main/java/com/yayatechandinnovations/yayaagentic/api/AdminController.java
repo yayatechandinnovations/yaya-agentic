@@ -43,6 +43,8 @@ public class AdminController {
     private final List<Authenticator> authenticators;
     private final List<Authorizer> authorizers;
     private final ObjectMapper json;
+    private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog;
+    private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper;
 
     public AdminController(TenantRepository tenants,
                            ProfileRepository profiles,
@@ -53,7 +55,9 @@ public class AdminController {
                            AuditAuthzRepository auditAuthz,
                            List<Authenticator> authenticators,
                            List<Authorizer> authorizers,
-                           ObjectMapper json) {
+                           ObjectMapper json,
+                           com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog,
+                           com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper) {
         this.tenants = tenants;
         this.profiles = profiles;
         this.capabilities = capabilities;
@@ -64,6 +68,8 @@ public class AdminController {
         this.authenticators = authenticators;
         this.authorizers = authorizers;
         this.json = json;
+        this.runtimeCatalog = runtimeCatalog;
+        this.catalogMapper = catalogMapper;
     }
 
     // ---- Profiles -------------------------------------------------------
@@ -127,7 +133,9 @@ public class AdminController {
         entity.setDescription(req.description());
         entity.setLlmGuidance(req.llmGuidance());
         entity.setToolIdsJson(writeJson(safeList(req.tools())));
+        entity.setFollowUpHintsJson(writeJson(safeList(req.followUpHints())));
         capabilities.save(entity);
+        runtimeCatalog.registerCapability(catalogMapper.toCapability(entity));
         return ResponseEntity.status(HttpStatus.CREATED).body(toCapabilityResponse(entity));
     }
 
@@ -179,6 +187,7 @@ public class AdminController {
         }
 
         tools.save(entity);
+        runtimeCatalog.registerTool(catalogMapper.toDescriptor(entity));
         return ResponseEntity.status(HttpStatus.CREATED).body(toToolResponse(entity));
     }
 
@@ -353,6 +362,7 @@ public class AdminController {
                 e.getId(), e.getVersion(), e.getTenantId(),
                 e.getLabel(), e.getDescription(), e.getLlmGuidance(),
                 readJson(e.getToolIdsJson(), new TypeReference<List<String>>() {}),
+                readJson(e.getFollowUpHintsJson(), new TypeReference<List<String>>() {}),
                 null /* createdAt populated by DB; not loaded here in M1 */);
     }
 

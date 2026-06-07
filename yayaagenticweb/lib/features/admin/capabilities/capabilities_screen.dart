@@ -23,6 +23,7 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
   final _labelCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _guidanceCtrl = TextEditingController();
+  final _hintsCtrl = TextEditingController();
   final _toolsSelected = <String>{};
   bool _saving = false;
 
@@ -32,8 +33,15 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
     _labelCtrl.dispose();
     _descCtrl.dispose();
     _guidanceCtrl.dispose();
+    _hintsCtrl.dispose();
     super.dispose();
   }
+
+  List<String> _parseHints(String raw) => raw
+      .split('\n')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 
   Future<void> _save() async {
     if (_idCtrl.text.trim().isEmpty || _labelCtrl.text.trim().isEmpty) {
@@ -50,6 +58,7 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
         description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
         llmGuidance: _guidanceCtrl.text.trim().isEmpty ? null : _guidanceCtrl.text.trim(),
         tools: _toolsSelected.toList(),
+        followUpHints: _parseHints(_hintsCtrl.text),
       ));
       ref.invalidate(capabilitiesProvider);
       if (!mounted) return;
@@ -57,6 +66,7 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
       _labelCtrl.clear();
       _descCtrl.clear();
       _guidanceCtrl.clear();
+      _hintsCtrl.clear();
       setState(_toolsSelected.clear);
       showSnack(context, 'capability saved');
     } catch (e) {
@@ -106,6 +116,15 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
                 maxLines: 3,
                 decoration: const InputDecoration(labelText: 'LLM guidance'),
               ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _hintsCtrl,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Follow-up hints',
+                  helperText: 'one per line — emitted as quick-reply chips after dispatch',
+                ),
+              ),
               const SizedBox(height: 12),
               Text('Tools', style: Theme.of(context).textTheme.labelLarge),
               tools.when(
@@ -153,11 +172,41 @@ class _Tile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: ListTile(
-        title: Text('${c.id}@${c.version}'),
-        subtitle: Text('${c.label}${c.description == null ? "" : "\n${c.description}"}'),
-        isThreeLine: c.description != null,
-        trailing: Text('${c.tools.length} tools', style: Theme.of(context).textTheme.bodySmall),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('${c.id}@${c.version}',
+                    style: Theme.of(context).textTheme.titleMedium)),
+                Text('${c.tools.length} tools',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(c.label, style: Theme.of(context).textTheme.bodyMedium),
+            if (c.description != null)
+              Text(c.description!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.outline)),
+            if (c.followUpHints.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: c.followUpHints
+                    .map((h) => Chip(
+                          label: Text(h, style: const TextStyle(fontSize: 12)),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ))
+                    .toList(),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

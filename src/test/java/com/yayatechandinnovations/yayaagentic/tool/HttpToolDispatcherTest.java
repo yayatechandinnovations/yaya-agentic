@@ -95,7 +95,7 @@ class HttpToolDispatcherTest {
 
     private HttpToolDispatcher dispatcherWithAllowlist(List<String> allowlist) {
         YayaAgenticProperties props = new YayaAgenticProperties(
-                "default", "default", null, null, null,
+                "default", "default", null, null, null, null,
                 new YayaAgenticProperties.HttpTools(allowlist, true, Duration.ofSeconds(3)));
         HttpEgressPolicy egress = new HttpEgressPolicy(props);
         return new HttpToolDispatcher(WebClient.builder(), egress, new ObjectMapper(), props);
