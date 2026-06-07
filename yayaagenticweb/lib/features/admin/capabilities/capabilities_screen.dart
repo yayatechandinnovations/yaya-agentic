@@ -26,6 +26,35 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
   final _hintsCtrl = TextEditingController();
   final _toolsSelected = <String>{};
   bool _saving = false;
+  int? _cloningFromVersion;
+
+  void _cloneEditFrom(CapabilityResponse c) {
+    setState(() {
+      _idCtrl.text = c.id;
+      _labelCtrl.text = c.label;
+      _descCtrl.text = c.description ?? '';
+      _guidanceCtrl.text = c.llmGuidance ?? '';
+      _hintsCtrl.text = c.followUpHints.join('\n');
+      _toolsSelected
+        ..clear()
+        ..addAll(c.tools);
+      _cloningFromVersion = c.version;
+    });
+    showSnack(context,
+        'Cloned ${c.id}@${c.version} → will save as v${c.version + 1}');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloningFromVersion = null;
+      _idCtrl.clear();
+      _labelCtrl.clear();
+      _descCtrl.clear();
+      _guidanceCtrl.clear();
+      _hintsCtrl.clear();
+      _toolsSelected.clear();
+    });
+  }
 
   @override
   void dispose() {
@@ -62,13 +91,20 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
       ));
       ref.invalidate(capabilitiesProvider);
       if (!mounted) return;
+      final wasCloning = _cloningFromVersion;
       _idCtrl.clear();
       _labelCtrl.clear();
       _descCtrl.clear();
       _guidanceCtrl.clear();
       _hintsCtrl.clear();
-      setState(_toolsSelected.clear);
-      showSnack(context, 'capability saved');
+      setState(() {
+        _toolsSelected.clear();
+        _cloningFromVersion = null;
+      });
+      showSnack(context,
+          wasCloning == null
+              ? 'capability saved'
+              : 'saved as v${wasCloning + 1}');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     } finally {
@@ -90,14 +126,20 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
         data: (list) => list.isEmpty
             ? const Center(child: Text('No capabilities yet.'))
             : ListView.separated(
-                itemBuilder: (_, i) => _Tile(c: list[i]),
+                itemBuilder: (_, i) => _Tile(
+                  c: list[i],
+                  onCloneEdit: () => _cloneEditFrom(list[i]),
+                ),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemCount: list.length,
               ),
       ),
       form: SingleChildScrollView(
         child: FormCard(
-          title: 'New capability',
+          title: _cloningFromVersion == null
+              ? 'New capability'
+              : 'Editing clone of ${_idCtrl.text}@$_cloningFromVersion → '
+                  'saves as v${_cloningFromVersion! + 1}',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -152,11 +194,18 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
             ],
           ),
           actions: [
+            if (_cloningFromVersion != null)
+              TextButton(
+                onPressed: _saving ? null : _cancelClone,
+                child: const Text('Cancel'),
+              ),
             FilledButton(
               onPressed: _saving ? null : _save,
               child: _saving
                   ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Save'),
+                  : Text(_cloningFromVersion == null
+                      ? 'Save'
+                      : 'Save as v${_cloningFromVersion! + 1}'),
             ),
           ],
         ),
@@ -166,47 +215,46 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
 }
 
 class _Tile extends StatelessWidget {
-  const _Tile({required this.c});
+  const _Tile({required this.c, required this.onCloneEdit});
   final CapabilityResponse c;
+  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(child: Text('${c.id}@${c.version}',
-                    style: Theme.of(context).textTheme.titleMedium)),
-                Text('${c.tools.length} tools',
-                    style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(c.label, style: Theme.of(context).textTheme.bodyMedium),
-            if (c.description != null)
-              Text(c.description!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.outline)),
-            if (c.followUpHints.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: c.followUpHints
-                    .map((h) => Chip(
-                          label: Text(h, style: const TextStyle(fontSize: 12)),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ))
-                    .toList(),
-              ),
-            ],
-          ],
-        ),
+    return EditableRecordCard(
+      onCloneEdit: onCloneEdit,
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${c.id}@${c.version}',
+              style: Theme.of(context).textTheme.titleSmall),
+          Text(c.label, style: Theme.of(context).textTheme.bodyMedium),
+        ],
+      ),
+      trailing: Chip(
+        label: Text('${c.tools.length} tools'),
+        visualDensity: VisualDensity.compact,
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'label', value: c.label),
+          if (c.description != null)
+            DetailRow(label: 'description', value: c.description!),
+          if (c.llmGuidance != null)
+            DetailRow(label: 'llmGuidance', value: c.llmGuidance!),
+          DetailRow(
+            label: 'tools',
+            value: c.tools.isEmpty ? '(none)' : c.tools.join(', '),
+          ),
+          DetailRow(
+            label: 'followUpHints',
+            value: c.followUpHints.isEmpty
+                ? '(none)'
+                : c.followUpHints.map((h) => '• $h').join('\n'),
+            mono: c.followUpHints.length > 1,
+          ),
+        ],
       ),
     );
   }

@@ -31,6 +31,54 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
 
   bool _saving = false;
 
+  /// Non-null when the form was populated from a "Clone & edit" action.
+  /// Persists from form prefill until the next successful save, then resets.
+  int? _cloningFromVersion;
+
+  void _cloneEditFrom(ToolResponse t) {
+    setState(() {
+      _idCtrl.text = t.id;
+      _inputSchemaCtrl.text = t.inputSchemaJson;
+      _outputSchemaCtrl.text = t.outputSchemaJson;
+      _kind = t.handler.kind;
+      _beanNameCtrl.text = t.handler.beanName ?? '';
+      final http = t.handler.httpSpec;
+      if (http != null) {
+        _httpMethod = http.method;
+        _urlCtrl.text = http.urlTemplate;
+        _headersCtrl.text = http.headerTemplates.entries
+            .map((e) => '${e.key}=${e.value}')
+            .join('\n');
+        _bodyContentTypeCtrl.text =
+            http.body?.contentType ?? 'application/json';
+        _bodyTemplateCtrl.text = http.body?.template ?? '';
+        _jsonPathCtrl.text = http.response?.jsonPath ?? r'$';
+        _authForwarding = http.authForwarding;
+      }
+      _confirmable = t.policy['confirmable'] == true;
+      _cloningFromVersion = t.version;
+    });
+    showSnack(context,
+        'Cloned ${t.id}@${t.version} → will save as v${t.version + 1}');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloningFromVersion = null;
+      _idCtrl.clear();
+      _beanNameCtrl.clear();
+      _urlCtrl.clear();
+      _headersCtrl.clear();
+      _bodyTemplateCtrl.clear();
+      _inputSchemaCtrl.text = '{"type":"object"}';
+      _outputSchemaCtrl.text = '{"type":"object"}';
+      _jsonPathCtrl.text = r'$';
+      _kind = 'BEAN';
+      _confirmable = false;
+      _authForwarding = 'NONE';
+    });
+  }
+
   @override
   void dispose() {
     _idCtrl.dispose();
@@ -108,13 +156,18 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       ));
       ref.invalidate(toolsProvider);
       if (!mounted) return;
+      final wasCloning = _cloningFromVersion;
       _idCtrl.clear();
       _beanNameCtrl.clear();
       _urlCtrl.clear();
       _headersCtrl.clear();
       _bodyTemplateCtrl.clear();
       _jsonPathCtrl.text = r'$';
-      showSnack(context, 'tool saved');
+      setState(() => _cloningFromVersion = null);
+      showSnack(context,
+          wasCloning == null
+              ? 'tool saved'
+              : 'saved as v${wasCloning + 1}');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     } finally {
@@ -134,7 +187,10 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         data: (list) => list.isEmpty
             ? const Center(child: Text('No tools yet.'))
             : ListView.separated(
-                itemBuilder: (_, i) => _Tile(t: list[i]),
+                itemBuilder: (_, i) => _Tile(
+                  t: list[i],
+                  onCloneEdit: () => _cloneEditFrom(list[i]),
+                ),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemCount: list.length,
               ),
@@ -144,8 +200,11 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   }
 
   Widget _form(BuildContext context) {
+    final cloning = _cloningFromVersion;
     return FormCard(
-      title: 'New / new-version tool',
+      title: cloning == null
+          ? 'New tool'
+          : 'Editing clone of ${_idCtrl.text}@$cloning → saves as v${cloning + 1}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -197,11 +256,18 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         ],
       ),
       actions: [
+        if (_cloningFromVersion != null)
+          TextButton(
+            onPressed: _saving ? null : _cancelClone,
+            child: const Text('Cancel'),
+          ),
         FilledButton(
           onPressed: _saving ? null : _save,
           child: _saving
               ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Save'),
+              : Text(_cloningFromVersion == null
+                  ? 'Save'
+                  : 'Save as v${_cloningFromVersion! + 1}'),
         ),
       ],
     );
@@ -277,19 +343,24 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
 }
 
 class _Tile extends StatelessWidget {
-  const _Tile({required this.t});
+  const _Tile({required this.t, required this.onCloneEdit});
   final ToolResponse t;
+  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
     final isHttp = t.handler.kind == 'HTTP';
     final confirmable = t.policy['confirmable'] == true;
-    return Card(
-      child: ListTile(
-        leading: Icon(isHttp ? Icons.cloud_outlined : Icons.memory_outlined),
-        title: Row(
-          children: [
-            Text('${t.id}@${t.version}'),
+    final http = t.handler.httpSpec;
+    return EditableRecordCard(
+      onCloneEdit: onCloneEdit,
+      leading: Icon(isHttp ? Icons.cloud_outlined : Icons.memory_outlined),
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text('${t.id}@${t.version}',
+                style: Theme.of(context).textTheme.titleSmall),
             if (confirmable) ...[
               const SizedBox(width: 8),
               Tooltip(
@@ -298,15 +369,50 @@ class _Tile extends StatelessWidget {
                     size: 16, color: Theme.of(context).colorScheme.error),
               ),
             ],
+          ]),
+          Text(isHttp
+              ? '${http?.method} ${http?.urlTemplate}'
+              : 'bean: ${t.handler.beanName}'),
+        ],
+      ),
+      trailing: Chip(
+        label: Text(t.handler.kind),
+        visualDensity: VisualDensity.compact,
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'inputSchemaJson', value: t.inputSchemaJson, mono: true),
+          DetailRow(label: 'outputSchemaJson', value: t.outputSchemaJson, mono: true),
+          DetailRow(label: 'handler.kind', value: t.handler.kind),
+          if (t.handler.beanName != null)
+            DetailRow(label: 'handler.beanName', value: t.handler.beanName!),
+          if (http != null) ...[
+            DetailRow(label: 'http.method', value: http.method),
+            DetailRow(label: 'http.urlTemplate', value: http.urlTemplate),
+            DetailRow(
+              label: 'http.headers',
+              value: http.headerTemplates.isEmpty
+                  ? '(none)'
+                  : http.headerTemplates.entries
+                      .map((e) => '${e.key}=${e.value}')
+                      .join('\n'),
+              mono: true,
+            ),
+            if (http.body != null)
+              DetailRow(
+                label: 'http.body',
+                value: '${http.body!.contentType}\n${http.body!.template}',
+                mono: true,
+              ),
+            DetailRow(label: 'http.response.jsonPath', value: http.response?.jsonPath ?? r'$'),
+            DetailRow(label: 'http.authForwarding', value: http.authForwarding),
           ],
-        ),
-        subtitle: Text(isHttp
-            ? '${t.handler.httpSpec?.method} ${t.handler.httpSpec?.urlTemplate}'
-            : 'bean: ${t.handler.beanName}'),
-        trailing: Chip(
-          label: Text(t.handler.kind),
-          visualDensity: VisualDensity.compact,
-        ),
+          DetailRow(
+            label: 'policy',
+            value: t.policy.entries.map((e) => '${e.key}=${e.value}').join('  '),
+          ),
+        ],
       ),
     );
   }

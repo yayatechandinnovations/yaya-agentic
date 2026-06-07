@@ -26,6 +26,41 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
   final _localPathCtrl = TextEditingController(text: '/var/data/docs');
   final _includeGlobCtrl = TextEditingController(text: 'glob:**/*.md');
   bool _saving = false;
+  int? _cloningFromVersion;
+
+  void _cloneEditFrom(KnowledgeSourceResponse s) {
+    setState(() {
+      _idCtrl.text = s.id;
+      _nameCtrl.text = s.name;
+      _locationKind = s.locationKind == 'LOCAL_PATH' ? 'LOCAL_PATH' : 'INLINE';
+      if (_locationKind == 'INLINE') {
+        final docs = (s.location['docs'] as List?) ?? const [];
+        if (docs.isNotEmpty && docs.first is Map) {
+          _inlineDocsCtrl.text =
+              ((docs.first as Map)['text'] ?? '').toString();
+        }
+      } else {
+        _localPathCtrl.text = (s.location['root'] ?? '').toString();
+        _includeGlobCtrl.text =
+            (s.location['includeGlob'] ?? 'glob:**/*.md').toString();
+      }
+      _cloningFromVersion = s.version;
+    });
+    showSnack(context,
+        'Cloned ${s.id}@${s.version} → will save as v${s.version + 1}');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloningFromVersion = null;
+      _idCtrl.clear();
+      _nameCtrl.clear();
+      _inlineDocsCtrl.text = '# Sample\n\nReplace this with your content.';
+      _localPathCtrl.text = '/var/data/docs';
+      _includeGlobCtrl.text = 'glob:**/*.md';
+      _locationKind = 'INLINE';
+    });
+  }
 
   @override
   void dispose() {
@@ -72,10 +107,15 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
         retrieval: const {},
       ));
       if (!mounted) return;
-      showSnack(context, 'created (status UNINDEXED — reindex to populate)');
+      final wasCloning = _cloningFromVersion;
+      showSnack(context,
+          wasCloning == null
+              ? 'created (status UNINDEXED — reindex to populate)'
+              : 'saved as v${wasCloning + 1} (reindex to populate)');
       ref.invalidate(knowledgeSourcesProvider);
       _idCtrl.clear();
       _nameCtrl.clear();
+      setState(() => _cloningFromVersion = null);
     } catch (e) {
       if (!mounted) return;
       showSnack(context, formatError(e), error: true);
@@ -122,6 +162,7 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
           itemBuilder: (_, i) => _SourceCard(
             source: list[i],
             onReindex: () => _reindex(list[i].id),
+            onCloneEdit: () => _cloneEditFrom(list[i]),
           ),
         ),
       ),
@@ -130,7 +171,11 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Create knowledge source',
+            Text(
+                _cloningFromVersion == null
+                    ? 'Create knowledge source'
+                    : 'Editing clone of ${_idCtrl.text}@$_cloningFromVersion → '
+                        'saves as v${_cloningFromVersion! + 1}',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
             TextField(
@@ -173,10 +218,26 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
                       hintText: 'glob:**/*.md')),
             ],
             const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: const Icon(Icons.add),
-              label: const Text('Create source'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (_cloningFromVersion != null) ...[
+                  TextButton(
+                    onPressed: _saving ? null : _cancelClone,
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                FilledButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: Icon(_cloningFromVersion == null
+                      ? Icons.add
+                      : Icons.save_outlined),
+                  label: Text(_cloningFromVersion == null
+                      ? 'Create source'
+                      : 'Save as v${_cloningFromVersion! + 1}'),
+                ),
+              ],
             ),
           ],
         ),
@@ -186,9 +247,14 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
 }
 
 class _SourceCard extends StatelessWidget {
-  const _SourceCard({required this.source, required this.onReindex});
+  const _SourceCard({
+    required this.source,
+    required this.onReindex,
+    required this.onCloneEdit,
+  });
   final KnowledgeSourceResponse source;
   final VoidCallback onReindex;
+  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -207,67 +273,60 @@ class _SourceCard extends StatelessWidget {
       default:
         statusColor = scheme.outline;
     }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(source.name,
-                          style: Theme.of(context).textTheme.titleSmall),
-                      Text(
-                          '${source.id}@${source.version}  ·  ${source.locationKind}',
-                          style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 12)),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: statusColor),
-                  ),
-                  child: Text(source.status,
-                      style: TextStyle(
-                          color: statusColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${source.docCount} docs · ${source.chunkCount} chunks'
-              '${source.lastIndexedAt == null ? "" : "  ·  indexed " + source.lastIndexedAt!.substring(0, 19)}',
-              style: const TextStyle(fontSize: 12),
-            ),
-            if (source.lastError != null) ...[
-              const SizedBox(height: 4),
-              Text(source.lastError!,
-                  style: TextStyle(color: scheme.error, fontSize: 12)),
-            ],
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: onReindex,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Reindex'),
-                ),
-              ],
-            ),
-          ],
+    return EditableRecordCard(
+      onCloneEdit: onCloneEdit,
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(source.name,
+              style: Theme.of(context).textTheme.titleSmall),
+          Text(
+              '${source.id}@${source.version}  ·  ${source.locationKind}',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        ],
+      ),
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: statusColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: statusColor),
         ),
+        child: Text(source.status,
+            style: TextStyle(
+                color: statusColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w700)),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'name', value: source.name),
+          DetailRow(label: 'locationKind', value: source.locationKind),
+          DetailRow(
+            label: 'location',
+            value: source.location.toString(),
+            mono: true,
+          ),
+          DetailRow(label: 'status', value: source.status),
+          DetailRow(
+            label: 'counts',
+            value: '${source.docCount} docs · ${source.chunkCount} chunks',
+          ),
+          if (source.lastIndexedAt != null)
+            DetailRow(label: 'lastIndexedAt', value: source.lastIndexedAt!),
+          if (source.lastError != null)
+            DetailRow(label: 'lastError', value: source.lastError!),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: onReindex,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Reindex now'),
+            ),
+          ),
+        ],
       ),
     );
   }

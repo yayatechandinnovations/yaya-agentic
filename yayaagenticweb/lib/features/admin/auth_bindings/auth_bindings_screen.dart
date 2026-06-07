@@ -22,6 +22,28 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
   String? _authenticatorRef;
   final _chainSelected = <String>{};
   bool _saving = false;
+  bool _cloning = false;
+
+  void _cloneEditFrom(AuthBindingResponse b) {
+    setState(() {
+      _idCtrl.text = b.id;
+      _authenticatorRef = b.authenticatorRef;
+      _chainSelected
+        ..clear()
+        ..addAll(b.authorizerChain);
+      _cloning = true;
+    });
+    showSnack(context, 'Cloned ${b.id} — auth bindings are upserted by id.');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloning = false;
+      _idCtrl.clear();
+      _authenticatorRef = null;
+      _chainSelected.clear();
+    });
+  }
 
   @override
   void dispose() {
@@ -45,12 +67,15 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
       ));
       ref.invalidate(authBindingsProvider);
       if (!mounted) return;
+      final wasCloning = _cloning;
       _idCtrl.clear();
       setState(() {
         _authenticatorRef = null;
         _chainSelected.clear();
+        _cloning = false;
       });
-      showSnack(context, 'binding saved');
+      showSnack(context,
+          wasCloning ? 'binding upserted' : 'binding saved');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     } finally {
@@ -72,14 +97,19 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
         data: (list) => list.isEmpty
             ? const Center(child: Text('No bindings yet.'))
             : ListView.separated(
-                itemBuilder: (_, i) => _Tile(b: list[i]),
+                itemBuilder: (_, i) => _Tile(
+                  b: list[i],
+                  onCloneEdit: () => _cloneEditFrom(list[i]),
+                ),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemCount: list.length,
               ),
       ),
       form: SingleChildScrollView(
         child: FormCard(
-          title: 'New / upsert auth binding',
+          title: _cloning
+              ? 'Editing ${_idCtrl.text} (upsert will overwrite)'
+              : 'New / upsert auth binding',
           child: avail.when(
             loading: () => const LinearProgressIndicator(),
             error: (e, _) => Text(formatError(e),
@@ -122,11 +152,16 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
             ),
           ),
           actions: [
+            if (_cloning)
+              TextButton(
+                onPressed: _saving ? null : _cancelClone,
+                child: const Text('Cancel'),
+              ),
             FilledButton(
               onPressed: _saving ? null : _save,
               child: _saving
                   ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Save'),
+                  : Text(_cloning ? 'Upsert' : 'Save'),
             ),
           ],
         ),
@@ -136,17 +171,34 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
 }
 
 class _Tile extends StatelessWidget {
-  const _Tile({required this.b});
+  const _Tile({required this.b, required this.onCloneEdit});
   final AuthBindingResponse b;
+  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        title: Text(b.id),
-        subtitle: Text('authenticator: ${b.authenticatorRef}'
-            '${b.authorizerChain.isEmpty ? "" : "\nchain: ${b.authorizerChain.join(" → ")}"}'),
-        isThreeLine: b.authorizerChain.isNotEmpty,
+    return EditableRecordCard(
+      onCloneEdit: onCloneEdit,
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(b.id, style: Theme.of(context).textTheme.titleSmall),
+          Text('authenticator: ${b.authenticatorRef}',
+              style: const TextStyle(fontSize: 13)),
+        ],
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'authenticatorRef', value: b.authenticatorRef),
+          DetailRow(
+            label: 'authorizerChain',
+            value: b.authorizerChain.isEmpty
+                ? '(empty — default Allow.none)'
+                : b.authorizerChain.join(' → '),
+            mono: b.authorizerChain.length > 2,
+          ),
+        ],
       ),
     );
   }

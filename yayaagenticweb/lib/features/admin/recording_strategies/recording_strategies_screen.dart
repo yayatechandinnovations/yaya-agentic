@@ -33,6 +33,32 @@ class _RecordingStrategiesScreenState
   String _strategyKind = 'fanout';
   final _extraJsonCtrl = TextEditingController(text: '{\n  "primary": "postgres",\n  "sinks": []\n}');
   bool _saving = false;
+  int? _cloningFromVersion;
+
+  void _cloneEditFrom(RecordingStrategyResponse s) {
+    final strategy = Map<String, dynamic>.from(s.strategy);
+    final kind = (strategy.remove('kind') ?? 'fanout').toString();
+    setState(() {
+      _scopeKind = s.scopeKind;
+      _scopeIdCtrl.text = s.scopeId;
+      _strategyKind = kind;
+      _extraJsonCtrl.text =
+          const JsonEncoder.withIndent('  ').convert(strategy);
+      _cloningFromVersion = s.version;
+    });
+    showSnack(context,
+        'Cloned ${s.scopeKind}/${s.scopeId}@${s.version} → will save as v${s.version + 1}');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloningFromVersion = null;
+      _scopeKind = 'PROFILE';
+      _scopeIdCtrl.text = 'hello-world';
+      _strategyKind = 'fanout';
+      _extraJsonCtrl.text = '{\n  "primary": "postgres",\n  "sinks": []\n}';
+    });
+  }
 
   @override
   void dispose() {
@@ -69,7 +95,12 @@ class _RecordingStrategiesScreenState
           (kind: _scopeKind, id: _scopeIdCtrl.text.trim());
       ref.invalidate(strategyForScopeProvider);
       if (!mounted) return;
-      showSnack(context, 'recording strategy saved');
+      final wasCloning = _cloningFromVersion;
+      setState(() => _cloningFromVersion = null);
+      showSnack(context,
+          wasCloning == null
+              ? 'recording strategy saved'
+              : 'saved as v${wasCloning + 1}');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     } finally {
@@ -134,8 +165,20 @@ class _RecordingStrategiesScreenState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('${s.scopeKind}/${s.scopeId}  v${s.version}',
-                                style: Theme.of(context).textTheme.titleMedium),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                      '${s.scopeKind}/${s.scopeId}  v${s.version}',
+                                      style: Theme.of(context).textTheme.titleMedium),
+                                ),
+                                FilledButton.tonalIcon(
+                                  onPressed: () => _cloneEditFrom(s),
+                                  icon: const Icon(Icons.edit_outlined, size: 18),
+                                  label: const Text('Clone & edit'),
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 8),
                             SelectableText(
                               const JsonEncoder.withIndent('  ').convert(s.strategy),
@@ -151,7 +194,10 @@ class _RecordingStrategiesScreenState
       ),
       form: SingleChildScrollView(
         child: FormCard(
-          title: 'New / new-version strategy',
+          title: _cloningFromVersion == null
+              ? 'New strategy'
+              : 'Editing clone of $_scopeKind/${_scopeIdCtrl.text}@$_cloningFromVersion → '
+                  'saves as v${_cloningFromVersion! + 1}',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -190,11 +236,18 @@ class _RecordingStrategiesScreenState
             ],
           ),
           actions: [
+            if (_cloningFromVersion != null)
+              TextButton(
+                onPressed: _saving ? null : _cancelClone,
+                child: const Text('Cancel'),
+              ),
             FilledButton(
               onPressed: _saving ? null : _save,
               child: _saving
                   ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Save'),
+                  : Text(_cloningFromVersion == null
+                      ? 'Save'
+                      : 'Save as v${_cloningFromVersion! + 1}'),
             ),
           ],
         ),

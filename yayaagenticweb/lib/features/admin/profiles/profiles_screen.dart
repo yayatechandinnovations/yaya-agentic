@@ -36,6 +36,35 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   final _capsSelected = <String>{};
   String? _authBinding;
   bool _saving = false;
+  int? _cloningFromVersion;
+
+  void _cloneEditFrom(ProfileResponse p) {
+    setState(() {
+      _idCtrl.text = p.id;
+      _nameCtrl.text = p.displayName;
+      _introCtrl.text = p.introOneLiner;
+      _promptCtrl.text = p.systemPromptFragment;
+      _capsSelected
+        ..clear()
+        ..addAll(p.capabilities);
+      _authBinding = p.authBindingId;
+      _cloningFromVersion = p.version;
+    });
+    showSnack(context,
+        'Cloned ${p.id}@${p.version} → will save as v${p.version + 1}');
+  }
+
+  void _cancelClone() {
+    setState(() {
+      _cloningFromVersion = null;
+      _idCtrl.clear();
+      _nameCtrl.clear();
+      _introCtrl.clear();
+      _promptCtrl.clear();
+      _capsSelected.clear();
+      _authBinding = null;
+    });
+  }
 
   @override
   void dispose() {
@@ -65,12 +94,20 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       ));
       ref.invalidate(profilesProvider);
       if (!mounted) return;
+      final wasCloning = _cloningFromVersion;
       _idCtrl.clear();
       _nameCtrl.clear();
       _introCtrl.clear();
       _promptCtrl.clear();
-      setState(_capsSelected.clear);
-      showSnack(context, 'profile saved');
+      setState(() {
+        _capsSelected.clear();
+        _authBinding = null;
+        _cloningFromVersion = null;
+      });
+      showSnack(context,
+          wasCloning == null
+              ? 'profile saved'
+              : 'saved as v${wasCloning + 1}');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     } finally {
@@ -93,14 +130,20 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         data: (list) => list.isEmpty
             ? const Center(child: Text('No profiles yet.'))
             : ListView.separated(
-                itemBuilder: (_, i) => _ProfileTile(profile: list[i]),
+                itemBuilder: (_, i) => _ProfileTile(
+                  profile: list[i],
+                  onCloneEdit: () => _cloneEditFrom(list[i]),
+                ),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemCount: list.length,
               ),
       ),
       form: SingleChildScrollView(
         child: FormCard(
-          title: 'New / new-version profile',
+          title: _cloningFromVersion == null
+              ? 'New profile'
+              : 'Editing clone of ${_idCtrl.text}@$_cloningFromVersion → '
+                  'saves as v${_cloningFromVersion! + 1}',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -157,9 +200,18 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
             ],
           ),
           actions: [
+            if (_cloningFromVersion != null)
+              TextButton(
+                onPressed: _saving ? null : _cancelClone,
+                child: const Text('Cancel'),
+              ),
             FilledButton(
               onPressed: _saving ? null : _save,
-              child: _saving ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save'),
+              child: _saving
+                  ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(_cloningFromVersion == null
+                      ? 'Save'
+                      : 'Save as v${_cloningFromVersion! + 1}'),
             ),
           ],
         ),
@@ -169,17 +221,49 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
 }
 
 class _ProfileTile extends StatelessWidget {
-  const _ProfileTile({required this.profile});
+  const _ProfileTile({required this.profile, required this.onCloneEdit});
   final ProfileResponse profile;
+  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        title: Text('${profile.id}@${profile.version}'),
-        subtitle: Text('${profile.displayName} · ${profile.capabilities.length} capabilities'
-            '${profile.authBindingId == null ? "" : " · auth: ${profile.authBindingId}"}'),
-        trailing: Text(profile.status ?? '', style: Theme.of(context).textTheme.bodySmall),
+    return EditableRecordCard(
+      onCloneEdit: onCloneEdit,
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${profile.id}@${profile.version}',
+              style: Theme.of(context).textTheme.titleSmall),
+          Text(profile.displayName, style: Theme.of(context).textTheme.bodyMedium),
+        ],
+      ),
+      trailing: profile.status == null
+          ? null
+          : Chip(
+              label: Text(profile.status!, style: const TextStyle(fontSize: 11)),
+              visualDensity: VisualDensity.compact,
+            ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'displayName', value: profile.displayName),
+          DetailRow(label: 'introOneLiner', value: profile.introOneLiner),
+          DetailRow(
+            label: 'systemPromptFragment',
+            value: profile.systemPromptFragment,
+            mono: true,
+          ),
+          DetailRow(
+            label: 'capabilities',
+            value: profile.capabilities.isEmpty
+                ? '(none)'
+                : profile.capabilities.join(', '),
+          ),
+          DetailRow(
+            label: 'authBindingId',
+            value: profile.authBindingId ?? '(none)',
+          ),
+        ],
       ),
     );
   }
