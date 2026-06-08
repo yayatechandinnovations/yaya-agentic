@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface ToolRepository extends JpaRepository<ToolEntity, ToolEntity.PK> {
     List<ToolEntity> findByTenantIdAndIdOrderByVersionDesc(String tenantId, String id);
+    List<ToolEntity> findByTenantId(String tenantId);
 }

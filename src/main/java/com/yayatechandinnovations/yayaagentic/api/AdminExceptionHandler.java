@@ -14,6 +14,14 @@ import org.springframework.web.server.ResponseStatusException;
 @RestControllerAdvice(basePackageClasses = AdminController.class)
 public class AdminExceptionHandler {
 
+    @ExceptionHandler(AdminApiException.class)
+    public ResponseEntity<AdminDtos.ApiError> handle(AdminApiException ex) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        return ResponseEntity.status(status).body(new AdminDtos.ApiError(
+                ex.code(),
+                ex.getReason() == null ? status.getReasonPhrase() : ex.getReason()));
+    }
+
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<AdminDtos.ApiError> handle(ResponseStatusException ex) {
         HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());

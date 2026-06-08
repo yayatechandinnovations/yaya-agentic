@@ -7,6 +7,9 @@ import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
 import com.yayatechandinnovations.yayaagentic.auth.Authorizer;
 import com.yayatechandinnovations.yayaagentic.persistence.*;
+import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlValidator;
+import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
+import com.yayatechandinnovations.yayaagentic.tenant.migration.AbsoluteToPathMigrator;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -33,7 +36,7 @@ public class AdminController {
 
     private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
 
-    private final TenantRepository tenants;
+    private final TenantGuard tenantGuard;
     private final ProfileRepository profiles;
     private final CapabilityRepository capabilities;
     private final ToolRepository tools;
@@ -45,8 +48,9 @@ public class AdminController {
     private final ObjectMapper json;
     private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog;
     private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper;
+    private final AbsoluteToPathMigrator absoluteToPathMigrator;
 
-    public AdminController(TenantRepository tenants,
+    public AdminController(TenantGuard tenantGuard,
                            ProfileRepository profiles,
                            CapabilityRepository capabilities,
                            ToolRepository tools,
@@ -57,8 +61,9 @@ public class AdminController {
                            List<Authorizer> authorizers,
                            ObjectMapper json,
                            com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog,
-                           com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper) {
-        this.tenants = tenants;
+                           com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper,
+                           AbsoluteToPathMigrator absoluteToPathMigrator) {
+        this.tenantGuard = tenantGuard;
         this.profiles = profiles;
         this.capabilities = capabilities;
         this.tools = tools;
@@ -70,6 +75,7 @@ public class AdminController {
         this.json = json;
         this.runtimeCatalog = runtimeCatalog;
         this.catalogMapper = catalogMapper;
+        this.absoluteToPathMigrator = absoluteToPathMigrator;
     }
 
     // ---- Profiles -------------------------------------------------------
@@ -83,7 +89,7 @@ public class AdminController {
         require(req.introOneLiner(), "profile.introOneLiner");
         require(req.systemPromptFragment(), "profile.systemPromptFragment");
 
-        ensureTenant(tenant);
+        tenantGuard.requireWritable(tenant);
         for (String capId : safeList(req.capabilities())) {
             if (capabilities.findByTenantIdAndIdOrderByVersionDesc(tenant, capId).isEmpty()) {
                 throw badRequest("profile references unknown capability: " + capId);
@@ -121,7 +127,7 @@ public class AdminController {
         String tenant = requireTenant(req.tenant());
         require(req.id(), "capability.id");
         require(req.label(), "capability.label");
-        ensureTenant(tenant);
+        tenantGuard.requireWritable(tenant);
         for (String toolId : safeList(req.tools())) {
             if (tools.findByTenantIdAndIdOrderByVersionDesc(tenant, toolId).isEmpty()) {
                 throw badRequest("capability references unknown tool: " + toolId);
@@ -158,7 +164,7 @@ public class AdminController {
         require(req.inputSchemaJson(), "tool.inputSchemaJson");
         require(req.outputSchemaJson(), "tool.outputSchemaJson");
         if (req.handler() == null) throw badRequest("tool.handler is required");
-        ensureTenant(tenant);
+        tenantGuard.requireWritable(tenant);
         parseOrFail(req.inputSchemaJson(), "tool.inputSchemaJson");
         parseOrFail(req.outputSchemaJson(), "tool.outputSchemaJson");
 
@@ -208,7 +214,7 @@ public class AdminController {
         String tenant = requireTenant(req.tenant());
         require(req.id(), "authBinding.id");
         require(req.authenticatorRef(), "authBinding.authenticatorRef");
-        ensureTenant(tenant);
+        tenantGuard.requireWritable(tenant);
 
         Set<String> known = authenticators.stream().map(Authenticator::name).collect(Collectors.toUnmodifiableSet());
         if (!known.contains(req.authenticatorRef())) {
@@ -265,7 +271,7 @@ public class AdminController {
                         .contains(s.toLowerCase(Locale.ROOT))) {
             throw badRequest("strategy.kind must be one of single|fanout|tiered|classified");
         }
-        ensureTenant(tenant);
+        tenantGuard.requireWritable(tenant);
 
         int nextVersion = recordingStrategies
                 .findByTenantIdAndScopeKindAndScopeIdOrderByVersionDesc(tenant, scope, req.scopeId())
@@ -308,11 +314,25 @@ public class AdminController {
         return new AdminDtos.AuthzAuditPage(items, result.getNumber(), result.getSize(), result.getTotalElements());
     }
 
+    // ---- Migration helper (§9.2) ---------------------------------------
+
+    @PostMapping("/tools/migrate-to-path")
+    public AbsoluteToPathMigrator.Plan migrateToPath(@RequestParam("tenant") String tenant,
+                                                     @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun) {
+        tenantGuard.requireWritable(tenant);
+        return dryRun
+                ? absoluteToPathMigrator.plan(tenant)
+                : absoluteToPathMigrator.apply(tenant);
+    }
+
     // ---- Validation + JSON helpers --------------------------------------
 
     private void validateHttpSpec(AdminDtos.HttpHandlerDto spec) {
         require(spec.method(), "httpSpec.method");
-        require(spec.urlTemplate(), "httpSpec.urlTemplate");
+        // Path-only enforcement per tenant-registry-design §6.1. The host
+        // resolves from the tool's tenant at dispatch time; absolute URLs
+        // re-introduce the per-tenant fan-out / cloning bug we just closed.
+        BaseUrlValidator.validatePathOnlyTemplate(spec.urlTemplate());
         try {
             HttpToolSpec.HttpMethod.valueOf(spec.method().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
@@ -338,12 +358,6 @@ public class AdminController {
     private int nextToolVersion(String tenant, String id) {
         return tools.findByTenantIdAndIdOrderByVersionDesc(tenant, id)
                 .stream().mapToInt(ToolEntity::getVersion).max().orElse(0) + 1;
-    }
-
-    private void ensureTenant(String tenant) {
-        if (!tenants.existsById(tenant)) {
-            tenants.save(new TenantEntity(tenant, tenant));
-        }
     }
 
     // ---- Mapping back to DTOs ------------------------------------------

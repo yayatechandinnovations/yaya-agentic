@@ -52,6 +52,21 @@ class AdminControllerTest {
         // header echoed from the XSRF-TOKEN cookie. TestAuthDance handles
         // the GET-then-POST handshake so each test sees a primed client.
         client = TestAuthDance.asBootstrap(client);
+        // M2.8 — the implicit ensureTenant is gone; admin writes against an
+        // unknown tenant return 400 unknown_tenant. Each test pre-registers
+        // the tenant (idempotent: accepts both 201 and 409 tenant_id_taken).
+        ensureAdminTestTenant();
+    }
+
+    private void ensureAdminTestTenant() {
+        var req = new AdminDtos.TenantRequest(
+                TENANT, "Admin Test", "https://admin-test.example",
+                List.of(), List.of(), true, null, null, Map.of());
+        client.post().uri("/v1/admin/tenants")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req)
+                .exchange()
+                .expectStatus().value(s -> assertThat(s).isIn(201, 409));
     }
 
     @Test @Order(1)

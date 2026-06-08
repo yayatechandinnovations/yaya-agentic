@@ -7,7 +7,9 @@ import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
+import com.yayatechandinnovations.yayaagentic.persistence.SessionRepository;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
+import com.yayatechandinnovations.yayaagentic.tenant.OriginEnforcer;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -17,34 +19,43 @@ import reactor.core.publisher.Mono;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/v1/sessions")
 public class SessionController {
 
     private final ConversationEngine engine;
+    private final OriginEnforcer originEnforcer;
+    private final SessionRepository sessions;
 
-    public SessionController(ConversationEngine engine) {
+    public SessionController(ConversationEngine engine,
+                             OriginEnforcer originEnforcer,
+                             SessionRepository sessions) {
         this.engine = engine;
+        this.originEnforcer = originEnforcer;
+        this.sessions = sessions;
     }
 
     @PostMapping
     public Mono<SessionDtos.StartSessionResponse> start(@RequestBody SessionDtos.StartSessionRequest body,
                                                         ServerWebExchange exchange) {
         Ids.TenantId tenant = new Ids.TenantId(body.tenant() == null ? "default" : body.tenant());
-        Optional<Ids.ProfileId> explicit = body.profileId() == null
-                ? Optional.empty()
-                : Optional.of(new Ids.ProfileId(body.profileId(),
-                        body.profileVersion() == null ? 1 : body.profileVersion()));
+        return enforceOriginMono(tenant.value(), exchange).then(Mono.fromSupplier(() -> {
+            Optional<Ids.ProfileId> explicit = body.profileId() == null
+                    ? Optional.empty()
+                    : Optional.of(new Ids.ProfileId(body.profileId(),
+                            body.profileVersion() == null ? 1 : body.profileVersion()));
 
-        StartConversationRequest req = new StartConversationRequest(tenant, explicit,
-                body.channel() == null ? "web" : body.channel(),
-                body.hints() == null ? Map.of() : body.hints());
+            StartConversationRequest req = new StartConversationRequest(tenant, explicit,
+                    body.channel() == null ? "web" : body.channel(),
+                    body.hints() == null ? Map.of() : body.hints());
 
-        AuthContext auth = authContext(tenant, exchange);
-        StartSessionResult result = engine.start(req, auth);
-        return Mono.just(SessionDtos.StartSessionResponse.of(
-                result.session().id(), result.profile(), result.greeting(), result.quickReplies()));
+            AuthContext auth = authContext(tenant, exchange);
+            StartSessionResult result = engine.start(req, auth);
+            return SessionDtos.StartSessionResponse.of(
+                    result.session().id(), result.profile(), result.greeting(), result.quickReplies());
+        }));
     }
 
     @PostMapping(value = "/{id}/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -52,15 +63,36 @@ public class SessionController {
                                                      @RequestBody SessionDtos.MessageRequest body,
                                                      ServerWebExchange exchange) {
         Ids.SessionId sessionId = new Ids.SessionId(id);
-        AuthContext auth = authContext(new Ids.TenantId("default"), exchange);
-        return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
-                .map(SessionController::toSse);
+        String tenant = lookupTenant(id);
+        return enforceOriginMono(tenant, exchange).thenMany(Flux.defer(() -> {
+            AuthContext auth = authContext(new Ids.TenantId(tenant), exchange);
+            return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
+                    .map(SessionController::toSse);
+        }));
     }
 
     @PostMapping("/{id}/end")
     public Mono<Void> end(@PathVariable("id") String id, ServerWebExchange exchange) {
-        engine.end(new Ids.SessionId(id), authContext(new Ids.TenantId("default"), exchange));
-        return Mono.empty();
+        String tenant = lookupTenant(id);
+        return enforceOriginMono(tenant, exchange).then(Mono.fromRunnable(() ->
+                engine.end(new Ids.SessionId(id), authContext(new Ids.TenantId(tenant), exchange))));
+    }
+
+    private Mono<Void> enforceOriginMono(String tenantId, ServerWebExchange exchange) {
+        String origin = exchange.getRequest().getHeaders().getFirst("Origin");
+        String path = exchange.getRequest().getPath().value();
+        return Mono.fromRunnable(() ->
+                originEnforcer.requirePermitted(tenantId, origin, path, null));
+    }
+
+    private String lookupTenant(String sessionId) {
+        try {
+            return sessions.findById(UUID.fromString(sessionId))
+                    .map(s -> s.getTenantId())
+                    .orElse("default");
+        } catch (IllegalArgumentException malformed) {
+            return "default";
+        }
     }
 
     private AuthContext authContext(Ids.TenantId tenant, ServerWebExchange exchange) {

@@ -13,6 +13,7 @@ import com.yayatechandinnovations.yayaagentic.knowledge.SourceLocation;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionOrchestrator;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceRepository;
+import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -43,15 +44,18 @@ public class KnowledgeAdminController {
     private final IngestionOrchestrator ingestion;
     private final M0Catalog runtimeCatalog;
     private final ObjectMapper json;
+    private final TenantGuard tenantGuard;
 
     public KnowledgeAdminController(KnowledgeSourceRepository sources,
                                     IngestionOrchestrator ingestion,
                                     M0Catalog runtimeCatalog,
-                                    ObjectMapper json) {
+                                    ObjectMapper json,
+                                    TenantGuard tenantGuard) {
         this.sources = sources;
         this.ingestion = ingestion;
         this.runtimeCatalog = runtimeCatalog;
         this.json = json;
+        this.tenantGuard = tenantGuard;
     }
 
     @GetMapping
@@ -75,6 +79,7 @@ public class KnowledgeAdminController {
     public KnowledgeAdminDtos.KnowledgeSourceView create(
             @RequestBody KnowledgeAdminDtos.CreateKnowledgeSourceRequest req) {
         String tenant = req.tenant() == null ? "default" : req.tenant();
+        tenantGuard.requireWritable(tenant);
         int version = sources.findByTenantId(tenant).stream()
                 .filter(e -> e.getId().equals(req.id()))
                 .mapToInt(KnowledgeSourceEntity::getVersion)
@@ -102,6 +107,7 @@ public class KnowledgeAdminController {
             @RequestParam(value = "tenant", defaultValue = "default") String tenant,
             @PathVariable("id") String id,
             @RequestBody KnowledgeAdminDtos.UpdateKnowledgeSourceRequest req) {
+        tenantGuard.requireWritable(tenant);
         int nextVersion = sources.findByTenantId(tenant).stream()
                 .filter(e -> e.getId().equals(id))
                 .mapToInt(KnowledgeSourceEntity::getVersion)

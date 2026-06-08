@@ -122,6 +122,47 @@ public final class AdminDtos {
 
     public record AuthzAuditPage(List<AuthzAuditEntry> items, int page, int pageSize, long total) {}
 
+    // ---- Tenants --------------------------------------------------------
+
+    public record TenantRequest(
+            String id,                            // ignored on PUT/PATCH
+            String displayName,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist,
+            Boolean requireHttps,
+            String defaultAuthenticatorBindingId,
+            Long defaultRecordingStrategyId,
+            Map<String, Object> settings
+    ) {}
+
+    public record TenantResponse(
+            String id,
+            String displayName,
+            String status,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist,
+            Boolean requireHttps,
+            String defaultAuthenticatorBindingId,
+            Long defaultRecordingStrategyId,
+            Map<String, Object> settings,
+            OffsetDateTime createdAt,
+            OffsetDateTime updatedAt,
+            OffsetDateTime archivedAt,
+            String createdBy
+    ) {}
+
+    public record TenantHealthResponse(
+            String tenantId,
+            String status,
+            boolean hostBaseUrlSet,
+            boolean authBindingResolves,
+            boolean recordingStrategyResolves,
+            int dependencyCount,
+            List<String> warnings
+    ) {}
+
     // ---- Generic --------------------------------------------------------
 
     public record ApiError(String error, String message) {}
