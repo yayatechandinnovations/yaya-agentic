@@ -10,6 +10,9 @@ target/
 *.pem
 *.key
 
+### Deploy tooling (local-only, never tracked)
+deploy/
+
 ### Flutter build artifacts
 yayaagenticweb/build/
 yayaagenticweb/.dart_tool/

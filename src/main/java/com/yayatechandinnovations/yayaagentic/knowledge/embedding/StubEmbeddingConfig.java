@@ -1,6 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.knowledge.embedding;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Bean;
 
@@ -22,8 +22,20 @@ import java.util.List;
 @Configuration
 public class StubEmbeddingConfig {
 
+    // Gated on the explicit Spring AI provider switch rather than
+    // {@code @ConditionalOnMissingBean(EmbeddingService.class)}. The
+    // missing-bean check was timing-fragile against
+    // {@link SpringAiOpenAiEmbeddingService}'s {@code @ConditionalOnBean}
+    // (evaluated at component-scan time, before Spring AI auto-config
+    // could publish the {@code EmbeddingModel}) — when the OpenAI key was
+    // absent or invalid, neither bean ended up registered and boot failed.
+    // Property-gated registration is deterministic.
     @Bean
-    @ConditionalOnMissingBean(EmbeddingService.class)
+    @ConditionalOnProperty(
+            prefix = "spring.ai.model",
+            name = "embedding",
+            havingValue = "none",
+            matchIfMissing = true)
     public EmbeddingService stubEmbeddingService() {
         return new DeterministicHashEmbeddingService();
     }
