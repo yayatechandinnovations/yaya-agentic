@@ -4,10 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
+import '../models/admin/clone.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
+import '../models/admin/tenant.dart';
 import '../models/admin/tool.dart';
 import 'api_client.dart';
 
@@ -17,6 +19,79 @@ import 'api_client.dart';
 class AdminApi {
   AdminApi(this._dio);
   final Dio _dio;
+
+  // ---- Tenants -------------------------------------------------------
+
+  Future<List<TenantResponse>> listTenants({String? status}) async {
+    final res = await _dio.get('/v1/admin/tenants',
+        queryParameters: {if (status != null) 'status': status});
+    return (res.data as List)
+        .map((e) => TenantResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<TenantResponse> getTenant(String id) async {
+    final res = await _dio.get('/v1/admin/tenants/$id');
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantResponse> createTenant(TenantRequest req) async {
+    final res = await _dio.post('/v1/admin/tenants', data: req.toJson());
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantResponse> patchTenant(String id, TenantRequest req) async {
+    final res = await _dio.patch('/v1/admin/tenants/$id', data: req.toJson());
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantResponse> suspendTenant(String id) async {
+    final res = await _dio.post('/v1/admin/tenants/$id/suspend');
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantResponse> resumeTenant(String id) async {
+    final res = await _dio.post('/v1/admin/tenants/$id/resume');
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantResponse> archiveTenant(String id) async {
+    final res = await _dio.post('/v1/admin/tenants/$id/archive');
+    return TenantResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantHealthResponse> tenantHealth(String id) async {
+    final res = await _dio.get('/v1/admin/tenants/$id/health');
+    return TenantHealthResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- Cross-tenant profile clone ------------------------------------
+
+  Future<CloneResult> cloneProfile({
+    required String sourceTenant,
+    required String profileId,
+    required int version,
+    required CloneRequest body,
+  }) async {
+    final res = await _dio.post(
+      '/v1/admin/tenants/$sourceTenant/profiles/$profileId/$version/clone',
+      data: body.toJson(),
+    );
+    return CloneResult.fromJson(_asMap(res.data));
+  }
+
+  // ---- Absolute→path migrator ----------------------------------------
+
+  Future<MigrateToPathPlan> migrateToolsToPath({
+    required String tenant,
+    bool dryRun = true,
+  }) async {
+    final res = await _dio.post(
+      '/v1/admin/tools/migrate-to-path',
+      queryParameters: {'tenant': tenant, 'dryRun': dryRun},
+    );
+    return MigrateToPathPlan.fromJson(_asMap(res.data));
+  }
 
   // ---- Profiles ------------------------------------------------------
 

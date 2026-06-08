@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../models/admin/tenant.dart';
 import '../../../models/admin/tool.dart';
 import '../capabilities/capabilities_screen.dart' show toolsProvider;
 import '../shared/admin_shared.dart';
+import '../tenants/tenants_screen.dart' show tenantsProvider;
 
 class ToolsScreen extends ConsumerStatefulWidget {
   const ToolsScreen({super.key});
@@ -286,12 +288,9 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
           onChanged: (v) => setState(() => _httpMethod = v ?? 'GET'),
         ),
         const SizedBox(height: 8),
-        TextField(
+        _PathOnlyUrlField(
           controller: _urlCtrl,
-          decoration: const InputDecoration(
-            labelText: 'urlTemplate',
-            helperText: 'placeholders: {field} or {a.b.c}',
-          ),
+          onChanged: () => setState(() {}),
         ),
         const SizedBox(height: 8),
         TextField(
@@ -337,6 +336,114 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
                 : null,
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// urlTemplate input that enforces the path-only rule (§6 of
+/// tenant-registry-design.md) in-place. Absolute URLs surface an inline
+/// warning + a single-click "Extract path" affordance when the origin
+/// matches the tenant's host_base_url. Anything else just gets a "fix
+/// manually" hint — same code path the backend rejects with
+/// absolute_url_not_permitted at save time.
+class _PathOnlyUrlField extends ConsumerWidget {
+  const _PathOnlyUrlField({required this.controller, required this.onChanged});
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+
+  static const _kTenant = 'default';            // mirrors the form's hardcoded tenant
+
+  bool _isAbsolute(String s) =>
+      s.startsWith('//') || s.indexOf('://') > 0;
+
+  String? _originOf(String url) {
+    if (url.startsWith('//')) return null;
+    final schemeEnd = url.indexOf('://');
+    if (schemeEnd <= 0) return null;
+    final pathStart = url.indexOf('/', schemeEnd + 3);
+    return pathStart < 0
+        ? url.toLowerCase()
+        : url.substring(0, pathStart).toLowerCase();
+  }
+
+  String _extractPath(String url) {
+    final origin = _originOf(url);
+    if (origin == null) return url;
+    final tail = url.substring(origin.length);
+    return tail.isEmpty || !tail.startsWith('/') ? '/$tail' : tail;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final value = controller.text;
+    final absolute = _isAbsolute(value);
+    final tenants = ref.watch(tenantsProvider);
+
+    final tenantOrigin = tenants.maybeWhen(
+      data: (list) {
+        for (final TenantResponse t in list) {
+          if (t.id == _kTenant) {
+            return _originOf(t.hostBaseUrl ?? '');
+          }
+        }
+        return null;
+      },
+      orElse: () => null,
+    );
+
+    final urlOrigin = absolute ? _originOf(value) : null;
+    final canExtract = absolute
+        && urlOrigin != null
+        && tenantOrigin != null
+        && urlOrigin == tenantOrigin;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: controller,
+          onChanged: (_) => onChanged(),
+          decoration: InputDecoration(
+            labelText: 'urlTemplate',
+            helperText: 'Path only (/...). The host resolves from this tool\'s tenant.',
+            helperMaxLines: 2,
+            errorText: absolute
+                ? 'Absolute URLs are no longer accepted (absolute_url_not_permitted).'
+                : null,
+          ),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+        ),
+        if (absolute) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.warning_amber_rounded,
+                size: 16, color: theme.colorScheme.error),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                canExtract
+                    ? 'Origin matches tenant host — click to extract the path.'
+                    : 'Origin doesn\'t match this tenant\'s host_base_url; '
+                        'fix manually or route via tenant migration.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ),
+            if (canExtract)
+              TextButton.icon(
+                onPressed: () {
+                  controller.text = _extractPath(value);
+                  onChanged();
+                },
+                icon: const Icon(Icons.content_cut, size: 16),
+                label: const Text('Extract path'),
+              ),
+          ]),
+        ],
       ],
     );
   }

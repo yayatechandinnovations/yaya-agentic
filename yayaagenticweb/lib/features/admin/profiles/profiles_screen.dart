@@ -6,6 +6,7 @@ import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
 import '../shared/admin_shared.dart';
+import 'clone_profile_wizard.dart';
 
 final profilesProvider = FutureProvider<List<ProfileResponse>>((ref) async {
   final api = await ref.watch(adminApiProvider.future);
@@ -258,6 +259,17 @@ class _ProfileTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return EditableRecordCard(
       onCloneEdit: onCloneEdit,
+      extraActions: [
+        OutlinedButton.icon(
+          onPressed: () => CloneProfileWizard.show(
+            context,
+            sourceTenant: profile.tenant,
+            profile: profile,
+          ),
+          icon: const Icon(Icons.move_to_inbox_outlined, size: 18),
+          label: const Text('Clone to another tenant…'),
+        ),
+      ],
       header: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

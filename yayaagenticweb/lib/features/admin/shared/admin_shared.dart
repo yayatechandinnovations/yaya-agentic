@@ -126,6 +126,7 @@ class EditableRecordCard extends StatefulWidget {
     required this.onCloneEdit,
     this.leading,
     this.trailing,
+    this.extraActions = const [],
   });
 
   final Widget header;
@@ -133,6 +134,9 @@ class EditableRecordCard extends StatefulWidget {
   final VoidCallback onCloneEdit;
   final Widget? leading;
   final Widget? trailing;
+  /// Optional extra buttons rendered next to "Clone & edit" inside the
+  /// expanded body. Used by the profiles screen for "Clone to tenant…".
+  final List<Widget> extraActions;
 
   @override
   State<EditableRecordCard> createState() => _EditableRecordCardState();
@@ -177,9 +181,12 @@ class _EditableRecordCardState extends State<EditableRecordCard> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 4,
                 children: [
+                  ...widget.extraActions,
                   FilledButton.tonalIcon(
                     onPressed: widget.onCloneEdit,
                     icon: const Icon(Icons.edit_outlined, size: 18),

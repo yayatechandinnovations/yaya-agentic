@@ -9,6 +9,7 @@ import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
+import '../features/admin/tenants/tenants_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/models/auth_state.dart';
@@ -55,6 +56,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => _AppShell(child: child),
         routes: [
           GoRoute(path: '/playground', builder: (_, __) => const PlaygroundScreen()),
+          GoRoute(path: '/admin/tenants', builder: (_, __) => const TenantsScreen()),
           GoRoute(path: '/admin/profiles', builder: (_, __) => const ProfilesScreen()),
           GoRoute(path: '/admin/capabilities', builder: (_, __) => const CapabilitiesScreen()),
           GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
@@ -107,6 +109,7 @@ class _NavItem {
 
 const _navItems = <_NavItem>[
   _NavItem('Playground', Icons.chat_outlined, Icons.chat, '/playground'),
+  _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants'),
   _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
   _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
   _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
