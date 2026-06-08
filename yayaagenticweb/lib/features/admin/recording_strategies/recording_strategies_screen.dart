@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/recording_strategy.dart';
 import '../shared/admin_shared.dart';
 
@@ -13,9 +14,12 @@ final lookupCtrlProvider = StateProvider<({String kind, String id})>((_) =>
     (kind: 'PROFILE', id: 'hello-world'));
 
 final strategyForScopeProvider = FutureProvider<RecordingStrategyResponse?>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return null;
   final api = await ref.watch(adminApiProvider.future);
   final scope = ref.watch(lookupCtrlProvider);
-  return api.getRecordingStrategy(scopeKind: scope.kind, scopeId: scope.id);
+  return api.getRecordingStrategy(
+      tenant: tenant, scopeKind: scope.kind, scopeId: scope.id);
 });
 
 class RecordingStrategiesScreen extends ConsumerStatefulWidget {
@@ -82,11 +86,16 @@ class _RecordingStrategiesScreenState
       showSnack(context, 'extra JSON is not valid: $e', error: true);
       return;
     }
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createRecordingStrategy(RecordingStrategyRequest(
-        tenant: 'default',
+        tenant: tenant,
         scopeKind: _scopeKind,
         scopeId: _scopeIdCtrl.text.trim(),
         strategy: {'kind': _strategyKind, ...extras},
@@ -110,6 +119,9 @@ class _RecordingStrategiesScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Recording strategies');
+    }
     final effective = ref.watch(strategyForScopeProvider);
     return AdminTwoPane(
       title: 'Recording strategies',

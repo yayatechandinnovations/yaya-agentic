@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/selected_tenant.dart';
 import '../../models/inspector_snapshot.dart';
 import '../../models/turn_event.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
+import '../admin/shared/admin_shared.dart' show TenantScopedEmptyState;
 import 'playground_controller.dart';
 
 class PlaygroundScreen extends ConsumerStatefulWidget {
@@ -31,6 +33,9 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Playground sessions');
+    }
     final state = ref.watch(playgroundProvider);
 
     if (state.session == null) {
@@ -635,8 +640,25 @@ class _ProfilePickerState extends ConsumerState<_ProfilePicker> {
                   error: (e, _) => Text('Failed to load profiles: $e',
                       style: TextStyle(color: Theme.of(context).colorScheme.error)),
                   data: (list) {
+                    if (list.isEmpty) {
+                      return Text(
+                        'No profiles in this tenant yet. Register one under '
+                        'Profiles to start a session.',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.outline),
+                      );
+                    }
+                    // A tenant switch can leave `_selected` pointing at a
+                    // profile that no longer exists in the new list. Reset
+                    // to the first available so the dropdown doesn't assert.
+                    final available = list
+                        .map((p) => '${p.id}@${p.version}')
+                        .toSet();
+                    if (_selected != null && !available.contains(_selected)) {
+                      _selected = null;
+                    }
                     final value =
-                        _selected ?? (list.isEmpty ? null : '${list.first.id}@${list.first.version}');
+                        _selected ?? '${list.first.id}@${list.first.version}';
                     _selected ??= value;
                     return DropdownButtonFormField<String?>(
                       initialValue: value,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/tenant.dart';
 import '../../../models/admin/tool.dart';
 import '../capabilities/capabilities_screen.dart' show toolsProvider;
@@ -145,11 +146,16 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       );
     }
 
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createTool(ToolRequest(
-        tenant: 'default',
+        tenant: tenant,
         id: _idCtrl.text.trim(),
         inputSchemaJson: _inputSchemaCtrl.text,
         outputSchemaJson: _outputSchemaCtrl.text,
@@ -179,6 +185,9 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Tools');
+    }
     final tools = ref.watch(toolsProvider);
     return AdminTwoPane(
       title: 'Tools',
@@ -352,8 +361,6 @@ class _PathOnlyUrlField extends ConsumerWidget {
   final TextEditingController controller;
   final VoidCallback onChanged;
 
-  static const _kTenant = 'default';            // mirrors the form's hardcoded tenant
-
   bool _isAbsolute(String s) =>
       s.startsWith('//') || s.indexOf('://') > 0;
 
@@ -379,12 +386,14 @@ class _PathOnlyUrlField extends ConsumerWidget {
     final theme = Theme.of(context);
     final value = controller.text;
     final absolute = _isAbsolute(value);
+    final selected = ref.watch(currentTenantOrNull);
     final tenants = ref.watch(tenantsProvider);
 
     final tenantOrigin = tenants.maybeWhen(
       data: (list) {
+        if (selected == null) return null;
         for (final TenantResponse t in list) {
-          if (t.id == _kTenant) {
+          if (t.id == selected) {
             return _originOf(t.hostBaseUrl ?? '');
           }
         }

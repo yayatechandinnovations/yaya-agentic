@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/knowledge_source.dart';
 import '../shared/admin_shared.dart';
 
 final knowledgeSourcesProvider =
     FutureProvider.autoDispose<List<KnowledgeSourceResponse>>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
-  return api.listKnowledgeSources();
+  return api.listKnowledgeSources(tenant: tenant);
 });
 
 class KnowledgeSourcesScreen extends ConsumerStatefulWidget {
@@ -95,10 +98,16 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
       showSnack(context, 'id and name are required', error: true);
       return;
     }
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createKnowledgeSource(CreateKnowledgeSourceRequest(
+        tenant: tenant,
         id: _idCtrl.text.trim(),
         name: _nameCtrl.text.trim(),
         locationKind: _locationKind,
@@ -125,9 +134,14 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
   }
 
   Future<void> _reindex(String id) async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     try {
       final api = await ref.read(adminApiProvider.future);
-      final result = await api.reindexKnowledgeSource(id: id);
+      final result = await api.reindexKnowledgeSource(tenant: tenant, id: id);
       if (!mounted) return;
       final summary = result.error == null
           ? 'reindexed: +${result.docsAdded} docs, +${result.chunksAdded} chunks '
@@ -143,6 +157,9 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Knowledge sources');
+    }
     final sources = ref.watch(knowledgeSourcesProvider);
     return AdminTwoPane(
       title: 'Knowledge sources',

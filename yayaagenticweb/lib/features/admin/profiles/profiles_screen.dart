@@ -2,25 +2,35 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
 import '../shared/admin_shared.dart';
 import 'clone_profile_wizard.dart';
 
+/// Empty list when no tenant is selected — the scoped screen renders a
+/// "register a tenant first" banner via [TenantScopedEmptyState] instead
+/// of dispatching against `default` and confusing the operator.
 final profilesProvider = FutureProvider<List<ProfileResponse>>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
-  return api.listProfiles();
+  return api.listProfiles(tenant: tenant);
 });
 
 final capabilitiesProvider = FutureProvider<List<CapabilityResponse>>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
-  return api.listCapabilities();
+  return api.listCapabilities(tenant: tenant);
 });
 
 final authBindingsProvider = FutureProvider<List<AuthBindingResponse>>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
-  return api.listAuthBindings();
+  return api.listAuthBindings(tenant: tenant);
 });
 
 class ProfilesScreen extends ConsumerStatefulWidget {
@@ -93,11 +103,16 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       showSnack(context, 'fill id, display name, intro, and system prompt', error: true);
       return;
     }
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createProfile(ProfileRequest(
-        tenant: 'default',
+        tenant: tenant,
         id: _idCtrl.text.trim(),
         displayName: _nameCtrl.text.trim(),
         introOneLiner: _introCtrl.text.trim(),
@@ -132,6 +147,9 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Profiles');
+    }
     final profiles = ref.watch(profilesProvider);
     final caps = ref.watch(capabilitiesProvider);
     final bindings = ref.watch(authBindingsProvider);

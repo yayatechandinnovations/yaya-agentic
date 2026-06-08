@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/tool.dart';
 import '../profiles/profiles_screen.dart' show capabilitiesProvider;
 import '../shared/admin_shared.dart';
 
 final toolsProvider = FutureProvider<List<ToolResponse>>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
-  return api.listTools();
+  return api.listTools(tenant: tenant);
 });
 
 class CapabilitiesScreen extends ConsumerStatefulWidget {
@@ -77,11 +80,16 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
       showSnack(context, 'id and label are required', error: true);
       return;
     }
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createCapability(CapabilityRequest(
-        tenant: 'default',
+        tenant: tenant,
         id: _idCtrl.text.trim(),
         label: _labelCtrl.text.trim(),
         description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
@@ -114,6 +122,9 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Capabilities');
+    }
     final caps = ref.watch(capabilitiesProvider);
     final tools = ref.watch(toolsProvider);
 

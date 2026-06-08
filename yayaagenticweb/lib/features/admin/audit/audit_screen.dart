@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/audit.dart';
 import '../shared/admin_shared.dart';
 
@@ -28,9 +29,14 @@ class AuditFilter {
 final auditFilterProvider = StateProvider<AuditFilter>((_) => const AuditFilter());
 
 final auditPageProvider = FutureProvider<AuthzAuditPage>((ref) async {
+  final tenant = ref.watch(currentTenantOrNull);
+  if (tenant == null) {
+    return const AuthzAuditPage(items: [], page: 0, pageSize: 0, total: 0);
+  }
   final api = await ref.watch(adminApiProvider.future);
   final filter = ref.watch(auditFilterProvider);
   return api.searchAuthzAudit(
+    tenant: tenant,
     decision: filter.decision,
     principal: filter.principal,
     toolId: filter.toolId,
@@ -44,6 +50,9 @@ class AuditScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'AuthZ audit entries');
+    }
     final filter = ref.watch(auditFilterProvider);
     final page = ref.watch(auditPageProvider);
     return Column(

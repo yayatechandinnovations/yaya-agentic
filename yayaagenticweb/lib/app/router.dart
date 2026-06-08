@@ -11,12 +11,14 @@ import '../features/admin/profiles/profiles_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
 import '../features/admin/tenants/tenants_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
+import '../features/admin/tenants/tenants_screen.dart' show tenantsProvider;
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/models/auth_state.dart';
 import '../features/auth/models/operator.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/playground/playground_screen.dart';
 import '../features/settings/settings_screen.dart';
+import 'selected_tenant.dart';
 
 /// GoRouter exposed as a Riverpod provider so the redirect callback can
 /// react to operator auth state.
@@ -143,6 +145,7 @@ class _AppShell extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Yaya Agentic — Admin'),
         actions: [
+          if (auth is AuthAuthenticated) const _TenantPicker(),
           if (auth is AuthAuthenticated) _OperatorMenu(operator: auth.operator),
         ],
       ),
@@ -165,6 +168,87 @@ class _AppShell extends ConsumerWidget {
           Expanded(child: child),
         ],
       ),
+    );
+  }
+}
+
+/// Top-bar tenant selector. Drives every list provider in the admin
+/// console + the playground. Hidden until the operator is authenticated
+/// (no point selecting a tenant before login). Archived tenants are
+/// filtered out — the operator can't accidentally write to an archived
+/// row that the backend will reject anyway.
+class _TenantPicker extends ConsumerWidget {
+  const _TenantPicker();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tenants = ref.watch(tenantsProvider);
+    final selected = ref.watch(currentTenantOrNull);
+    final theme = Theme.of(context);
+
+    return tenants.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: SizedBox.square(
+          dimension: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (list) {
+        final eligible = list.where((t) => t.status != 'ARCHIVED').toList();
+        if (eligible.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: TextButton.icon(
+              onPressed: () => GoRouter.of(context).go('/admin/tenants'),
+              icon: const Icon(Icons.add_business_outlined),
+              label: const Text('Register a tenant'),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.apartment_outlined,
+                  size: 18, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: selected,
+                  hint: const Text('Select tenant'),
+                  borderRadius: BorderRadius.circular(8),
+                  items: eligible
+                      .map((t) => DropdownMenuItem<String>(
+                            value: t.id,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(t.id),
+                                if (t.status != 'ACTIVE') ...[
+                                  const SizedBox(width: 6),
+                                  Text('(${t.status.toLowerCase()})',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: theme.colorScheme.outline)),
+                                ],
+                              ],
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      ref.read(selectedTenantProvider.notifier).select(v);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/sessions_api.dart';
+import '../../app/selected_tenant.dart';
 import '../../models/inspector_snapshot.dart';
 import '../../models/start_session.dart';
 import '../../models/turn_event.dart';
@@ -97,15 +98,32 @@ class PlaygroundController extends Notifier<PlaygroundState> {
   StreamSubscription<TurnEventDto>? _sub;
 
   @override
-  PlaygroundState build() => PlaygroundState();
+  PlaygroundState build() {
+    // End any active session when the operator switches tenants. A session
+    // is server-side bound to the tenant it was started under, so silently
+    // keeping it alive after a top-bar switch would be misleading.
+    ref.listen<String?>(currentTenantOrNull, (prev, next) {
+      if (prev != null && next != prev && state.session != null) {
+        endSession();
+      }
+    });
+    return PlaygroundState();
+  }
 
   Future<void> startSession({
     String profileId = 'hello-world',
     int profileVersion = 1,
   }) async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      state = state.copyWith(
+          error: 'Pick a tenant from the top bar before starting a session.');
+      return;
+    }
     final api = await ref.read(sessionsApiProvider.future);
     try {
       final res = await api.start(StartSessionRequest(
+        tenant: tenant,
         profileId: profileId,
         profileVersion: profileVersion,
       ));

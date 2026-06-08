@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/selected_tenant.dart';
 import '../../../models/admin/auth_binding.dart';
 import '../profiles/profiles_screen.dart' show authBindingsProvider;
 import '../shared/admin_shared.dart';
@@ -56,11 +57,16 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
       showSnack(context, 'id and authenticator are required', error: true);
       return;
     }
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) {
+      showSnack(context, 'select a tenant first', error: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createAuthBinding(AuthBindingRequest(
-        tenant: 'default',
+        tenant: tenant,
         id: _idCtrl.text.trim(),
         authenticatorRef: _authenticatorRef!,
         authorizerChain: _chainSelected.toList(),
@@ -85,6 +91,9 @@ class _AuthBindingsScreenState extends ConsumerState<AuthBindingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Auth bindings');
+    }
     final bindings = ref.watch(authBindingsProvider);
     final avail = ref.watch(authAvailabilityProvider);
 

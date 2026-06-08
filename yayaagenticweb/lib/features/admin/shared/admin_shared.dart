@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 /// Pulls the human-readable message out of a Dio error. The backend's
 /// AdminExceptionHandler emits {error, message}; everything else falls
@@ -96,6 +98,58 @@ class FormCard extends StatelessWidget {
               Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Banner shown by every tenant-scoped admin screen when no tenant is
+/// currently selected. Links the operator to the tenant registry so they
+/// can either pick or register one — replaces the silent empty-list trap.
+class TenantScopedEmptyState extends ConsumerWidget {
+  const TenantScopedEmptyState({super.key, required this.resourceLabel});
+  final String resourceLabel;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  Icon(Icons.apartment_outlined,
+                      color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Pick a tenant first',
+                        style: theme.textTheme.titleMedium),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                Text(
+                  '$resourceLabel are scoped to a tenant. Use the tenant '
+                  'picker in the top bar, or register a new tenant if none '
+                  'exist yet.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () =>
+                      GoRouter.of(context).go('/admin/tenants'),
+                  icon: const Icon(Icons.add_business_outlined),
+                  label: const Text('Go to tenants'),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
