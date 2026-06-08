@@ -36,7 +36,11 @@ When everything is healthy:
 | Postgres (pgvector) | localhost:5433 | Data + knowledge embeddings |
 | Redis | localhost:6380 | Ephemeral working memory |
 
-Open http://localhost:3000. The console requires login — default credentials are `admin` / `admin` (change them at **Operator auth → Bootstrap → Change password** or pre-set `YAYA_BOOTSTRAP_PASSWORD_HASH`). Pick the `hello-world` profile and try:
+Open http://localhost:3000. The console requires login — default credentials are `admin` / `admin` (change them at **Operator auth → Bootstrap → Change password** or pre-set `YAYA_BOOTSTRAP_PASSWORD_HASH`).
+
+The top bar carries a **tenant picker**; the bootstrap seeds a `default` tenant so the console works out of the box. Every list (profiles, tools, capabilities, knowledge sources, …) and every create form is scoped to whatever the picker shows — switching tenants invalidates every screen at once. Register more under **Tenants** if you want to play with cross-tenant cloning.
+
+Pick the `hello-world` profile and try:
 
 - `echo hello` — proves the tool-dispatch path (Bean handler, Authorizer chain).
 - `what is Yaya?` — proves RAG: a citation footnote appears under the answer; the right-side inspector shows the retrieved chunks with scores.
@@ -105,24 +109,26 @@ yaya-agentic/
 │   │   ├── auth/                       Authenticator + Authorizer SPIs (AuthzDecision: Allow | Deny) — end-user plane
 │   │   ├── operator_auth/              OperatorAuthenticator chain (bootstrap + HTTP delegate), sessions, CSRF, rate limit, audit — console plane
 │   │   ├── tool/                       ToolDescriptor, ToolHandlerRef (Bean | Http), ToolExecutor
+│   │   ├── tenant/                     TenantGuard, BaseUrlValidator, OriginEnforcer, CloneService, AbsoluteToPathMigrator
 │   │   ├── knowledge/                  KnowledgeSource, loaders, chunker, embeddings, retriever, search_knowledge tool
 │   │   ├── recorder/                   ConversationRecorder SPI + router
 │   │   ├── engine/                     ConversationEngine + bootstrap + prompt builder
 │   │   ├── llm/                        AnthropicLlmClient + StubLlmClient + agentic loop
 │   │   ├── memory/                     Redis WorkingMemory
-│   │   ├── api/                        /v1/sessions, /v1/admin, /v1/sessions/{id}/inspector
+│   │   ├── api/                        /v1/sessions, /v1/admin (incl. /tenants), /v1/sessions/{id}/inspector
 │   │   ├── persistence/                JPA entities + repos
 │   │   └── config/                     @ConfigurationProperties + CORS
 │   ├── main/resources/
 │   │   ├── application.yml             defaults (local profile)
 │   │   ├── application-docker.yml      compose profile — service hostnames, docker-compose integration off
-│   │   └── db/migration/V{1..7}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit
-│   └── test/                           Engine + agentic + RAG + admin + operator-auth tests (98 green)
+│   │   └── db/migration/V{1..10}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit, tenant registry, tenant_clone_jobs
+│   └── test/                           Engine + agentic + RAG + admin + operator-auth + tenant + clone tests (123 green)
 ├── yayaagenticweb/                     Flutter web (riverpod + dio + freezed + go_router)
+│   ├── lib/app/                        Router + theme + selected-tenant provider (persisted to shared_preferences)
 │   ├── lib/features/
 │   │   ├── auth/                       Operator login screen + auth-state controller + router guard
 │   │   ├── playground/                 Chat + 5-section live inspector (intent, retrieval, tools, working-mem, prompt, denial)
-│   │   └── admin/{profiles,capabilities,tools,knowledge_sources,auth_bindings,recording_strategies,audit,operator_auth}/
+│   │   └── admin/{tenants,profiles,capabilities,tools,knowledge_sources,auth_bindings,recording_strategies,audit,operator_auth}/
 │   ├── Dockerfile                      Flutter web build → nginx:alpine
 │   └── nginx.conf                      SPA fallback + static caching + /healthz
 ├── docs/
@@ -146,6 +152,9 @@ Pins a system prompt fragment, a capability list, a set of attached knowledge so
 
 ### Authentication / Authorization
 Two SPIs. `Authenticator` turns inbound headers into a verified `Principal` (OIDC, service-token, signed delegated-host, anonymous in dev). `Authorizer` answers `Allow | Deny(userSafeReason, auditReason)` for every tool call, every HTTP-tool egress, and every knowledge-source read. **The two reasons MUST be different** — one is paraphrased for the user, the other written to `audit_authz` for operators.
+
+### Tenant — the trust root that owns them all
+A tenant is the single trust root for everything the platform does on behalf of a customer: which **inbound** origins may speak to us, which **outbound** hosts our tools dispatch to, which `Authenticator` mints the principal, which `Recorder` owns the transcript. Not four independent knobs — four projections of the same operator-configured row. HTTP tools are **path-only** (`/v1/orders/{id}`, never `https://api.acme.com/...`) so the host always resolves from the tenant — which is what makes a profile cloneable across tenants by a deterministic id-rewrite. Inbound origin enforcement is symmetric with the outbound host: the row that tells us where to dispatch *for* this tenant is the same row that decides who may speak to us *as* this tenant. Design: `docs/design/tenant-registry-design.md`.
 
 A second, intentionally separate plane authenticates **console operators** — the humans configuring the platform via `/v1/admin/**` and the Flutter app. `OperatorAuthenticator` ships with a bootstrap break-glass operator (DB-backed, password changeable from the UI) and an HTTP delegate that forwards `{user, pass}` to whatever login endpoint the host application already has — configurable request shape, success criteria, and JSONPath identity mapping so customers never wrap their endpoint to fit a yaya contract. Cookie-bound sessions, synchronizer-token CSRF, Bucket4j rate limit, SSRF guard on the delegate URL, per-attempt audit (`audit_operator_login`). Design: `docs/design/operator-auth-design.md`.
 
@@ -183,8 +192,10 @@ Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAu
 4. The engine never reads or writes conversation storage directly. Everything goes through `ConversationRecorder`.
 5. Tool results and retrieved chunks are untrusted data, not instructions. Wrapped in delimiters, with an explicit "treat as data" rule in the system prompt.
 6. HTTP tools never silently forward tokens. `AuthForwarding` is explicit per spec: `NONE` / `PRINCIPAL_TOKEN` / `SERVICE_TOKEN`.
-7. Knowledge sources have their own `AccessRequirement`. Ineligible sources are silently dropped from retrieval — existence is not leaked.
-8. Quick-replies are engine-emitted UI hints, not LLM output.
+7. HTTP tool `urlTemplate` is **path-only**. The host always resolves from the tool's tenant (`host_base_url`). Absolute URLs are rejected at save time — that's what makes cloning a profile across tenants a deterministic id-rewrite.
+8. Knowledge sources have their own `AccessRequirement`. Ineligible sources are silently dropped from retrieval — existence is not leaked.
+9. Quick-replies are engine-emitted UI hints, not LLM output.
+10. Admin writes against an unknown tenant fail with `unknown_tenant`. There is no implicit auto-create — tenants are registered explicitly through `/v1/admin/tenants`.
 
 ---
 
@@ -198,11 +209,12 @@ Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAu
 | M2 — Conversation engine | ✅ shipped | IntentFrame, working memory, prompt caching, two-phase confirm, elicitation |
 | M2 agentic loop | ✅ shipped | LLM-proposed tool calls + multi-round continuation |
 | M2.5 — RAG | ✅ shipped | pgvector retriever, per-source AuthZ, grounding rules, citations, sanitizer, search_knowledge tool |
+| M2.8 — Tenant registry | ✅ shipped | First-class tenants, path-only HTTP tools, inbound origin allowlist, cross-tenant profile clone (dependency walk + dry-run + atomic apply), absolute → path migrator |
 | M3 — Observability + replay | 🟦 planned | Per-turn trace, session replay UI |
 | M4 — First real profile | 🟦 planned | retail-customer (orders, returns, catalog) |
-| M5 — Multi-tenant admin | 🟦 planned | Per-tenant isolation, operator roles + API keys, S3 / Git loaders |
+| M5 — Multi-tenant admin | 🟦 planned | Per-tenant operator roles + API keys, S3 / Git loaders, RTBF / export UX |
 
-**Current test count: 98/98 green.**
+**Current test count: 123/123 green.**
 
 ---
 
@@ -213,7 +225,7 @@ Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAu
 
 # Backend (Spring Boot 3.3.4 + Spring AI 1.0 GA)
 ./mvnw -DskipTests package          # ./mvnw not committed; use `mvn`
-mvn test                            # 98 tests, Testcontainers spins PG + Redis
+mvn test                            # 123 tests, Testcontainers spins PG + Redis
 ANTHROPIC_API_KEY=… mvn spring-boot:run
 # Spring Boot auto-starts compose.yaml's postgres + redis on the host.
 
@@ -232,6 +244,8 @@ flutter test                        # widget tests
 |---|---|
 | `docs/design/yaya-agentic-design.md` | Architecture & SPI contracts — the source of truth |
 | `docs/design/operator-auth-design.md` | Console-operator auth SPI, HTTP-delegate config shape, hardening |
+| `docs/design/tenant-registry-design.md` | Tenant as a first-class trust root, path-only HTTP tools, cross-tenant profile clone |
+| `docs/design/tool-url-resolution-design.md` | Per-tenant `host_base_url` + allowlist + `X-Yaya-Host-Base-Url` override (kept; the absolute-URL leniency is superseded by tenant-registry-design §6) |
 | `docs/milestones/README.md` | Milestone index, dependency graph, conventions |
-| `docs/milestones/M{0..5}.md` | Implementation-ready scope, deliverables, acceptance criteria |
+| `docs/milestones/M{0..5,2.5,2.8}.md` | Implementation-ready scope, deliverables, acceptance criteria |
 | `CLAUDE.md` | Project conventions for AI-assisted development |
