@@ -36,7 +36,7 @@ When everything is healthy:
 | Postgres (pgvector) | localhost:5433 | Data + knowledge embeddings |
 | Redis | localhost:6380 | Ephemeral working memory |
 
-Open http://localhost:3000, pick the `hello-world` profile, and try:
+Open http://localhost:3000. The console requires login — default credentials are `admin` / `admin` (change them at **Operator auth → Bootstrap → Change password** or pre-set `YAYA_BOOTSTRAP_PASSWORD_HASH`). Pick the `hello-world` profile and try:
 
 - `echo hello` — proves the tool-dispatch path (Bean handler, Authorizer chain).
 - `what is Yaya?` — proves RAG: a citation footnote appears under the answer; the right-side inspector shows the retrieved chunks with scores.
@@ -102,7 +102,8 @@ yaya-agentic/
 │   │   ├── core/                       Shared domain (typed Ids, Principal, Session, IntentFrame, …)
 │   │   ├── personality/                Cross-profile voice + rules SPI
 │   │   ├── profile/                    Role bundles + resolver chain
-│   │   ├── auth/                       Authenticator + Authorizer SPIs (AuthzDecision: Allow | Deny)
+│   │   ├── auth/                       Authenticator + Authorizer SPIs (AuthzDecision: Allow | Deny) — end-user plane
+│   │   ├── operator_auth/              OperatorAuthenticator chain (bootstrap + HTTP delegate), sessions, CSRF, rate limit, audit — console plane
 │   │   ├── tool/                       ToolDescriptor, ToolHandlerRef (Bean | Http), ToolExecutor
 │   │   ├── knowledge/                  KnowledgeSource, loaders, chunker, embeddings, retriever, search_knowledge tool
 │   │   ├── recorder/                   ConversationRecorder SPI + router
@@ -115,12 +116,13 @@ yaya-agentic/
 │   ├── main/resources/
 │   │   ├── application.yml             defaults (local profile)
 │   │   ├── application-docker.yml      compose profile — service hostnames, docker-compose integration off
-│   │   └── db/migration/V{1..4}__*.sql Flyway: core, recorder, follow_up_hints, knowledge indices
-│   └── test/                           Engine + agentic + RAG + admin tests (53 green)
+│   │   └── db/migration/V{1..7}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit
+│   └── test/                           Engine + agentic + RAG + admin + operator-auth tests (98 green)
 ├── yayaagenticweb/                     Flutter web (riverpod + dio + freezed + go_router)
 │   ├── lib/features/
+│   │   ├── auth/                       Operator login screen + auth-state controller + router guard
 │   │   ├── playground/                 Chat + 5-section live inspector (intent, retrieval, tools, working-mem, prompt, denial)
-│   │   └── admin/{profiles,capabilities,tools,knowledge_sources,auth_bindings,recording_strategies,audit}/
+│   │   └── admin/{profiles,capabilities,tools,knowledge_sources,auth_bindings,recording_strategies,audit,operator_auth}/
 │   ├── Dockerfile                      Flutter web build → nginx:alpine
 │   └── nginx.conf                      SPA fallback + static caching + /healthz
 ├── docs/
@@ -145,6 +147,8 @@ Pins a system prompt fragment, a capability list, a set of attached knowledge so
 ### Authentication / Authorization
 Two SPIs. `Authenticator` turns inbound headers into a verified `Principal` (OIDC, service-token, signed delegated-host, anonymous in dev). `Authorizer` answers `Allow | Deny(userSafeReason, auditReason)` for every tool call, every HTTP-tool egress, and every knowledge-source read. **The two reasons MUST be different** — one is paraphrased for the user, the other written to `audit_authz` for operators.
 
+A second, intentionally separate plane authenticates **console operators** — the humans configuring the platform via `/v1/admin/**` and the Flutter app. `OperatorAuthenticator` ships with a bootstrap break-glass operator (DB-backed, password changeable from the UI) and an HTTP delegate that forwards `{user, pass}` to whatever login endpoint the host application already has — configurable request shape, success criteria, and JSONPath identity mapping so customers never wrap their endpoint to fit a yaya contract. Cookie-bound sessions, synchronizer-token CSRF, Bucket4j rate limit, SSRF guard on the delegate URL, per-attempt audit (`audit_operator_login`). Design: `docs/design/operator-auth-design.md`.
+
 ---
 
 ## The agentic loop, in one paragraph
@@ -167,7 +171,7 @@ A user message arrives. The engine resolves the profile, builds an `IntentFrame`
 10. `ConversationSummarizer` — §5.9 (called by recorders, not the engine)
 11. `ConversationEngine` — §6 (top-level façade)
 
-Section numbers reference `docs/design/yaya-agentic-design.md`.
+Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAuthenticator` — the console-operator plane (separate trust boundary, see `docs/design/operator-auth-design.md` §3).
 
 ---
 
@@ -190,14 +194,15 @@ Section numbers reference `docs/design/yaya-agentic-design.md`.
 |---|---|---|
 | M0 — Skeleton | ✅ shipped | Engine, profile, Bean tools, recorder, SSE stream |
 | M1 — Core abstractions | ✅ shipped | All SPIs wired; admin REST + Flutter admin |
+| M1.5 — Operator auth | ✅ shipped | Bootstrap + HTTP-delegate strategies, login-gated console, CSRF + Bucket4j + audit |
 | M2 — Conversation engine | ✅ shipped | IntentFrame, working memory, prompt caching, two-phase confirm, elicitation |
 | M2 agentic loop | ✅ shipped | LLM-proposed tool calls + multi-round continuation |
 | M2.5 — RAG | ✅ shipped | pgvector retriever, per-source AuthZ, grounding rules, citations, sanitizer, search_knowledge tool |
 | M3 — Observability + replay | 🟦 planned | Per-turn trace, session replay UI |
 | M4 — First real profile | 🟦 planned | retail-customer (orders, returns, catalog) |
-| M5 — Multi-tenant admin | 🟦 planned | Operator auth, per-tenant isolation, S3 / Git loaders |
+| M5 — Multi-tenant admin | 🟦 planned | Per-tenant isolation, operator roles + API keys, S3 / Git loaders |
 
-**Current test count: 53/53 green.**
+**Current test count: 98/98 green.**
 
 ---
 
@@ -208,7 +213,7 @@ Section numbers reference `docs/design/yaya-agentic-design.md`.
 
 # Backend (Spring Boot 3.3.4 + Spring AI 1.0 GA)
 ./mvnw -DskipTests package          # ./mvnw not committed; use `mvn`
-mvn test                            # 53 tests, Testcontainers spins PG + Redis
+mvn test                            # 98 tests, Testcontainers spins PG + Redis
 ANTHROPIC_API_KEY=… mvn spring-boot:run
 # Spring Boot auto-starts compose.yaml's postgres + redis on the host.
 
@@ -226,6 +231,7 @@ flutter test                        # widget tests
 | Doc | Purpose |
 |---|---|
 | `docs/design/yaya-agentic-design.md` | Architecture & SPI contracts — the source of truth |
+| `docs/design/operator-auth-design.md` | Console-operator auth SPI, HTTP-delegate config shape, hardening |
 | `docs/milestones/README.md` | Milestone index, dependency graph, conventions |
 | `docs/milestones/M{0..5}.md` | Implementation-ready scope, deliverables, acceptance criteria |
 | `CLAUDE.md` | Project conventions for AI-assisted development |
