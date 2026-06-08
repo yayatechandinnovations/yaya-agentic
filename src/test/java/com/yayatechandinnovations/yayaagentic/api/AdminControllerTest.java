@@ -1,7 +1,10 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
+import com.yayatechandinnovations.yayaagentic.operator_auth.TestAuthDance;
+import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.LoginRateLimiter;
 import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -36,8 +39,20 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class AdminControllerTest {
 
     @Autowired WebTestClient client;
+    @Autowired LoginRateLimiter rateLimiter;
 
     private static final String TENANT = "admin-test";
+
+    @BeforeEach
+    void authenticateAsBootstrap() {
+        // Reset the rate-limit buckets — across 10 tests we'd otherwise
+        // trip the 5/min/username limit on attempt 6.
+        rateLimiter.resetAll();
+        // Phase 5 hardening — admin requests now also need an X-XSRF-TOKEN
+        // header echoed from the XSRF-TOKEN cookie. TestAuthDance handles
+        // the GET-then-POST handshake so each test sees a primed client.
+        client = TestAuthDance.asBootstrap(client);
+    }
 
     @Test @Order(1)
     void posts_a_tool_then_lists_it() {

@@ -101,6 +101,24 @@ yaya:
         # Base64-encoded raw Ed25519 public key (32 bytes). Empty disables.
         public-key-pem: ""
 
+    # Operator console authentication — see docs/design/operator-auth-design.md.
+    # Distinct from `auth` above, which authenticates conversational callers.
+    operator-auth:
+      bootstrap:
+        enabled: true
+        username: ${YAYA_BOOTSTRAP_USERNAME:admin}
+        # Prefer YAYA_BOOTSTRAP_PASSWORD_HASH in prod. Plaintext below is
+        # hashed at boot; leaving it as the default triggers a [SECURITY]
+        # warning every boot.
+        password: ${YAYA_BOOTSTRAP_PASSWORD:admin}
+        password-hash: ${YAYA_BOOTSTRAP_PASSWORD_HASH:}
+      session:
+        cookie-name: YAYA_SESSION
+        ttl: PT8H
+        sliding-window: PT1H
+        # Local dev runs over HTTP; flip via env in prod.
+        cookie-secure: ${YAYA_SESSION_COOKIE_SECURE:false}
+
 logging:
   level:
     com.yayatechandinnovations.yayaagentic: INFO

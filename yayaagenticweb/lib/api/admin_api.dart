@@ -5,6 +5,7 @@ import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
 import '../models/admin/knowledge_source.dart';
+import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tool.dart';
@@ -126,6 +127,58 @@ class AdminApi {
     final res = await _dio.post('/v1/admin/knowledge-sources/$id/reindex',
         queryParameters: {'tenant': tenant});
     return ReindexResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- Operator-auth strategies -------------------------------------
+
+  Future<StrategiesResponse> getStrategies() async {
+    final res = await _dio.get('/v1/admin/auth/strategies');
+    return StrategiesResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<StrategiesResponse> putBootstrapStrategy({
+    bool? enabled,
+    String? newPassword,
+  }) async {
+    final res = await _dio.put('/v1/admin/auth/strategies/bootstrap', data: {
+      if (enabled != null) 'enabled': enabled,
+      if (newPassword != null && newPassword.isNotEmpty) 'newPassword': newPassword,
+    });
+    return StrategiesResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<StrategiesResponse> putDelegateStrategy(
+    DelegateView delegate, {
+    String? sharedSecret,           // null = preserve existing
+    bool confirmPermissive = false,
+  }) async {
+    final res = await _dio.put(
+      '/v1/admin/auth/strategies/http-delegate',
+      queryParameters: {if (confirmPermissive) 'confirmPermissive': true},
+      data: {
+        'enabled': delegate.enabled,
+        if (delegate.url != null) 'url': delegate.url,
+        if (sharedSecret != null && sharedSecret.isNotEmpty) 'sharedSecret': sharedSecret,
+        'timeoutMs': delegate.timeoutMs,
+        'requireHttps': delegate.requireHttps,
+        'request': delegate.request.toJson(),
+        'success': delegate.success.toJson(),
+        'identity': delegate.identity.toJson(),
+        'failure': delegate.failure.toJson(),
+      },
+    );
+    return StrategiesResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ProbeResult> testDelegate({
+    required String username,
+    required String password,
+  }) async {
+    final res = await _dio.post(
+      '/v1/admin/auth/strategies/http-delegate/test',
+      data: {'username': username, 'password': password},
+    );
+    return ProbeResult.fromJson(_asMap(res.data));
   }
 
   // ---- Audit ---------------------------------------------------------

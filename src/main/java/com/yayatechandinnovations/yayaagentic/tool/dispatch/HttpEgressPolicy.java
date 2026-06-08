@@ -59,6 +59,21 @@ public class HttpEgressPolicy {
             return new Decision.Deny("egress: host '" + host + "' not in allowlist");
         }
 
+        return checkPrivateAddressOnly(uri);
+    }
+
+    /**
+     * SSRF check without the allowlist gate. Use this for outbound URLs
+     * that are operator-configured (not LLM-influenced) — the delegate
+     * login URL being the canonical case. Still blocks loopback,
+     * link-local, private (RFC1918), multicast, and any-local addresses
+     * unless {@code allow-private-networks=true}.
+     */
+    public Decision checkPrivateAddressOnly(URI uri) {
+        if (uri == null || uri.getHost() == null) {
+            return new Decision.Deny("egress: missing host");
+        }
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
         InetAddress[] addrs;
         try {
             addrs = InetAddress.getAllByName(host);

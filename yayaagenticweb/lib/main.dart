@@ -8,16 +8,17 @@ void main() {
   runApp(const ProviderScope(child: YayaAgenticWebApp()));
 }
 
-class YayaAgenticWebApp extends StatelessWidget {
+class YayaAgenticWebApp extends ConsumerWidget {
   const YayaAgenticWebApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final router = ref.watch(routerProvider);
     return MaterialApp.router(
       title: 'Yaya Agentic — Admin',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      routerConfig: appRouter,
+      routerConfig: router,
     );
   }
 }

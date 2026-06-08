@@ -106,6 +106,28 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Crypto primitives for operator auth (Argon2PasswordEncoder +
+             Encryptors.text). Pulls in BouncyCastle for Argon2; no full
+             Spring Security wiring. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.78.1</version>
+        </dependency>
+
+        <!-- Token-bucket rate limiting for /v1/auth/login. In-memory backed
+             via ConcurrentHashMap in v1; upgrade to bucket4j-redis when
+             we horizontally scale the admin plane. -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+            <version>8.14.0</version>
+        </dependency>
+
         <!-- Spring AI 1.0.0 GA: Anthropic for chat, OpenAI for embeddings. -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

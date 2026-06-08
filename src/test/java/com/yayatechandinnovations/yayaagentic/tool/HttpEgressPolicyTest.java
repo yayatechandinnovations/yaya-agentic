@@ -55,7 +55,8 @@ class HttpEgressPolicyTest {
     private static HttpEgressPolicy policyWith(List<String> allowlist, boolean allowPrivate) {
         YayaAgenticProperties props = new YayaAgenticProperties(
                 "default", "default", null, null, null, null,
-                new YayaAgenticProperties.HttpTools(allowlist, allowPrivate, Duration.ofSeconds(10)));
+                new YayaAgenticProperties.HttpTools(allowlist, allowPrivate, Duration.ofSeconds(10)),
+                null);
         return new HttpEgressPolicy(props);
     }
 }

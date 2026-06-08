@@ -14,7 +14,8 @@ public record YayaAgenticProperties(
         Llm llm,
         Cors cors,
         Auth auth,
-        HttpTools httpTools
+        HttpTools httpTools,
+        OperatorAuth operatorAuth
 ) {
     public record Session(Duration idleTimeout) {}
 
@@ -41,5 +42,35 @@ public record YayaAgenticProperties(
         public record ServiceToken(Map<String, String> tenantSecrets) {}
 
         public record DelegatedHost(String publicKeyPem) {}
+    }
+
+    /**
+     * Console-operator authentication. Distinct trust plane from {@link Auth},
+     * which authenticates conversational callers. See
+     * {@code docs/design/operator-auth-design.md} §2.
+     */
+    public record OperatorAuth(
+            Bootstrap bootstrap,
+            Session session
+    ) {
+        /**
+         * Always-on break-glass operator. Resolution order:
+         * {@code passwordHash} > {@code password} (hashed at boot) >
+         * defaults ({@code admin}/{@code admin}, logged with a [SECURITY] warning).
+         */
+        public record Bootstrap(
+                boolean enabled,
+                String username,
+                String password,
+                String passwordHash
+        ) {}
+
+        /** Cookie + server-side-session knobs. */
+        public record Session(
+                String cookieName,
+                Duration ttl,
+                Duration slidingWindow,
+                boolean cookieSecure
+        ) {}
     }
 }
