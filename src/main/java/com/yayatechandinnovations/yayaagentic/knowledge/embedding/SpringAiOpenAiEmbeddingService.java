@@ -1,9 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.knowledge.embedding;
 
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.context.annotation.Primary;
-import org.springframework.stereotype.Service;
 
 import java.util.List;
 
@@ -12,14 +9,12 @@ import java.util.List;
  * starter when {@code OPENAI_API_KEY} is present) into our internal
  * {@link EmbeddingService} port.
  * <p>
- * Conditional on the bean's presence so the application still boots without
- * an OpenAI key — RAG features will return a degraded result instead of
- * failing startup. A {@link StubEmbeddingService} fallback is registered
- * elsewhere for tests and offline dev.
+ * Plain class — no stereotype/conditional annotations. {@link EmbeddingConfig}
+ * registers it as a {@code @Primary @Bean} gated on the presence of an
+ * {@link EmbeddingModel} bean. That keeps the OpenAI-vs-stub fallback purely
+ * config-time and avoids the timing fragility of {@code @ConditionalOnBean}
+ * on a component-scanned {@code @Service}.
  */
-@Service
-@Primary
-@ConditionalOnBean(EmbeddingModel.class)
 public class SpringAiOpenAiEmbeddingService implements EmbeddingService {
 
     private static final int DIMENSION = 1536;

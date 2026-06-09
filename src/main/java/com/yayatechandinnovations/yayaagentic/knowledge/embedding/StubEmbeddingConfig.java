@@ -1,8 +1,11 @@
 package com.yayatechandinnovations.yayaagentic.knowledge.embedding;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -11,31 +14,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Deterministic, offline embedding fallback used by tests and when no real
- * embedding model is configured. We hash the text into a fixed-length
- * float vector — meaningless semantically, but stable enough to round-trip
- * the persistence + retriever path end-to-end.
+ * Wires the active {@link EmbeddingService} implementation: the OpenAI-backed
+ * one when Spring AI publishes an {@link EmbeddingModel} bean, otherwise the
+ * deterministic-hash stub. Both definitions live here as {@code @Bean}
+ * methods so the conditional pair evaluates in a single, deterministic phase.
  * <p>
- * Real RAG quality requires the OpenAI service; this stub exists only so
- * the engine starts without a key and tests don't hit the network.
+ * Earlier, the OpenAI variant was a component-scanned {@code @Service} with
+ * {@code @ConditionalOnBean(EmbeddingModel.class)} and the stub used
+ * {@code @ConditionalOnMissingBean(EmbeddingService.class)}. That pair raced
+ * at scan time: the OpenAI candidate was visible in the bean-definition map
+ * before its own condition had been resolved, so the stub's missing-bean
+ * check returned false, and the OpenAI condition then resolved to false too
+ * — net effect, zero {@link EmbeddingService} beans and boot failed.
+ * <p>
+ * Real RAG quality requires the OpenAI service; the stub exists so the
+ * engine boots without an OpenAI key and tests don't hit the network.
  */
 @Configuration
 public class StubEmbeddingConfig {
 
-    // Gated on the explicit Spring AI provider switch rather than
-    // {@code @ConditionalOnMissingBean(EmbeddingService.class)}. The
-    // missing-bean check was timing-fragile against
-    // {@link SpringAiOpenAiEmbeddingService}'s {@code @ConditionalOnBean}
-    // (evaluated at component-scan time, before Spring AI auto-config
-    // could publish the {@code EmbeddingModel}) — when the OpenAI key was
-    // absent or invalid, neither bean ended up registered and boot failed.
-    // Property-gated registration is deterministic.
     @Bean
-    @ConditionalOnProperty(
-            prefix = "spring.ai.model",
-            name = "embedding",
-            havingValue = "none",
-            matchIfMissing = true)
+    @Primary
+    @ConditionalOnBean(EmbeddingModel.class)
+    public EmbeddingService openAiEmbeddingService(EmbeddingModel model) {
+        return new SpringAiOpenAiEmbeddingService(model);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(EmbeddingService.class)
     public EmbeddingService stubEmbeddingService() {
         return new DeterministicHashEmbeddingService();
     }
