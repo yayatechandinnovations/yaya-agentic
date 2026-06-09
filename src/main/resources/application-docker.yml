@@ -26,8 +26,9 @@ spring:
 yaya:
   agentic:
     cors:
-      # Compose exposes the web app on host port 3000; the playground
-      # may also be opened directly via flutter run -d chrome.
-      allowed-origins:
-        - "http://localhost:*"
-        - "http://127.0.0.1:*"
+      # Comma-separated list of allowed origins (patterns supported — see
+      # CorsConfiguration.setAllowedOriginPatterns in CoreConfiguration).
+      # Default covers compose-on-host-3000 and flutter run -d chrome.
+      # Add the public SPA origin(s) via env var in each deployment's .env,
+      # e.g. YAYA_AGENTIC_CORS_ALLOWED_ORIGINS=http://localhost:*,https://admin.example.com
+      allowed-origins: ${YAYA_AGENTIC_CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
