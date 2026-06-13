@@ -68,7 +68,7 @@ class YayaAgenticApplicationTests {
     private SessionDtos.StartSessionResponse startHelloWorld() {
         return client.post().uri("/v1/sessions")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(new SessionDtos.StartSessionRequest("default", "hello-world", 1, "web", Map.of()))
+                .bodyValue(new SessionDtos.StartSessionRequest("default", "hello-world", 1, "web", Map.of(), null))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(SessionDtos.StartSessionResponse.class)

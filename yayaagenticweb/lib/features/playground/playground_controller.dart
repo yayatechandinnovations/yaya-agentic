@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/sessions_api.dart';
 import '../../app/selected_tenant.dart';
+import '../../models/act_as.dart';
 import '../../models/inspector_snapshot.dart';
 import '../../models/start_session.dart';
 import '../../models/turn_event.dart';
@@ -113,6 +114,7 @@ class PlaygroundController extends Notifier<PlaygroundState> {
   Future<void> startSession({
     String profileId = 'hello-world',
     int profileVersion = 1,
+    ActAs? actAs,
   }) async {
     final tenant = ref.read(currentTenantOrNull);
     if (tenant == null) {
@@ -126,6 +128,7 @@ class PlaygroundController extends Notifier<PlaygroundState> {
         tenant: tenant,
         profileId: profileId,
         profileVersion: profileVersion,
+        actAs: actAs,
       ));
       state = PlaygroundState(
         session: res,

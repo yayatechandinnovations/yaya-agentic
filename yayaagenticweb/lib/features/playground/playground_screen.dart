@@ -6,6 +6,7 @@ import '../../models/inspector_snapshot.dart';
 import '../../models/turn_event.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import '../admin/shared/admin_shared.dart' show TenantScopedEmptyState;
+import 'act_as_panel.dart';
 import 'playground_controller.dart';
 
 class PlaygroundScreen extends ConsumerStatefulWidget {
@@ -43,6 +44,7 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
     }
 
     final session = state.session!;
+    final actAsDraft = ref.watch(actAsDraftProvider);
     return Row(
       children: [
         Expanded(
@@ -79,6 +81,7 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                   ),
                 ),
               ),
+              ActAsActiveBanner(draft: actAsDraft),
               Expanded(
                 child: ListView.builder(
                   padding: const EdgeInsets.all(12),
@@ -631,7 +634,9 @@ class _ProfilePickerState extends ConsumerState<_ProfilePicker> {
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(
-                  'Pick a profile registered in the admin. Principal impersonation lands in M5.',
+                  'Pick a profile registered in the admin. Use "Act as" below '
+                  'to supply an end-user token when the profile calls HTTP tools '
+                  'that authenticate against the tenant app.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 16),
@@ -674,6 +679,8 @@ class _ProfilePickerState extends ConsumerState<_ProfilePicker> {
                   },
                 ),
                 const SizedBox(height: 16),
+                const ActAsPanel(),
+                const SizedBox(height: 16),
                 FilledButton.icon(
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start session'),
@@ -681,9 +688,11 @@ class _ProfilePickerState extends ConsumerState<_ProfilePicker> {
                       ? null
                       : () {
                           final parts = _selected!.split('@');
+                          final draft = ref.read(actAsDraftProvider);
                           ref.read(playgroundProvider.notifier).startSession(
                                 profileId: parts[0],
                                 profileVersion: int.tryParse(parts[1]) ?? 1,
+                                actAs: draft.toActAs(),
                               );
                         },
                 ),

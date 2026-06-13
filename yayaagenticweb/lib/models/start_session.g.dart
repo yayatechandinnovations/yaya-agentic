@@ -14,6 +14,9 @@ _$StartSessionRequestImpl _$$StartSessionRequestImplFromJson(
   profileVersion: (json['profileVersion'] as num?)?.toInt() ?? 1,
   channel: json['channel'] as String? ?? 'web',
   hints: json['hints'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+  actAs: json['actAs'] == null
+      ? null
+      : ActAs.fromJson(json['actAs'] as Map<String, dynamic>),
 );
 
 Map<String, dynamic> _$$StartSessionRequestImplToJson(
@@ -24,6 +27,7 @@ Map<String, dynamic> _$$StartSessionRequestImplToJson(
   'profileVersion': instance.profileVersion,
   'channel': instance.channel,
   'hints': instance.hints,
+  'actAs': instance.actAs,
 };
 
 _$StartSessionResponseImpl _$$StartSessionResponseImplFromJson(

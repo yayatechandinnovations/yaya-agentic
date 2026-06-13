@@ -1,5 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'act_as.dart';
+
 part 'start_session.freezed.dart';
 part 'start_session.g.dart';
 
@@ -11,6 +13,7 @@ class StartSessionRequest with _$StartSessionRequest {
     @Default(1) int profileVersion,
     @Default('web') String channel,
     @Default(<String, dynamic>{}) Map<String, dynamic> hints,
+    ActAs? actAs,
   }) = _StartSessionRequest;
 
   factory StartSessionRequest.fromJson(Map<String, dynamic> json) =>

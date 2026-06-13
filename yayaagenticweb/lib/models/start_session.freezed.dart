@@ -26,6 +26,7 @@ mixin _$StartSessionRequest {
   int get profileVersion => throw _privateConstructorUsedError;
   String get channel => throw _privateConstructorUsedError;
   Map<String, dynamic> get hints => throw _privateConstructorUsedError;
+  ActAs? get actAs => throw _privateConstructorUsedError;
 
   /// Serializes this StartSessionRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -50,7 +51,10 @@ abstract class $StartSessionRequestCopyWith<$Res> {
     int profileVersion,
     String channel,
     Map<String, dynamic> hints,
+    ActAs? actAs,
   });
+
+  $ActAsCopyWith<$Res>? get actAs;
 }
 
 /// @nodoc
@@ -73,6 +77,7 @@ class _$StartSessionRequestCopyWithImpl<$Res, $Val extends StartSessionRequest>
     Object? profileVersion = null,
     Object? channel = null,
     Object? hints = null,
+    Object? actAs = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -96,9 +101,27 @@ class _$StartSessionRequestCopyWithImpl<$Res, $Val extends StartSessionRequest>
                 ? _value.hints
                 : hints // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
+            actAs: freezed == actAs
+                ? _value.actAs
+                : actAs // ignore: cast_nullable_to_non_nullable
+                      as ActAs?,
           )
           as $Val,
     );
+  }
+
+  /// Create a copy of StartSessionRequest
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $ActAsCopyWith<$Res>? get actAs {
+    if (_value.actAs == null) {
+      return null;
+    }
+
+    return $ActAsCopyWith<$Res>(_value.actAs!, (value) {
+      return _then(_value.copyWith(actAs: value) as $Val);
+    });
   }
 }
 
@@ -117,7 +140,11 @@ abstract class _$$StartSessionRequestImplCopyWith<$Res>
     int profileVersion,
     String channel,
     Map<String, dynamic> hints,
+    ActAs? actAs,
   });
+
+  @override
+  $ActAsCopyWith<$Res>? get actAs;
 }
 
 /// @nodoc
@@ -139,6 +166,7 @@ class __$$StartSessionRequestImplCopyWithImpl<$Res>
     Object? profileVersion = null,
     Object? channel = null,
     Object? hints = null,
+    Object? actAs = freezed,
   }) {
     return _then(
       _$StartSessionRequestImpl(
@@ -162,6 +190,10 @@ class __$$StartSessionRequestImplCopyWithImpl<$Res>
             ? _value._hints
             : hints // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
+        actAs: freezed == actAs
+            ? _value.actAs
+            : actAs // ignore: cast_nullable_to_non_nullable
+                  as ActAs?,
       ),
     );
   }
@@ -176,6 +208,7 @@ class _$StartSessionRequestImpl implements _StartSessionRequest {
     this.profileVersion = 1,
     this.channel = 'web',
     final Map<String, dynamic> hints = const <String, dynamic>{},
+    this.actAs,
   }) : _hints = hints;
 
   factory _$StartSessionRequestImpl.fromJson(Map<String, dynamic> json) =>
@@ -203,8 +236,11 @@ class _$StartSessionRequestImpl implements _StartSessionRequest {
   }
 
   @override
+  final ActAs? actAs;
+
+  @override
   String toString() {
-    return 'StartSessionRequest(tenant: $tenant, profileId: $profileId, profileVersion: $profileVersion, channel: $channel, hints: $hints)';
+    return 'StartSessionRequest(tenant: $tenant, profileId: $profileId, profileVersion: $profileVersion, channel: $channel, hints: $hints, actAs: $actAs)';
   }
 
   @override
@@ -218,7 +254,8 @@ class _$StartSessionRequestImpl implements _StartSessionRequest {
             (identical(other.profileVersion, profileVersion) ||
                 other.profileVersion == profileVersion) &&
             (identical(other.channel, channel) || other.channel == channel) &&
-            const DeepCollectionEquality().equals(other._hints, _hints));
+            const DeepCollectionEquality().equals(other._hints, _hints) &&
+            (identical(other.actAs, actAs) || other.actAs == actAs));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -230,6 +267,7 @@ class _$StartSessionRequestImpl implements _StartSessionRequest {
     profileVersion,
     channel,
     const DeepCollectionEquality().hash(_hints),
+    actAs,
   );
 
   /// Create a copy of StartSessionRequest
@@ -256,6 +294,7 @@ abstract class _StartSessionRequest implements StartSessionRequest {
     final int profileVersion,
     final String channel,
     final Map<String, dynamic> hints,
+    final ActAs? actAs,
   }) = _$StartSessionRequestImpl;
 
   factory _StartSessionRequest.fromJson(Map<String, dynamic> json) =
@@ -271,6 +310,8 @@ abstract class _StartSessionRequest implements StartSessionRequest {
   String get channel;
   @override
   Map<String, dynamic> get hints;
+  @override
+  ActAs? get actAs;
 
   /// Create a copy of StartSessionRequest
   /// with the given fields replaced by the non-null parameter values.

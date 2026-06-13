@@ -2,6 +2,9 @@ package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.SessionDtos;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
+import com.yayatechandinnovations.yayaagentic.auth.playground.ActAs;
+import com.yayatechandinnovations.yayaagentic.auth.playground.ActAsMaterializer;
+import com.yayatechandinnovations.yayaagentic.auth.playground.PlaygroundActAsRegistry;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
@@ -28,13 +31,19 @@ public class SessionController {
     private final ConversationEngine engine;
     private final OriginEnforcer originEnforcer;
     private final SessionRepository sessions;
+    private final ActAsMaterializer actAsMaterializer;
+    private final PlaygroundActAsRegistry actAsRegistry;
 
     public SessionController(ConversationEngine engine,
                              OriginEnforcer originEnforcer,
-                             SessionRepository sessions) {
+                             SessionRepository sessions,
+                             ActAsMaterializer actAsMaterializer,
+                             PlaygroundActAsRegistry actAsRegistry) {
         this.engine = engine;
         this.originEnforcer = originEnforcer;
         this.sessions = sessions;
+        this.actAsMaterializer = actAsMaterializer;
+        this.actAsRegistry = actAsRegistry;
     }
 
     @PostMapping
@@ -52,7 +61,10 @@ public class SessionController {
                     body.hints() == null ? Map.of() : body.hints());
 
             AuthContext auth = authContext(tenant, exchange);
+            Optional<ActAs> actAs = Optional.ofNullable(body.actAs());
+            auth = actAsMaterializer.applyIfPresent(auth, actAs);
             StartSessionResult result = engine.start(req, auth);
+            actAs.ifPresent(spec -> actAsRegistry.put(result.session().id(), spec));
             return SessionDtos.StartSessionResponse.of(
                     result.session().id(), result.profile(), result.greeting(), result.quickReplies());
         }));
@@ -66,6 +78,7 @@ public class SessionController {
         String tenant = lookupTenant(id);
         return enforceOriginMono(tenant, exchange).thenMany(Flux.defer(() -> {
             AuthContext auth = authContext(new Ids.TenantId(tenant), exchange);
+            auth = actAsMaterializer.applyIfPresent(auth, actAsRegistry.get(sessionId));
             return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
                     .map(SessionController::toSse);
         }));
@@ -74,8 +87,13 @@ public class SessionController {
     @PostMapping("/{id}/end")
     public Mono<Void> end(@PathVariable("id") String id, ServerWebExchange exchange) {
         String tenant = lookupTenant(id);
-        return enforceOriginMono(tenant, exchange).then(Mono.fromRunnable(() ->
-                engine.end(new Ids.SessionId(id), authContext(new Ids.TenantId(tenant), exchange))));
+        Ids.SessionId sessionId = new Ids.SessionId(id);
+        return enforceOriginMono(tenant, exchange).then(Mono.fromRunnable(() -> {
+            AuthContext auth = authContext(new Ids.TenantId(tenant), exchange);
+            auth = actAsMaterializer.applyIfPresent(auth, actAsRegistry.get(sessionId));
+            engine.end(sessionId, auth);
+            actAsRegistry.remove(sessionId);
+        }));
     }
 
     private Mono<Void> enforceOriginMono(String tenantId, ServerWebExchange exchange) {
