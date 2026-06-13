@@ -49,6 +49,7 @@ public class AdminController {
     private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog;
     private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper;
     private final AbsoluteToPathMigrator absoluteToPathMigrator;
+    private final com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair;
 
     public AdminController(TenantGuard tenantGuard,
                            ProfileRepository profiles,
@@ -62,7 +63,8 @@ public class AdminController {
                            ObjectMapper json,
                            com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog,
                            com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper,
-                           AbsoluteToPathMigrator absoluteToPathMigrator) {
+                           AbsoluteToPathMigrator absoluteToPathMigrator,
+                           com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair) {
         this.tenantGuard = tenantGuard;
         this.profiles = profiles;
         this.capabilities = capabilities;
@@ -76,6 +78,7 @@ public class AdminController {
         this.runtimeCatalog = runtimeCatalog;
         this.catalogMapper = catalogMapper;
         this.absoluteToPathMigrator = absoluteToPathMigrator;
+        this.toolNameRepair = toolNameRepair;
     }
 
     // ---- Profiles -------------------------------------------------------
@@ -161,6 +164,10 @@ public class AdminController {
     public ResponseEntity<AdminDtos.ToolResponse> createTool(@RequestBody AdminDtos.ToolRequest req) {
         String tenant = requireTenant(req.tenant());
         require(req.id(), "tool.id");
+        if (!com.yayatechandinnovations.yayaagentic.tool.ToolIdPattern.isValid(req.id())) {
+            throw badRequest("tool.id must match " + com.yayatechandinnovations.yayaagentic.tool.ToolIdPattern.REGEX
+                    + " (Anthropic tool-name constraint) — got '" + req.id() + "'");
+        }
         require(req.inputSchemaJson(), "tool.inputSchemaJson");
         require(req.outputSchemaJson(), "tool.outputSchemaJson");
         if (req.handler() == null) throw badRequest("tool.handler is required");
@@ -323,6 +330,60 @@ public class AdminController {
         return dryRun
                 ? absoluteToPathMigrator.plan(tenant)
                 : absoluteToPathMigrator.apply(tenant);
+    }
+
+    /**
+     * Repair legacy tool ids that don't satisfy the Anthropic tool-name
+     * constraint. Sanitises every offender ({@code [^a-zA-Z0-9_-]+ -> _},
+     * collapse repeats, truncate to 128), cascades the rename to every
+     * capability that referenced the old id, and re-syncs the in-memory
+     * runtime catalog so subsequent LLM calls send the new names.
+     *
+     * <p>Historical {@code session_turns} and {@code audit_authz} rows are
+     * NOT rewritten — they record what actually happened at the time.
+     *
+     * <p>Fails with 409 + a collision map if any sanitised target would
+     * clash with another existing tool id; nothing is written in that case.
+     */
+    @PostMapping("/tools/repair-names")
+    public ResponseEntity<?> repairToolNames(@RequestParam("tenant") String tenant,
+                                             @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun) {
+        tenantGuard.requireWritable(tenant);
+        if (dryRun) {
+            return ResponseEntity.ok(toolNameRepair.plan(tenant));
+        }
+        try {
+            var report = toolNameRepair.apply(tenant);
+            refreshRuntimeCatalogAfterRepair(tenant, report);
+            return ResponseEntity.ok(report);
+        } catch (com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService.CollisionException ce) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                    "error", "tool_id_repair_collision",
+                    "message", "sanitised tool ids would collide; rename one side manually then retry",
+                    "collisions", ce.collisions()));
+        }
+    }
+
+    /**
+     * Re-register every renamed tool and every capability whose tool list
+     * may have changed. The orphaned old-id entries in {@code M0Catalog}
+     * are harmless (no capability references them) but get garbage-collected
+     * on next process restart when {@code RuntimeCatalogLoader} hydrates
+     * from the DB.
+     */
+    private void refreshRuntimeCatalogAfterRepair(String tenant,
+            com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService.Report report) {
+        if (report == null || report.renames().isEmpty()) return;
+        java.util.Set<String> renamed = new java.util.HashSet<>();
+        for (var r : report.renames()) renamed.add(r.to());
+        for (ToolEntity t : tools.findByTenantId(tenant)) {
+            if (renamed.contains(t.getId())) {
+                runtimeCatalog.registerTool(catalogMapper.toDescriptor(t));
+            }
+        }
+        for (CapabilityEntity c : capabilities.findByTenantId(tenant)) {
+            runtimeCatalog.registerCapability(catalogMapper.toCapability(c));
+        }
     }
 
     // ---- Validation + JSON helpers --------------------------------------
