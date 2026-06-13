@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/sessions_api.dart';
@@ -136,8 +137,29 @@ class PlaygroundController extends Notifier<PlaygroundState> {
         currentQuickReplies: List.of(res.quickReplies),
       );
     } catch (e) {
-      state = state.copyWith(error: 'Failed to start session: $e');
+      state = state.copyWith(error: 'Failed to start session: ${_describe(e)}');
     }
+  }
+
+  /// Pulls the actual server message out of a DioException — by default Dio
+  /// only stringifies the status code, hiding the body that explains *why*
+  /// (e.g. an OriginEnforcer denial with the offending origin). Falls back to
+  /// the exception toString for non-Dio failures.
+  String _describe(Object error) {
+    if (error is! DioException) return error.toString();
+    final response = error.response;
+    if (response == null) return error.message ?? error.toString();
+    final data = response.data;
+    final status = response.statusCode;
+    String body;
+    if (data is Map && (data['message'] is String || data['error'] is String)) {
+      body = '${data['error'] ?? ''} ${data['message'] ?? ''}'.trim();
+    } else if (data is String && data.isNotEmpty) {
+      body = data;
+    } else {
+      body = response.statusMessage ?? 'no body';
+    }
+    return 'HTTP $status — $body';
   }
 
   /// Ends the current session server-side and resets local state so the
