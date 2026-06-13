@@ -21,19 +21,21 @@ ActAs _$ActAsFromJson(Map<String, dynamic> json) {
 
 /// @nodoc
 mixin _$ActAs {
+  String get kind => throw _privateConstructorUsedError;
   String get scheme => throw _privateConstructorUsedError;
   String get token => throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String scheme, String token) rawToken,
+    required TResult Function(String kind, String scheme, String token)
+    rawToken,
   }) => throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String scheme, String token)? rawToken,
+    TResult? Function(String kind, String scheme, String token)? rawToken,
   }) => throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String scheme, String token)? rawToken,
+    TResult Function(String kind, String scheme, String token)? rawToken,
     required TResult orElse(),
   }) => throw _privateConstructorUsedError;
   @optionalTypeArgs
@@ -64,7 +66,7 @@ abstract class $ActAsCopyWith<$Res> {
   factory $ActAsCopyWith(ActAs value, $Res Function(ActAs) then) =
       _$ActAsCopyWithImpl<$Res, ActAs>;
   @useResult
-  $Res call({String scheme, String token});
+  $Res call({String kind, String scheme, String token});
 }
 
 /// @nodoc
@@ -81,9 +83,17 @@ class _$ActAsCopyWithImpl<$Res, $Val extends ActAs>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? scheme = null, Object? token = null}) {
+  $Res call({
+    Object? kind = null,
+    Object? scheme = null,
+    Object? token = null,
+  }) {
     return _then(
       _value.copyWith(
+            kind: null == kind
+                ? _value.kind
+                : kind // ignore: cast_nullable_to_non_nullable
+                      as String,
             scheme: null == scheme
                 ? _value.scheme
                 : scheme // ignore: cast_nullable_to_non_nullable
@@ -107,7 +117,7 @@ abstract class _$$ActAsRawTokenImplCopyWith<$Res>
   ) = __$$ActAsRawTokenImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String scheme, String token});
+  $Res call({String kind, String scheme, String token});
 }
 
 /// @nodoc
@@ -123,9 +133,17 @@ class __$$ActAsRawTokenImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? scheme = null, Object? token = null}) {
+  $Res call({
+    Object? kind = null,
+    Object? scheme = null,
+    Object? token = null,
+  }) {
     return _then(
       _$ActAsRawTokenImpl(
+        kind: null == kind
+            ? _value.kind
+            : kind // ignore: cast_nullable_to_non_nullable
+                  as String,
         scheme: null == scheme
             ? _value.scheme
             : scheme // ignore: cast_nullable_to_non_nullable
@@ -142,11 +160,18 @@ class __$$ActAsRawTokenImplCopyWithImpl<$Res>
 /// @nodoc
 @JsonSerializable()
 class _$ActAsRawTokenImpl implements ActAsRawToken {
-  const _$ActAsRawTokenImpl({this.scheme = 'Bearer', required this.token});
+  const _$ActAsRawTokenImpl({
+    this.kind = 'raw-token',
+    this.scheme = 'Bearer',
+    required this.token,
+  });
 
   factory _$ActAsRawTokenImpl.fromJson(Map<String, dynamic> json) =>
       _$$ActAsRawTokenImplFromJson(json);
 
+  @override
+  @JsonKey()
+  final String kind;
   @override
   @JsonKey()
   final String scheme;
@@ -155,7 +180,7 @@ class _$ActAsRawTokenImpl implements ActAsRawToken {
 
   @override
   String toString() {
-    return 'ActAs.rawToken(scheme: $scheme, token: $token)';
+    return 'ActAs.rawToken(kind: $kind, scheme: $scheme, token: $token)';
   }
 
   @override
@@ -163,13 +188,14 @@ class _$ActAsRawTokenImpl implements ActAsRawToken {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is _$ActAsRawTokenImpl &&
+            (identical(other.kind, kind) || other.kind == kind) &&
             (identical(other.scheme, scheme) || other.scheme == scheme) &&
             (identical(other.token, token) || other.token == token));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, scheme, token);
+  int get hashCode => Object.hash(runtimeType, kind, scheme, token);
 
   /// Create a copy of ActAs
   /// with the given fields replaced by the non-null parameter values.
@@ -182,27 +208,28 @@ class _$ActAsRawTokenImpl implements ActAsRawToken {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String scheme, String token) rawToken,
+    required TResult Function(String kind, String scheme, String token)
+    rawToken,
   }) {
-    return rawToken(scheme, token);
+    return rawToken(kind, scheme, token);
   }
 
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String scheme, String token)? rawToken,
+    TResult? Function(String kind, String scheme, String token)? rawToken,
   }) {
-    return rawToken?.call(scheme, token);
+    return rawToken?.call(kind, scheme, token);
   }
 
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String scheme, String token)? rawToken,
+    TResult Function(String kind, String scheme, String token)? rawToken,
     required TResult orElse(),
   }) {
     if (rawToken != null) {
-      return rawToken(scheme, token);
+      return rawToken(kind, scheme, token);
     }
     return orElse();
   }
@@ -243,6 +270,7 @@ class _$ActAsRawTokenImpl implements ActAsRawToken {
 
 abstract class ActAsRawToken implements ActAs {
   const factory ActAsRawToken({
+    final String kind,
     final String scheme,
     required final String token,
   }) = _$ActAsRawTokenImpl;
@@ -250,6 +278,8 @@ abstract class ActAsRawToken implements ActAs {
   factory ActAsRawToken.fromJson(Map<String, dynamic> json) =
       _$ActAsRawTokenImpl.fromJson;
 
+  @override
+  String get kind;
   @override
   String get scheme;
   @override

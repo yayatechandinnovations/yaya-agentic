@@ -8,9 +8,14 @@ part of 'act_as.dart';
 
 _$ActAsRawTokenImpl _$$ActAsRawTokenImplFromJson(Map<String, dynamic> json) =>
     _$ActAsRawTokenImpl(
+      kind: json['kind'] as String? ?? 'raw-token',
       scheme: json['scheme'] as String? ?? 'Bearer',
       token: json['token'] as String,
     );
 
 Map<String, dynamic> _$$ActAsRawTokenImplToJson(_$ActAsRawTokenImpl instance) =>
-    <String, dynamic>{'scheme': instance.scheme, 'token': instance.token};
+    <String, dynamic>{
+      'kind': instance.kind,
+      'scheme': instance.scheme,
+      'token': instance.token,
+    };
