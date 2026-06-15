@@ -101,11 +101,18 @@ com.yayatechandinnovations.yayaagentic
 │   ├── Authenticator, AuthContext, AuthenticationException
 │   ├── Authorizer, AuthzContext
 │   ├── AuthzDecision                   sealed: Allow | Deny(userSafeReason, auditReason)
-│   └── oidc/
-│       ├── OidcAuthenticator             DB-first per-tenant trust (reads tenant_oidc_issuers);
-│       │                                 YAML at yaya.agentic.auth.oidc.issuers is fallback
-│       └── TenantOidcIssuersChangedEvent published by admin CRUD on every write;
-│                                         evicts the OidcAuthenticator per-tenant processor cache
+│   ├── oidc/
+│   │   ├── OidcAuthenticator             DB-first per-tenant trust (reads tenant_oidc_issuers);
+│   │   │                                 YAML at yaya.agentic.auth.oidc.issuers is fallback.
+│   │   │                                 Yields on HS-family algs so SharedSecretJwtAuthenticator wins.
+│   │   └── TenantOidcIssuersChangedEvent published by admin CRUD; evicts per-tenant processor cache
+│   ├── jwt/
+│   │   ├── SharedSecretJwtAuthenticator  @Order(150). HS256/HS384/HS512 verification with per-tenant
+│   │   │                                 HMAC secrets (tenant_jwt_secrets). Yields on RS/ES algs.
+│   │   └── TenantJwtSecretsChangedEvent  published by admin CRUD; evicts per-tenant verifier cache
+│   └── secrets/
+│       └── SecretCipher                  AES-256-GCM envelope encryption for credentials at rest.
+│                                         Master key from yaya.agentic.secrets.encryption-key.
 ├── tool/                             Tool model — design §5.3
 │   ├── ToolDescriptor                  id + schemas + requires + handler ref + policy
 │   ├── ToolHandler<I,O>                Bean implementations
@@ -137,7 +144,8 @@ com.yayatechandinnovations.yayaagentic
 │   ├── SessionController               /v1/sessions/*
 │   ├── AdminController                 /v1/admin/*
 │   ├── TenantController                /v1/admin/tenants/*
-│   ├── TenantOidcIssuerController      /v1/admin/tenants/{id}/oidc-issuers  (per-tenant JWT trust)
+│   ├── TenantOidcIssuerController      /v1/admin/tenants/{id}/oidc-issuers  (per-tenant RS256/ES256 trust)
+│   ├── TenantJwtSecretController       /v1/admin/tenants/{id}/jwt-secrets   (per-tenant HS256 trust)
 │   └── IdentityProfileMappingController /v1/admin/tenants/{id}/identity-profile-mappings
 │                                        (claim → profile routing)
 └── config/

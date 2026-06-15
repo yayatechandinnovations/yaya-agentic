@@ -11,6 +11,7 @@ import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
+import '../models/admin/tenant_jwt_secret.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
 import 'api_client.dart';
@@ -304,6 +305,33 @@ class AdminApi {
 
   Future<void> deleteTenantOidcIssuer(String tenantId, int id) async {
     await _dio.delete('/v1/admin/tenants/$tenantId/oidc-issuers/$id');
+  }
+
+  // ---- Tenant JWT shared secrets (HS256) -----------------------------
+
+  Future<List<TenantJwtSecretResponse>> listTenantJwtSecrets(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/jwt-secrets');
+    return (res.data as List)
+        .map((e) => TenantJwtSecretResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<TenantJwtSecretResponse> createTenantJwtSecret(
+      String tenantId, TenantJwtSecretRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/jwt-secrets',
+        data: body.toJson());
+    return TenantJwtSecretResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantJwtSecretResponse> updateTenantJwtSecret(
+      String tenantId, int id, TenantJwtSecretRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/jwt-secrets/$id',
+        data: body.toJson());
+    return TenantJwtSecretResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteTenantJwtSecret(String tenantId, int id) async {
+    await _dio.delete('/v1/admin/tenants/$tenantId/jwt-secrets/$id');
   }
 
   // ---- Identity → profile mappings -----------------------------------

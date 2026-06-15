@@ -124,12 +124,21 @@ public class OidcAuthenticator implements Authenticator {
 
         SignedJWT signed;
         String iss;
+        String alg;
         try {
             signed = (SignedJWT) JWTParser.parse(token);
             iss = signed.getJWTClaimsSet().getIssuer();
+            alg = signed.getHeader().getAlgorithm() == null
+                    ? "" : signed.getHeader().getAlgorithm().getName();
         } catch (ParseException | ClassCastException e) {
             LOG.debug("oidc skip: Bearer token is not a parseable JWT — letting the chain continue "
                     + "(token prefix='{}', err={})", safePrefix(token), e.getMessage());
+            return Optional.empty();
+        }
+        // HS* JWTs belong to SharedSecretJwtAuthenticator — we trust only
+        // asymmetric algs against JWKS-published keys here.
+        if (alg != null && alg.startsWith("HS")) {
+            LOG.debug("oidc skip: alg='{}' is HMAC — yielding to shared-secret JWT authenticator", alg);
             return Optional.empty();
         }
         if (iss == null) throw new AuthenticationException("oidc: token has no iss claim");

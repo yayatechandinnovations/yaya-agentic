@@ -121,7 +121,7 @@ yaya-agentic/
 │   ├── main/resources/
 │   │   ├── application.yml             defaults (local profile)
 │   │   ├── application-docker.yml      compose profile — service hostnames, docker-compose integration off
-│   │   └── db/migration/V{1..12}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit, tenant registry, tenant_clone_jobs, identity_profile_mappings, tenant_oidc_issuers
+│   │   └── db/migration/V{1..13}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit, tenant registry, tenant_clone_jobs, identity_profile_mappings, tenant_oidc_issuers, tenant_jwt_secrets
 │   └── test/                           Engine + agentic + RAG + admin + operator-auth + tenant + clone tests (123 green)
 ├── yayaagenticweb/                     Flutter web (riverpod + dio + freezed + go_router)
 │   ├── lib/app/                        Router + theme + selected-tenant provider (persisted to shared_preferences)
@@ -155,6 +155,8 @@ Two SPIs. `Authenticator` turns inbound headers into a verified `Principal` (OID
 
 For OIDC specifically, **trusted issuers are first-class per-tenant data** — each tenant declares its own IdP through `POST /v1/admin/tenants/{id}/oidc-issuers` and the change takes effect on the next request (the `OidcAuthenticator` listens to a `TenantOidcIssuersChangedEvent` and evicts its per-tenant processor cache). The global `yaya.agentic.auth.oidc.issuers` YAML list is kept as a fallback for ops who prefer file-based config but is not required — the framework owns zero tenant-specific knowledge in YAML.
 
+Tenants whose identity service mints **HMAC-signed (HS256) JWTs** instead of asymmetric OIDC tokens — common for internal apps that never set up a JWKS endpoint — register a shared secret through `POST /v1/admin/tenants/{id}/jwt-secrets`. `SharedSecretJwtAuthenticator` (`@Order(150)`, between OIDC and service-token) handles HS-family algs; OIDC handles RS / ES. The two coexist by yielding on alg, so a tenant can mix both (internal app via HS256, B2B partner via RS256) without collisions. Secrets are AES-256-GCM-encrypted at rest with a master key from `yaya.agentic.secrets.encryption-key` (env `YAYA_AGENTIC_SECRETS_ENCRYPTION_KEY`) — a DB dump alone never leaks signing keys.
+
 ### Tenant — the trust root that owns them all
 A tenant is the single trust root for everything the platform does on behalf of a customer: which **inbound** origins may speak to us, which **outbound** hosts our tools dispatch to, which `Authenticator` mints the principal, which `Recorder` owns the transcript. Not four independent knobs — four projections of the same operator-configured row. HTTP tools are **path-only** (`/v1/orders/{id}`, never `https://api.acme.com/...`) so the host always resolves from the tenant — which is what makes a profile cloneable across tenants by a deterministic id-rewrite. Inbound origin enforcement is symmetric with the outbound host: the row that tells us where to dispatch *for* this tenant is the same row that decides who may speak to us *as* this tenant. Design: `docs/design/tenant-registry-design.md`.
 
@@ -183,15 +185,26 @@ curl -X POST $YAYA/v1/admin/tenants \
     "inboundOriginAllowlist": ["https://lottery-dr.do"]
   }'
 
-# 2. Tell yaya-agentic which JWTs to trust for THIS tenant
-#    (Per-tenant DB row — first-class. Replaces / coexists with the YAML
-#    list at yaya.agentic.auth.oidc.issuers.)
+# 2a. (OIDC path) Tell yaya-agentic which RS256/ES256 JWTs to trust for THIS tenant
+#     (Per-tenant DB row — first-class. Replaces / coexists with the YAML
+#     list at yaya.agentic.auth.oidc.issuers.)
 curl -X POST $YAYA/v1/admin/tenants/lottery-dr/oidc-issuers \
   -H 'Content-Type: application/json' \
   -d '{
     "iss": "https://auth.lottery-dr.do",
     "jwksUri": "https://auth.lottery-dr.do/.well-known/jwks.json",
     "audiences": ["yaya-agentic"]
+  }'
+
+# 2b. (HS256 path) OR — if your identity service mints HMAC-signed JWTs
+#     and doesn't expose a JWKS endpoint — register the shared HMAC secret
+#     instead. Stored AES-256-GCM-encrypted at rest.
+curl -X POST $YAYA/v1/admin/tenants/lottery-dr/jwt-secrets \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "iss": "smart-lottery-identity",
+    "secret": "<the HMAC key your identity service signs with>",
+    "audiences": ["smart-lottery-api"]
   }'
 
 # 3. Map JWT claims onto profiles — the LLM-aware role routing.
@@ -215,7 +228,8 @@ After that, the client application talks to yaya-agentic with the user's Bearer 
 | Resource | Endpoint | Read by | Cache invalidation |
 |---|---|---|---|
 | Tenant | `/v1/admin/tenants` | Everything — trust root | Per-write |
-| **OIDC issuer trust** | `/v1/admin/tenants/{id}/oidc-issuers` | `OidcAuthenticator` | `TenantOidcIssuersChangedEvent` evicts the per-tenant processor cache on every write |
+| **OIDC issuer trust** (RS256/ES256) | `/v1/admin/tenants/{id}/oidc-issuers` | `OidcAuthenticator` | `TenantOidcIssuersChangedEvent` evicts the per-tenant processor cache on every write |
+| **HMAC JWT trust** (HS256) | `/v1/admin/tenants/{id}/jwt-secrets` | `SharedSecretJwtAuthenticator` | `TenantJwtSecretsChangedEvent` evicts the per-tenant verifier cache on every write. Secrets AES-GCM-encrypted at rest. |
 | **Claim → profile mapping** | `/v1/admin/tenants/{id}/identity-profile-mappings` | `IdentityProfileResolver` | Read on every session start (small per-tenant lookup) |
 | Auth binding | `/v1/admin/auth-bindings` | Tenant default | Per-write |
 | Recording strategy | `/v1/admin/recording-strategies` | `RecorderRouter` | Per-write |
@@ -279,11 +293,12 @@ Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAu
 | M2.5 — RAG | ✅ shipped | pgvector retriever, per-source AuthZ, grounding rules, citations, sanitizer, search_knowledge tool |
 | M2.8 — Tenant registry | ✅ shipped | First-class tenants, path-only HTTP tools, inbound origin allowlist, cross-tenant profile clone (dependency walk + dry-run + atomic apply), absolute → path migrator |
 | M2.9 — Tenant-scoped trust config | ✅ shipped | Per-tenant OIDC issuers (DB-first, YAML fallback, event-driven cache eviction), claim → profile mappings, identity-driven `IdentityProfileResolver`. HTTP-only consumers can onboard a tenant with three POSTs and zero backend changes. |
+| M2.9.1 — Shared-secret JWT trust | ✅ shipped | Per-tenant HS256 trust for identity services that don't speak OIDC. `SharedSecretJwtAuthenticator` (`@Order(150)`) coexists with OIDC by yielding on alg. Secrets AES-256-GCM-encrypted at rest. |
 | M3 — Observability + replay | 🟦 planned | Per-turn trace, session replay UI |
 | M4 — First real profile | 🟦 planned | retail-customer (orders, returns, catalog) |
 | M5 — Multi-tenant admin | 🟦 planned | Per-tenant operator roles + API keys, S3 / Git loaders, RTBF / export UX |
 
-**Current test count: 134 tests** (123 from M0–M2.8 + 11 added in M2.9 covering `IdentityProfileResolver` matching shapes and `OidcAuthenticator` lookup / cache eviction).
+**Current test count: 143 tests** (123 from M0–M2.8 + 11 added in M2.9 + 9 added in M2.9.1 covering `SharedSecretJwtAuthenticator` HS256 verification, cache eviction, expiry, audience checks, and OIDC ↔ shared-secret yield-by-alg coexistence).
 
 ---
 
