@@ -98,7 +98,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     public StartSessionResult start(StartConversationRequest req, AuthContext auth) {
         Principal principal = authenticator.authenticate(auth);
 
-        Ids.ProfileId profileId = resolverChain.resolve(req, auth)
+        Ids.ProfileId profileId = resolverChain.resolve(req, auth, principal)
                 .orElse(HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE);
 
         Profile profile = profileRegistry.find(req.tenant(), profileId)

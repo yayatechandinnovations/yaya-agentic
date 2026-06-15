@@ -88,13 +88,24 @@ com.yayatechandinnovations.yayaagentic
 │   └── DefaultPersonalityProvider      tenant-agnostic baseline
 ├── profile/                          Role bundles + resolver chain — design §5.2, §5.6
 │   ├── Profile, Capability, ProfileRegistry, StartConversationRequest
-│   ├── ProfileResolver                 SPI
+│   ├── ProfileResolver                 SPI — resolve(req, AuthContext, Principal)
 │   ├── ProfileResolverChain            ordered, first-non-empty-wins
-│   └── resolvers/{Explicit,Identity,Channel,Fallback}ProfileResolver
+│   └── resolvers/
+│       ├── ExplicitProfileResolver       request body's profileId wins
+│       ├── IdentityProfileResolver       reads identity_profile_mappings; matches the
+│       │                                 verified principal's JWT claims (scalar / list /
+│       │                                 OIDC space-separated scope) → profile
+│       ├── ChannelProfileResolver        (stub) channel → profile
+│       └── FallbackProfileResolver       (stub) tenant default
 ├── auth/                             AuthN + AuthZ SPIs — design §5.4, §5.5
 │   ├── Authenticator, AuthContext, AuthenticationException
 │   ├── Authorizer, AuthzContext
-│   └── AuthzDecision                   sealed: Allow | Deny(userSafeReason, auditReason)
+│   ├── AuthzDecision                   sealed: Allow | Deny(userSafeReason, auditReason)
+│   └── oidc/
+│       ├── OidcAuthenticator             DB-first per-tenant trust (reads tenant_oidc_issuers);
+│       │                                 YAML at yaya.agentic.auth.oidc.issuers is fallback
+│       └── TenantOidcIssuersChangedEvent published by admin CRUD on every write;
+│                                         evicts the OidcAuthenticator per-tenant processor cache
 ├── tool/                             Tool model — design §5.3
 │   ├── ToolDescriptor                  id + schemas + requires + handler ref + policy
 │   ├── ToolHandler<I,O>                Bean implementations
@@ -124,7 +135,11 @@ com.yayatechandinnovations.yayaagentic
 │   └── TurnEvent                       sealed SSE events: Token | ToolCall | ToolResult | Citation | UiHint | End
 ├── api/                              HTTP surface — design §9
 │   ├── SessionController               /v1/sessions/*
-│   └── AdminController                 /v1/admin/*
+│   ├── AdminController                 /v1/admin/*
+│   ├── TenantController                /v1/admin/tenants/*
+│   ├── TenantOidcIssuerController      /v1/admin/tenants/{id}/oidc-issuers  (per-tenant JWT trust)
+│   └── IdentityProfileMappingController /v1/admin/tenants/{id}/identity-profile-mappings
+│                                        (claim → profile routing)
 └── config/
     ├── YayaAgenticProperties           @ConfigurationProperties("yaya.agentic")
     └── CoreConfiguration               enables properties
@@ -135,7 +150,7 @@ com.yayatechandinnovations.yayaagentic
 ## The SPI inventory (do not extend or rename without re-reading the design doc)
 
 1. `PersonalityProvider` — §5.1
-2. `ProfileResolver` (+ chain) — §5.6
+2. `ProfileResolver` (+ chain) — §5.6 — signature is `resolve(StartConversationRequest, AuthContext, Principal)`. The chain receives the verified principal from the engine so identity-driven resolvers can read claims without re-authenticating.
 3. `Authenticator` — §5.4
 4. `Authorizer` — §5.5
 5. `ToolHandler<I,O>` + `ToolHandlerRef` (sealed: `Bean` | `Http`) — §5.3

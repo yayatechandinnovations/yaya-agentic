@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.profile.resolvers;
 
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileResolver;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import org.springframework.core.annotation.Order;
@@ -14,7 +15,7 @@ import java.util.Optional;
 @Order(1_000)
 public class FallbackProfileResolver implements ProfileResolver {
     @Override
-    public Optional<Ids.ProfileId> resolve(StartConversationRequest req, AuthContext auth) {
+    public Optional<Ids.ProfileId> resolve(StartConversationRequest req, AuthContext auth, Principal principal) {
         return Optional.empty();
     }
 }

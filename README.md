@@ -121,7 +121,7 @@ yaya-agentic/
 │   ├── main/resources/
 │   │   ├── application.yml             defaults (local profile)
 │   │   ├── application-docker.yml      compose profile — service hostnames, docker-compose integration off
-│   │   └── db/migration/V{1..10}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit, tenant registry, tenant_clone_jobs
+│   │   └── db/migration/V{1..12}__*.sql Flyway: core, recorder, knowledge, profile language, operator sessions, operator-auth config + audit, tenant registry, tenant_clone_jobs, identity_profile_mappings, tenant_oidc_issuers
 │   └── test/                           Engine + agentic + RAG + admin + operator-auth + tenant + clone tests (123 green)
 ├── yayaagenticweb/                     Flutter web (riverpod + dio + freezed + go_router)
 │   ├── lib/app/                        Router + theme + selected-tenant provider (persisted to shared_preferences)
@@ -153,6 +153,8 @@ Pins a system prompt fragment, a capability list, a set of attached knowledge so
 ### Authentication / Authorization
 Two SPIs. `Authenticator` turns inbound headers into a verified `Principal` (OIDC, service-token, signed delegated-host, anonymous in dev). `Authorizer` answers `Allow | Deny(userSafeReason, auditReason)` for every tool call, every HTTP-tool egress, and every knowledge-source read. **The two reasons MUST be different** — one is paraphrased for the user, the other written to `audit_authz` for operators.
 
+For OIDC specifically, **trusted issuers are first-class per-tenant data** — each tenant declares its own IdP through `POST /v1/admin/tenants/{id}/oidc-issuers` and the change takes effect on the next request (the `OidcAuthenticator` listens to a `TenantOidcIssuersChangedEvent` and evicts its per-tenant processor cache). The global `yaya.agentic.auth.oidc.issuers` YAML list is kept as a fallback for ops who prefer file-based config but is not required — the framework owns zero tenant-specific knowledge in YAML.
+
 ### Tenant — the trust root that owns them all
 A tenant is the single trust root for everything the platform does on behalf of a customer: which **inbound** origins may speak to us, which **outbound** hosts our tools dispatch to, which `Authenticator` mints the principal, which `Recorder` owns the transcript. Not four independent knobs — four projections of the same operator-configured row. HTTP tools are **path-only** (`/v1/orders/{id}`, never `https://api.acme.com/...`) so the host always resolves from the tenant — which is what makes a profile cloneable across tenants by a deterministic id-rewrite. Inbound origin enforcement is symmetric with the outbound host: the row that tells us where to dispatch *for* this tenant is the same row that decides who may speak to us *as* this tenant. Design: `docs/design/tenant-registry-design.md`.
 
@@ -166,10 +168,76 @@ A user message arrives. The engine resolves the profile, builds an `IntentFrame`
 
 ---
 
+## Onboarding a new tenant end-to-end
+
+The framework is **HTTP-consumable**: a client application (lottery, e-commerce, healthcare — anything) integrates over the admin REST and the `/v1/sessions` SSE without embedding yaya-agentic as a library. Adding a new app is **three POSTs and zero backend restarts**. No app-specific knowledge ends up in yaya-agentic's YAML or code.
+
+```bash
+# 1. Register the tenant (trust root: hostBaseUrl, inbound-origin allowlist, etc.)
+curl -X POST $YAYA/v1/admin/tenants \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "lottery-dr",
+    "displayName": "Lotería DR",
+    "hostBaseUrl": "https://api.lottery-dr.do",
+    "inboundOriginAllowlist": ["https://lottery-dr.do"]
+  }'
+
+# 2. Tell yaya-agentic which JWTs to trust for THIS tenant
+#    (Per-tenant DB row — first-class. Replaces / coexists with the YAML
+#    list at yaya.agentic.auth.oidc.issuers.)
+curl -X POST $YAYA/v1/admin/tenants/lottery-dr/oidc-issuers \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "iss": "https://auth.lottery-dr.do",
+    "jwksUri": "https://auth.lottery-dr.do/.well-known/jwks.json",
+    "audiences": ["yaya-agentic"]
+  }'
+
+# 3. Map JWT claims onto profiles — the LLM-aware role routing.
+#    "PLAYER" role gets the retail-player profile (its tool catalog).
+#    "CASHIER" gets retail-cashier. Repeat per role.
+curl -X POST $YAYA/v1/admin/tenants/lottery-dr/identity-profile-mappings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "claimName": "role",
+    "claimValue": "PLAYER",
+    "profileId": "retail-player",
+    "profileVersion": 1,
+    "priority": 100
+  }'
+```
+
+After that, the client application talks to yaya-agentic with the user's Bearer JWT and **no `profileId`** — the chain runs `ExplicitProfileResolver` (empty), `IdentityProfileResolver` (matches `role=PLAYER` from the JWT → `retail-player`), and the session starts under the right profile. The client stays domain-neutral; the framework stays tenant-neutral.
+
+### What each resource does
+
+| Resource | Endpoint | Read by | Cache invalidation |
+|---|---|---|---|
+| Tenant | `/v1/admin/tenants` | Everything — trust root | Per-write |
+| **OIDC issuer trust** | `/v1/admin/tenants/{id}/oidc-issuers` | `OidcAuthenticator` | `TenantOidcIssuersChangedEvent` evicts the per-tenant processor cache on every write |
+| **Claim → profile mapping** | `/v1/admin/tenants/{id}/identity-profile-mappings` | `IdentityProfileResolver` | Read on every session start (small per-tenant lookup) |
+| Auth binding | `/v1/admin/auth-bindings` | Tenant default | Per-write |
+| Recording strategy | `/v1/admin/recording-strategies` | `RecorderRouter` | Per-write |
+
+### Claim matching shapes (`IdentityProfileResolver`)
+
+The resolver accepts three claim shapes so config doesn't need to know how the IdP ships claims:
+
+| Claim shape | Example value | Matches `claim_value=X` if |
+|---|---|---|
+| Scalar string | `"PLAYER"` | `value == "PLAYER"` |
+| List / collection | `["EMPLOYEE", "CASHIER"]` | list contains `"PLAYER"` |
+| OIDC `scope` (space-separated) | `"openid PLAYER_QUERY_PUBLIC PLAYER_BETTING"` | any token equals `"PLAYER"` |
+
+Rows are walked in `priority ASC` (then insertion order); first match wins. No match → empty, the chain falls through to `ChannelProfileResolver` / `FallbackProfileResolver`.
+
+---
+
 ## SPI inventory (do not extend without re-reading the design)
 
 1. `PersonalityProvider` — §5.1
-2. `ProfileResolver` (+ chain) — §5.6
+2. `ProfileResolver` (+ chain) — §5.6 — signature: `resolve(StartConversationRequest, AuthContext, Principal)`. The verified principal is passed in so identity-driven resolvers can read claims without re-authenticating.
 3. `Authenticator` — §5.4
 4. `Authorizer` — §5.5
 5. `ToolHandler<I,O>` + `ToolHandlerRef` (sealed: Bean | Http) — §5.3
@@ -210,11 +278,12 @@ Section numbers reference `docs/design/yaya-agentic-design.md`. Plus `OperatorAu
 | M2 agentic loop | ✅ shipped | LLM-proposed tool calls + multi-round continuation |
 | M2.5 — RAG | ✅ shipped | pgvector retriever, per-source AuthZ, grounding rules, citations, sanitizer, search_knowledge tool |
 | M2.8 — Tenant registry | ✅ shipped | First-class tenants, path-only HTTP tools, inbound origin allowlist, cross-tenant profile clone (dependency walk + dry-run + atomic apply), absolute → path migrator |
+| M2.9 — Tenant-scoped trust config | ✅ shipped | Per-tenant OIDC issuers (DB-first, YAML fallback, event-driven cache eviction), claim → profile mappings, identity-driven `IdentityProfileResolver`. HTTP-only consumers can onboard a tenant with three POSTs and zero backend changes. |
 | M3 — Observability + replay | 🟦 planned | Per-turn trace, session replay UI |
 | M4 — First real profile | 🟦 planned | retail-customer (orders, returns, catalog) |
 | M5 — Multi-tenant admin | 🟦 planned | Per-tenant operator roles + API keys, S3 / Git loaders, RTBF / export UX |
 
-**Current test count: 123/123 green.**
+**Current test count: 134 tests** (123 from M0–M2.8 + 11 added in M2.9 covering `IdentityProfileResolver` matching shapes and `OidcAuthenticator` lookup / cache eviction).
 
 ---
 

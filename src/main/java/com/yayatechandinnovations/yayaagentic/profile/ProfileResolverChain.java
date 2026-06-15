@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.profile;
 
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.springframework.core.annotation.AnnotationAwareOrderComparator;
 import org.springframework.stereotype.Component;
 
@@ -19,9 +20,9 @@ public class ProfileResolverChain {
                 .toList();
     }
 
-    public Optional<Ids.ProfileId> resolve(StartConversationRequest req, AuthContext auth) {
+    public Optional<Ids.ProfileId> resolve(StartConversationRequest req, AuthContext auth, Principal principal) {
         for (ProfileResolver r : resolvers) {
-            Optional<Ids.ProfileId> hit = r.resolve(req, auth);
+            Optional<Ids.ProfileId> hit = r.resolve(req, auth, principal);
             if (hit.isPresent()) return hit;
         }
         return Optional.empty();

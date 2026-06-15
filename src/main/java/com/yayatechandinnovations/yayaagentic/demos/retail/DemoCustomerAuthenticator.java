@@ -37,6 +37,13 @@ public class DemoCustomerAuthenticator implements Authenticator {
 
     @Override
     public Optional<Principal> tryAuthenticate(AuthContext ctx) {
+        // A demo authenticator must never overwrite a real credential. When
+        // the caller supplied an Authorization header (Bearer/Basic), this
+        // request belongs to the production chain (OidcAuthenticator); we
+        // yield so the JWT-derived scopes survive instead of being replaced
+        // by the hardcoded retail scopes below.
+        if (hasAuthorizationHeader(ctx)) return Optional.empty();
+
         String subject = headerOrDefault(ctx);
         Ids.TenantId tenant = ctx.tenant() != null ? ctx.tenant() : new Ids.TenantId("default");
         return Optional.of(new Principal(
@@ -45,6 +52,20 @@ public class DemoCustomerAuthenticator implements Authenticator {
                 Set.of("customer.read", "customer.write"),
                 Map.of("customerId", subject),
                 Instant.now()));
+    }
+
+    private static boolean hasAuthorizationHeader(AuthContext ctx) {
+        Map<String, String> headers = ctx.headers();
+        if (headers == null) return false;
+        for (Map.Entry<String, String> e : headers.entrySet()) {
+            if (e.getKey() != null
+                    && "authorization".equalsIgnoreCase(e.getKey())
+                    && e.getValue() != null
+                    && !e.getValue().isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String headerOrDefault(AuthContext ctx) {

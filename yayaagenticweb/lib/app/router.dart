@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../features/admin/audit/audit_screen.dart';
 import '../features/admin/auth_bindings/auth_bindings_screen.dart';
 import '../features/admin/capabilities/capabilities_screen.dart';
+import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
+import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
@@ -64,6 +66,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
           GoRoute(path: '/admin/knowledge-sources', builder: (_, __) => const KnowledgeSourcesScreen()),
           GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
+          GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
+          GoRoute(path: '/admin/identity-routing', builder: (_, __) => const IdentityRoutingScreen()),
           GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
           GoRoute(path: '/admin/audit', builder: (_, __) => const AuditScreen()),
           GoRoute(path: '/admin/operator-auth', builder: (_, __) => const OperatorAuthScreen()),
@@ -117,6 +121,8 @@ const _navItems = <_NavItem>[
   _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
   _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
   _NavItem('Auth bindings', Icons.lock_outlined, Icons.lock, '/admin/auth-bindings'),
+  _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
+  _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
   _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
   _NavItem('Operator auth', Icons.admin_panel_settings_outlined, Icons.admin_panel_settings, '/admin/operator-auth'),

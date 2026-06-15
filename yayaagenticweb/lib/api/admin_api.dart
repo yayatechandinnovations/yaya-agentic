@@ -5,11 +5,13 @@ import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
 import '../models/admin/clone.dart';
+import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
+import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
 import 'api_client.dart';
 
@@ -275,6 +277,65 @@ class AdminApi {
       'pageSize': pageSize,
     });
     return AuthzAuditPage.fromJson(_asMap(res.data));
+  }
+
+  // ---- Tenant OIDC issuers -------------------------------------------
+
+  Future<List<TenantOidcIssuerResponse>> listTenantOidcIssuers(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/oidc-issuers');
+    return (res.data as List)
+        .map((e) => TenantOidcIssuerResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<TenantOidcIssuerResponse> createTenantOidcIssuer(
+      String tenantId, TenantOidcIssuerRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/oidc-issuers',
+        data: body.toJson());
+    return TenantOidcIssuerResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<TenantOidcIssuerResponse> updateTenantOidcIssuer(
+      String tenantId, int id, TenantOidcIssuerRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/oidc-issuers/$id',
+        data: body.toJson());
+    return TenantOidcIssuerResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteTenantOidcIssuer(String tenantId, int id) async {
+    await _dio.delete('/v1/admin/tenants/$tenantId/oidc-issuers/$id');
+  }
+
+  // ---- Identity → profile mappings -----------------------------------
+
+  Future<List<IdentityProfileMappingResponse>> listIdentityProfileMappings(
+      String tenantId) async {
+    final res = await _dio.get(
+        '/v1/admin/tenants/$tenantId/identity-profile-mappings');
+    return (res.data as List)
+        .map((e) => IdentityProfileMappingResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<IdentityProfileMappingResponse> createIdentityProfileMapping(
+      String tenantId, IdentityProfileMappingRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/identity-profile-mappings',
+        data: body.toJson());
+    return IdentityProfileMappingResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<IdentityProfileMappingResponse> updateIdentityProfileMapping(
+      String tenantId, int id, IdentityProfileMappingRequest body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/identity-profile-mappings/$id',
+        data: body.toJson());
+    return IdentityProfileMappingResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteIdentityProfileMapping(String tenantId, int id) async {
+    await _dio.delete(
+        '/v1/admin/tenants/$tenantId/identity-profile-mappings/$id');
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);
