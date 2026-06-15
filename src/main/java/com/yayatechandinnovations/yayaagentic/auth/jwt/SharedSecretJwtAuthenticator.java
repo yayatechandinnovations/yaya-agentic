@@ -10,7 +10,7 @@ import com.nimbusds.jwt.SignedJWT;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
-import com.yayatechandinnovations.yayaagentic.auth.secrets.SecretCipher;
+import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretEntity;
@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  * {@code ServiceTokenAuthenticator}. The upside vs. service-token is
  * that we still extract a per-user principal from the verified payload
  * instead of stamping every call with a tenant-level identity. Keys
- * are AES-256-GCM-encrypted at rest via {@link SecretCipher}.</p>
+ * are AES-256-GCM-encrypted at rest via {@link JwtSecretCipher}.</p>
  *
  * <h3>Chain ordering</h3>
  * <p>{@code @Order(150)} — sits between {@code OidcAuthenticator(100)}
@@ -55,7 +55,7 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
 
     private final TenantJwtSecretRepository repo;
-    private final SecretCipher cipher;
+    private final JwtSecretCipher cipher;
     private final ObjectMapper json;
 
     /** Cache: tenantId → (iss → CachedSecret). Lazily populated per
@@ -65,7 +65,7 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
     private record CachedSecret(MACVerifier verifier, Set<String> audiences) {}
 
     public SharedSecretJwtAuthenticator(TenantJwtSecretRepository repo,
-                                        SecretCipher cipher,
+                                        JwtSecretCipher cipher,
                                         ObjectMapper json) {
         this.repo = repo;
         this.cipher = cipher;

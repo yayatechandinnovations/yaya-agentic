@@ -24,11 +24,11 @@ import java.util.Base64;
  *
  * <p>If the master key isn't configured the bean still loads (so the
  * app boots without HS256 support) but every encrypt/decrypt call
- * throws a clear {@link SecretCipherException}. Admin endpoints surface
+ * throws a clear {@link JwtSecretCipherException}. Admin endpoints surface
  * that as a 503 with a config-fix message rather than a silent failure.</p>
  */
 @Component
-public class SecretCipher {
+public class JwtSecretCipher {
 
     private static final String AES = "AES";
     private static final String AES_GCM = "AES/GCM/NoPadding";
@@ -39,7 +39,7 @@ public class SecretCipher {
     private final SecretKey masterKey;
     private final SecureRandom rng = new SecureRandom();
 
-    public SecretCipher(@Value("${yaya.agentic.secrets.encryption-key:}") String configuredKey) {
+    public JwtSecretCipher(@Value("${yaya.agentic.secrets.encryption-key:}") String configuredKey) {
         this.masterKey = parseKey(configuredKey);
     }
 
@@ -52,7 +52,7 @@ public class SecretCipher {
 
     public Encrypted encrypt(String plaintext) {
         if (masterKey == null) throw notConfigured();
-        if (plaintext == null) throw new SecretCipherException("plaintext is required");
+        if (plaintext == null) throw new JwtSecretCipherException("plaintext is required");
         try {
             byte[] iv = new byte[IV_BYTES];
             rng.nextBytes(iv);
@@ -63,14 +63,14 @@ public class SecretCipher {
                     Base64.getEncoder().encodeToString(ciphertext),
                     Base64.getEncoder().encodeToString(iv));
         } catch (Exception e) {
-            throw new SecretCipherException("encryption failed: " + e.getMessage(), e);
+            throw new JwtSecretCipherException("encryption failed: " + e.getMessage(), e);
         }
     }
 
     public String decrypt(String ciphertextB64, String ivB64) {
         if (masterKey == null) throw notConfigured();
         if (ciphertextB64 == null || ivB64 == null) {
-            throw new SecretCipherException("ciphertext and iv are required");
+            throw new JwtSecretCipherException("ciphertext and iv are required");
         }
         try {
             byte[] iv = Base64.getDecoder().decode(ivB64);
@@ -80,7 +80,7 @@ public class SecretCipher {
             byte[] plaintext = cipher.doFinal(ciphertext);
             return new String(plaintext, java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new SecretCipherException("decryption failed (master key changed or row corrupted?): "
+            throw new JwtSecretCipherException("decryption failed (master key changed or row corrupted?): "
                     + e.getMessage(), e);
         }
     }
@@ -104,8 +104,8 @@ public class SecretCipher {
         return new SecretKeySpec(raw, AES);
     }
 
-    private SecretCipherException notConfigured() {
-        return new SecretCipherException(
+    private JwtSecretCipherException notConfigured() {
+        return new JwtSecretCipherException(
                 "secret cipher is not configured — set yaya.agentic.secrets.encryption-key "
                         + "(env YAYA_AGENTIC_SECRETS_ENCRYPTION_KEY) to a base64-encoded 32-byte AES key. "
                         + "Generate one with `openssl rand -base64 32`.");
@@ -117,8 +117,8 @@ public class SecretCipher {
     /** Thrown for any encryption/decryption failure — including the
      *  "not configured" case so the admin layer can return 503 without
      *  inspecting cause chains. */
-    public static class SecretCipherException extends RuntimeException {
-        public SecretCipherException(String message) { super(message); }
-        public SecretCipherException(String message, Throwable cause) { super(message, cause); }
+    public static class JwtSecretCipherException extends RuntimeException {
+        public JwtSecretCipherException(String message) { super(message); }
+        public JwtSecretCipherException(String message, Throwable cause) { super(message, cause); }
     }
 }

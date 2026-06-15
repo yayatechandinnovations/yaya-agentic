@@ -9,7 +9,7 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
-import com.yayatechandinnovations.yayaagentic.auth.secrets.SecretCipher;
+import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretEntity;
@@ -33,7 +33,7 @@ import static org.mockito.Mockito.when;
  * End-to-end tests for {@link SharedSecretJwtAuthenticator}: signs real
  * HS256 JWTs with Nimbus and runs them through the authenticator, plus
  * exercises the early-return and untrusted-issuer paths. The
- * {@link SecretCipher} is constructed with a real base64 key so the
+ * {@link JwtSecretCipher} is constructed with a real base64 key so the
  * encrypt → store → decrypt → verify round-trip is also covered.
  */
 class SharedSecretJwtAuthenticatorTest {
@@ -44,7 +44,7 @@ class SharedSecretJwtAuthenticatorTest {
 
     private final TenantJwtSecretRepository repo = mock(TenantJwtSecretRepository.class);
     private final ObjectMapper json = new ObjectMapper();
-    private final SecretCipher cipher = new SecretCipher(
+    private final JwtSecretCipher cipher = new JwtSecretCipher(
             // 32 raw bytes -> 44 base64 chars. Hand-rolled so tests don't depend
             // on env vars; production reads YAYA_AGENTIC_SECRETS_ENCRYPTION_KEY.
             Base64.getEncoder().encodeToString(new byte[32]));
@@ -173,7 +173,7 @@ class SharedSecretJwtAuthenticatorTest {
 
     private void givenStoredSecret(String iss, String plaintextSecret, List<String> audiences)
             throws Exception {
-        SecretCipher.Encrypted enc = cipher.encrypt(plaintextSecret);
+        JwtSecretCipher.Encrypted enc = cipher.encrypt(plaintextSecret);
         String audsJson = json.writeValueAsString(audiences);
         TenantJwtSecretEntity entity = new TenantJwtSecretEntity(
                 TENANT.value(), iss, enc.ciphertext(), enc.iv(), audsJson);

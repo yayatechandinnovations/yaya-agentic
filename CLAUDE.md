@@ -111,8 +111,10 @@ com.yayatechandinnovations.yayaagentic
 │   │   │                                 HMAC secrets (tenant_jwt_secrets). Yields on RS/ES algs.
 │   │   └── TenantJwtSecretsChangedEvent  published by admin CRUD; evicts per-tenant verifier cache
 │   └── secrets/
-│       └── SecretCipher                  AES-256-GCM envelope encryption for credentials at rest.
-│                                         Master key from yaya.agentic.secrets.encryption-key.
+│       └── JwtSecretCipher               AES-256-GCM envelope encryption for the per-tenant HMAC
+│                                         keys in tenant_jwt_secrets. Master key from
+│                                         yaya.agentic.secrets.encryption-key. (Distinct from the
+│                                         operator-auth SecretCipher in operator_auth/config/.)
 ├── tool/                             Tool model — design §5.3
 │   ├── ToolDescriptor                  id + schemas + requires + handler ref + policy
 │   ├── ToolHandler<I,O>                Bean implementations

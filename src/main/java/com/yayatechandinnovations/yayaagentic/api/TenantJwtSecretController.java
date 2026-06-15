@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.jwt.TenantJwtSecretsChangedEvent;
-import com.yayatechandinnovations.yayaagentic.auth.secrets.SecretCipher;
+import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
@@ -38,13 +38,13 @@ public class TenantJwtSecretController {
 
     private final TenantGuard tenantGuard;
     private final TenantJwtSecretRepository repo;
-    private final SecretCipher cipher;
+    private final JwtSecretCipher cipher;
     private final ObjectMapper json;
     private final ApplicationEventPublisher events;
 
     public TenantJwtSecretController(TenantGuard tenantGuard,
                                      TenantJwtSecretRepository repo,
-                                     SecretCipher cipher,
+                                     JwtSecretCipher cipher,
                                      ObjectMapper json,
                                      ApplicationEventPublisher events) {
         this.tenantGuard = tenantGuard;
@@ -70,7 +70,7 @@ public class TenantJwtSecretController {
         requireCipherConfigured();
         validateCreate(req);
 
-        SecretCipher.Encrypted encrypted = cipher.encrypt(req.secret().trim());
+        JwtSecretCipher.Encrypted encrypted = cipher.encrypt(req.secret().trim());
         TenantJwtSecretEntity entity = new TenantJwtSecretEntity(
                 tenantId, req.iss().trim(),
                 encrypted.ciphertext(), encrypted.iv(),
@@ -111,7 +111,7 @@ public class TenantJwtSecretController {
         entity.setAudiencesJson(writeAudiences(req.audiences()));
         if (req.secret() != null && !req.secret().isBlank()) {
             requireCipherConfigured();
-            SecretCipher.Encrypted encrypted = cipher.encrypt(req.secret().trim());
+            JwtSecretCipher.Encrypted encrypted = cipher.encrypt(req.secret().trim());
             entity.setSecretCiphertext(encrypted.ciphertext());
             entity.setSecretIv(encrypted.iv());
         }
