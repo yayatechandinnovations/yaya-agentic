@@ -16,6 +16,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
@@ -39,6 +41,8 @@ import java.util.regex.Pattern;
  */
 @Component
 public class HttpToolDispatcher {
+
+    private static final Logger LOG = LoggerFactory.getLogger(HttpToolDispatcher.class);
 
     /** Matches {field} or {a.b.c} placeholders in URL / header / body templates. */
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z0-9_.]+)\\}");
@@ -80,10 +84,12 @@ public class HttpToolDispatcher {
                                     ExecutionContext ctx,
                                     String callId) {
         HttpToolSpec spec = handlerRef.spec();
+        Map<String, Object> richArgs = enrichArgs(args, ctx, callId);
+        String toolId = descriptor.id().value();
 
         URI url;
         try {
-            String renderedPath = renderTemplate(spec.urlTemplate(), args);
+            String renderedPath = renderTemplate(spec.urlTemplate(), richArgs, toolId);
             String override = ctx == null || ctx.attributes() == null ? null
                     : (String) ctx.attributes().get("hostBaseUrlOverride");
             url = baseUrlResolver.resolve(
@@ -103,7 +109,7 @@ public class HttpToolDispatcher {
 
         Map<String, String> headers = new LinkedHashMap<>();
         if (spec.headerTemplates() != null) {
-            spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, args)));
+            spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, richArgs, toolId)));
         }
         applyAuthForwarding(spec.authForwarding(), ctx, headers);
 
@@ -111,7 +117,7 @@ public class HttpToolDispatcher {
         if (spec.body() != null && spec.body().template() != null
                 && spec.method() != HttpToolSpec.HttpMethod.GET
                 && spec.method() != HttpToolSpec.HttpMethod.DELETE) {
-            body = renderTemplate(spec.body().template(), args);
+            body = renderTemplate(spec.body().template(), richArgs, toolId);
         }
 
         WebClient client = webClientBuilder.build();
@@ -189,17 +195,55 @@ public class HttpToolDispatcher {
 
     // ---- Template + projection helpers ----------------------------------
 
-    private String renderTemplate(String template, Map<String, Object> args) {
+    private String renderTemplate(String template, Map<String, Object> args, String toolId) {
         if (template == null) return null;
         Matcher m = PLACEHOLDER.matcher(template);
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             String path = m.group(1);
             Object value = pluck(args, path);
+            if (value == null) {
+                // Silent empty substitution is what hid the principal.claims.*
+                // bug for days — make the miss visible so downstream 403s have
+                // a fingerprint in our logs.
+                LOG.warn("template placeholder {{{}}} resolved to null in toolId={} — substituting empty string",
+                        path, toolId);
+            }
             m.appendReplacement(out, Matcher.quoteReplacement(value == null ? "" : value.toString()));
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    /**
+     * Merge LLM-supplied {@code args} with verified server-side context so
+     * templates can reference {@code {principal.*}} and {@code {call.id}}
+     * without having to trust the model to pass them as arguments.
+     */
+    private static Map<String, Object> enrichArgs(Map<String, Object> args,
+                                                  ExecutionContext ctx,
+                                                  String callId) {
+        Map<String, Object> rich = new LinkedHashMap<>(args == null ? Map.of() : args);
+        if (ctx != null && ctx.principal() != null) {
+            Map<String, Object> principalNode = new LinkedHashMap<>();
+            principalNode.put("subject", ctx.principal().subject());
+            if (ctx.principal().tenant() != null) {
+                principalNode.put("tenant", ctx.principal().tenant().value());
+            }
+            principalNode.put("claims", ctx.principal().claims() == null
+                    ? Map.of() : ctx.principal().claims());
+            rich.put("principal", principalNode);
+        }
+        rich.put("call", Map.of("id", callId == null ? "" : callId));
+        if (ctx != null) {
+            if (ctx.sessionId() != null) {
+                rich.put("session", Map.of("id", ctx.sessionId().value()));
+            }
+            if (ctx.turnId() != null) {
+                rich.put("turn", Map.of("id", ctx.turnId().value()));
+            }
+        }
+        return rich;
     }
 
     @SuppressWarnings("unchecked")

@@ -171,6 +171,148 @@ class HttpToolDispatcherTest {
     }
 
     @Test
+    void renders_principal_claims_into_url_template() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/ai/sales/tickets"))
+                .withQueryParam("organizationId", equalTo("abc-123"))
+                .withQueryParam("lotteryName", equalTo("real"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/ai/sales/tickets?organizationId={principal.claims.org}&lotteryName={lotteryName}",
+                "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor,
+                Map.of("lotteryName", "real"),
+                execCtxWithPrincipal(Map.of("org", "abc-123", "sub", "user-1")),
+                "call-principal-claims");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/ai/sales/tickets"))
+                .withQueryParam("organizationId", equalTo("abc-123"))
+                .withQueryParam("lotteryName", equalTo("real")));
+    }
+
+    @Test
+    void renders_principal_subject_and_tenant() {
+        wireMock.stubFor(get(urlPathEqualTo("/whoami"))
+                .withQueryParam("sub", equalTo("alice"))
+                .withQueryParam("tenant", equalTo("acme"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/whoami?sub={principal.subject}&tenant={principal.tenant}", "$");
+
+        Principal p = new Principal("alice", new Ids.TenantId("acme"),
+                Set.of(), Map.of(), Instant.now());
+        ExecutionContext ctx = new ExecutionContext(
+                p, new Ids.SessionId("s"), new Ids.TurnId("t"), "trace", Map.of());
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                ctx, "call-subject-tenant");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/whoami"))
+                .withQueryParam("sub", equalTo("alice"))
+                .withQueryParam("tenant", equalTo("acme")));
+    }
+
+    @Test
+    void missing_claim_substitutes_empty_string() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/x"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/x?organizationId={principal.claims.missing}", "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                execCtxWithPrincipal(Map.of("sub", "user-1")),
+                "call-missing-claim");
+
+        // Dispatcher must not fail just because a claim is absent — the
+        // downstream service decides how to respond. We assert the request
+        // went out with the empty substitution.
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/x"))
+                .withQueryParam("organizationId", equalTo("")));
+    }
+
+    @Test
+    void renders_call_id_into_idempotency_header() {
+        wireMock.stubFor(post(urlEqualTo("/api/mutate"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        HttpToolSpec spec = new HttpToolSpec(
+                HttpToolSpec.HttpMethod.POST,
+                "/api/mutate",
+                Map.of("Idempotency-Key", "{session.id}-{turn.id}-{call.id}"),
+                new HttpToolSpec.BodyTemplate("application/json", "{}"),
+                new HttpToolSpec.ResponseProjection("$", Map.of()),
+                HttpToolSpec.AuthForwarding.NONE);
+        ToolDescriptor descriptor = new ToolDescriptor(
+                new Ids.ToolId("mutate"),
+                "{\"type\":\"object\"}",
+                "{\"type\":\"object\"}",
+                PermissionRequirement.none(),
+                new ToolHandlerRef.Http(spec),
+                ToolPolicy.defaults());
+
+        Principal p = new Principal("alice", new Ids.TenantId("default"),
+                Set.of(), Map.of(), Instant.now());
+        ExecutionContext ctx = new ExecutionContext(
+                p, new Ids.SessionId("sess-9"), new Ids.TurnId("turn-3"),
+                "trace", Map.of());
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                ctx, "call-42");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(postRequestedFor(urlEqualTo("/api/mutate"))
+                .withHeader("Idempotency-Key", equalTo("sess-9-turn-3-call-42")));
+    }
+
+    @Test
+    void llm_args_and_principal_claims_coexist_in_url_template() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/draft"))
+                .withQueryParam("organizationId", equalTo("org-9"))
+                .withQueryParam("lotteryName", equalTo("daily"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/draft?organizationId={principal.claims.org}&lotteryName={lotteryName}",
+                "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor,
+                Map.of("lotteryName", "daily"),
+                execCtxWithPrincipal(Map.of("org", "org-9")),
+                "call-mixed");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/draft"))
+                .withQueryParam("organizationId", equalTo("org-9"))
+                .withQueryParam("lotteryName", equalTo("daily")));
+    }
+
+    @Test
     void forwards_host_base_url_override_to_resolver() {
         AtomicReference<String> seenOverride = new AtomicReference<>();
         BaseUrlResolver capturing = new BaseUrlResolver(null, new ObjectMapper()) {
@@ -244,5 +386,11 @@ class HttpToolDispatcherTest {
                 ? Map.of()
                 : Map.of("hostBaseUrlOverride", hostBaseUrlOverride);
         return new ExecutionContext(p, new Ids.SessionId("s"), new Ids.TurnId("t"), "trace", attrs);
+    }
+
+    private static ExecutionContext execCtxWithPrincipal(Map<String, Object> claims) {
+        Principal p = new Principal("alice", new Ids.TenantId("default"),
+                Set.of(), claims, Instant.now());
+        return new ExecutionContext(p, new Ids.SessionId("s"), new Ids.TurnId("t"), "trace", Map.of());
     }
 }
