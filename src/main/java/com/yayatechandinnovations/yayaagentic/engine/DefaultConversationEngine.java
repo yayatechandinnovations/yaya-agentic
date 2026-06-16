@@ -639,13 +639,19 @@ public class DefaultConversationEngine implements ConversationEngine {
             return confirmFlow(toolDescriptor, args, personality, session, exec, recorder, turnId, message);
         }
 
-        ToolExecutor.Outcome outcome = toolExecutor.execute(toolDescriptor, args, exec, callIdHint);
-        return switch (outcome) {
-            case ToolExecutor.Outcome.NeedsInput ni ->
-                    elicitationFlow(toolDescriptor, args, ni, personality, session, exec, recorder, turnId, message);
-            case ToolExecutor.Outcome.Dispatched(var result) ->
-                    dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message, llmDriven);
-        };
+        // Hop off the Reactor Netty event loop before executing. HTTP tool
+        // dispatch is synchronous-blocking inside (WebClient + mono.block in
+        // HttpToolDispatcher), and running that on the event loop deadlocks
+        // the response read and trips BlockHound. boundedElastic is the
+        // standard scheduler for blocking I/O bridges.
+        return Mono.fromCallable(() -> toolExecutor.execute(toolDescriptor, args, exec, callIdHint))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                .flatMapMany(outcome -> switch (outcome) {
+                    case ToolExecutor.Outcome.NeedsInput ni ->
+                            elicitationFlow(toolDescriptor, args, ni, personality, session, exec, recorder, turnId, message);
+                    case ToolExecutor.Outcome.Dispatched(var result) ->
+                            dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message, llmDriven);
+                });
     }
 
     /** B2.8 — Two-phase preview: stream tool_call + UiHint(confirm) and wait for the next turn. */
