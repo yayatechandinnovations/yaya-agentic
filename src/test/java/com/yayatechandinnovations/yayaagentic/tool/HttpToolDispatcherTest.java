@@ -87,7 +87,8 @@ class HttpToolDispatcherTest {
 
     @Test
     void surfaces_http_4xx_as_failed_with_status() {
-        wireMock.stubFor(get(urlMatching("/missing.*")).willReturn(aResponse().withStatus(404)));
+        wireMock.stubFor(get(urlMatching("/missing.*"))
+                .willReturn(aResponse().withStatus(404).withBody("no such resource")));
 
         HttpToolDispatcher dispatcher = dispatcher(
                 List.of("localhost"),
@@ -99,7 +100,55 @@ class HttpToolDispatcherTest {
                 execCtx(null), "call-3");
 
         assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.FAILED);
-        assertThat(result.error()).contains("404");
+        assertThat(result.error())
+                .contains("404")
+                .contains("no such resource");
+    }
+
+    @Test
+    void does_not_retry_4xx_even_when_policy_allows_retries() {
+        wireMock.stubFor(get(urlMatching("/missing.*"))
+                .willReturn(aResponse().withStatus(404).withBody("nope")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor("/missing", "$",
+                new ToolPolicy(Duration.ofSeconds(2), 3, true, false));
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                execCtx(null), "call-4xx-noretry");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.FAILED);
+        assertThat(result.error())
+                .contains("404")
+                .doesNotContain("Retries exhausted");
+        // Exactly one request — no retries on a 4xx that can't recover.
+        wireMock.verify(1, getRequestedFor(urlMatching("/missing.*")));
+    }
+
+    @Test
+    void retries_5xx_and_surfaces_underlying_status_when_exhausted() {
+        wireMock.stubFor(get(urlMatching("/flaky.*"))
+                .willReturn(aResponse().withStatus(503).withBody("down")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor("/flaky", "$",
+                new ToolPolicy(Duration.ofSeconds(2), 2, true, false));
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                execCtx(null), "call-5xx-retry");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.FAILED);
+        // The error must report the actual upstream status, not the
+        // "Retries exhausted" wrapper.
+        assertThat(result.error()).contains("503");
+        // Initial + 2 retries = 3 requests.
+        wireMock.verify(3, getRequestedFor(urlMatching("/flaky.*")));
     }
 
     @Test
@@ -168,6 +217,10 @@ class HttpToolDispatcherTest {
     }
 
     private static ToolDescriptor httpGetDescriptor(String urlTemplate, String jsonPath) {
+        return httpGetDescriptor(urlTemplate, jsonPath, ToolPolicy.defaults());
+    }
+
+    private static ToolDescriptor httpGetDescriptor(String urlTemplate, String jsonPath, ToolPolicy policy) {
         HttpToolSpec spec = new HttpToolSpec(
                 HttpToolSpec.HttpMethod.GET,
                 urlTemplate,
@@ -181,7 +234,7 @@ class HttpToolDispatcherTest {
                 "{\"type\":\"object\"}",
                 PermissionRequirement.none(),
                 new ToolHandlerRef.Http(spec),
-                ToolPolicy.defaults());
+                policy);
     }
 
     private static ExecutionContext execCtx(String hostBaseUrlOverride) {

@@ -131,15 +131,60 @@ public class HttpToolDispatcher {
             }
             var mono = req.retrieve().bodyToMono(String.class).timeout(timeout);
             if (policy.maxRetries() > 0) {
-                mono = mono.retryWhen(Retry.backoff(policy.maxRetries(), Duration.ofMillis(200)));
+                // Only retry transient failures. Retrying a 404 / 401 / 422
+                // just wastes time and floods the logs with "Retries
+                // exhausted" wrappers that hide the real cause.
+                mono = mono.retryWhen(Retry.backoff(policy.maxRetries(), Duration.ofMillis(200))
+                        .filter(HttpToolDispatcher::isTransient));
             }
             String responseBody = mono.block();
             return project(callId, spec.response(), responseBody);
         } catch (WebClientResponseException e) {
-            return failed(callId, "HTTP " + e.getStatusCode().value() + ": " + e.getStatusText());
+            return failed(callId, formatHttpFailure(e));
         } catch (Exception e) {
-            return failed(callId, "HTTP tool '" + descriptor.id().value() + "' failed: " + e.getMessage());
+            return failed(callId, "HTTP tool '" + descriptor.id().value() + "' failed: "
+                    + describeCause(e));
         }
+    }
+
+    /** Retry only what's worth retrying. Everything else fails fast. */
+    private static boolean isTransient(Throwable t) {
+        if (t instanceof WebClientResponseException w) {
+            int code = w.getStatusCode().value();
+            return code >= 500 || code == 429;
+        }
+        return t instanceof java.io.IOException
+                || t instanceof java.util.concurrent.TimeoutException;
+    }
+
+    /**
+     * Unwrap Reactor's {@code RetryExhaustedException} (and any other
+     * decorator) so the FAILED tool_result carries the actual reason —
+     * HTTP status, "Connection refused", "read timeout", etc. — instead of
+     * the opaque {@code "Retries exhausted: N/N"} text.
+     */
+    private static String describeCause(Throwable t) {
+        Throwable root = rootCause(t);
+        if (root instanceof WebClientResponseException w) return formatHttpFailure(w);
+        String msg = root.getMessage();
+        String name = root.getClass().getSimpleName();
+        return (msg == null || msg.isBlank()) ? name : name + ": " + msg;
+    }
+
+    private static Throwable rootCause(Throwable t) {
+        Throwable cur = t;
+        while (cur.getCause() != null && cur.getCause() != cur) cur = cur.getCause();
+        return cur;
+    }
+
+    private static String formatHttpFailure(WebClientResponseException e) {
+        String body = e.getResponseBodyAsString();
+        String base = "HTTP " + e.getStatusCode().value() + " " + e.getStatusText();
+        if (body == null || body.isBlank()) return base;
+        // Cap body in the error string — tool results bubble back to the LLM
+        // and a 50 KB error page in the prompt is not useful.
+        String snippet = body.length() > 500 ? body.substring(0, 500) + "…" : body;
+        return base + " — " + snippet;
     }
 
     // ---- Template + projection helpers ----------------------------------
