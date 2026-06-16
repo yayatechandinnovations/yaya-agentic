@@ -146,6 +146,18 @@ public class DefaultConversationEngine implements ConversationEngine {
             String authzHeader = auth.headers().get("Authorization");
             if (authzHeader == null) authzHeader = auth.headers().get("authorization");
             if (authzHeader != null) execAttrs.put("inboundAuthorization", authzHeader);
+
+            String overrideHost = auth.headers().get("X-Yaya-Host-Base-Url");
+            if (overrideHost == null) overrideHost = auth.headers().get("x-yaya-host-base-url");
+            if (overrideHost != null && !overrideHost.isBlank()) {
+                String trimmed = overrideHost.trim();
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                    execAttrs.put("hostBaseUrlOverride", trimmed);
+                }
+                // Silently drop malformed overrides — the dispatcher would
+                // reject anyway, and we don't want a typoed inbound header
+                // to fail a turn that has a perfectly good tenant default.
+            }
         }
         ExecutionContext exec = new ExecutionContext(
                 principal, sessionId, turnId, UUID.randomUUID().toString(), Map.copyOf(execAttrs));

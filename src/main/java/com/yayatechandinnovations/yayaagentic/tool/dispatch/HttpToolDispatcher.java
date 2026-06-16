@@ -6,6 +6,8 @@ import com.jayway.jsonpath.PathNotFoundException;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
+import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlResolutionException;
+import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlResolver;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolHandlerRef;
@@ -43,16 +45,19 @@ public class HttpToolDispatcher {
 
     private final WebClient.Builder webClientBuilder;
     private final HttpEgressPolicy egress;
+    private final BaseUrlResolver baseUrlResolver;
     private final ObjectMapper json;
     private final Duration defaultTimeout;
     private final Map<String, byte[]> serviceTokenSecrets;
 
     public HttpToolDispatcher(WebClient.Builder webClientBuilder,
                               HttpEgressPolicy egress,
+                              BaseUrlResolver baseUrlResolver,
                               ObjectMapper json,
                               YayaAgenticProperties props) {
         this.webClientBuilder = webClientBuilder;
         this.egress = egress;
+        this.baseUrlResolver = baseUrlResolver;
         this.json = json;
         this.defaultTimeout = props.httpTools() != null && props.httpTools().defaultTimeout() != null
                 ? props.httpTools().defaultTimeout()
@@ -78,7 +83,15 @@ public class HttpToolDispatcher {
 
         URI url;
         try {
-            url = URI.create(renderTemplate(spec.urlTemplate(), args));
+            String renderedPath = renderTemplate(spec.urlTemplate(), args);
+            String override = ctx == null || ctx.attributes() == null ? null
+                    : (String) ctx.attributes().get("hostBaseUrlOverride");
+            url = baseUrlResolver.resolve(
+                    ctx == null || ctx.principal() == null ? null : ctx.principal().tenant(),
+                    renderedPath,
+                    override);
+        } catch (BaseUrlResolutionException e) {
+            return failed(callId, "egress: " + e.getMessage());
         } catch (Exception e) {
             return failed(callId, "HTTP tool URL render failed: " + e.getMessage());
         }
