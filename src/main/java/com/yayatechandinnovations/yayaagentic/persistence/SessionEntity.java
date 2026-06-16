@@ -33,6 +33,15 @@ public class SessionEntity {
     @Column(name = "ended_at")
     private OffsetDateTime endedAt;
 
+    @Column(name = "summary_text")
+    private String summaryText;
+
+    @Column(name = "summary_through_turn_idx")
+    private Integer summaryThroughTurnIdx;
+
+    @Column(name = "summary_updated_at")
+    private OffsetDateTime summaryUpdatedAt;
+
     protected SessionEntity() {}
 
     public SessionEntity(UUID id, String tenantId, String principalSubject,
@@ -57,4 +66,12 @@ public class SessionEntity {
     public OffsetDateTime getEndedAt() { return endedAt; }
 
     public void setEndedAt(OffsetDateTime v) { this.endedAt = v; }
+
+    public String getSummaryText() { return summaryText; }
+    public Integer getSummaryThroughTurnIdx() { return summaryThroughTurnIdx; }
+    public OffsetDateTime getSummaryUpdatedAt() { return summaryUpdatedAt; }
+
+    public void setSummaryText(String v) { this.summaryText = v; }
+    public void setSummaryThroughTurnIdx(Integer v) { this.summaryThroughTurnIdx = v; }
+    public void setSummaryUpdatedAt(OffsetDateTime v) { this.summaryUpdatedAt = v; }
 }

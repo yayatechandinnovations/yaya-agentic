@@ -17,7 +17,25 @@ public record YayaAgenticProperties(
         HttpTools httpTools,
         OperatorAuth operatorAuth
 ) {
-    public record Session(Duration idleTimeout) {}
+    public record Session(Duration idleTimeout, Memory memory) {
+        public Memory memory() {
+            return memory == null ? Memory.defaults() : memory;
+        }
+    }
+
+    /**
+     * Cross-turn memory tuning. {@code tailWindow} is how many recent turns the
+     * recorder returns under {@code LoadOptions.summarizedForPrompt} and how
+     * many the prompt builder renders verbatim. {@code rotationThreshold} is
+     * the unsummarized-tail size that triggers a post-commit summarization
+     * pass — once exceeded, the recorder folds (count - tailWindow) oldest
+     * turns into a single rolling summary on the session row.
+     */
+    public record Memory(int tailWindow, int rotationThreshold) {
+        public static Memory defaults() {
+            return new Memory(12, 20);
+        }
+    }
 
     public record Llm(String provider) {}
 

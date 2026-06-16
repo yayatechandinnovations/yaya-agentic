@@ -17,9 +17,12 @@ import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileResolverChain;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import com.yayatechandinnovations.yayaagentic.recorder.ConversationRecorder;
+import com.yayatechandinnovations.yayaagentic.recorder.LoadOptions;
 import com.yayatechandinnovations.yayaagentic.recorder.Operations;
+import com.yayatechandinnovations.yayaagentic.recorder.RecordedSession;
 import com.yayatechandinnovations.yayaagentic.recorder.RecorderContext;
 import com.yayatechandinnovations.yayaagentic.recorder.RecorderRouter;
+import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolExecutor;
 import org.springframework.stereotype.Component;
@@ -57,6 +60,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final PromptBuilder promptBuilder;
     private final com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector;
     private final Retriever retriever;
+    private final YayaAgenticProperties.Memory memoryConfig;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
@@ -77,7 +81,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory,
                                      PromptBuilder promptBuilder,
                                      com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector,
-                                     Retriever retriever) {
+                                     Retriever retriever,
+                                     YayaAgenticProperties props) {
         this.personalityProvider = personalityProvider;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
@@ -92,6 +97,9 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.promptBuilder = promptBuilder;
         this.confirmDetector = confirmDetector;
         this.retriever = retriever;
+        this.memoryConfig = props != null && props.session() != null && props.session().memory() != null
+                ? props.session().memory()
+                : YayaAgenticProperties.Memory.defaults();
     }
 
     @Override
@@ -231,14 +239,83 @@ public class DefaultConversationEngine implements ConversationEngine {
                 "last_user_message", message.text(),
                 "intent_label", updatedIntent.label() == null ? "" : updatedIntent.label()));
 
+        // ---- Cross-turn memory: load prior tail + rolling summary -------
+        // The recorder owns summarization (CLAUDE.md SPI #10) — engine just
+        // asks for a summarized view. Empty list / null summary on the very
+        // first turn is the expected base case.
+        PriorContext prior = loadPriorContext(recorder, sessionId);
+
         // Run the agentic loop — the LLM sees the tool catalog and either
         // proposes a tool_use (which goes through runToolDispatch with full
         // AuthZ/elicit/confirm semantics) or streams a plain reply.
         final IntentFrame currentIntent = updatedIntent;
         Flux<TurnEvent> body = streamLlmTurn(personality, profile, session,
-                currentIntent, message, recorder, exec, turnId);
+                currentIntent, message, recorder, exec, turnId,
+                prior.historyEntries, prior.tailTurns, prior.summaryText);
 
         return body.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+    }
+
+    /** Per-session prior context for prompt + LLM history. */
+    private record PriorContext(List<LlmClient.HistoryEntry> historyEntries,
+                                List<Turn> tailTurns,
+                                String summaryText) {
+        static PriorContext empty() {
+            return new PriorContext(List.of(), List.of(), null);
+        }
+    }
+
+    private PriorContext loadPriorContext(ConversationRecorder recorder, Ids.SessionId sessionId) {
+        try {
+            return recorder.loadSession(sessionId, LoadOptions.summarizedForPrompt(memoryConfig.tailWindow()))
+                    .map(rec -> {
+                        List<Turn> tail = rec.turns() == null ? List.<Turn>of() : rec.turns();
+                        String summary = rec.summary() == null ? null : rec.summary().text();
+                        return new PriorContext(toHistoryEntries(tail), tail, summary);
+                    })
+                    .orElse(PriorContext.empty());
+        } catch (RuntimeException e) {
+            // History load must never fail a user turn — degrade gracefully.
+            return PriorContext.empty();
+        }
+    }
+
+    /**
+     * Projects recorded {@link Turn}s into the LLM client's history shape.
+     * USER → {@code User}; ASSISTANT → {@code Assistant} (carrying any tool
+     * calls), optionally followed by a {@code ToolResults} entry for the
+     * matching tool outcomes recorded on the same assistant turn. SYSTEM /
+     * TOOL roles are filtered — the recorder doesn't currently produce them
+     * in the canonical engine path, and we don't want to invent ones.
+     */
+    private static List<LlmClient.HistoryEntry> toHistoryEntries(List<Turn> turns) {
+        List<LlmClient.HistoryEntry> out = new java.util.ArrayList<>(turns.size());
+        for (Turn t : turns) {
+            switch (t.role()) {
+                case USER -> out.add(new LlmClient.HistoryEntry.User(
+                        t.content() == null ? "" : t.content()));
+                case ASSISTANT -> {
+                    List<LlmClient.ToolCallSpec> calls = (t.toolCalls() == null) ? List.of()
+                            : t.toolCalls().stream()
+                                .map(c -> new LlmClient.ToolCallSpec(c.callId(),
+                                        c.toolId().value(),
+                                        c.args() == null ? Map.<String, Object>of() : c.args()))
+                                .toList();
+                    out.add(new LlmClient.HistoryEntry.Assistant(
+                            t.content() == null ? "" : t.content(), calls));
+                    if (t.toolResults() != null && !t.toolResults().isEmpty()) {
+                        List<LlmClient.ToolResultSpec> results = t.toolResults().stream()
+                                .map(r -> new LlmClient.ToolResultSpec(
+                                        r.callId(), r.value(),
+                                        r.status() != Turn.ToolResult.Status.OK))
+                                .toList();
+                        out.add(new LlmClient.HistoryEntry.ToolResults(results));
+                    }
+                }
+                case SYSTEM, TOOL -> { /* skipped — not produced by the engine */ }
+            }
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")
@@ -303,8 +380,12 @@ public class DefaultConversationEngine implements ConversationEngine {
                                           UserMessage message,
                                           ConversationRecorder recorder,
                                           ExecutionContext exec,
-                                          Ids.TurnId turnId) {
-        List<LlmClient.HistoryEntry> initial = new java.util.ArrayList<>();
+                                          Ids.TurnId turnId,
+                                          List<LlmClient.HistoryEntry> priorHistory,
+                                          List<Turn> priorTurns,
+                                          String earlierSummary) {
+        List<LlmClient.HistoryEntry> initial = new java.util.ArrayList<>(priorHistory.size() + 1);
+        initial.addAll(priorHistory);
         initial.add(new LlmClient.HistoryEntry.User(message.text()));
         java.util.concurrent.atomic.AtomicBoolean anyDispatch = new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -317,7 +398,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                 .map(this::toCitationEvent);
 
         Flux<TurnEvent> body = streamLlmRound(personality, profile, session, intent, message,
-                recorder, exec, turnId, initial, retrieved, 0, anyDispatch);
+                recorder, exec, turnId, initial, retrieved, priorTurns, earlierSummary, 0, anyDispatch);
 
         return citations.concatWith(body);
     }
@@ -364,6 +445,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                            Ids.TurnId turnId,
                                            List<LlmClient.HistoryEntry> history,
                                            List<RetrievedChunk> retrieved,
+                                           List<Turn> priorTurns,
+                                           String earlierSummary,
                                            int round,
                                            java.util.concurrent.atomic.AtomicBoolean anyDispatch) {
         if (round >= MAX_TOOL_ROUNDS) {
@@ -375,7 +458,9 @@ public class DefaultConversationEngine implements ConversationEngine {
 
         List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
         PromptBuilder.PromptPayload payload = promptBuilder.build(
-                personality, profile, session, intent, List.of(), retrieved, message);
+                personality, profile, session, intent,
+                priorTurns == null ? List.of() : priorTurns,
+                retrieved, message, earlierSummary);
         // Keep the most recent payload so the inspector endpoint can show
         // exactly what was sent — cacheable prefix vs variable suffix split.
         lastPromptBySession.put(session.id(), payload);
@@ -445,7 +530,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                             next.add(new LlmClient.HistoryEntry.ToolResults(List.copyOf(roundResults)));
                         }
                         return streamLlmRound(personality, profile, session, intent, message,
-                                recorder, exec, turnId, next, retrieved, round + 1, anyDispatch);
+                                recorder, exec, turnId, next, retrieved, priorTurns, earlierSummary,
+                                round + 1, anyDispatch);
                     }
                     // Terminal round.
                     // - If no tool ever fired this user turn, record the

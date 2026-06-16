@@ -35,8 +35,9 @@ public class RecordingPromptInspector implements PromptBuilder {
     public PromptPayload build(PersonalityFragment personality, Profile profile,
                                Session session, IntentFrame intent,
                                List<Turn> history, List<RetrievedChunk> retrieved,
-                               UserMessage userMessage) {
-        PromptPayload payload = delegate.build(personality, profile, session, intent, history, retrieved, userMessage);
+                               UserMessage userMessage, String earlierSummary) {
+        PromptPayload payload = delegate.build(personality, profile, session, intent,
+                history, retrieved, userMessage, earlierSummary);
         seen.add(payload);
         return payload;
     }

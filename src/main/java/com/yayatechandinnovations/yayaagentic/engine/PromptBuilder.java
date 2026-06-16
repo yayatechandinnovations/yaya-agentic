@@ -22,7 +22,8 @@ public interface PromptBuilder {
                         IntentFrame intent,
                         List<Turn> history,
                         List<RetrievedChunk> retrieved,
-                        UserMessage userMessage);
+                        UserMessage userMessage,
+                        String earlierSummary);
 
     record PromptPayload(String cacheablePrefix, String variableSuffix) {}
 }
