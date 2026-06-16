@@ -14,11 +14,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HttpEgressPolicyTest {
 
     @Test
-    void denies_when_allowlist_empty() {
+    void empty_allowlist_skips_platform_gate() {
+        // Empty platform allowlist = no platform-level gate. BaseUrlResolver
+        // is the per-tenant authorization. SSRF still runs, so use localhost
+        // + allow-private to keep this test offline (matches the existing
+        // glob_pattern test below).
+        HttpEgressPolicy policy = policyWith(List.of(), true);
+        var decision = policy.check(URI.create("http://localhost:8080/x"));
+        assertThat(decision).isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
+    }
+
+    @Test
+    void empty_allowlist_still_blocks_loopback_via_ssrf() {
         HttpEgressPolicy policy = policyWith(List.of(), false);
-        var decision = policy.check(URI.create("https://api.example.com/x"));
+        var decision = policy.check(URI.create("http://localhost/anything"));
         assertThat(decision).isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
-        assertThat(((HttpEgressPolicy.Decision.Deny) decision).reason()).contains("allowlist");
+        assertThat(((HttpEgressPolicy.Decision.Deny) decision).reason()).contains("loopback");
+    }
+
+    @Test
+    void non_empty_allowlist_message_names_the_yaml_key() {
+        HttpEgressPolicy policy = policyWith(List.of("api.example.com"), true);
+        var decision = policy.check(URI.create("https://other.example.com/"));
+        assertThat(decision).isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
+        assertThat(((HttpEgressPolicy.Decision.Deny) decision).reason())
+                .contains("yaya.agentic.http-tools.egress-allowlist");
     }
 
     @Test

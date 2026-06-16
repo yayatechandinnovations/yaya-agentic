@@ -14,12 +14,20 @@ import java.util.regex.Pattern;
  * Pre-flight gate for every outbound HTTP tool call. Two layers:
  *
  * <ol>
- *   <li>Allowlist: the target host must match at least one configured
- *       pattern (exact, glob with {@code *}, or {@code "host:port"}).
- *       Empty allowlist = nothing permitted (closed by default).</li>
- *   <li>SSRF guard: the resolved IP must not be loopback, link-local,
- *       multicast, any-local, or RFC1918 private (unless
- *       {@code allow-private-networks=true}).</li>
+ *   <li>Platform allowlist (OPTIONAL kill-switch): when configured, the
+ *       target host must match at least one pattern (exact, glob with
+ *       {@code *}, or {@code "host:port"}). When the list is empty —
+ *       which is the default for multi-tenant SaaS deployments — this
+ *       layer is bypassed: per-tenant authorization is supplied
+ *       structurally by {@code BaseUrlResolver}, which already constrains
+ *       the dispatched host to {@code tenant.hostBaseUrl} or an entry
+ *       in {@code tenant.hostBaseUrlAllowlist}. Operators who want a
+ *       deployment-wide "this cluster can only ever call …" gate can
+ *       still set the list and it will enforce.</li>
+ *   <li>SSRF guard (always on): the resolved IP must not be loopback,
+ *       link-local, multicast, any-local, or RFC1918 private (unless
+ *       {@code allow-private-networks=true}). This is a platform
+ *       concern and runs regardless of allowlist configuration.</li>
  * </ol>
  *
  * Both decisions surface as a {@link Decision} that the dispatcher logs
@@ -52,11 +60,18 @@ public class HttpEgressPolicy {
             return new Decision.Deny("egress: missing host");
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
-        int port = uri.getPort() == -1 ? defaultPort(uri.getScheme()) : uri.getPort();
-        String hostPort = host + ":" + port;
 
-        if (!matchesAllowlist(host, hostPort)) {
-            return new Decision.Deny("egress: host '" + host + "' not in allowlist");
+        // Platform allowlist is an OPTIONAL kill-switch. When non-empty it
+        // gates; when empty we skip to SSRF only and let per-tenant config
+        // (BaseUrlResolver) carry the authorization. See class javadoc.
+        if (!allowed.isEmpty()) {
+            int port = uri.getPort() == -1 ? defaultPort(uri.getScheme()) : uri.getPort();
+            String hostPort = host + ":" + port;
+            if (!matchesAllowlist(host, hostPort)) {
+                return new Decision.Deny("egress: host '" + host
+                        + "' not in platform egress-allowlist"
+                        + " (yaya.agentic.http-tools.egress-allowlist)");
+            }
         }
 
         return checkPrivateAddressOnly(uri);
@@ -90,7 +105,6 @@ public class HttpEgressPolicy {
     }
 
     private boolean matchesAllowlist(String host, String hostPort) {
-        if (allowed.isEmpty()) return false;
         for (Pattern p : allowed) {
             if (p.matcher(host).matches()) return true;
             if (p.matcher(hostPort).matches()) return true;

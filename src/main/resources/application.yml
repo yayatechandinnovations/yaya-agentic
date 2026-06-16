@@ -78,9 +78,14 @@ yaya:
         - "http://localhost:*"
         - "http://127.0.0.1:*"
     http-tools:
-      # Hostnames or "host:port" patterns allowed as HTTP tool egress
-      # targets. Empty list = no outbound HTTP tools allowed. M5 will
-      # source the per-tenant list from DB; M1 reads this global list.
+      # OPTIONAL platform-wide kill-switch on outbound HTTP tool hosts.
+      # Empty list (default) = no platform-level gate; per-tenant
+      # authorization is supplied structurally by BaseUrlResolver, which
+      # constrains the dispatched host to tenant.hostBaseUrl (or an entry
+      # in tenant.hostBaseUrlAllowlist for X-Yaya-Host-Base-Url overrides).
+      # Set this only if you want a deployment-wide "this cluster can
+      # only ever call X" guard on top of per-tenant config. SSRF guard
+      # (allow-private-networks) still applies regardless.
       egress-allowlist: []
       # SSRF guard. Default refuses RFC1918 / loopback / link-local /
       # multicast / any-local. Tests can override per call.
