@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * from {@code Turn.ToolResult.capturedEntities} on load.</p>
  */
 @Component
-@ConditionalOnMissingBean(EntityMemory.class)
+@ConditionalOnMissingBean(value = EntityMemory.class, ignored = InMemoryEntityMemory.class)
 public class InMemoryEntityMemory implements EntityMemory {
 
     private final Map<Ids.SessionId, Map<String, EntityRef>> bySession = new ConcurrentHashMap<>();
