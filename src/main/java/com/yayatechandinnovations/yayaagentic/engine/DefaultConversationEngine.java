@@ -4,8 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.yayatechandinnovations.yayaagentic.auth.*;
 import com.yayatechandinnovations.yayaagentic.core.*;
+import com.yayatechandinnovations.yayaagentic.core.entity.EntityKind;
+import com.yayatechandinnovations.yayaagentic.core.entity.EntityMemory;
+import com.yayatechandinnovations.yayaagentic.core.entity.EntityRef;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
+import com.yayatechandinnovations.yayaagentic.engine.confirm.EntityConflictDetector;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalContext;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalQuery;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalResult;
@@ -25,8 +29,12 @@ import com.yayatechandinnovations.yayaagentic.recorder.RecordedSession;
 import com.yayatechandinnovations.yayaagentic.recorder.RecorderContext;
 import com.yayatechandinnovations.yayaagentic.recorder.RecorderRouter;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
+import com.yayatechandinnovations.yayaagentic.tool.EntityCapture;
+import com.yayatechandinnovations.yayaagentic.tool.OnConflict;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolExecutor;
+import com.yayatechandinnovations.yayaagentic.tool.dispatch.EntityBinder;
+import com.yayatechandinnovations.yayaagentic.tool.dispatch.JsonPointerExtractor;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -64,6 +72,9 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final Retriever retriever;
     private final YayaAgenticProperties.Memory memoryConfig;
     private final ObjectMapper fingerprintMapper;
+    private final EntityMemory entityMemory;
+    private final EntityConflictDetector entityConflictDetector;
+    private final JsonPointerExtractor entityExtractor;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
@@ -85,7 +96,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      PromptBuilder promptBuilder,
                                      com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector,
                                      Retriever retriever,
-                                     YayaAgenticProperties props) {
+                                     YayaAgenticProperties props,
+                                     EntityMemory entityMemory,
+                                     EntityConflictDetector entityConflictDetector,
+                                     ObjectMapper sharedObjectMapper) {
         this.personalityProvider = personalityProvider;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
@@ -108,6 +122,9 @@ public class DefaultConversationEngine implements ConversationEngine {
         // retry of the same operation matches the user's prior consent.
         this.fingerprintMapper = new ObjectMapper()
                 .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+        this.entityMemory = entityMemory;
+        this.entityConflictDetector = entityConflictDetector;
+        this.entityExtractor = new JsonPointerExtractor(sharedObjectMapper);
     }
 
     @Override
@@ -229,6 +246,80 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
         }
 
+        // ---- M2.10: resolve a pending entity-conflict (ASK_USER mode) ----
+        // Mirrors the pending_confirm state machine: the prior turn surfaced
+        // a conflict via UiHint + working memory, the LLM paraphrased the
+        // question, and the user's reply now routes to continue / replace /
+        // view / pivot. See docs/design/entity-memory-design.md §7.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pendingEntityConflict = pendingMapOf(wm, "pending_entity_conflict");
+        if (pendingEntityConflict != null) {
+            var signal = entityConflictDetector.detect(message.text());
+            String entityName = String.valueOf(pendingEntityConflict.get("entityName"));
+            switch (signal) {
+                case CONTINUE_EXISTING -> {
+                    // Drop the incoming; existing memory is unchanged.
+                    workingMemory.remove(sessionId, "pending_entity_conflict");
+                    // Let the LLM continue the turn normally — it will see
+                    // the resolved memory state and can proceed.
+                }
+                case REPLACE -> {
+                    workingMemory.remove(sessionId, "pending_entity_conflict");
+                    String rollbackTool = (String) pendingEntityConflict.get("rollbackTool");
+                    EntityRef incoming = (EntityRef) pendingEntityConflict.get("incoming");
+                    IntentFrame intentForResume = activeIntents.getOrDefault(sessionId,
+                            session.activeIntent() == null ? IntentFrame.empty() : session.activeIntent());
+                    if (rollbackTool != null && !rollbackTool.isBlank()
+                            && catalog.tool(new Ids.ToolId(rollbackTool)).isPresent()) {
+                        // Dispatch rollback against the still-current entity
+                        // (bindings on the rollback tool will fill its args
+                        // from memory). On success, the rollback continuation
+                        // captures the incoming entity below.
+                        Flux<TurnEvent> rollback = resumeReplaceWithRollback(
+                                new Ids.ToolId(rollbackTool), incoming,
+                                profile, personality, session, intentForResume,
+                                exec, recorder, turnId, message);
+                        if (rollback != null) {
+                            return rollback.concatWith(Mono.fromCallable(
+                                    () -> TurnEvent.End.of(turnId, 0, 0)));
+                        }
+                    }
+                    // No rollback tool declared — overwrite memory and let
+                    // the LLM continue the turn with the new entity.
+                    if (incoming != null) {
+                        entityMemory.capture(sessionId, incoming);
+                    }
+                }
+                case VIEW_EXISTING -> {
+                    String describeTool = (String) pendingEntityConflict.get("describeTool");
+                    if (describeTool != null && !describeTool.isBlank()
+                            && catalog.tool(new Ids.ToolId(describeTool)).isPresent()) {
+                        IntentFrame intentForResume = activeIntents.getOrDefault(sessionId,
+                                session.activeIntent() == null ? IntentFrame.empty() : session.activeIntent());
+                        // Don't clear pending_entity_conflict — after the
+                        // user sees the existing entity, we want to re-ask.
+                        Flux<TurnEvent> view = dispatchByToolId(
+                                new Ids.ToolId(describeTool), Map.of(),
+                                profile, personality, session, exec, recorder, turnId, message,
+                                /* skipConfirm */ true, /* callIdHint */ null,
+                                /* llmDriven */ true);
+                        if (view != null) {
+                            return view.concatWith(Mono.fromCallable(
+                                    () -> TurnEvent.End.of(turnId, 0, 0)));
+                        }
+                    }
+                    // No describe tool — drop pending and let the LLM
+                    // describe from whatever working-memory state it sees.
+                    workingMemory.remove(sessionId, "pending_entity_conflict");
+                }
+                case UNCLEAR -> {
+                    // Pivot — drop the pending conflict, let the rest of
+                    // the turn handle whatever the user actually meant.
+                    workingMemory.remove(sessionId, "pending_entity_conflict");
+                }
+            }
+        }
+
         // ---- M2-C: if a previous turn left an elicitation pending, the
         // user's current message fills the requested slot — skip the
         // intent tracker, jump straight to the dispatch we wanted last time.
@@ -294,12 +385,34 @@ public class DefaultConversationEngine implements ConversationEngine {
                     .map(rec -> {
                         List<Turn> tail = rec.turns() == null ? List.<Turn>of() : rec.turns();
                         String summary = rec.summary() == null ? null : rec.summary().text();
+                        rehydrateEntityMemoryIfEmpty(sessionId, tail);
                         return new PriorContext(toHistoryEntries(tail), tail, summary);
                     })
                     .orElse(PriorContext.empty());
         } catch (RuntimeException e) {
             // History load must never fail a user turn — degrade gracefully.
             return PriorContext.empty();
+        }
+    }
+
+    /**
+     * Phase-1 entity-memory rehydration. When {@link EntityMemory} has no
+     * entries for this session (process restart, evicted cache, etc.),
+     * walk the recorded turn results and re-capture every persisted
+     * {@link EntityRef}. Phase 2 replaces this with a dedicated table read
+     * — see docs/design/entity-memory-design.md §15.
+     */
+    private void rehydrateEntityMemoryIfEmpty(Ids.SessionId sessionId, List<Turn> tail) {
+        if (entityMemory == null || tail == null || tail.isEmpty()) return;
+        if (!entityMemory.all(sessionId).isEmpty()) return;
+        for (Turn turn : tail) {
+            if (turn.toolResults() == null) continue;
+            for (Turn.ToolResult tr : turn.toolResults()) {
+                if (tr.capturedEntities() == null) continue;
+                for (EntityRef ref : tr.capturedEntities()) {
+                    entityMemory.capture(sessionId, ref);
+                }
+            }
         }
     }
 
@@ -462,6 +575,9 @@ public class DefaultConversationEngine implements ConversationEngine {
         lastPromptBySession.remove(sessionId);
         lastRetrievalBySession.remove(sessionId);
         workingMemory.clear(sessionId);
+        if (entityMemory != null) {
+            entityMemory.clearScope(sessionId, com.yayatechandinnovations.yayaagentic.core.entity.EntityScope.SESSION);
+        }
         if (session == null) return;
         ConversationRecorder recorder = recorderRouter.recorderFor(session,
                 new RecorderRouter.RecordingDecisionContext(Map.of()));
@@ -746,13 +862,22 @@ public class DefaultConversationEngine implements ConversationEngine {
         ToolDescriptor toolDescriptor = catalog.tool(toolId)
                 .orElseThrow(() -> new IllegalStateException("tool descriptor missing: " + toolId.value()));
 
+        // M2.10 — apply entity bindings BEFORE authorize so the chain sees
+        // the real expanded args (the actual ticketId / principalSubject,
+        // not a placeholder the LLM omitted). Bindings are a no-op when the
+        // tool has no declared bindings or memory has no matching entities.
+        EntityBinder.Result bindResult = EntityBinder.apply(
+                args, toolDescriptor.bindings(), entityMemory, session.id());
+        Map<String, Object> effectiveArgs = bindResult.args();
+
         AuthzDecision decision = authorizer.authorize(
-                session.principal(), toolDescriptor.requires(), args,
+                session.principal(), toolDescriptor.requires(), effectiveArgs,
                 new AuthzContext(session.id(), turnId, exec.traceId(),
-                        Map.of("toolId", toolDescriptor.id().value())));
+                        Map.of("toolId", toolDescriptor.id().value(),
+                                "boundEntities", bindResult.bound())));
 
         if (decision instanceof AuthzDecision.Deny deny) {
-            return denialFlow(toolDescriptor, args, deny, personality, session, exec,
+            return denialFlow(toolDescriptor, effectiveArgs, deny, personality, session, exec,
                     recorder, turnId, message, callIdHint, llmDriven);
         }
 
@@ -762,9 +887,11 @@ public class DefaultConversationEngine implements ConversationEngine {
         // proposing a retry after a failed dispatch — don't loop them back
         // through the same yes/no. Different args still earn a fresh
         // confirmation; see alreadyConsentedThisTurn for the match rule.
+        // Consent matching uses the EXPANDED args so a retry whose
+        // post-binding shape matches the prior consent reuses it.
         if (!skipConfirm && toolDescriptor.policy() != null && toolDescriptor.policy().confirmable()
-                && !alreadyConsentedThisTurn(session.id(), turnId, toolDescriptor.id(), args)) {
-            return confirmFlow(toolDescriptor, args, personality, session, exec, recorder, turnId, message);
+                && !alreadyConsentedThisTurn(session.id(), turnId, toolDescriptor.id(), effectiveArgs)) {
+            return confirmFlow(toolDescriptor, effectiveArgs, personality, session, exec, recorder, turnId, message);
         }
 
         // Hop off the Reactor Netty event loop before executing. HTTP tool
@@ -772,13 +899,13 @@ public class DefaultConversationEngine implements ConversationEngine {
         // HttpToolDispatcher), and running that on the event loop deadlocks
         // the response read and trips BlockHound. boundedElastic is the
         // standard scheduler for blocking I/O bridges.
-        return Mono.fromCallable(() -> toolExecutor.execute(toolDescriptor, args, exec, callIdHint))
+        return Mono.fromCallable(() -> toolExecutor.execute(toolDescriptor, effectiveArgs, exec, callIdHint))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(outcome -> switch (outcome) {
                     case ToolExecutor.Outcome.NeedsInput ni ->
-                            elicitationFlow(toolDescriptor, args, ni, personality, session, exec, recorder, turnId, message);
+                            elicitationFlow(toolDescriptor, effectiveArgs, ni, personality, session, exec, recorder, turnId, message);
                     case ToolExecutor.Outcome.Dispatched(var result) ->
-                            dispatchedFlow(toolDescriptor, args, result, profile, session, exec, recorder, turnId, message, llmDriven);
+                            dispatchedFlow(toolDescriptor, effectiveArgs, result, profile, session, exec, recorder, turnId, message, llmDriven);
                 });
     }
 
@@ -825,13 +952,26 @@ public class DefaultConversationEngine implements ConversationEngine {
                                            boolean llmDriven) {
         Turn.ToolCall call = new Turn.ToolCall(result.callId(), toolDescriptor.id(), args);
 
+        // M2.10 — extract declared captures and either commit them to
+        // EntityMemory or queue an ASK_USER conflict for the next turn.
+        // Only OK results capture: DENIED/FAILED would let a poisoned
+        // upstream response pollute memory through a denied path.
+        CaptureOutcome captureOutcome = (result.status() == Turn.ToolResult.Status.OK)
+                ? applyCaptures(toolDescriptor, result, session)
+                : CaptureOutcome.empty();
+        Turn.ToolResult recordedResult = result.withCapturedEntities(captureOutcome.captured());
+
         List<String> followUps = (result.status() == Turn.ToolResult.Status.OK)
                 ? followUpHintsForTool(profile, toolDescriptor.id())
                 : List.of();
 
-        List<TurnEvent> events = new java.util.ArrayList<>(4);
+        List<TurnEvent> events = new java.util.ArrayList<>(5);
         events.add(new TurnEvent.ToolCall(call.callId(), toolDescriptor.id(), args));
-        events.add(new TurnEvent.ToolResult(call.callId(), result.status(), result.value(), result.error()));
+        events.add(new TurnEvent.ToolResult(call.callId(), recordedResult.status(),
+                recordedResult.value(), recordedResult.error()));
+        if (captureOutcome.conflictUiHint() != null) {
+            events.add(captureOutcome.conflictUiHint());
+        }
 
         if (llmDriven) {
             // The continuation LLM round paraphrases the tool result in the
@@ -843,17 +983,17 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
             return Flux.fromIterable(events)
                     .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, "",
-                            List.of(call), List.of(result)));
+                            List.of(call), List.of(recordedResult)));
         }
 
         // Resumed (confirm / elicit) paths don't get a fresh LLM round, so
         // they still need a fallback reply. Hardcoded English here matches
         // the equivalent denialFlow branch.
-        String spoken = switch (result.status()) {
+        String spoken = switch (recordedResult.status()) {
             case OK -> "You said: \""
                     + String.valueOf(args.getOrDefault("text", "")) + "\". Anything else?";
             case DENIED -> "I can't echo that.";
-            case FAILED -> "Sorry — that didn't work (" + result.error() + ").";
+            case FAILED -> "Sorry — that didn't work (" + recordedResult.error() + ").";
         };
         events.add(new TurnEvent.Token(spoken));
         if (!followUps.isEmpty()) {
@@ -862,7 +1002,166 @@ public class DefaultConversationEngine implements ConversationEngine {
 
         return Flux.fromIterable(events)
                 .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
-                        List.of(call), List.of(result)));
+                        List.of(call), List.of(recordedResult)));
+    }
+
+    /**
+     * Walks the tool's declared captures, extracts each value via JSON
+     * Pointer, and either commits it to {@link EntityMemory} or queues an
+     * {@link OnConflict#ASK_USER} resolution. Returns the list of
+     * successfully-committed {@link EntityRef}s (for recording) and an
+     * optional conflict {@link TurnEvent.UiHint} to emit.
+     *
+     * <p>Phase 1 surfaces at most ONE conflict per call. If multiple
+     * captures conflict, the first one wins and the rest are deferred to
+     * the next dispatch — they'll re-evaluate after the user resolves the
+     * first conflict.</p>
+     */
+    private CaptureOutcome applyCaptures(ToolDescriptor toolDescriptor,
+                                         Turn.ToolResult result,
+                                         Session session) {
+        List<EntityCapture> captures = toolDescriptor.captures();
+        if (captures == null || captures.isEmpty()) return CaptureOutcome.empty();
+
+        List<EntityRef> committed = new java.util.ArrayList<>(captures.size());
+        TurnEvent.UiHint conflictHint = null;
+
+        for (EntityCapture capture : captures) {
+            Object extracted = entityExtractor.extract(result.value(), capture.jsonPointer());
+            if (extracted == null) continue;
+
+            EntityRef incoming = new EntityRef(
+                    capture.name(),
+                    extracted,
+                    capture.scope(),
+                    capture.kind(),
+                    capture.visibleToLlm(),
+                    toolDescriptor.id(),
+                    Instant.now(),
+                    Map.of());
+
+            // Collection captures append unconditionally (no SINGLETON
+            // conflict semantics apply). EntityMemory handles the merge.
+            if (capture.kind() == EntityKind.COLLECTION) {
+                entityMemory.capture(session.id(), incoming);
+                committed.add(incoming);
+                continue;
+            }
+
+            // SINGLETON — check for existing under the same name.
+            Optional<EntityRef> existing = entityMemory.resolve(session.id(), capture.name());
+            if (existing.isEmpty()) {
+                entityMemory.capture(session.id(), incoming);
+                committed.add(incoming);
+                continue;
+            }
+
+            switch (capture.onConflict()) {
+                case OVERWRITE -> {
+                    entityMemory.capture(session.id(), incoming);
+                    committed.add(incoming);
+                }
+                case IGNORE -> { /* keep existing; do nothing */ }
+                case ERROR -> {
+                    // Surface as a typed failure on the recorded result.
+                    // For phase 1 we just skip the capture and let the
+                    // FAILED status (if upstream sets it later) handle it.
+                    // ERROR is operator-opt-in; ASK_USER is the default.
+                }
+                case ASK_USER -> {
+                    if (conflictHint != null) continue; // only one at a time
+                    workingMemory.merge(session.id(), Map.of("pending_entity_conflict", Map.of(
+                            "entityName", capture.name(),
+                            "incoming", incoming,
+                            "existing", existing.get(),
+                            "rollbackTool", capture.rollbackTool().map(Ids.ToolId::value).orElse(""),
+                            "describeTool", capture.describeTool().map(Ids.ToolId::value).orElse(""))));
+                    conflictHint = new TurnEvent.UiHint("entity_conflict", Map.of(
+                            "name", capture.name(),
+                            "existing", Map.of(
+                                    "producedBy", existing.get().producedBy() == null
+                                            ? "" : existing.get().producedBy().value(),
+                                    "capturedAt", existing.get().capturedAt().toString()),
+                            "options", List.of("continue_existing", "replace", "view_existing")));
+                }
+                case APPEND -> { /* invariant prevented at descriptor build */ }
+            }
+        }
+
+        return new CaptureOutcome(List.copyOf(committed), conflictHint);
+    }
+
+    /**
+     * Captures successfully committed in this dispatch plus, optionally, a
+     * single {@link TurnEvent.UiHint} to surface a pending entity conflict.
+     */
+    private record CaptureOutcome(List<EntityRef> captured, TurnEvent.UiHint conflictUiHint) {
+        static CaptureOutcome empty() {
+            return new CaptureOutcome(List.of(), null);
+        }
+    }
+
+    /**
+     * REPLACE branch of the entity-conflict resolver. Dispatches the
+     * operator-declared rollback tool against the existing entity (which
+     * is still in memory at this point; the rollback tool's bindings fill
+     * its args). On rollback success, captures the incoming entity; the
+     * LLM continuation paraphrases the outcome.
+     */
+    private Flux<TurnEvent> resumeReplaceWithRollback(Ids.ToolId rollbackToolId,
+                                                      EntityRef incoming,
+                                                      Profile profile,
+                                                      PersonalityFragment personality,
+                                                      Session session,
+                                                      IntentFrame intent,
+                                                      ExecutionContext exec,
+                                                      ConversationRecorder recorder,
+                                                      Ids.TurnId turnId,
+                                                      UserMessage message) {
+        if (catalog.tool(rollbackToolId).isEmpty()) return null;
+
+        PriorContext prior = loadPriorContext(recorder, session.id());
+        String callIdHint = UUID.randomUUID().toString();
+        java.util.concurrent.atomic.AtomicReference<Turn.ToolResult> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        Flux<TurnEvent> dispatched = dispatchByToolId(rollbackToolId, Map.of(),
+                profile, personality, session, exec, recorder, turnId, message,
+                /* skipConfirm */ true, callIdHint, /* llmDriven */ true)
+                .doOnNext(ev -> {
+                    if (ev instanceof TurnEvent.ToolResult tr) {
+                        captured.set(new Turn.ToolResult(tr.callId(), tr.status(),
+                                tr.value(), tr.error()));
+                    }
+                });
+
+        Flux<TurnEvent> continuation = Flux.defer(() -> {
+            Turn.ToolResult result = captured.get();
+            if (result == null) return Flux.<TurnEvent>empty();
+            if (result.status() == Turn.ToolResult.Status.OK && incoming != null) {
+                // Rollback succeeded; the existing entity has been
+                // invalidated upstream. Commit the incoming entity now.
+                entityMemory.capture(session.id(), incoming);
+            }
+            // Either way, let the LLM continuation explain what happened.
+            List<LlmClient.HistoryEntry> history = new java.util.ArrayList<>(prior.historyEntries);
+            history.add(new LlmClient.HistoryEntry.User(message.text()));
+            history.add(new LlmClient.HistoryEntry.Assistant("",
+                    List.of(new LlmClient.ToolCallSpec(callIdHint, rollbackToolId.value(), Map.of()))));
+            history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
+                    new LlmClient.ToolResultSpec(callIdHint, result.value(),
+                            result.status() != Turn.ToolResult.Status.OK))));
+
+            List<RetrievedChunk> retrieved = retrieveForTurn(profile, session, intent, exec, message);
+            java.util.concurrent.atomic.AtomicBoolean anyDispatch =
+                    new java.util.concurrent.atomic.AtomicBoolean(true);
+            return streamLlmRound(personality, profile, session, intent, message,
+                    recorder, exec, turnId, history, retrieved,
+                    prior.tailTurns, prior.summaryText,
+                    /* round */ 1, anyDispatch);
+        });
+
+        return dispatched.concatWith(continuation);
     }
 
     /** Finds the first capability the profile references that backs this tool,

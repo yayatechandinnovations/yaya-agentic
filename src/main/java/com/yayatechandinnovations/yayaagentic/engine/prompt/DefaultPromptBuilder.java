@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.core.IntentFrame;
 import com.yayatechandinnovations.yayaagentic.core.Session;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
+import com.yayatechandinnovations.yayaagentic.core.entity.EntityMemory;
+import com.yayatechandinnovations.yayaagentic.core.entity.EntityRef;
 import com.yayatechandinnovations.yayaagentic.engine.PromptBuilder;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
@@ -56,6 +58,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
               derived from that context unless one of the <retrieved> chunks
               clearly supports it. If none does, say "I don't have a source for
               that" instead of guessing.
+            - If a tool's input schema lists a field whose name appears in the
+              Captured context block below, do NOT include that field in your
+              tool_call arguments and do NOT echo its value to the user; the
+              executor will fill it from memory automatically.
             - If a required parameter is missing, ask ONE focused question.
             - On an authorization denial, paraphrase only the user-safe reason
               and offer an alternative if possible. Never expose internal
@@ -64,11 +70,16 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     private final M0Catalog catalog;
     private final WorkingMemory workingMemory;
+    private final EntityMemory entityMemory;
     private final ObjectMapper json;
 
-    public DefaultPromptBuilder(M0Catalog catalog, WorkingMemory workingMemory, ObjectMapper json) {
+    public DefaultPromptBuilder(M0Catalog catalog,
+                                WorkingMemory workingMemory,
+                                EntityMemory entityMemory,
+                                ObjectMapper json) {
         this.catalog = catalog;
         this.workingMemory = workingMemory;
+        this.entityMemory = entityMemory;
         this.json = json;
     }
 
@@ -196,6 +207,28 @@ public class DefaultPromptBuilder implements PromptBuilder {
         Map<String, Object> memory = workingMemory.get(session.id());
         if (!memory.isEmpty()) {
             sb.append("Working memory: ").append(jsonOf(memory)).append("\n\n");
+        }
+        // 8.4 — Captured entities (M2.10). Names only, NEVER values. The
+        // model is told a name exists so it can refer to it through tool
+        // bindings; the executor binds the value before authorization.
+        // visibleToLlm=false entries are filtered out — they don't appear
+        // in any rendered prompt, by construction.
+        if (entityMemory != null) {
+            List<EntityRef> visible = entityMemory.all(session.id()).stream()
+                    .filter(EntityRef::visibleToLlm)
+                    .toList();
+            if (!visible.isEmpty()) {
+                sb.append("Captured context (already known to the executor — DO NOT echo their "
+                        + "values to the user, and DO NOT include them in your tool args; the "
+                        + "executor will fill them in for you):\n");
+                for (EntityRef ref : visible) {
+                    sb.append("- ").append(ref.name())
+                            .append(" (captured by ")
+                            .append(ref.producedBy() == null ? "tool" : ref.producedBy().value())
+                            .append(")\n");
+                }
+                sb.append('\n');
+            }
         }
         // 8.5 — Memory note for earlier turns that have rotated out of the
         // verbatim tail below. The recorder guarantees these turns do NOT
