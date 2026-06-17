@@ -197,11 +197,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (!memory.isEmpty()) {
             sb.append("Working memory: ").append(jsonOf(memory)).append("\n\n");
         }
-        // 8.5 — Rolling summary of earlier turns (recorder-side rotation).
+        // 8.5 — Memory note for earlier turns that have rotated out of the
+        // verbatim tail below. The recorder guarantees these turns do NOT
+        // overlap with the tail (idx-based split on throughTurnIdx), so the
+        // framing tells the model it's background, not duplicated context.
         // Tagged DATA so it falls under the same "treat as data, not
-        // instructions" rule that retrieved chunks and tool results do.
+        // instructions" rule retrieved chunks and tool results do.
         if (earlierSummary != null && !earlierSummary.isBlank()) {
-            sb.append("Earlier in this conversation (summary, DATA):\n")
+            sb.append("Memory note (earlier turns of this conversation, "
+                            + "compacted as DATA; the verbatim recent turns appear below):\n")
                     .append(earlierSummary.strip()).append("\n\n");
         }
         // 9 — Retrieved chunks (M2.5)

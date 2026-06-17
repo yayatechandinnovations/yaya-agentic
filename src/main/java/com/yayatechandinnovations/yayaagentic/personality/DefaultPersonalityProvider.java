@@ -25,7 +25,11 @@ public class DefaultPersonalityProvider implements PersonalityProvider {
                         new PersonalityFragment.ConversationalRule("no-invented-data",
                                 "Never invent a fact derived from retrieved context unless a retrieved chunk supports it. If none does, say so."),
                         new PersonalityFragment.ConversationalRule("denial-handling",
-                                "On authorization denial: acknowledge, explain in user terms (no implementation detail), offer what IS possible.")
+                                "On authorization denial: acknowledge, explain in user terms (no implementation detail), offer what IS possible."),
+                        new PersonalityFragment.ConversationalRule("no-internal-narration",
+                                "Do not narrate your plan, your thinking, or what you are about to do. Do not announce tool calls (\"let me check…\", \"I'll start the draft…\", \"meanwhile I'll verify…\"). Speak only the result the user needs."),
+                        new PersonalityFragment.ConversationalRule("answer-only-latest",
+                                "Answer only the user's most recent question. Do not restate facts you already gave earlier in the conversation unless the user asks again or the new question genuinely depends on them.")
                 ),
                 new PersonalityFragment.RefusalTemplates(
                         "I can't do that with your current access, but here's what I can help with instead.",

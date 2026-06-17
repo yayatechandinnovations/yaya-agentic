@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.engine;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.yayatechandinnovations.yayaagentic.auth.*;
 import com.yayatechandinnovations.yayaagentic.core.*;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
@@ -61,6 +63,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector;
     private final Retriever retriever;
     private final YayaAgenticProperties.Memory memoryConfig;
+    private final ObjectMapper fingerprintMapper;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
@@ -100,6 +103,11 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.memoryConfig = props != null && props.session() != null && props.session().memory() != null
                 ? props.session().memory()
                 : YayaAgenticProperties.Memory.defaults();
+        // Order-stable JSON for tool-args fingerprinting. Two args maps that
+        // differ only in key order must produce the same fingerprint, so a
+        // retry of the same operation matches the user's prior consent.
+        this.fingerprintMapper = new ObjectMapper()
+                .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     }
 
     @Override
@@ -182,10 +190,25 @@ public class DefaultConversationEngine implements ConversationEngine {
                     String toolId = String.valueOf(pendingConfirm.get("toolId"));
                     Map<String, Object> args = (Map<String, Object>) pendingConfirm
                             .getOrDefault("args", Map.of());
+                    String callIdHint = pendingConfirm.get("callId") == null
+                            ? UUID.randomUUID().toString()
+                            : String.valueOf(pendingConfirm.get("callId"));
                     workingMemory.remove(sessionId, "pending_confirm");
-                    Flux<TurnEvent> resumed = dispatchByToolId(new Ids.ToolId(toolId), args,
-                            profile, personality, session, exec, recorder, turnId, message,
-                            /* skipConfirm */ true);
+                    // Record that the user consented for this exact operation
+                    // (tool + args) in this turn, so a retry the LLM proposes
+                    // later in the same turn skips the confirm gate. Keyed on
+                    // args fingerprint so a tool with different args still
+                    // earns its own confirmation.
+                    workingMemory.merge(sessionId, Map.of("consumed_confirm", Map.of(
+                            "toolId", toolId,
+                            "argsFingerprint", argsFingerprint(args),
+                            "turnId", turnId.value())));
+                    IntentFrame intentForResume = activeIntents.getOrDefault(sessionId,
+                            session.activeIntent() == null ? IntentFrame.empty() : session.activeIntent());
+                    Flux<TurnEvent> resumed = resumeConfirmedDispatch(
+                            new Ids.ToolId(toolId), args, callIdHint,
+                            profile, personality, session, intentForResume,
+                            exec, recorder, turnId, message);
                     if (resumed != null) return resumed.concatWith(Mono.fromCallable(
                             () -> TurnEvent.End.of(turnId, 0, 0)));
                 }
@@ -330,6 +353,105 @@ public class DefaultConversationEngine implements ConversationEngine {
         Object raw = wm == null ? null : wm.get(key);
         if (raw instanceof Map<?, ?> m && !m.isEmpty()) return (Map<String, Object>) m;
         return null;
+    }
+
+    /**
+     * True when the user already confirmed this exact operation earlier in
+     * this engine turn. Match is on (turnId, toolId, args fingerprint) — a
+     * retry with the same args reuses consent; different args are treated
+     * as a different operation and earn their own confirmation. Consent is
+     * scoped to the current {@link Ids.TurnId}, so a new user turn always
+     * starts from a clean slate.
+     */
+    private boolean alreadyConsentedThisTurn(Ids.SessionId sessionId,
+                                             Ids.TurnId turnId,
+                                             Ids.ToolId toolId,
+                                             Map<String, Object> args) {
+        Map<String, Object> consumed = pendingMapOf(workingMemory.get(sessionId), "consumed_confirm");
+        if (consumed == null) return false;
+        return turnId.value().equals(String.valueOf(consumed.get("turnId")))
+                && toolId.value().equals(String.valueOf(consumed.get("toolId")))
+                && argsFingerprint(args).equals(String.valueOf(consumed.get("argsFingerprint")));
+    }
+
+    /**
+     * Deterministic fingerprint for a tool args map. Used to decide whether
+     * a retry the LLM proposes after a failed dispatch is "the same
+     * operation the user already consented to" or a genuinely different
+     * call that still needs a fresh confirmation.
+     */
+    private String argsFingerprint(Map<String, Object> args) {
+        try {
+            return fingerprintMapper.writeValueAsString(args == null ? Map.of() : args);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // Args that can't serialize cleanly cannot match anything; that
+            // is the safe failure mode — it forces a fresh confirmation
+            // rather than silently waving the call through.
+            return "__unfingerprintable__:" + System.identityHashCode(args);
+        }
+    }
+
+    /**
+     * Continues a confirmable tool dispatch after the user has consented.
+     * Streams the tool call + result as usual, then continues with one LLM
+     * round so the model paraphrases the outcome in the conversation
+     * language — instead of the hardcoded English fallback that used to
+     * terminate the turn here.
+     */
+    private Flux<TurnEvent> resumeConfirmedDispatch(Ids.ToolId toolId,
+                                                    Map<String, Object> args,
+                                                    String callIdHint,
+                                                    Profile profile,
+                                                    PersonalityFragment personality,
+                                                    Session session,
+                                                    IntentFrame intent,
+                                                    ExecutionContext exec,
+                                                    ConversationRecorder recorder,
+                                                    Ids.TurnId turnId,
+                                                    UserMessage message) {
+        if (catalog.tool(toolId).isEmpty()) return null;
+
+        PriorContext prior = loadPriorContext(recorder, session.id());
+        java.util.concurrent.atomic.AtomicReference<Turn.ToolResult> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        Flux<TurnEvent> dispatched = dispatchByToolId(toolId, args, profile, personality,
+                session, exec, recorder, turnId, message,
+                /* skipConfirm */ true, /* callIdHint */ callIdHint,
+                /* llmDriven */ true)
+                .doOnNext(ev -> {
+                    if (ev instanceof TurnEvent.ToolResult tr) {
+                        captured.set(new Turn.ToolResult(tr.callId(), tr.status(),
+                                tr.value(), tr.error()));
+                    }
+                });
+
+        Flux<TurnEvent> continuation = Flux.defer(() -> {
+            Turn.ToolResult result = captured.get();
+            if (result == null) {
+                // Dispatch produced no ToolResult — nothing for the LLM to
+                // paraphrase. This happens only for elicitation pauses,
+                // which surface their own user-facing question.
+                return Flux.<TurnEvent>empty();
+            }
+            List<LlmClient.HistoryEntry> history = new java.util.ArrayList<>(prior.historyEntries);
+            history.add(new LlmClient.HistoryEntry.User(message.text()));
+            history.add(new LlmClient.HistoryEntry.Assistant("",
+                    List.of(new LlmClient.ToolCallSpec(callIdHint, toolId.value(), args))));
+            history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
+                    new LlmClient.ToolResultSpec(callIdHint, result.value(),
+                            result.status() != Turn.ToolResult.Status.OK))));
+
+            List<RetrievedChunk> retrieved = retrieveForTurn(profile, session, intent, exec, message);
+            java.util.concurrent.atomic.AtomicBoolean anyDispatch =
+                    new java.util.concurrent.atomic.AtomicBoolean(true);
+            return streamLlmRound(personality, profile, session, intent, message,
+                    recorder, exec, turnId, history, retrieved,
+                    prior.tailTurns, prior.summaryText,
+                    /* round */ 1, anyDispatch);
+        });
+
+        return dispatched.concatWith(continuation);
     }
 
     @Override
@@ -635,7 +757,13 @@ public class DefaultConversationEngine implements ConversationEngine {
         }
 
         // B2.8 — confirmable tools pause for explicit confirm before dispatch.
-        if (!skipConfirm && toolDescriptor.policy() != null && toolDescriptor.policy().confirmable()) {
+        // Exception: if the user already consented to this exact (tool,
+        // args) operation earlier in this engine turn — e.g. the LLM is
+        // proposing a retry after a failed dispatch — don't loop them back
+        // through the same yes/no. Different args still earn a fresh
+        // confirmation; see alreadyConsentedThisTurn for the match rule.
+        if (!skipConfirm && toolDescriptor.policy() != null && toolDescriptor.policy().confirmable()
+                && !alreadyConsentedThisTurn(session.id(), turnId, toolDescriptor.id(), args)) {
             return confirmFlow(toolDescriptor, args, personality, session, exec, recorder, turnId, message);
         }
 
