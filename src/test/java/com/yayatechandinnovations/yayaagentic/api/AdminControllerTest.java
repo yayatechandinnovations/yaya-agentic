@@ -250,4 +250,149 @@ class AdminControllerTest {
         assertThat(res.authenticators()).contains("noop", "oidc", "service-token", "delegated-host");
         assertThat(res.authorizers()).contains("ScopeAuthorizer", "OwnershipAuthorizer", "OpaAuthorizer");
     }
+
+    // ---- M2.10 entity captures + bindings round-trip --------------------
+
+    @Test @Order(11)
+    void posts_a_tool_with_captures_and_bindings_and_reads_them_back() {
+        // Mirrors the lottery case: prepare-draft captures draftId (SINGLETON
+        // visible to the LLM, ASK_USER on conflict, rollback via cancel-draft);
+        // add-lines binds draftId from memory with OVERRIDE so the LLM can't
+        // forge it. See docs/design/entity-memory-design.md §10.
+        var prepareDraft = new AdminDtos.ToolRequest(
+                TENANT, "prepare-draft",
+                "{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\"}}}",
+                "{\"type\":\"object\",\"properties\":{\"draftId\":{\"type\":\"string\"}}}",
+                Map.of(),
+                new AdminDtos.ToolHandlerDto("BEAN", "echoTool", null),
+                Map.of(),
+                List.of(new com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec(
+                        "draftId", "/draftId",
+                        "SESSION", "SINGLETON", "ASK_USER",
+                        /* visibleToLlm */ true,
+                        /* rollbackTool */ "cancel-draft",
+                        /* describeTool */ null)),
+                List.of());
+
+        var created = client.post().uri("/v1/admin/tools")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(prepareDraft)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(AdminDtos.ToolResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(created).isNotNull();
+        assertThat(created.captures()).hasSize(1);
+        assertThat(created.captures().get(0).name()).isEqualTo("draftId");
+        assertThat(created.captures().get(0).jsonPointer()).isEqualTo("/draftId");
+        assertThat(created.captures().get(0).onConflict()).isEqualTo("ASK_USER");
+        assertThat(created.captures().get(0).rollbackTool()).isEqualTo("cancel-draft");
+        assertThat(created.captures().get(0).visibleToLlm()).isTrue();
+        assertThat(created.bindings()).isEmpty();
+
+        var addLines = new AdminDtos.ToolRequest(
+                TENANT, "add-lines",
+                "{\"type\":\"object\",\"properties\":{\"draftId\":{\"type\":\"string\"},"
+                        + "\"numbers\":{\"type\":\"string\"}}}",
+                "{\"type\":\"object\",\"properties\":{\"lineId\":{\"type\":\"string\"}}}",
+                Map.of(),
+                new AdminDtos.ToolHandlerDto("BEAN", "echoTool", null),
+                Map.of(),
+                List.of(),
+                List.of(new com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec(
+                        "draftId", "draftId", "OVERRIDE")));
+
+        var withBinding = client.post().uri("/v1/admin/tools")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(addLines)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(AdminDtos.ToolResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(withBinding).isNotNull();
+        assertThat(withBinding.bindings()).hasSize(1);
+        assertThat(withBinding.bindings().get(0).argName()).isEqualTo("draftId");
+        assertThat(withBinding.bindings().get(0).entityName()).isEqualTo("draftId");
+        assertThat(withBinding.bindings().get(0).mode()).isEqualTo("OVERRIDE");
+
+        // Round-trip: GET list and confirm both come back with the same shape.
+        List<AdminDtos.ToolResponse> list = client.get()
+                .uri("/v1/admin/tools?tenant=" + TENANT)
+                .exchange().expectStatus().isOk()
+                .expectBodyList(AdminDtos.ToolResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(list).isNotNull();
+        AdminDtos.ToolResponse fetched = list.stream()
+                .filter(t -> t.id().equals("prepare-draft")).findFirst().orElseThrow();
+        assertThat(fetched.captures()).hasSize(1);
+        assertThat(fetched.captures().get(0).rollbackTool()).isEqualTo("cancel-draft");
+    }
+
+    @Test @Order(12)
+    void rejects_capture_with_collection_kind_but_non_append_onConflict() {
+        var req = new AdminDtos.ToolRequest(
+                TENANT, "bad-capture-kind",
+                "{\"type\":\"object\"}", "{\"type\":\"object\"}",
+                Map.of(),
+                new AdminDtos.ToolHandlerDto("BEAN", "echoTool", null),
+                Map.of(),
+                List.of(new com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec(
+                        "lines", "/lineId",
+                        "SESSION", "COLLECTION", "ASK_USER",
+                        true, null, null)),
+                List.of());
+        client.post().uri("/v1/admin/tools")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req)
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.message()).contains("COLLECTION requires onConflict=APPEND"));
+    }
+
+    @Test @Order(13)
+    void rejects_binding_whose_argName_is_not_in_input_schema() {
+        var req = new AdminDtos.ToolRequest(
+                TENANT, "bad-binding",
+                "{\"type\":\"object\",\"properties\":{\"foo\":{\"type\":\"string\"}}}",
+                "{\"type\":\"object\"}",
+                Map.of(),
+                new AdminDtos.ToolHandlerDto("BEAN", "echoTool", null),
+                Map.of(),
+                List.of(),
+                List.of(new com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec(
+                        "ghost", "draftId", "OVERRIDE")));
+        client.post().uri("/v1/admin/tools")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req)
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.message()).contains("'ghost' is not a property"));
+    }
+
+    @Test @Order(14)
+    void rejects_duplicate_capture_names_on_the_same_tool() {
+        var req = new AdminDtos.ToolRequest(
+                TENANT, "dup-capture",
+                "{\"type\":\"object\"}", "{\"type\":\"object\"}",
+                Map.of(),
+                new AdminDtos.ToolHandlerDto("BEAN", "echoTool", null),
+                Map.of(),
+                List.of(
+                    new com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec(
+                        "draftId", "/a", "SESSION", "SINGLETON", "ASK_USER",
+                        true, null, null),
+                    new com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec(
+                        "draftId", "/b", "SESSION", "SINGLETON", "OVERWRITE",
+                        true, null, null)),
+                List.of());
+        client.post().uri("/v1/admin/tools")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req)
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.message()).contains("duplicate entity name 'draftId'"));
+    }
 }

@@ -1,5 +1,8 @@
 package com.yayatechandinnovations.yayaagentic.api.dto;
 
+import com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec;
+import com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -54,8 +57,23 @@ public final class AdminDtos {
     public record ToolRequest(
             String tenant, String id, String inputSchemaJson, String outputSchemaJson,
             Map<String, Object> requires, ToolHandlerDto handler,
-            Map<String, Object> policy
-    ) {}
+            Map<String, Object> policy,
+            List<EntityCaptureSpec> captures,
+            List<EntityBindingSpec> bindings
+    ) {
+        public ToolRequest {
+            captures = captures == null ? List.of() : List.copyOf(captures);
+            bindings = bindings == null ? List.of() : List.copyOf(bindings);
+        }
+
+        /** Compat ctor for tools that don't declare entity-memory hooks. */
+        public ToolRequest(String tenant, String id, String inputSchemaJson, String outputSchemaJson,
+                           Map<String, Object> requires, ToolHandlerDto handler,
+                           Map<String, Object> policy) {
+            this(tenant, id, inputSchemaJson, outputSchemaJson, requires, handler, policy,
+                    List.of(), List.of());
+        }
+    }
 
     public record ToolHandlerDto(
             String kind,                          // BEAN | HTTP
@@ -79,9 +97,17 @@ public final class AdminDtos {
             String id, int version, String tenant,
             String inputSchemaJson, String outputSchemaJson,
             Map<String, Object> requires, ToolHandlerDto handler,
-            Map<String, Object> policy, String status,
+            Map<String, Object> policy,
+            List<EntityCaptureSpec> captures,
+            List<EntityBindingSpec> bindings,
+            String status,
             OffsetDateTime createdAt
-    ) {}
+    ) {
+        public ToolResponse {
+            captures = captures == null ? List.of() : List.copyOf(captures);
+            bindings = bindings == null ? List.of() : List.copyOf(bindings);
+        }
+    }
 
     // ---- Auth bindings --------------------------------------------------
 

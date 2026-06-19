@@ -8,6 +8,10 @@ import com.yayatechandinnovations.yayaagentic.core.PermissionRequirement;
 import com.yayatechandinnovations.yayaagentic.persistence.CapabilityEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ToolEntity;
 import com.yayatechandinnovations.yayaagentic.profile.Capability;
+import com.yayatechandinnovations.yayaagentic.tool.EntityBinding;
+import com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec;
+import com.yayatechandinnovations.yayaagentic.tool.EntityCapture;
+import com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolHandlerRef;
@@ -32,6 +36,8 @@ public class CatalogMapper {
     private static final TypeReference<PermissionRequirement> PERMISSION_REQUIREMENT = new TypeReference<>() {};
     private static final TypeReference<HttpToolSpec> HTTP_TOOL_SPEC = new TypeReference<>() {};
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
+    private static final TypeReference<List<EntityCaptureSpec>> CAPTURE_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<EntityBindingSpec>> BINDING_LIST = new TypeReference<>() {};
 
     private final ObjectMapper json;
 
@@ -49,12 +55,19 @@ public class CatalogMapper {
 
         ToolPolicy policy = readPolicy(e.getPolicyJson());
 
+        List<EntityCapture> captures = readJson(e.getCapturesJson(), CAPTURE_LIST, List.of())
+                .stream().map(EntityCaptureSpec::toRuntime).toList();
+        List<EntityBinding> bindings = readJson(e.getBindingsJson(), BINDING_LIST, List.of())
+                .stream().map(EntityBindingSpec::toRuntime).toList();
+
         return new ToolDescriptor(id,
                 e.getInputSchemaJson(),
                 e.getOutputSchemaJson(),
                 requires == null ? PermissionRequirement.none() : requires,
                 handler,
-                policy);
+                policy,
+                captures,
+                bindings);
     }
 
     public Capability toCapability(CapabilityEntity e) {

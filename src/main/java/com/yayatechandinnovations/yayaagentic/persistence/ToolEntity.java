@@ -48,6 +48,14 @@ public class ToolEntity {
     @Column(name = "policy_json", columnDefinition = "jsonb", nullable = false)
     private String policyJson = "{}";
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "captures_json", columnDefinition = "jsonb", nullable = false)
+    private String capturesJson = "[]";
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "bindings_json", columnDefinition = "jsonb", nullable = false)
+    private String bindingsJson = "[]";
+
     @Column(nullable = false, length = 16)
     private String status = "ACTIVE";
 
@@ -77,6 +85,8 @@ public class ToolEntity {
     public String getHandlerBeanName() { return handlerBeanName; }
     public String getHandlerHttpSpecJson() { return handlerHttpSpecJson; }
     public String getPolicyJson() { return policyJson; }
+    public String getCapturesJson() { return capturesJson; }
+    public String getBindingsJson() { return bindingsJson; }
     public String getStatus() { return status; }
 
     public void setInputSchemaJson(String v) { this.inputSchemaJson = v; }
@@ -86,6 +96,8 @@ public class ToolEntity {
     public void setHandlerBeanName(String v) { this.handlerBeanName = v; }
     public void setHandlerHttpSpecJson(String v) { this.handlerHttpSpecJson = v; }
     public void setPolicyJson(String v) { this.policyJson = v; }
+    public void setCapturesJson(String v) { this.capturesJson = v == null || v.isBlank() ? "[]" : v; }
+    public void setBindingsJson(String v) { this.bindingsJson = v == null || v.isBlank() ? "[]" : v; }
     public void setStatus(String v) { this.status = v; }
 
     public static class PK implements Serializable {

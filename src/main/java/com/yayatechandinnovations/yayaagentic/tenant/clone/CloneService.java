@@ -398,6 +398,8 @@ public class CloneService {
                     latest.getInputSchemaJson(), latest.getOutputSchemaJson(), latest.getHandlerKind());
             cloned.setRequiresJson(latest.getRequiresJson());
             cloned.setPolicyJson(latest.getPolicyJson());
+            cloned.setCapturesJson(latest.getCapturesJson());
+            cloned.setBindingsJson(latest.getBindingsJson());
             cloned.setHandlerBeanName(latest.getHandlerBeanName());
             // Path-only invariant: urlTemplate is a path; no rewrite needed.
             cloned.setHandlerHttpSpecJson(latest.getHandlerHttpSpecJson());

@@ -10,7 +10,11 @@ import com.yayatechandinnovations.yayaagentic.persistence.*;
 import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlValidator;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
 import com.yayatechandinnovations.yayaagentic.tenant.migration.AbsoluteToPathMigrator;
+import com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec;
+import com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -34,7 +38,22 @@ import java.util.stream.Collectors;
 @RequestMapping("/v1/admin")
 public class AdminController {
 
+    private static final Logger log = LoggerFactory.getLogger(AdminController.class);
+
     private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
+    private static final TypeReference<List<EntityCaptureSpec>> CAPTURE_LIST_REF = new TypeReference<>() {};
+    private static final TypeReference<List<EntityBindingSpec>> BINDING_LIST_REF = new TypeReference<>() {};
+
+    /**
+     * Names that almost certainly carry secrets, tokens, or credentials. When
+     * an operator declares an {@link EntityCaptureSpec} whose {@code name}
+     * matches this pattern with {@code visibleToLlm=true}, we log a WARN —
+     * the operator has explicitly opted in, but it's a high-cost mistake to
+     * make silently. See entity-memory-design §13 ("Admin UI") and §12 row 9.
+     */
+    private static final java.util.regex.Pattern SENSITIVE_ENTITY_NAME =
+            java.util.regex.Pattern.compile(
+                    "(?i).*(token|secret|credential|password|api[_-]?key).*");
 
     private final TenantGuard tenantGuard;
     private final ProfileRepository profiles;
@@ -182,6 +201,18 @@ public class AdminController {
                 req.inputSchemaJson(), req.outputSchemaJson(), kind);
         entity.setRequiresJson(writeJson(req.requires() == null ? Map.of() : req.requires()));
         entity.setPolicyJson(writeJson(req.policy() == null ? Map.of() : req.policy()));
+
+        // M2.10 — operator-declared captures + bindings. Validate by attempting
+        // to project each wire spec into its runtime record (the records carry
+        // strict invariants — non-blank, RFC-6901 pointer, kind/onConflict
+        // pairing). Any IllegalArgumentException becomes a 400 with the same
+        // message the operator will see in the Flutter form.
+        List<EntityCaptureSpec> captures = req.captures() == null ? List.of() : req.captures();
+        List<EntityBindingSpec> bindings = req.bindings() == null ? List.of() : req.bindings();
+        validateCaptures(captures);
+        validateBindings(bindings, req.inputSchemaJson());
+        entity.setCapturesJson(writeJson(captures));
+        entity.setBindingsJson(writeJson(bindings));
 
         switch (kind) {
             case "BEAN" -> {
@@ -408,6 +439,97 @@ public class AdminController {
         }
     }
 
+    /**
+     * Validates each capture by projecting it to its runtime record (which
+     * carries the invariants — non-blank fields, RFC-6901 pointer, valid
+     * kind/onConflict pairing). The wire-form enum strings must also be
+     * known {@link com.yayatechandinnovations.yayaagentic.core.entity.EntityScope}
+     * / {@link com.yayatechandinnovations.yayaagentic.core.entity.EntityKind}
+     * / {@link com.yayatechandinnovations.yayaagentic.tool.OnConflict} names —
+     * an unknown value throws an {@link IllegalArgumentException} from
+     * {@code Enum.valueOf} which we surface as 400 with the original message.
+     *
+     * <p>Sensitive-name lint: when an entity's {@code name} matches the
+     * secret/token/credential pattern AND {@code visibleToLlm=true}, we
+     * accept the value (operators sometimes have legitimate cases) but log
+     * a WARN — explicit opt-in to a high-cost mistake should be noisy.
+     */
+    private void validateCaptures(List<EntityCaptureSpec> captures) {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (int i = 0; i < captures.size(); i++) {
+            EntityCaptureSpec c = captures.get(i);
+            if (c == null) {
+                throw badRequest("tool.captures[" + i + "] is null");
+            }
+            try {
+                c.toRuntime();
+            } catch (IllegalArgumentException ex) {
+                throw badRequest("tool.captures[" + i + "]: " + ex.getMessage());
+            }
+            if (!names.add(c.name())) {
+                throw badRequest("tool.captures[" + i + "] duplicate entity name '" + c.name()
+                        + "' — a single tool cannot capture the same entity twice");
+            }
+            if (c.visibleToLlm() && SENSITIVE_ENTITY_NAME.matcher(c.name()).matches()) {
+                log.warn("admin: capture name '{}' looks sensitive but visibleToLlm=true — "
+                        + "the LLM will see this name in every prompt. Confirm this is intentional.",
+                        c.name());
+            }
+        }
+    }
+
+    /**
+     * Validates each binding by projecting it to its runtime record and
+     * (optionally) confirming the {@code argName} is a property of the tool's
+     * input schema. The latter is a soft check — if the schema doesn't parse
+     * as an object schema we accept the binding rather than failing the
+     * save; the engine will surface a runtime error if the arg never resolves.
+     */
+    private void validateBindings(List<EntityBindingSpec> bindings, String inputSchemaJson) {
+        java.util.Set<String> declaredProps = inputSchemaProperties(inputSchemaJson);
+        java.util.Set<String> argNames = new java.util.HashSet<>();
+        for (int i = 0; i < bindings.size(); i++) {
+            EntityBindingSpec b = bindings.get(i);
+            if (b == null) {
+                throw badRequest("tool.bindings[" + i + "] is null");
+            }
+            try {
+                b.toRuntime();
+            } catch (IllegalArgumentException ex) {
+                throw badRequest("tool.bindings[" + i + "]: " + ex.getMessage());
+            }
+            if (!argNames.add(b.argName())) {
+                throw badRequest("tool.bindings[" + i + "] duplicate argName '" + b.argName()
+                        + "' — a single tool cannot bind the same arg twice");
+            }
+            if (!declaredProps.isEmpty() && !declaredProps.contains(b.argName())) {
+                throw badRequest("tool.bindings[" + i + "] argName '" + b.argName()
+                        + "' is not a property in this tool's inputSchema (known: "
+                        + declaredProps + ")");
+            }
+        }
+    }
+
+    /**
+     * Best-effort extraction of {@code properties} keys from a JSON-Schema
+     * object schema. Returns an empty set when the schema isn't an object
+     * with a {@code properties} map — in which case binding validation
+     * skips the membership check.
+     */
+    private java.util.Set<String> inputSchemaProperties(String inputSchemaJson) {
+        if (inputSchemaJson == null || inputSchemaJson.isBlank()) return java.util.Set.of();
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = json.readTree(inputSchemaJson);
+            com.fasterxml.jackson.databind.JsonNode props = root == null ? null : root.get("properties");
+            if (props == null || !props.isObject()) return java.util.Set.of();
+            java.util.Set<String> out = new java.util.HashSet<>();
+            props.fieldNames().forEachRemaining(out::add);
+            return out;
+        } catch (Exception e) {
+            return java.util.Set.of();
+        }
+    }
+
     private void parseOrFail(String json, String field) {
         try {
             this.json.readTree(json);
@@ -454,6 +576,8 @@ public class AdminController {
                 readJson(e.getRequiresJson(), MAP_REF),
                 handler,
                 readJson(e.getPolicyJson(), MAP_REF),
+                readList(e.getCapturesJson(), CAPTURE_LIST_REF),
+                readList(e.getBindingsJson(), BINDING_LIST_REF),
                 e.getStatus(), null);
     }
 
@@ -498,6 +622,22 @@ public class AdminController {
             return json.readValue(raw, type);
         } catch (Exception e) {
             return json.convertValue(Map.of(), type);
+        }
+    }
+
+    /**
+     * Like {@link #readJson} but for list-typed columns: defaults to an empty
+     * list on missing/unreadable input instead of an empty map. Avoids the
+     * {@code convertValue(Map.of(), List<X>)} ClassCastException we'd hit if
+     * we used the generic helper for list types.
+     */
+    private <T> List<T> readList(String raw, TypeReference<List<T>> type) {
+        if (raw == null || raw.isBlank()) return List.of();
+        try {
+            List<T> parsed = json.readValue(raw, type);
+            return parsed == null ? List.of() : parsed;
+        } catch (Exception e) {
+            return List.of();
         }
     }
 
