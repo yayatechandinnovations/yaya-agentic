@@ -419,32 +419,55 @@ public class DefaultConversationEngine implements ConversationEngine {
     /**
      * Projects recorded {@link Turn}s into the LLM client's history shape.
      * USER → {@code User}; ASSISTANT → {@code Assistant} (carrying any tool
-     * calls), optionally followed by a {@code ToolResults} entry for the
-     * matching tool outcomes recorded on the same assistant turn. SYSTEM /
+     * calls that produced a matching result on the same turn), optionally
+     * followed by a {@code ToolResults} entry for those results. SYSTEM /
      * TOOL roles are filtered — the recorder doesn't currently produce them
      * in the canonical engine path, and we don't want to invent ones.
+     *
+     * <p>Orphan {@code tool_use} blocks are dropped: Anthropic's API
+     * requires every {@code tool_use} to be immediately followed by a
+     * matching {@code tool_result}, and the confirmable-tool preview flow
+     * records a {@link Turn.ToolCall} without a result (we paused for the
+     * user's yes/no). Sending that turn back as history would yield
+     * {@code 400 BAD_REQUEST: tool_use ids were found without tool_result
+     * blocks immediately after}. The original {@link Turn.ToolCall} stays
+     * in the recorded transcript for audit / playground display; we just
+     * don't surface the unpaired half to the model.</p>
      */
-    private static List<LlmClient.HistoryEntry> toHistoryEntries(List<Turn> turns) {
+    static List<LlmClient.HistoryEntry> toHistoryEntries(List<Turn> turns) {
         List<LlmClient.HistoryEntry> out = new java.util.ArrayList<>(turns.size());
         for (Turn t : turns) {
             switch (t.role()) {
                 case USER -> out.add(new LlmClient.HistoryEntry.User(
                         t.content() == null ? "" : t.content()));
                 case ASSISTANT -> {
-                    List<LlmClient.ToolCallSpec> calls = (t.toolCalls() == null) ? List.of()
-                            : t.toolCalls().stream()
-                                .map(c -> new LlmClient.ToolCallSpec(c.callId(),
-                                        c.toolId().value(),
-                                        c.args() == null ? Map.<String, Object>of() : c.args()))
-                                .toList();
-                    out.add(new LlmClient.HistoryEntry.Assistant(
-                            t.content() == null ? "" : t.content(), calls));
-                    if (t.toolResults() != null && !t.toolResults().isEmpty()) {
-                        List<LlmClient.ToolResultSpec> results = t.toolResults().stream()
-                                .map(r -> new LlmClient.ToolResultSpec(
-                                        r.callId(), r.value(),
-                                        r.status() != Turn.ToolResult.Status.OK))
-                                .toList();
+                    List<Turn.ToolCall> rawCalls = t.toolCalls() == null ? List.of() : t.toolCalls();
+                    List<Turn.ToolResult> rawResults = t.toolResults() == null ? List.of() : t.toolResults();
+                    java.util.Set<String> resultIds = rawResults.stream()
+                            .map(Turn.ToolResult::callId)
+                            .collect(java.util.stream.Collectors.toSet());
+                    java.util.Set<String> callIds = rawCalls.stream()
+                            .map(Turn.ToolCall::callId)
+                            .collect(java.util.stream.Collectors.toSet());
+
+                    List<LlmClient.ToolCallSpec> calls = rawCalls.stream()
+                            .filter(c -> resultIds.contains(c.callId()))
+                            .map(c -> new LlmClient.ToolCallSpec(c.callId(),
+                                    c.toolId().value(),
+                                    c.args() == null ? Map.<String, Object>of() : c.args()))
+                            .toList();
+                    List<LlmClient.ToolResultSpec> results = rawResults.stream()
+                            .filter(r -> callIds.contains(r.callId()))
+                            .map(r -> new LlmClient.ToolResultSpec(
+                                    r.callId(), r.value(),
+                                    r.status() != Turn.ToolResult.Status.OK))
+                            .toList();
+
+                    String text = t.content() == null ? "" : t.content();
+                    if (!text.isEmpty() || !calls.isEmpty()) {
+                        out.add(new LlmClient.HistoryEntry.Assistant(text, calls));
+                    }
+                    if (!results.isEmpty()) {
                         out.add(new LlmClient.HistoryEntry.ToolResults(results));
                     }
                 }
