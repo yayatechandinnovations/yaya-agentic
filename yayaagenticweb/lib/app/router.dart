@@ -18,9 +18,18 @@ import '../features/admin/tenants/tenants_screen.dart' show tenantsProvider;
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/models/auth_state.dart';
 import '../features/auth/models/operator.dart';
+import '../features/auth/presentation/accept_invitation_screen.dart';
+import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/auth/presentation/reset_password_screen.dart';
+import '../features/auth/presentation/signup_screen.dart';
+import '../features/auth/presentation/verify_email_screen.dart';
 import '../features/playground/playground_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/workspaces/application/workspaces_controller.dart';
+import '../features/workspaces/presentation/workspace_list_screen.dart';
+import '../features/workspaces/presentation/workspace_settings_screen.dart';
+import '../features/workspaces/presentation/workspace_switcher.dart';
 import 'selected_tenant.dart';
 
 /// GoRouter exposed as a Riverpod provider so the redirect callback can
@@ -42,25 +51,61 @@ final routerProvider = Provider<GoRouter>((ref) {
       final loc = state.matchedLocation;
       final atLogin = loc == '/login';
       final atLoading = loc == '/loading';
+      // Public routes — accessible without a session. /verify and
+      // /reset-password are token-bearer landings; /signup, /verify/pending,
+      // and /forgot-password are self-serve entry/info screens. Anonymous
+      // visitors and signed-in users alike can hit any of these.
+      final isPublic = atLogin ||
+          loc == '/signup' ||
+          loc == '/verify' ||
+          loc == '/verify/pending' ||
+          loc == '/forgot-password' ||
+          loc == '/reset-password' ||
+          loc == '/accept-invitation';
 
       if (auth is AuthChecking) {
         return atLoading ? null : '/loading';
       }
       if (auth is AuthAuthenticated) {
-        return (atLogin || atLoading) ? '/playground' : null;
+        // Signed-in users hitting /login bounce into the app; the other
+        // public routes (verify landing for someone juggling tabs, etc.)
+        // pass through unchanged.
+        if (atLogin || atLoading) return '/playground';
+        // Platform-only routes (cross-tenant admin, operator-auth config)
+        // require the platform-admin flag — non-platform admins land on
+        // /playground instead of a screen the API would 403 anyway.
+        if (_platformOnlyRoutes.contains(loc) &&
+            !auth.operator.platformAdmin) {
+          return '/playground';
+        }
+        return null;
       }
-      // Unauthenticated or SessionExpired → /login (preserve return path).
-      if (atLogin) return null;
+      // Unauthenticated or SessionExpired → /login (preserve return path),
+      // unless they're on a public route.
+      if (isPublic) return null;
       final returnTo = (loc.isEmpty || loc == '/loading') ? '/playground' : loc;
       return '/login?returnTo=${Uri.encodeComponent(returnTo)}';
     },
     routes: [
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
+      GoRoute(path: '/verify', builder: (_, __) => const VerifyEmailLandingScreen()),
+      GoRoute(path: '/verify/pending', builder: (_, __) => const VerifyEmailPendingScreen()),
+      GoRoute(path: '/forgot-password', builder: (_, __) => const ForgotPasswordScreen()),
+      GoRoute(path: '/reset-password', builder: (_, __) => const ResetPasswordScreen()),
+      GoRoute(path: '/accept-invitation', builder: (_, __) => const AcceptInvitationScreen()),
       GoRoute(path: '/loading', builder: (_, __) => const _BootstrapSplash()),
       ShellRoute(
         builder: (context, state, child) => _AppShell(child: child),
         routes: [
           GoRoute(path: '/playground', builder: (_, __) => const PlaygroundScreen()),
+          GoRoute(path: '/workspaces', builder: (_, __) => const WorkspaceListScreen()),
+          GoRoute(
+            path: '/workspaces/:code/settings',
+            builder: (_, state) => WorkspaceSettingsScreen(
+              code: state.pathParameters['code']!,
+            ),
+          ),
           GoRoute(path: '/admin/tenants', builder: (_, __) => const TenantsScreen()),
           GoRoute(path: '/admin/profiles', builder: (_, __) => const ProfilesScreen()),
           GoRoute(path: '/admin/capabilities', builder: (_, __) => const CapabilitiesScreen()),
@@ -108,16 +153,30 @@ class _BootstrapSplash extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _NavItem {
-  const _NavItem(this.label, this.icon, this.selectedIcon, this.location);
+  const _NavItem(
+    this.label,
+    this.icon,
+    this.selectedIcon,
+    this.location, {
+    this.platformOnly = false,
+  });
   final String label;
   final IconData icon;
   final IconData selectedIcon;
   final String location;
+
+  /// True for surfaces that operate above the workspace plane — the
+  /// platform-admin cross-tenant view and the bootstrap / HTTP-delegate
+  /// operator-auth config. Hidden from regular users; even direct
+  /// navigation to the route is bounced (see redirect below).
+  final bool platformOnly;
 }
 
 const _navItems = <_NavItem>[
   _NavItem('Playground', Icons.chat_outlined, Icons.chat, '/playground'),
-  _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants'),
+  _NavItem('Workspaces', Icons.workspaces_outline, Icons.workspaces, '/workspaces'),
+  _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants',
+      platformOnly: true),
   _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
   _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
   _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
@@ -128,17 +187,27 @@ const _navItems = <_NavItem>[
   _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
   _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
-  _NavItem('Operator auth', Icons.admin_panel_settings_outlined, Icons.admin_panel_settings, '/admin/operator-auth'),
+  _NavItem('Operator auth', Icons.admin_panel_settings_outlined,
+      Icons.admin_panel_settings, '/admin/operator-auth',
+      platformOnly: true),
   _NavItem('Settings', Icons.tune_outlined, Icons.tune, '/settings'),
 ];
+
+/// Routes that should bounce back to `/playground` when a non-platform-admin
+/// lands on them directly (typed URL, deep link). Mirrors the platformOnly
+/// nav items above; kept as a plain set so the redirect lookup is O(1).
+const _platformOnlyRoutes = <String>{
+  '/admin/tenants',
+  '/admin/operator-auth',
+};
 
 class _AppShell extends ConsumerWidget {
   const _AppShell({required this.child});
   final Widget child;
 
-  int _selectedIndex(String location) {
-    for (var i = 0; i < _navItems.length; i++) {
-      if (location.startsWith(_navItems[i].location)) return i;
+  int _selectedIndex(String location, List<_NavItem> items) {
+    for (var i = 0; i < items.length; i++) {
+      if (location.startsWith(items[i].location)) return i;
     }
     return 0;
   }
@@ -146,15 +215,31 @@ class _AppShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.path;
-    final selected = _selectedIndex(location);
     final wide = MediaQuery.of(context).size.width > 1100;
     final auth = ref.watch(authProvider);
+
+    // Mount the workspace→tenant bridge so currentWorkspace changes cascade
+    // through legacy admin feature providers (which still watch
+    // currentTenantOrNull). This is the only place in the tree that
+    // guarantees a single subscription for the bridge.
+    ref.watch(workspaceToTenantBridgeProvider);
+
+    final isPlatformAdmin =
+        auth is AuthAuthenticated && auth.operator.platformAdmin;
+
+    // Strip platform-only items for regular users so the nav rail doesn't
+    // dangle dead links. The redirect below also bounces direct URL hits.
+    final visibleItems = isPlatformAdmin
+        ? _navItems
+        : _navItems.where((i) => !i.platformOnly).toList();
+    final selected = _selectedIndex(location, visibleItems);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Yaya Agentic — Admin'),
         actions: [
-          if (auth is AuthAuthenticated) const _TenantPicker(),
+          if (auth is AuthAuthenticated) const WorkspaceSwitcher(),
+          if (isPlatformAdmin) const _TenantPicker(),
           if (auth is AuthAuthenticated) _OperatorMenu(operator: auth.operator),
         ],
       ),
@@ -163,9 +248,9 @@ class _AppShell extends ConsumerWidget {
           NavigationRail(
             extended: wide,
             selectedIndex: selected,
-            onDestinationSelected: (i) => context.go(_navItems[i].location),
+            onDestinationSelected: (i) => context.go(visibleItems[i].location),
             labelType: wide ? NavigationRailLabelType.none : NavigationRailLabelType.all,
-            destinations: _navItems
+            destinations: visibleItems
                 .map((item) => NavigationRailDestination(
                       icon: Icon(item.icon),
                       selectedIcon: Icon(item.selectedIcon),

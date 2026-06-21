@@ -14,7 +14,22 @@ class Operator with _$Operator {
     required String source,
     @Default(<String, dynamic>{}) Map<String, dynamic> attributes,
     DateTime? verifiedAt,
+    @Default(<WorkspaceMembership>[]) List<WorkspaceMembership> memberships,
+    @Default(false) bool platformAdmin,
   }) = _Operator;
 
   factory Operator.fromJson(Map<String, dynamic> json) => _$OperatorFromJson(json);
+}
+
+/// One row in the operator's workspace-membership list. Used by the
+/// workspace switcher and to gate UI affordances per role.
+@freezed
+class WorkspaceMembership with _$WorkspaceMembership {
+  const factory WorkspaceMembership({
+    required String workspaceId,
+    required String role,
+  }) = _WorkspaceMembership;
+
+  factory WorkspaceMembership.fromJson(Map<String, dynamic> json) =>
+      _$WorkspaceMembershipFromJson(json);
 }

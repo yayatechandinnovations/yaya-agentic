@@ -55,6 +55,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final apiError = (auth is AuthUnauthenticated) ? auth.error : null;
     final sessionExpiredBanner = auth is AuthSessionExpired;
     final error = _localError ?? apiError;
+    final theme = Theme.of(context);
+    final params = GoRouterState.of(context).uri.queryParameters;
+    final verifiedBanner = params['verified'] == '1';
+    final resetBanner = params['reset'] == '1';
 
     return Scaffold(
       body: Center(
@@ -72,23 +76,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   children: [
                     Text('Yaya Agentic',
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineSmall),
+                        style: theme.textTheme.headlineSmall),
                     const SizedBox(height: 4),
                     Text('Admin console',
                         textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium),
+                        style: theme.textTheme.bodyMedium),
                     const SizedBox(height: 24),
-                    if (sessionExpiredBanner)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                            'Your session has expired. Please sign in again.'),
-                      ),
-                    if (sessionExpiredBanner) const SizedBox(height: 16),
+                    if (verifiedBanner) ...[
+                      _LoginBanner(text: 'Email verified — sign in to continue.'),
+                      const SizedBox(height: 12),
+                    ],
+                    if (resetBanner) ...[
+                      _LoginBanner(
+                          text: 'Password updated — sign in with the new one.'),
+                      const SizedBox(height: 12),
+                    ],
+                    if (sessionExpiredBanner) ...[
+                      _LoginBanner(
+                          text: 'Your session has expired. Please sign in again.'),
+                      const SizedBox(height: 16),
+                    ],
                     TextFormField(
                       controller: _username,
                       decoration: const InputDecoration(
@@ -128,6 +135,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('Sign in'),
                     ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: _submitting
+                              ? null
+                              : () => context.go('/forgot-password'),
+                          child: const Text('Forgot password?'),
+                        ),
+                        TextButton(
+                          onPressed:
+                              _submitting ? null : () => context.go('/signup'),
+                          child: const Text('Create account'),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -135,6 +159,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Reusable banner widget for the verified/reset/session-expired callouts
+/// at the top of the login form.
+class _LoginBanner extends StatelessWidget {
+  const _LoginBanner({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(text,
+          style: TextStyle(color: theme.colorScheme.onSecondaryContainer)),
     );
   }
 }
