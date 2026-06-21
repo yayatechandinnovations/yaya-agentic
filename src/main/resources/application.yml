@@ -110,7 +110,10 @@ yaya:
     # Distinct from `auth` above, which authenticates conversational callers.
     operator-auth:
       bootstrap:
-        enabled: true
+        # Break-glass admin login. Keep on in dev so the bundled `admin`/`admin`
+        # login works; flip to false in prod ONCE you've registered at least
+        # one platform-admin user via signup (M5a).
+        enabled: ${YAYA_BOOTSTRAP_ENABLED:true}
         username: ${YAYA_BOOTSTRAP_USERNAME:admin}
         # Prefer YAYA_BOOTSTRAP_PASSWORD_HASH in prod. Plaintext below is
         # hashed at boot; leaving it as the default triggers a [SECURITY]
@@ -123,6 +126,58 @@ yaya:
         sliding-window: PT1H
         # Local dev runs over HTTP; flip via env in prod.
         cookie-secure: ${YAYA_SESSION_COOKIE_SECURE:false}
+
+    # Self-serve user accounts & workspaces (M5a) — see
+    # docs/specs/user-accounts/PRD.md. THE LOAD-BEARING FLAG. When false,
+    # every /v1/auth/{signup,verify,...} route 404s and AdminController
+    # falls back to the legacy default-tenant behaviour. Flip to true
+    # only after the V20–V22 migrations have applied.
+    user-accounts:
+      enabled: ${YAYA_USER_ACCOUNTS_ENABLED:false}
+      # When true, the FIRST user that signs up after this boot is granted
+      # the platform-admin flag. Use during initial prod bring-up only;
+      # flip back to false after the first signup completes.
+      # NOTE: the wiring that consults this flag ships with M5b — today
+      # promote the first user manually via SQL.
+      first-user-is-platform-admin: ${YAYA_FIRST_USER_IS_PLATFORM_ADMIN:false}
+      password:
+        min-length: 12
+        # ≥3 of {lowercase, uppercase, digit, symbol}.
+        classes-required: 3
+      verification:
+        token-ttl: PT24H
+        resend-cooldown: PT60S
+        resend-per-hour-cap: 5
+      reset:
+        token-ttl: PT1H
+      invitation:
+        token-ttl: P7D
+      sessions:
+        # user-password sessions stay valid longer than break-glass
+        # bootstrap sessions, which are deliberately short-lived.
+        user-ttl: PT12H
+        bootstrap-ttl: PT1H
+
+    # Outbound email used by signup/verify/reset/invitation flows.
+    # Provider defaults to dev-console — the raw token + body land in
+    # the application log (grep for `[MAIL]`). Switch to sendgrid in
+    # prod and set SENDGRID_API_KEY.
+    # NOTE: the SendGrid adapter ships in M5b; today only dev-console
+    # is wired. Setting provider=sendgrid before then leaves the app
+    # without an active MailSender bean.
+    email:
+      enabled: ${YAYA_EMAIL_ENABLED:true}
+      provider: ${YAYA_EMAIL_PROVIDER:dev-console}        # sendgrid | dev-console
+      from: ${YAYA_EMAIL_FROM:noreply@yaya.local}
+      reply-to: ${YAYA_EMAIL_REPLY_TO:}
+      sendgrid:
+        api-key: ${SENDGRID_API_KEY:}
+      outbox:
+        max-retries: 3
+        backoff-initial: PT30S
+        backoff-multiplier: 2.0
+        drainer-fixed-rate: PT60S
+        batch-size: 100
 
 logging:
   level:
