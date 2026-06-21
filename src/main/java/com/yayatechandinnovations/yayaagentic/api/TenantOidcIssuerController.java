@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.oidc.TenantOidcIssuersChangedEvent;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantOidcIssuerEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantOidcIssuerRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
@@ -13,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.net.URI;
 import java.time.OffsetDateTime;
@@ -38,19 +41,24 @@ public class TenantOidcIssuerController {
     private final TenantOidcIssuerRepository repo;
     private final ObjectMapper json;
     private final ApplicationEventPublisher events;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public TenantOidcIssuerController(TenantGuard tenantGuard,
                                       TenantOidcIssuerRepository repo,
                                       ObjectMapper json,
-                                      ApplicationEventPublisher events) {
+                                      ApplicationEventPublisher events,
+                                      WorkspaceAccessHelper workspaceAccess) {
         this.tenantGuard = tenantGuard;
         this.repo = repo;
         this.json = json;
         this.events = events;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping
-    public List<IssuerResponse> list(@PathVariable("tenantId") String tenantId) {
+    public List<IssuerResponse> list(@PathVariable("tenantId") String tenantId,
+                                     ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
         return repo.findByTenantId(tenantId).stream()
                 .map(e -> IssuerResponse.of(e, parseAudiences(e.getAudiencesJson())))
@@ -60,7 +68,9 @@ public class TenantOidcIssuerController {
     @PostMapping
     @Transactional
     public ResponseEntity<IssuerResponse> create(@PathVariable("tenantId") String tenantId,
-                                                 @RequestBody IssuerRequest req) {
+                                                 @RequestBody IssuerRequest req,
+                                                 ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validate(req);
 
@@ -82,7 +92,9 @@ public class TenantOidcIssuerController {
     @Transactional
     public IssuerResponse update(@PathVariable("tenantId") String tenantId,
                                  @PathVariable("id") Long id,
-                                 @RequestBody IssuerRequest req) {
+                                 @RequestBody IssuerRequest req,
+                                 ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validate(req);
 
@@ -102,7 +114,9 @@ public class TenantOidcIssuerController {
     @DeleteMapping("/{id}")
     @Transactional
     public ResponseEntity<Void> delete(@PathVariable("tenantId") String tenantId,
-                                       @PathVariable("id") Long id) {
+                                       @PathVariable("id") Long id,
+                                       ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         TenantOidcIssuerEntity entity = repo.findById(id)
                 .filter(e -> e.getTenantId().equals(tenantId))

@@ -342,7 +342,7 @@ class HttpToolDispatcherTest {
         YayaAgenticProperties props = new YayaAgenticProperties(
                 "default", "default", null, null, null, null,
                 new YayaAgenticProperties.HttpTools(allowlist, true, Duration.ofSeconds(3)),
-                null);
+                null, null, null);
         HttpEgressPolicy egress = new HttpEgressPolicy(props);
         return new HttpToolDispatcher(WebClient.builder(), egress, resolver, new ObjectMapper(), props);
     }

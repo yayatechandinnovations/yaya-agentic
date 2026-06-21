@@ -15,7 +15,9 @@ public record YayaAgenticProperties(
         Cors cors,
         Auth auth,
         HttpTools httpTools,
-        OperatorAuth operatorAuth
+        OperatorAuth operatorAuth,
+        UserAccounts userAccounts,
+        Email email
 ) {
     public record Session(Duration idleTimeout, Memory memory) {
         public Memory memory() {
@@ -90,5 +92,72 @@ public record YayaAgenticProperties(
                 Duration slidingWindow,
                 boolean cookieSecure
         ) {}
+    }
+
+    /**
+     * Self-serve user accounts on the admin plane. See
+     * {@code docs/specs/user-accounts/TRD.md} §6.1.
+     */
+    public record UserAccounts(
+            boolean enabled,
+            boolean firstUserIsPlatformAdmin,
+            Password password,
+            Verification verification,
+            Reset reset,
+            Invitation invitation,
+            Sessions sessions
+    ) {
+        public record Password(int minLength, int classesRequired) {
+            public static Password defaults() { return new Password(12, 3); }
+        }
+
+        public record Verification(Duration tokenTtl, Duration resendCooldown, int resendPerHourCap) {
+            public static Verification defaults() {
+                return new Verification(Duration.ofHours(24), Duration.ofSeconds(60), 5);
+            }
+        }
+
+        public record Reset(Duration tokenTtl) {
+            public static Reset defaults() { return new Reset(Duration.ofHours(1)); }
+        }
+
+        public record Invitation(Duration tokenTtl) {
+            public static Invitation defaults() { return new Invitation(Duration.ofDays(7)); }
+        }
+
+        /** User-session and bootstrap-session TTLs differ — bootstrap is shorter for incident-response safety. */
+        public record Sessions(Duration userTtl, Duration bootstrapTtl) {
+            public static Sessions defaults() {
+                return new Sessions(Duration.ofHours(12), Duration.ofHours(1));
+            }
+        }
+    }
+
+    /**
+     * Outbound email — provider plus shared outbox tuning. Provider impls
+     * live behind a {@code MailSender} bean; missing config drops mail to a
+     * dev-console logger.
+     */
+    public record Email(
+            boolean enabled,
+            String provider,        // "sendgrid" | "dev-console"
+            String from,
+            String replyTo,
+            SendGrid sendgrid,
+            Outbox outbox
+    ) {
+        public record SendGrid(String apiKey) {}
+
+        public record Outbox(
+                int maxRetries,
+                Duration backoffInitial,
+                double backoffMultiplier,
+                Duration drainerFixedRate,
+                int batchSize
+        ) {
+            public static Outbox defaults() {
+                return new Outbox(3, Duration.ofSeconds(30), 2.0, Duration.ofSeconds(60), 100);
+            }
+        }
     }
 }

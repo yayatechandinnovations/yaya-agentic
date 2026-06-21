@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.IdentityProfileMappingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.IdentityProfileMappingRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileEntity;
@@ -10,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -31,17 +34,22 @@ public class IdentityProfileMappingController {
     private final TenantGuard tenantGuard;
     private final IdentityProfileMappingRepository mappings;
     private final ProfileRepository profiles;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public IdentityProfileMappingController(TenantGuard tenantGuard,
                                             IdentityProfileMappingRepository mappings,
-                                            ProfileRepository profiles) {
+                                            ProfileRepository profiles,
+                                            WorkspaceAccessHelper workspaceAccess) {
         this.tenantGuard = tenantGuard;
         this.mappings = mappings;
         this.profiles = profiles;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping
-    public List<MappingResponse> list(@PathVariable("tenantId") String tenantId) {
+    public List<MappingResponse> list(@PathVariable("tenantId") String tenantId,
+                                     ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.VIEWER);
         tenantGuard.requireExists(tenantId);
         return mappings.findByTenantIdOrderByPriorityAscIdAsc(tenantId).stream()
                 .map(MappingResponse::of)
@@ -51,7 +59,11 @@ public class IdentityProfileMappingController {
     @PostMapping
     @Transactional
     public ResponseEntity<MappingResponse> create(@PathVariable("tenantId") String tenantId,
-                                                  @RequestBody MappingRequest req) {
+                                                  @RequestBody MappingRequest req,
+                                                  ServerWebExchange exchange) {
+        // Identity mappings control which end-user routes to which profile —
+        // a security-adjacent decision. ADMIN+ to write.
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validate(req);
         requireProfileExists(tenantId, req.profileId(), req.profileVersion());
@@ -78,7 +90,9 @@ public class IdentityProfileMappingController {
     @Transactional
     public MappingResponse update(@PathVariable("tenantId") String tenantId,
                                   @PathVariable("id") Long id,
-                                  @RequestBody MappingRequest req) {
+                                  @RequestBody MappingRequest req,
+                                  ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validate(req);
         requireProfileExists(tenantId, req.profileId(), req.profileVersion());
@@ -97,7 +111,9 @@ public class IdentityProfileMappingController {
     @DeleteMapping("/{id}")
     @Transactional
     public ResponseEntity<Void> delete(@PathVariable("tenantId") String tenantId,
-                                       @PathVariable("id") Long id) {
+                                       @PathVariable("id") Long id,
+                                       ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         IdentityProfileMappingEntity entity = mappings.findById(id)
                 .filter(e -> e.getTenantId().equals(tenantId))

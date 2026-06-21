@@ -137,7 +137,7 @@ class OidcAuthenticatorTest {
                         new YayaAgenticProperties.Auth.Oidc(issuers, Duration.ofMinutes(10), Duration.ofSeconds(30)),
                         new YayaAgenticProperties.Auth.ServiceToken(Map.of()),
                         new YayaAgenticProperties.Auth.DelegatedHost("")),
-                null, null);
+                null, null, null, null);
     }
 
     private TenantOidcIssuerRepository noTenantIssuers() {

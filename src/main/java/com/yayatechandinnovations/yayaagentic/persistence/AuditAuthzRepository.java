@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.persistence;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -22,6 +23,7 @@ public interface AuditAuthzRepository extends JpaRepository<AuditAuthzEntity, Lo
                                   @Param("toolId") String toolId,
                                   Pageable pageable);
 
+    @WorkspaceUnscoped("session UUID is itself tenant-binding; lookup by sessionId is the scoping")
     @Query("""
         select a from AuditAuthzEntity a
         where a.sessionId = :sessionId and a.decision = 'DENY'

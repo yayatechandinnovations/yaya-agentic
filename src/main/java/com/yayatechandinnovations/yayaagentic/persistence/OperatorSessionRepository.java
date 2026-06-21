@@ -12,4 +12,14 @@ public interface OperatorSessionRepository extends JpaRepository<OperatorSession
     @Modifying
     @Query("delete from OperatorSessionEntity s where s.expiresAt < :cutoff")
     int deleteExpired(@Param("cutoff") OffsetDateTime cutoff);
+
+    /**
+     * Used by password-reset confirm to invalidate every session for a user.
+     * Matches against {@code operator_subject} because that's where
+     * {@code UserPasswordOperatorAuthenticator} stores the user UUID until
+     * V25 adds a dedicated {@code user_id} column.
+     */
+    @Modifying
+    @Query("delete from OperatorSessionEntity s where s.operatorSubject = :subject")
+    int deleteByOperatorSubject(@Param("subject") String subject);
 }

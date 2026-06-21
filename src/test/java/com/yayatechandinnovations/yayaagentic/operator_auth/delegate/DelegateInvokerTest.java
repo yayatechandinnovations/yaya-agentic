@@ -38,7 +38,7 @@ class DelegateInvokerTest {
         YayaAgenticProperties props = new YayaAgenticProperties(
                 "default", "default", null, null, null, null,
                 new YayaAgenticProperties.HttpTools(List.of(), true, Duration.ofSeconds(10)),
-                null);
+                null, null, null);
         invoker = new DelegateInvoker(WebClient.builder(), new ObjectMapper(), new HttpEgressPolicy(props));
     }
 

@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.operator_auth.session;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.operator_auth.Operator;
@@ -34,6 +35,7 @@ public class OperatorSessionService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Base64.Encoder URL_ENC = Base64.getUrlEncoder().withoutPadding();
+    private static final TypeReference<Map<String, Object>> ATTRS_REF = new TypeReference<>() {};
 
     private final OperatorSessionRepository repo;
     private final ObjectMapper json;
@@ -96,9 +98,19 @@ public class OperatorSessionService {
                         e.getOperatorSubject(),
                         e.getOperatorDisplay(),
                         Operator.Source.valueOf(e.getSource()),
-                        Map.of(), // attributes not rehydrated in v1 — phase 3 reads JSONB if needed
+                        deserializeAttributes(e.getAttributes()),
                         e.getCreatedAt().toInstant()),
                 e.getExpiresAt()));
+    }
+
+    private Map<String, Object> deserializeAttributes(String attrs) {
+        if (attrs == null || attrs.isBlank()) return Map.of();
+        try {
+            Map<String, Object> parsed = json.readValue(attrs, ATTRS_REF);
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     @Transactional

@@ -41,6 +41,15 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
             PARSER.parse("/v1/auth/me"),
             PARSER.parse("/v1/auth/logout"));
 
+    /**
+     * Paths where the operator is OPTIONAL — bind it if a session cookie is
+     * present, but don't 401 if it isn't. Used by token-bearer endpoints
+     * (invitation accept) that behave differently for signed-in vs anon
+     * recipients.
+     */
+    private static final List<PathPattern> SOFT_AUTH = List.of(
+            PARSER.parse("/v1/auth/invitations/accept"));
+
     private final OperatorSessionService sessions;
     private final String cookieName;
     private final ObjectMapper json;
@@ -65,7 +74,9 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
-        if (!isProtected(request)) return chain.filter(exchange);
+        boolean protectedPath = isProtected(request);
+        boolean softAuthPath = !protectedPath && isSoftAuth(request);
+        if (!protectedPath && !softAuthPath) return chain.filter(exchange);
         if (request.getMethod() != null
                 && "OPTIONS".equalsIgnoreCase(request.getMethod().name())) {
             return chain.filter(exchange);
@@ -73,6 +84,7 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
 
         var cookie = request.getCookies().getFirst(cookieName);
         if (cookie == null || cookie.getValue().isBlank()) {
+            if (softAuthPath) return chain.filter(exchange);   // anon visitor, no session
             return unauthorized(exchange, "no_session_cookie");
         }
         String token = cookie.getValue();
@@ -84,12 +96,22 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
                             exchange.getAttributes().put(OperatorContext.ATTR, loaded.operator());
                             return chain.filter(exchange);
                         })
-                        .orElseGet(() -> unauthorized(exchange, "session_expired_or_unknown")));
+                        .orElseGet(() -> softAuthPath
+                                ? chain.filter(exchange)
+                                : unauthorized(exchange, "session_expired_or_unknown")));
     }
 
     private boolean isProtected(ServerHttpRequest request) {
+        return matchesAny(request, PROTECTED);
+    }
+
+    private boolean isSoftAuth(ServerHttpRequest request) {
+        return matchesAny(request, SOFT_AUTH);
+    }
+
+    private static boolean matchesAny(ServerHttpRequest request, List<PathPattern> patterns) {
         var path = request.getPath().pathWithinApplication();
-        for (PathPattern p : PROTECTED) {
+        for (PathPattern p : patterns) {
             if (p.matches(path)) return true;
         }
         return false;

@@ -11,6 +11,8 @@ import com.yayatechandinnovations.yayaagentic.knowledge.KnowledgeSource;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalPolicy;
 import com.yayatechandinnovations.yayaagentic.knowledge.SourceLocation;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionOrchestrator;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
@@ -18,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -45,23 +48,28 @@ public class KnowledgeAdminController {
     private final M0Catalog runtimeCatalog;
     private final ObjectMapper json;
     private final TenantGuard tenantGuard;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public KnowledgeAdminController(KnowledgeSourceRepository sources,
                                     IngestionOrchestrator ingestion,
                                     M0Catalog runtimeCatalog,
                                     ObjectMapper json,
-                                    TenantGuard tenantGuard) {
+                                    TenantGuard tenantGuard,
+                                    WorkspaceAccessHelper workspaceAccess) {
         this.sources = sources;
         this.ingestion = ingestion;
         this.runtimeCatalog = runtimeCatalog;
         this.json = json;
         this.tenantGuard = tenantGuard;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping
     public KnowledgeAdminDtos.ListResponse list(
-            @RequestParam(value = "tenant", defaultValue = "default") String tenant) {
-        var items = sources.findByTenantId(tenant).stream()
+            @RequestParam(value = "tenant", required = false) String tenant,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.VIEWER);
+        var items = sources.findByTenantId(resolved).stream()
                 .map(this::toView)
                 .toList();
         return new KnowledgeAdminDtos.ListResponse(items);
@@ -69,16 +77,19 @@ public class KnowledgeAdminController {
 
     @GetMapping("/{id}")
     public KnowledgeAdminDtos.KnowledgeSourceView get(
-            @RequestParam(value = "tenant", defaultValue = "default") String tenant,
-            @PathVariable("id") String id) {
-        return toView(findLatestOrThrow(tenant, id));
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @PathVariable("id") String id,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.VIEWER);
+        return toView(findLatestOrThrow(resolved, id));
     }
 
     @PostMapping
     @Transactional
     public KnowledgeAdminDtos.KnowledgeSourceView create(
-            @RequestBody KnowledgeAdminDtos.CreateKnowledgeSourceRequest req) {
-        String tenant = req.tenant() == null ? "default" : req.tenant();
+            @RequestBody KnowledgeAdminDtos.CreateKnowledgeSourceRequest req,
+            ServerWebExchange exchange) {
+        String tenant = workspaceAccess.require(req.tenant(), exchange, Role.MEMBER);
         tenantGuard.requireWritable(tenant);
         int version = sources.findByTenantId(tenant).stream()
                 .filter(e -> e.getId().equals(req.id()))
@@ -104,18 +115,20 @@ public class KnowledgeAdminController {
     @PutMapping("/{id}")
     @Transactional
     public KnowledgeAdminDtos.KnowledgeSourceView update(
-            @RequestParam(value = "tenant", defaultValue = "default") String tenant,
+            @RequestParam(value = "tenant", required = false) String tenant,
             @PathVariable("id") String id,
-            @RequestBody KnowledgeAdminDtos.UpdateKnowledgeSourceRequest req) {
-        tenantGuard.requireWritable(tenant);
-        int nextVersion = sources.findByTenantId(tenant).stream()
+            @RequestBody KnowledgeAdminDtos.UpdateKnowledgeSourceRequest req,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
+        tenantGuard.requireWritable(resolved);
+        int nextVersion = sources.findByTenantId(resolved).stream()
                 .filter(e -> e.getId().equals(id))
                 .mapToInt(KnowledgeSourceEntity::getVersion)
                 .max().orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "no such source: " + id)) + 1;
 
         KnowledgeSourceEntity entity = new KnowledgeSourceEntity(
-                tenant, id, nextVersion,
+                resolved, id, nextVersion,
                 req.name(), req.locationKind(),
                 writeJson(req.location() == null ? Map.of() : req.location()),
                 writeJson(req.ingestion() == null ? Map.of() : req.ingestion()),
@@ -130,9 +143,11 @@ public class KnowledgeAdminController {
 
     @PostMapping("/{id}/reindex")
     public KnowledgeAdminDtos.ReindexResponse reindex(
-            @RequestParam(value = "tenant", defaultValue = "default") String tenant,
-            @PathVariable("id") String id) {
-        KnowledgeSourceEntity entity = findLatestOrThrow(tenant, id);
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @PathVariable("id") String id,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
+        KnowledgeSourceEntity entity = findLatestOrThrow(resolved, id);
         KnowledgeSource source = rehydrate(entity);
         var result = ingestion.ingest(source);
         // Re-register in case ingest updated counts/status indirectly.
@@ -145,9 +160,11 @@ public class KnowledgeAdminController {
 
     @GetMapping("/{id}/status")
     public Map<String, Object> status(
-            @RequestParam(value = "tenant", defaultValue = "default") String tenant,
-            @PathVariable("id") String id) {
-        KnowledgeSourceEntity e = findLatestOrThrow(tenant, id);
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @PathVariable("id") String id,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.VIEWER);
+        KnowledgeSourceEntity e = findLatestOrThrow(resolved, id);
         Map<String, Object> out = new java.util.HashMap<>();
         out.put("status", e.getStatus());
         out.put("lastIndexedAt", e.getLastIndexedAt());

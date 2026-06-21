@@ -5,6 +5,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * The tenant aggregate per docs/design/tenant-registry-design.md §3.
@@ -23,6 +24,33 @@ public class TenantEntity {
     @Id
     @Column(length = 64)
     private String id;
+
+    /**
+     * Human-readable slug surfaced in URLs and the UI. Today this is
+     * always equal to {@link #id} (V22 backfills it from the slug PK); the
+     * V23/V24 cutover moves the PK to {@link #idUuid} and {@code code}
+     * becomes the only "human" identifier. Immutable post-create.
+     */
+    @Column(length = 64, updatable = false)
+    private String code;
+
+    /**
+     * Stable machine identifier (UUID). V22 sets a DB-side
+     * {@code DEFAULT gen_random_uuid()} so the column populates without
+     * the application needing to know — V23 re-points every child-table
+     * FK at it. Marked non-insertable/non-updatable so JPA stays out of
+     * the way.
+     */
+    @Column(name = "id_uuid", insertable = false, updatable = false)
+    private UUID idUuid;
+
+    /**
+     * User who owns the workspace. Set by {@code WorkspaceService.create}
+     * on insert; service code maintains it in sync with the canonical
+     * OWNER membership for transfers.
+     */
+    @Column(name = "owner_user_id")
+    private UUID ownerUserId;
 
     @Column(name = "display_name", nullable = false)
     private String displayName;
@@ -66,15 +94,35 @@ public class TenantEntity {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
+    /**
+     * Synthetic platform-admin UUID seeded by V21. Used as the default
+     * {@link #ownerUserId} for tenants created via the 2-arg constructor
+     * (mostly tests and pre-M5a code paths) so NOT NULL holds. Callers
+     * that know the real owner overwrite via {@link #setOwnerUserId}.
+     */
+    private static final UUID SYNTHETIC_OWNER =
+            UUID.fromString("00000000-0000-0000-0000-000000000001");
+
     protected TenantEntity() {}
 
     public TenantEntity(String id, String displayName) {
         this.id = id;
         this.displayName = displayName;
+        // V22 introduces tenants.code NOT NULL; default to the slug PK so
+        // pre-M5a constructors and tests keep working without per-callsite
+        // updates. WorkspaceService overwrites with the explicit slug.
+        this.code = id;
+        this.ownerUserId = SYNTHETIC_OWNER;
     }
 
     public String getId() { return id; }
+    public String getCode() { return code; }
+    public UUID getIdUuid() { return idUuid; }
+    public UUID getOwnerUserId() { return ownerUserId; }
     public String getDisplayName() { return displayName; }
+
+    public void setCode(String code) { this.code = code; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
     public String getStatus() { return status; }
     public Status statusEnum() { return Status.valueOf(status); }
     public String getHostBaseUrl() { return hostBaseUrl; }

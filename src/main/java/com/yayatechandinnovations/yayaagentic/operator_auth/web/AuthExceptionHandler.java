@@ -1,6 +1,9 @@
 package com.yayatechandinnovations.yayaagentic.operator_auth.web;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.AccountTokenException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.PasswordPolicyException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.RateLimitedException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceNotFoundException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,6 +43,31 @@ public class AuthExceptionHandler {
                 .body(new ApiError(
                         HttpStatus.TOO_MANY_REQUESTS.name(),
                         "Too many login attempts. Try again later."));
+    }
+
+    @ExceptionHandler(AccountTokenException.class)
+    public ResponseEntity<ApiError> handle(AccountTokenException ex) {
+        // Always a generic "link no longer works" — never reveal whether
+        // the token was unknown, expired, or already consumed.
+        return ResponseEntity.status(HttpStatus.GONE).body(new ApiError(
+                "token_invalid",
+                "This link is no longer valid. Request a new one."));
+    }
+
+    @ExceptionHandler(PasswordPolicyException.class)
+    public ResponseEntity<ApiError> handle(PasswordPolicyException ex) {
+        return ResponseEntity.badRequest().body(new ApiError(
+                "password_policy",
+                ex.getMessage()));
+    }
+
+    @ExceptionHandler(WorkspaceNotFoundException.class)
+    public ResponseEntity<ApiError> handle(WorkspaceNotFoundException ex) {
+        // Identical body whether the workspace exists or the caller has no
+        // membership — existence non-leak. See TRD §3.2.
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ApiError(
+                "workspace_not_found",
+                "Workspace not found."));
     }
 
     public record ApiError(String error, String message) {}

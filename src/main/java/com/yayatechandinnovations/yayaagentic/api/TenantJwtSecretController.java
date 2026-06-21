@@ -5,6 +5,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.jwt.TenantJwtSecretsChangedEvent;
 import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantJwtSecretRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
@@ -15,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -41,21 +44,28 @@ public class TenantJwtSecretController {
     private final JwtSecretCipher cipher;
     private final ObjectMapper json;
     private final ApplicationEventPublisher events;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public TenantJwtSecretController(TenantGuard tenantGuard,
                                      TenantJwtSecretRepository repo,
                                      JwtSecretCipher cipher,
                                      ObjectMapper json,
-                                     ApplicationEventPublisher events) {
+                                     ApplicationEventPublisher events,
+                                     WorkspaceAccessHelper workspaceAccess) {
         this.tenantGuard = tenantGuard;
         this.repo = repo;
         this.cipher = cipher;
         this.json = json;
         this.events = events;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping
-    public List<SecretResponse> list(@PathVariable("tenantId") String tenantId) {
+    public List<SecretResponse> list(@PathVariable("tenantId") String tenantId,
+                                     ServerWebExchange exchange) {
+        // Returned value equals tenantId (path variable IS the tenant id);
+        // we call this purely for the 404-or-allow side effect.
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
         return repo.findByTenantId(tenantId).stream()
                 .map(e -> SecretResponse.of(e, parseAudiences(e.getAudiencesJson())))
@@ -65,7 +75,9 @@ public class TenantJwtSecretController {
     @PostMapping
     @Transactional
     public ResponseEntity<SecretResponse> create(@PathVariable("tenantId") String tenantId,
-                                                 @RequestBody SecretRequest req) {
+                                                 @RequestBody SecretRequest req,
+                                                 ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         requireCipherConfigured();
         validateCreate(req);
@@ -98,7 +110,9 @@ public class TenantJwtSecretController {
     @Transactional
     public SecretResponse update(@PathVariable("tenantId") String tenantId,
                                  @PathVariable("id") Long id,
-                                 @RequestBody SecretRequest req) {
+                                 @RequestBody SecretRequest req,
+                                 ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validateMetadata(req);
 
@@ -124,7 +138,9 @@ public class TenantJwtSecretController {
     @DeleteMapping("/{id}")
     @Transactional
     public ResponseEntity<Void> delete(@PathVariable("tenantId") String tenantId,
-                                       @PathVariable("id") Long id) {
+                                       @PathVariable("id") Long id,
+                                       ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         TenantJwtSecretEntity entity = repo.findById(id)
                 .filter(e -> e.getTenantId().equals(tenantId))

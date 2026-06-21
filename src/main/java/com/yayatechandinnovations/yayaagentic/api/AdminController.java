@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
 import com.yayatechandinnovations.yayaagentic.auth.Authorizer;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.*;
 import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlValidator;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
@@ -21,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -69,6 +72,7 @@ public class AdminController {
     private final com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper;
     private final AbsoluteToPathMigrator absoluteToPathMigrator;
     private final com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public AdminController(TenantGuard tenantGuard,
                            ProfileRepository profiles,
@@ -83,7 +87,8 @@ public class AdminController {
                            com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog runtimeCatalog,
                            com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper catalogMapper,
                            AbsoluteToPathMigrator absoluteToPathMigrator,
-                           com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair) {
+                           com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair,
+                           WorkspaceAccessHelper workspaceAccess) {
         this.tenantGuard = tenantGuard;
         this.profiles = profiles;
         this.capabilities = capabilities;
@@ -98,14 +103,16 @@ public class AdminController {
         this.catalogMapper = catalogMapper;
         this.absoluteToPathMigrator = absoluteToPathMigrator;
         this.toolNameRepair = toolNameRepair;
+        this.workspaceAccess = workspaceAccess;
     }
 
     // ---- Profiles -------------------------------------------------------
 
     @PostMapping("/profiles")
     @Transactional
-    public ResponseEntity<AdminDtos.ProfileResponse> createProfile(@RequestBody AdminDtos.ProfileRequest req) {
-        String tenant = requireTenant(req.tenant());
+    public ResponseEntity<AdminDtos.ProfileResponse> createProfile(@RequestBody AdminDtos.ProfileRequest req,
+                                                                    ServerWebExchange exchange) {
+        String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "profile.id");
         require(req.displayName(), "profile.displayName");
         require(req.introOneLiner(), "profile.introOneLiner");
@@ -136,8 +143,10 @@ public class AdminController {
     }
 
     @GetMapping("/profiles")
-    public List<AdminDtos.ProfileResponse> listProfiles(@RequestParam(defaultValue = "default") String tenant) {
-        return profiles.findByTenantId(tenant).stream().map(this::toProfileResponse).toList();
+    public List<AdminDtos.ProfileResponse> listProfiles(@RequestParam(required = false) String tenant,
+                                                        ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.VIEWER);
+        return profiles.findByTenantId(resolved).stream().map(this::toProfileResponse).toList();
     }
 
     // ---- Capabilities ---------------------------------------------------
@@ -145,8 +154,9 @@ public class AdminController {
     @PostMapping("/capabilities")
     @Transactional
     public ResponseEntity<AdminDtos.CapabilityResponse> createCapability(
-            @RequestBody AdminDtos.CapabilityRequest req) {
-        String tenant = requireTenant(req.tenant());
+            @RequestBody AdminDtos.CapabilityRequest req,
+            ServerWebExchange exchange) {
+        String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "capability.id");
         require(req.label(), "capability.label");
         tenantGuard.requireWritable(tenant);
@@ -170,9 +180,11 @@ public class AdminController {
 
     @GetMapping("/capabilities")
     public List<AdminDtos.CapabilityResponse> listCapabilities(
-            @RequestParam(defaultValue = "default") String tenant) {
+            @RequestParam(required = false) String tenant,
+            ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.VIEWER);
         return capabilities.findAll().stream()
-                .filter(c -> c.getTenantId().equals(tenant))
+                .filter(c -> c.getTenantId().equals(resolved))
                 .map(this::toCapabilityResponse).toList();
     }
 
@@ -180,8 +192,9 @@ public class AdminController {
 
     @PostMapping("/tools")
     @Transactional
-    public ResponseEntity<AdminDtos.ToolResponse> createTool(@RequestBody AdminDtos.ToolRequest req) {
-        String tenant = requireTenant(req.tenant());
+    public ResponseEntity<AdminDtos.ToolResponse> createTool(@RequestBody AdminDtos.ToolRequest req,
+                                                             ServerWebExchange exchange) {
+        String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "tool.id");
         if (!com.yayatechandinnovations.yayaagentic.tool.ToolIdPattern.isValid(req.id())) {
             throw badRequest("tool.id must match " + com.yayatechandinnovations.yayaagentic.tool.ToolIdPattern.REGEX
@@ -237,9 +250,11 @@ public class AdminController {
     }
 
     @GetMapping("/tools")
-    public List<AdminDtos.ToolResponse> listTools(@RequestParam(defaultValue = "default") String tenant) {
+    public List<AdminDtos.ToolResponse> listTools(@RequestParam(required = false) String tenant,
+                                                  ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.VIEWER);
         return tools.findAll().stream()
-                .filter(t -> t.getTenantId().equals(tenant))
+                .filter(t -> t.getTenantId().equals(resolved))
                 .map(this::toToolResponse).toList();
     }
 
@@ -248,8 +263,11 @@ public class AdminController {
     @PostMapping("/auth-bindings")
     @Transactional
     public ResponseEntity<AdminDtos.AuthBindingResponse> createAuthBinding(
-            @RequestBody AdminDtos.AuthBindingRequest req) {
-        String tenant = requireTenant(req.tenant());
+            @RequestBody AdminDtos.AuthBindingRequest req,
+            ServerWebExchange exchange) {
+        // Auth bindings carry secrets-adjacent semantics — gate at ADMIN+,
+        // matching the JWT/OIDC issuer surface (see UI-UX §9.1).
+        String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.ADMIN);
         require(req.id(), "authBinding.id");
         require(req.authenticatorRef(), "authBinding.authenticatorRef");
         tenantGuard.requireWritable(tenant);
@@ -270,9 +288,12 @@ public class AdminController {
 
     @GetMapping("/auth-bindings")
     public List<AdminDtos.AuthBindingResponse> listAuthBindings(
-            @RequestParam(defaultValue = "default") String tenant) {
+            @RequestParam(required = false) String tenant,
+            ServerWebExchange exchange) {
+        // Bindings are secret-adjacent; require ADMIN to read.
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.ADMIN);
         return authBindings.findAll().stream()
-                .filter(b -> b.getTenantId().equals(tenant))
+                .filter(b -> b.getTenantId().equals(resolved))
                 .map(this::toAuthBindingResponse).toList();
     }
 
@@ -294,8 +315,9 @@ public class AdminController {
     @PostMapping("/recording-strategies")
     @Transactional
     public ResponseEntity<AdminDtos.RecordingStrategyResponse> createRecordingStrategy(
-            @RequestBody AdminDtos.RecordingStrategyRequest req) {
-        String tenant = requireTenant(req.tenant());
+            @RequestBody AdminDtos.RecordingStrategyRequest req,
+            ServerWebExchange exchange) {
+        String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.ADMIN);
         String scope = req.scopeKind() == null ? "" : req.scopeKind().toUpperCase(Locale.ROOT);
         if (!"TENANT".equals(scope) && !"PROFILE".equals(scope)) {
             throw badRequest("recordingStrategy.scopeKind must be TENANT or PROFILE");
@@ -323,11 +345,13 @@ public class AdminController {
 
     @GetMapping("/recording-strategies/{scopeKind}/{scopeId}")
     public AdminDtos.RecordingStrategyResponse getRecordingStrategy(
-            @RequestParam(defaultValue = "default") String tenant,
+            @RequestParam(required = false) String tenant,
             @PathVariable String scopeKind,
-            @PathVariable String scopeId) {
+            @PathVariable String scopeId,
+            ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.VIEWER);
         return recordingStrategies
-                .findLatest(tenant, scopeKind.toUpperCase(Locale.ROOT), scopeId)
+                .findLatest(resolved, scopeKind.toUpperCase(Locale.ROOT), scopeId)
                 .map(this::toStrategyResponse)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "no recording strategy at " + scopeKind + "/" + scopeId));
@@ -337,14 +361,17 @@ public class AdminController {
 
     @GetMapping("/audit/authz")
     public AdminDtos.AuthzAuditPage searchAuthzAudit(
-            @RequestParam(defaultValue = "default") String tenant,
+            @RequestParam(required = false) String tenant,
             @RequestParam(required = false) String decision,
             @RequestParam(required = false) String principal,
             @RequestParam(name = "toolId", required = false) String toolId,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "20") int pageSize,
+            ServerWebExchange exchange) {
+        // Audit reads require ADMIN — UI-UX §9.1.
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.ADMIN);
         var pr = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(pageSize, 200)));
-        var result = auditAuthz.search(tenant,
+        var result = auditAuthz.search(resolved,
                 decision == null ? null : decision.toUpperCase(Locale.ROOT),
                 principal, toolId, pr);
         List<AdminDtos.AuthzAuditEntry> items = result.getContent().stream()
@@ -356,11 +383,13 @@ public class AdminController {
 
     @PostMapping("/tools/migrate-to-path")
     public AbsoluteToPathMigrator.Plan migrateToPath(@RequestParam("tenant") String tenant,
-                                                     @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun) {
-        tenantGuard.requireWritable(tenant);
+                                                     @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun,
+                                                     ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(resolved);
         return dryRun
-                ? absoluteToPathMigrator.plan(tenant)
-                : absoluteToPathMigrator.apply(tenant);
+                ? absoluteToPathMigrator.plan(resolved)
+                : absoluteToPathMigrator.apply(resolved);
     }
 
     /**
@@ -378,14 +407,16 @@ public class AdminController {
      */
     @PostMapping("/tools/repair-names")
     public ResponseEntity<?> repairToolNames(@RequestParam("tenant") String tenant,
-                                             @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun) {
-        tenantGuard.requireWritable(tenant);
+                                             @RequestParam(value = "dryRun", defaultValue = "true") boolean dryRun,
+                                             ServerWebExchange exchange) {
+        String resolved = requireWorkspaceAccess(tenant, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(resolved);
         if (dryRun) {
-            return ResponseEntity.ok(toolNameRepair.plan(tenant));
+            return ResponseEntity.ok(toolNameRepair.plan(resolved));
         }
         try {
-            var report = toolNameRepair.apply(tenant);
-            refreshRuntimeCatalogAfterRepair(tenant, report);
+            var report = toolNameRepair.apply(resolved);
+            refreshRuntimeCatalogAfterRepair(resolved, report);
             return ResponseEntity.ok(report);
         } catch (com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService.CollisionException ce) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
@@ -641,9 +672,9 @@ public class AdminController {
         }
     }
 
-    private static String requireTenant(String tenant) {
-        if (tenant == null || tenant.isBlank()) return "default";
-        return tenant;
+    /** Thin pass-through to the shared helper — kept so call-sites read consistently. */
+    private String requireWorkspaceAccess(String tenant, ServerWebExchange exchange, Role minRole) {
+        return workspaceAccess.require(tenant, exchange, minRole);
     }
 
     private static void require(String value, String field) {

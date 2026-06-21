@@ -5,6 +5,9 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.Operator;
 import com.yayatechandinnovations.yayaagentic.operator_auth.OperatorAuthenticationException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.OperatorAuthenticator;
 import com.yayatechandinnovations.yayaagentic.operator_auth.OperatorCredentials;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Membership;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAccountService;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.UserId;
 import com.yayatechandinnovations.yayaagentic.operator_auth.audit.OperatorLoginAudit;
 import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.LoginRateLimiter;
 import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.RateLimitedException;
@@ -26,6 +29,8 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -50,6 +55,7 @@ public class AuthController {
     private final OperatorSessionService sessions;
     private final OperatorLoginAudit audit;
     private final LoginRateLimiter rateLimiter;
+    private final OperatorAccountService accounts;
     private final String cookieName;
     private final Duration ttl;
     private final boolean cookieSecure;
@@ -58,11 +64,13 @@ public class AuthController {
                           OperatorSessionService sessions,
                           OperatorLoginAudit audit,
                           LoginRateLimiter rateLimiter,
+                          OperatorAccountService accounts,
                           YayaAgenticProperties props) {
         this.chain = chain;
         this.sessions = sessions;
         this.audit = audit;
         this.rateLimiter = rateLimiter;
+        this.accounts = accounts;
         var sess = props.operatorAuth() == null ? null : props.operatorAuth().session();
         this.cookieName = sess == null || isBlank(sess.cookieName()) ? "YAYA_SESSION" : sess.cookieName();
         this.ttl = sess == null || sess.ttl() == null ? Duration.ofHours(8) : sess.ttl();
@@ -163,23 +171,59 @@ public class AuthController {
     @GetMapping("/me")
     public Mono<ResponseEntity<MeResponse>> me(ServerWebExchange exchange) {
         return Mono.justOrEmpty(OperatorContext.current(exchange))
-                .map(op -> ResponseEntity.ok(MeResponse.of(op)))
+                .flatMap(op -> Mono.fromCallable(() -> ResponseEntity.ok(meResponseFor(op)))
+                        .subscribeOn(Schedulers.boundedElastic()))
                 .switchIfEmpty(Mono.error(unauthorized("no_operator_on_exchange")));
+    }
+
+    /**
+     * Build a {@link MeResponse} that includes the user's workspaces, when
+     * we can identify the user. Sessions sourced from {@code BOOTSTRAP}
+     * don't have a user UUID and surface with empty memberships — the
+     * platform-admin flag is still set so the UI can show the cross-tenant
+     * tools.
+     */
+    private MeResponse meResponseFor(Operator op) {
+        List<WorkspaceMembershipDto> ws = List.of();
+        boolean platformAdmin = false;
+        Object adminAttr = op.attributes() == null ? null : op.attributes().get("is_platform_admin");
+        if (adminAttr instanceof Boolean b) platformAdmin = b;
+
+        Object userIdAttr = op.attributes() == null ? null : op.attributes().get("user_id");
+        if (userIdAttr instanceof String s && !s.isBlank()) {
+            try {
+                UserId uid = UserId.parse(s);
+                List<Membership> mine = accounts.workspacesFor(uid);
+                List<WorkspaceMembershipDto> built = new ArrayList<>(mine.size());
+                for (Membership m : mine) {
+                    built.add(new WorkspaceMembershipDto(m.workspaceId().value(), m.role().name()));
+                }
+                ws = built;
+                // Re-derive platform-admin from the persisted user row so a
+                // stale session attribute can't keep someone admin after a
+                // demotion.
+                platformAdmin = accounts.findById(uid).map(u -> u.isPlatformAdmin()).orElse(platformAdmin);
+            } catch (IllegalArgumentException ignored) {
+                // user_id attribute wasn't a valid UUID — leave defaults.
+            }
+        }
+        return MeResponse.of(op, ws, platformAdmin);
     }
 
     // ------------------------------------------------------------------
 
     private Mono<ResponseEntity<MeResponse>> issueSession(Operator op, String ip, String ua,
                                                           ServerWebExchange exchange, String attemptId) {
-        return Mono.fromCallable(() -> sessions.create(op, ip, ua))
-                .subscribeOn(Schedulers.boundedElastic())
-                .map(issued -> {
-                    log.info("operator-login allow: subject={} source={} attempt={}",
-                            op.subject(), op.source(), attemptId);
+        return Mono.fromCallable(() -> {
+                    OperatorSessionService.Issued issued = sessions.create(op, ip, ua);
+                    MeResponse body = meResponseFor(op);
                     return ResponseEntity.ok()
                             .header("Set-Cookie", sessionCookie(issued.rawToken()).toString())
-                            .body(MeResponse.of(op));
-                });
+                            .body(body);
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnNext(r -> log.info("operator-login allow: subject={} source={} attempt={}",
+                        op.subject(), op.source(), attemptId));
     }
 
     private ResponseCookie sessionCookie(String token) {
@@ -227,11 +271,15 @@ public class AuthController {
             String displayName,
             String source,
             Map<String, Object> attributes,
-            Instant verifiedAt
+            Instant verifiedAt,
+            List<WorkspaceMembershipDto> memberships,
+            boolean platformAdmin
     ) {
-        public static MeResponse of(Operator op) {
+        public static MeResponse of(Operator op, List<WorkspaceMembershipDto> memberships, boolean platformAdmin) {
             return new MeResponse(op.subject(), op.displayName(), op.source().name(),
-                    op.attributes(), op.verifiedAt());
+                    op.attributes(), op.verifiedAt(), memberships, platformAdmin);
         }
     }
+
+    public record WorkspaceMembershipDto(String workspaceId, String role) {}
 }
