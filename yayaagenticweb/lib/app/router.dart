@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -46,46 +47,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/playground',
     refreshListenable: refresh,
-    redirect: (context, state) {
-      final auth = ref.read(authProvider);
-      final loc = state.matchedLocation;
-      final atLogin = loc == '/login';
-      final atLoading = loc == '/loading';
-      // Public routes — accessible without a session. /verify and
-      // /reset-password are token-bearer landings; /signup, /verify/pending,
-      // and /forgot-password are self-serve entry/info screens. Anonymous
-      // visitors and signed-in users alike can hit any of these.
-      final isPublic = atLogin ||
-          loc == '/signup' ||
-          loc == '/verify' ||
-          loc == '/verify/pending' ||
-          loc == '/forgot-password' ||
-          loc == '/reset-password' ||
-          loc == '/accept-invitation';
-
-      if (auth is AuthChecking) {
-        return atLoading ? null : '/loading';
-      }
-      if (auth is AuthAuthenticated) {
-        // Signed-in users hitting /login bounce into the app; the other
-        // public routes (verify landing for someone juggling tabs, etc.)
-        // pass through unchanged.
-        if (atLogin || atLoading) return '/playground';
-        // Platform-only routes (cross-tenant admin, operator-auth config)
-        // require the platform-admin flag — non-platform admins land on
-        // /playground instead of a screen the API would 403 anyway.
-        if (_platformOnlyRoutes.contains(loc) &&
-            !auth.operator.platformAdmin) {
-          return '/playground';
-        }
-        return null;
-      }
-      // Unauthenticated or SessionExpired → /login (preserve return path),
-      // unless they're on a public route.
-      if (isPublic) return null;
-      final returnTo = (loc.isEmpty || loc == '/loading') ? '/playground' : loc;
-      return '/login?returnTo=${Uri.encodeComponent(returnTo)}';
-    },
+    redirect: (context, state) => resolveAuthRedirect(
+          auth: ref.read(authProvider),
+          matchedLocation: state.matchedLocation,
+        ),
     routes: [
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
       GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
@@ -124,6 +89,62 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Pure redirect logic — kept top-level so it's unit-testable without
+/// mounting GoRouter. Returns the path to redirect to, or null to let
+/// the navigation proceed as-is.
+///
+/// The load-bearing branch: token-bearer routes (verify, reset-password,
+/// accept-invitation) MUST return null during {@link AuthChecking} so
+/// the SPA mounts the landing screen with the `?token=` query intact.
+/// Bouncing them to /loading strips the query and dead-ends users at
+/// /login when bootstrap completes.
+@visibleForTesting
+String? resolveAuthRedirect({
+  required AuthState auth,
+  required String matchedLocation,
+}) {
+  final loc = matchedLocation;
+  final atLogin = loc == '/login';
+  final atLoading = loc == '/loading';
+  // Public routes — accessible without a session. /verify and
+  // /reset-password are token-bearer landings; /signup, /verify/pending,
+  // and /forgot-password are self-serve entry/info screens. Anonymous
+  // visitors and signed-in users alike can hit any of these.
+  final isPublic = atLogin ||
+      loc == '/signup' ||
+      loc == '/verify' ||
+      loc == '/verify/pending' ||
+      loc == '/forgot-password' ||
+      loc == '/reset-password' ||
+      loc == '/accept-invitation';
+
+  if (auth is AuthChecking) {
+    // Token-bearer routes must mount immediately — see top-of-function
+    // note. The other public routes are cheap to show during the
+    // spinner window too.
+    if (isPublic) return null;
+    return atLoading ? null : '/loading';
+  }
+  if (auth is AuthAuthenticated) {
+    // Signed-in users hitting /login bounce into the app; the other
+    // public routes (verify landing for someone juggling tabs, etc.)
+    // pass through unchanged.
+    if (atLogin || atLoading) return '/playground';
+    // Platform-only routes (cross-tenant admin, operator-auth config)
+    // require the platform-admin flag — non-platform admins land on
+    // /playground instead of a screen the API would 403 anyway.
+    if (_platformOnlyRoutes.contains(loc) && !auth.operator.platformAdmin) {
+      return '/playground';
+    }
+    return null;
+  }
+  // Unauthenticated or SessionExpired → /login (preserve return path),
+  // unless they're on a public route.
+  if (isPublic) return null;
+  final returnTo = (loc.isEmpty || loc == '/loading') ? '/playground' : loc;
+  return '/login?returnTo=${Uri.encodeComponent(returnTo)}';
+}
 
 /// Bridges Riverpod's authProvider into a [Listenable] for GoRouter's
 /// refreshListenable so the redirect rebuilds on every auth transition.
