@@ -5,6 +5,10 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAcc
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAccountService.SignupOutcome;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAccountService.VerifyOutcome;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.SignupRequest;
+import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.RateLimitedException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.VerificationResendRateLimiter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -35,10 +39,15 @@ import java.util.UUID;
 @ConditionalOnProperty(name = "yaya.agentic.user-accounts.enabled", havingValue = "true")
 public class UserAccountsController {
 
-    private final OperatorAccountService accounts;
+    private static final Logger log = LoggerFactory.getLogger(UserAccountsController.class);
 
-    public UserAccountsController(OperatorAccountService accounts) {
+    private final OperatorAccountService accounts;
+    private final VerificationResendRateLimiter resendRateLimiter;
+
+    public UserAccountsController(OperatorAccountService accounts,
+                                  VerificationResendRateLimiter resendRateLimiter) {
         this.accounts = accounts;
+        this.resendRateLimiter = resendRateLimiter;
     }
 
     /**
@@ -74,6 +83,32 @@ public class UserAccountsController {
                         out.userId().value(),
                         out.defaultWorkspaceId().value(),
                         out.redeemedInvitations().size())));
+    }
+
+    /**
+     * Re-issue an email verification token for an account that hasn't
+     * activated yet. Always 202 to keep the response enumeration-safe;
+     * 429 only when the per-email or per-IP bucket is empty.
+     */
+    @PostMapping("/verify/resend")
+    public Mono<ResponseEntity<Void>> resendVerification(@RequestBody EmailBody body,
+                                                         ServerWebExchange exchange) {
+        if (body == null || body.email() == null || body.email().isBlank()) {
+            // Match other enumeration-safe endpoints: return 202 regardless,
+            // skip the rate-limit ticket so probes can't drain the bucket
+            // with empty bodies.
+            return Mono.just(ResponseEntity.accepted().build());
+        }
+        RequestMeta meta = meta(exchange);
+        var rl = resendRateLimiter.check(body.email(), meta.clientIp());
+        if (rl instanceof VerificationResendRateLimiter.Outcome.Denied d) {
+            log.info("verification-resend deny: rate_limited axis={} retryAfter={}s (email={}, ip={})",
+                    d.axis(), d.retryAfterSeconds(), body.email(), meta.clientIp());
+            return Mono.error(new RateLimitedException(d.axis(), d.retryAfterSeconds()));
+        }
+        return Mono.<Void>fromRunnable(() -> accounts.requestVerificationResend(body.email(), meta))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then(Mono.just(ResponseEntity.accepted().<Void>build()));
     }
 
     @PostMapping("/password-reset/request")

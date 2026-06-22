@@ -136,9 +136,11 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
 
         Optional<UserEntity> existing = users.findActiveByEmail(email);
         if (existing.isPresent()) {
-            UserId uid = new UserId(existing.get().getId());
-            enqueueDuplicateSignupDecoy(email);
-            audit.write("SIGNUP_DUPLICATE_ATTEMPT", uid, null, meta, Map.of());
+            UserEntity prior = existing.get();
+            UserId uid = new UserId(prior.getId());
+            enqueueDuplicateSignupDecoy(email, prior.getStatus());
+            audit.write("SIGNUP_DUPLICATE_ATTEMPT", uid, null, meta,
+                    Map.of("status", prior.getStatus()));
             return SignupOutcome.existing();
         }
 
@@ -264,6 +266,35 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
                     now));
         }
         return minted;
+    }
+
+    // -------------------------------------------------------------------
+    // Verification resend
+    // -------------------------------------------------------------------
+
+    @Override
+    @Transactional
+    public void requestVerificationResend(String email, RequestMeta meta) {
+        if (email == null || email.isBlank()) return;
+        String normalized = normalizeEmail(email);
+        if (!EMAIL_RE.matcher(normalized).matches()) return;
+
+        Optional<UserEntity> maybe = users.findActiveByEmail(normalized);
+        if (maybe.isEmpty()) return;
+        UserEntity user = maybe.get();
+        // Only PENDING accounts get a fresh link. ACTIVE/SUSPENDED/DELETED
+        // are silent no-ops so the response can't be used to enumerate state.
+        if (!UserStatus.PENDING_VERIFICATION.name().equals(user.getStatus())) return;
+
+        OffsetDateTime now = now();
+        String rawToken = tokens.mintRawToken();
+        byte[] hash = tokens.sha256(rawToken);
+        // Prior unconsumed tokens stay valid until natural TTL — users who
+        // click an older link after requesting a new one shouldn't hit a
+        // dead end. The hashed PK guarantees no collision.
+        verifyTokens.save(new EmailVerificationTokenEntity(hash, user.getId(), now.plus(verifyTtl), now));
+        enqueueVerificationMail(normalized, user.getDisplayName(), rawToken, hash);
+        audit.write("VERIFICATION_RESEND", new UserId(user.getId()), null, meta, Map.of());
     }
 
     // -------------------------------------------------------------------
@@ -407,8 +438,22 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
                 idempotencyKey("verify-email", tokenHash)));
     }
 
-    private void enqueueDuplicateSignupDecoy(String to) {
-        String body = """
+    private void enqueueDuplicateSignupDecoy(String to, String priorStatus) {
+        // The decoy is delivered only to the real account holder's inbox, so
+        // tailoring copy by internal status does not leak enumeration. For a
+        // PENDING account the original "sign in or reset password" advice is
+        // a dead end — point at the resend flow instead.
+        boolean pending = UserStatus.PENDING_VERIFICATION.name().equals(priorStatus);
+        String body = pending ? """
+                Someone tried to sign up for a yaya-agentic account with your email.
+
+                You already started signing up but haven't verified your email yet.
+                Open the most recent verification email, or request a new one from
+                the sign-in page ("resend verification link").
+
+                If it wasn't you, you can safely ignore this email — no new account
+                was created.
+                """ : """
                 Someone tried to sign up for a yaya-agentic account with your email.
 
                 If that was you, you already have an account — sign in instead, or

@@ -62,7 +62,7 @@ class LoginRateLimitTest {
                 .exchange()
                 .expectStatus().isEqualTo(429)
                 .expectBody()
-                .jsonPath("$.message").isEqualTo("Too many login attempts. Try again later.")
+                .jsonPath("$.message").isEqualTo("Too many requests. Try again later.")
                 .returnResult();
 
         String retryAfter = sixth.getResponseHeaders().getFirst("Retry-After");

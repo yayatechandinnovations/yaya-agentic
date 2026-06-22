@@ -38,11 +38,12 @@ public class AuthExceptionHandler {
     @ExceptionHandler(RateLimitedException.class)
     public ResponseEntity<ApiError> handle(RateLimitedException ex) {
         // Same generic message every time — never leak which axis tripped.
+        // Phrased to cover any auth endpoint (login, verify-resend, …).
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()))
                 .body(new ApiError(
                         HttpStatus.TOO_MANY_REQUESTS.name(),
-                        "Too many login attempts. Try again later."));
+                        "Too many requests. Try again later."));
     }
 
     @ExceptionHandler(AccountTokenException.class)

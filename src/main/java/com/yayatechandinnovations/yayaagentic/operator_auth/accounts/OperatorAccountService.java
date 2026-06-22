@@ -37,6 +37,15 @@ public interface OperatorAccountService {
     void requestPasswordReset(String email, RequestMeta meta);
 
     /**
+     * Re-issues an email verification token for a {@code PENDING_VERIFICATION}
+     * user. Enumeration-safe: returns silently for unknown emails and for
+     * already-ACTIVE / SUSPENDED / DELETED users. Rate-limiting is the
+     * controller's responsibility — by the time we get here, the call has
+     * been admitted.
+     */
+    void requestVerificationResend(String email, RequestMeta meta);
+
+    /**
      * Rotates the password hash AND deletes every operator-session for this
      * user in one transaction.
      *
