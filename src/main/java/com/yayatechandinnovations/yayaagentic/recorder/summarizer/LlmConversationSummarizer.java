@@ -34,10 +34,11 @@ public class LlmConversationSummarizer implements ConversationSummarizer {
     private static final Duration LLM_TIMEOUT = Duration.ofSeconds(20);
 
     private static final String SYSTEM_PROMPT = """
-            You produce a compact memory note for an agent's earlier turns.
-            The note is read alongside the verbatim recent turns, so do NOT
-            re-narrate what the user or assistant said. Capture only state
-            the agent must carry forward:
+            You compact agent conversations into a short memory note for
+            the agent's earlier turns. The note is read alongside the
+            verbatim recent turns, so do NOT re-narrate what the user or
+            assistant said. Capture only state the agent must carry
+            forward:
             - open user goals that are not yet satisfied
             - entities the user referenced (names, ids, quantities) that
               may be needed later
