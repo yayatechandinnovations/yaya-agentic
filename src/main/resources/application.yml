@@ -162,9 +162,8 @@ yaya:
     # Provider defaults to dev-console — the raw token + body land in
     # the application log (grep for `[MAIL]`). Switch to sendgrid in
     # prod and set SENDGRID_API_KEY.
-    # NOTE: the SendGrid adapter ships in M5b; today only dev-console
-    # is wired. Setting provider=sendgrid before then leaves the app
-    # without an active MailSender bean.
+    # Provider=sendgrid hits SendGrid's HTTPS v3 /mail/send endpoint;
+    # boot fails fast with a clear error if SENDGRID_API_KEY is blank.
     email:
       enabled: ${YAYA_EMAIL_ENABLED:true}
       provider: ${YAYA_EMAIL_PROVIDER:dev-console}        # sendgrid | dev-console

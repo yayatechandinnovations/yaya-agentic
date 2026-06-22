@@ -7,10 +7,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Logs the rendered mail to the console. Wired by
  * {@link MailSenderConfig#devConsoleMailSender} as the unconditional
- * fallback whenever no other {@link MailSender} bean is registered.
- * Stays usable even when an operator points
- * {@code yaya.agentic.email.provider} at a sender we haven't wired
- * yet (e.g. {@code sendgrid} pre-M5b).
+ * fallback whenever no other {@link MailSender} bean is registered —
+ * for example when {@code yaya.agentic.email.provider} is unset or
+ * points at a sender we haven't wired (the SendGrid adapter is the
+ * only typed sender today).
  *
  * <p>Token-bearing emails (verify, reset, invite) print the raw token
  * in the log so an operator can paste it into the browser. In a real
@@ -40,10 +40,16 @@ public class DevConsoleMailSender implements MailSender {
         String requested = email == null || email.provider() == null
                 ? "dev-console" : email.provider();
         if (!"dev-console".equalsIgnoreCase(requested)) {
+            // Reachable today only when provider=sendgrid AND something
+            // suppressed the SendGrid bean (e.g. a downstream override
+            // bean), or when provider is set to a value we don't
+            // recognise. Either way, the operator should know mail is
+            // landing in the log instead of being delivered.
             log.warn("[MAIL] yaya.agentic.email.provider={} is configured but no "
                     + "matching MailSender bean is registered; falling back to "
                     + "the dev-console sender. Tokens will land in this log. "
-                    + "(The {} adapter ships in M5b.)", requested, requested);
+                    + "Check that the provider name matches a registered bean "
+                    + "(currently: sendgrid).", requested);
         }
     }
 
