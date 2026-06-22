@@ -10,6 +10,7 @@ import java.util.Map;
 public record YayaAgenticProperties(
         String defaultPersonality,
         String defaultTenant,
+        String publicBaseUrl,
         Session session,
         Llm llm,
         Cors cors,

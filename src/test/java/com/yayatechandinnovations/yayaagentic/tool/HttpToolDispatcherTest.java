@@ -340,7 +340,7 @@ class HttpToolDispatcherTest {
 
     private HttpToolDispatcher dispatcher(List<String> allowlist, BaseUrlResolver resolver) {
         YayaAgenticProperties props = new YayaAgenticProperties(
-                "default", "default", null, null, null, null,
+                "default", "default", null, null, null, null, null,
                 new YayaAgenticProperties.HttpTools(allowlist, true, Duration.ofSeconds(3)),
                 null, null, null);
         HttpEgressPolicy egress = new HttpEgressPolicy(props);

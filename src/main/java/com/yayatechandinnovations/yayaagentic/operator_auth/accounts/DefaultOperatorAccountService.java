@@ -76,6 +76,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
     private final AccountTokens tokens;
     private final WorkspaceSlugger slugger;
     private final AccountAuditWriter audit;
+    private final AccountMailLinks links;
     private final Duration verifyTtl;
     private final Duration resetTtl;
 
@@ -92,6 +93,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
                                          AccountTokens tokens,
                                          WorkspaceSlugger slugger,
                                          AccountAuditWriter audit,
+                                         AccountMailLinks links,
                                          YayaAgenticProperties props) {
         this.users = users;
         this.memberships = memberships;
@@ -106,6 +108,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
         this.tokens = tokens;
         this.slugger = slugger;
         this.audit = audit;
+        this.links = links;
 
         YayaAgenticProperties.UserAccounts ua = props.userAccounts();
         YayaAgenticProperties.UserAccounts.Verification v = (ua == null || ua.verification() == null)
@@ -418,17 +421,24 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
     // -------------------------------------------------------------------
 
     private void enqueueVerificationMail(String to, String displayName, String rawToken, byte[] tokenHash) {
+        String url = links.verifyUrl(rawToken);
         String body = """
                 Hi %s,
 
                 Confirm your email to activate your yaya-agentic account.
 
+                Click to verify:
+                %s
+
+                The link expires in %d hours.
+
+                If the link doesn't work in your email client, you can paste this
+                token into the verification page directly.
+
                 Verification token: %s
 
-                The link in the admin console will use this token. It expires in %d hours.
-
                 If you didn't sign up, ignore this email.
-                """.formatted(displayName, rawToken, verifyTtl.toHours());
+                """.formatted(displayName, url, verifyTtl.toHours(), rawToken);
         mail.enqueue(new MailMessage(
                 to,
                 "Verify your yaya-agentic account",
@@ -472,18 +482,25 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
     }
 
     private void enqueueResetMail(String to, String displayName, String rawToken, byte[] tokenHash) {
+        String url = links.resetPasswordUrl(rawToken);
         String body = """
                 Hi %s,
 
                 A password reset was requested for your yaya-agentic account.
 
-                Reset token: %s
+                Reset your password:
+                %s
 
-                The link in the admin console will use this token. It expires in %d minutes.
+                The link expires in %d minutes.
+
+                If the link doesn't work in your email client, paste this token
+                into the reset page directly.
+
+                Reset token: %s
 
                 If you didn't ask for this, you can ignore the email — your password
                 is unchanged.
-                """.formatted(displayName, rawToken, resetTtl.toMinutes());
+                """.formatted(displayName, url, resetTtl.toMinutes(), rawToken);
         mail.enqueue(new MailMessage(
                 to,
                 "Reset your yaya-agentic password",

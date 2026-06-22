@@ -67,6 +67,11 @@ yaya:
   agentic:
     default-personality: default
     default-tenant: default
+    # Public origin of the admin SPA — used to build clickable links in
+    # verify / reset / invitation emails. In prod set to the URL users
+    # type into their browser (e.g. https://admin.smartlottery.do). Leave
+    # the default for local dev where the backend serves the SPA itself.
+    public-base-url: ${YAYA_PUBLIC_BASE_URL:http://localhost:8080}
     session:
       # Idle TTL for ephemeral session state in Redis. Bumped on every
       # interaction; reaching zero auto-evicts working memory.

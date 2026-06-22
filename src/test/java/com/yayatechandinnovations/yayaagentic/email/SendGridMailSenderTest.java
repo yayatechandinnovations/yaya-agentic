@@ -80,7 +80,7 @@ class SendGridMailSenderTest {
         // Production ctor (the one without the Api seam) goes through
         // requireApiKey and must fail fast when the key is missing.
         YayaAgenticProperties propsWithoutKey = new YayaAgenticProperties(
-                null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null,
                 new YayaAgenticProperties.Email(
                         true, "sendgrid", "noreply@example.com", null,
                         new YayaAgenticProperties.Email.SendGrid(""),
@@ -105,7 +105,7 @@ class SendGridMailSenderTest {
 
     private static YayaAgenticProperties props() {
         return new YayaAgenticProperties(
-                null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null,
                 new YayaAgenticProperties.Email(
                         true, "sendgrid", "noreply@example.com", "reply@example.com",
                         new YayaAgenticProperties.Email.SendGrid("SG.fake-key"),

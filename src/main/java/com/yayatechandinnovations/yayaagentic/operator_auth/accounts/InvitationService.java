@@ -51,6 +51,7 @@ public class InvitationService {
     private final OutboxMailQueue mail;
     private final AccountTokens tokens;
     private final AccountAuditWriter audit;
+    private final AccountMailLinks links;
     private final Duration ttl;
 
     public InvitationService(UserInvitationRepository invitations,
@@ -60,6 +61,7 @@ public class InvitationService {
                              OutboxMailQueue mail,
                              AccountTokens tokens,
                              AccountAuditWriter audit,
+                             AccountMailLinks links,
                              YayaAgenticProperties props) {
         this.invitations = invitations;
         this.memberships = memberships;
@@ -68,6 +70,7 @@ public class InvitationService {
         this.mail = mail;
         this.tokens = tokens;
         this.audit = audit;
+        this.links = links;
         YayaAgenticProperties.UserAccounts ua = props.userAccounts();
         YayaAgenticProperties.UserAccounts.Invitation inv = (ua == null || ua.invitation() == null)
                 ? YayaAgenticProperties.UserAccounts.Invitation.defaults() : ua.invitation();
@@ -196,14 +199,22 @@ public class InvitationService {
 
     private void enqueueInvitationMail(String to, String workspaceDisplay, Role role,
                                        String rawToken, byte[] tokenHash) {
+        String url = links.acceptInvitationUrl(rawToken);
         String body = """
                 You've been invited to join %s on yaya-agentic as %s.
 
+                Accept the invitation:
+                %s
+
+                The invitation expires in %d days.
+
+                If the link doesn't work in your email client, paste this token
+                into the accept-invitation page directly.
+
                 Invitation token: %s
 
-                Open the admin console to accept. The invitation expires in %d days.
                 If you didn't expect this, you can safely ignore the email.
-                """.formatted(workspaceDisplay, role.name(), rawToken, ttl.toDays());
+                """.formatted(workspaceDisplay, role.name(), url, ttl.toDays(), rawToken);
         mail.enqueue(new MailMessage(
                 to,
                 "You're invited to " + workspaceDisplay,

@@ -36,7 +36,7 @@ class DelegateInvokerTest {
         // allow-private-networks = true so loopback (WireMock) isn't
         // blocked by the SSRF guard. Prod deployments leave it off.
         YayaAgenticProperties props = new YayaAgenticProperties(
-                "default", "default", null, null, null, null,
+                "default", "default", null, null, null, null, null,
                 new YayaAgenticProperties.HttpTools(List.of(), true, Duration.ofSeconds(10)),
                 null, null, null);
         invoker = new DelegateInvoker(WebClient.builder(), new ObjectMapper(), new HttpEgressPolicy(props));

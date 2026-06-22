@@ -131,7 +131,7 @@ class OidcAuthenticatorTest {
 
     private YayaAgenticProperties propsWith(List<YayaAgenticProperties.Auth.Oidc.Issuer> issuers) {
         return new YayaAgenticProperties(
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 new YayaAgenticProperties.Auth(
                         false,
                         new YayaAgenticProperties.Auth.Oidc(issuers, Duration.ofMinutes(10), Duration.ofSeconds(30)),
