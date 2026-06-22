@@ -87,6 +87,27 @@ class AuthApi {
     }
   }
 
+  /// Enumeration-safe — server always responds 202 for a syntactically
+  /// valid call, regardless of whether the email belongs to a PENDING
+  /// account. Throws [ResendThrottledException] (subclass of
+  /// [AuthApiException]) on 429 so the UI can render a countdown.
+  Future<void> resendVerification(String email) async {
+    try {
+      await _dio.post('/v1/auth/verify/resend', data: {'email': email});
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 429) {
+        final retryRaw = e.response?.headers.value('retry-after');
+        final retryAfter = int.tryParse(retryRaw ?? '') ?? 60;
+        throw ResendThrottledException(
+          retryAfterSeconds: retryAfter,
+          message: _readApiMessage(e) ??
+              'Too many requests. Try again in $retryAfter seconds.',
+        );
+      }
+      throw _toAuthException(e);
+    }
+  }
+
   /// Always silent — the response is fixed at 204 regardless of whether the
   /// email is known. The UI shows the same "if an account exists..." copy
   /// in every branch.
@@ -174,6 +195,12 @@ class AuthApi {
     );
   }
 
+  static String? _readApiMessage(DioException e) {
+    final data = e.response?.data;
+    if (data is Map && data['message'] is String) return data['message'] as String;
+    return null;
+  }
+
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw as Map);
 }
 
@@ -193,6 +220,18 @@ class AuthApiException implements Exception {
 
   @override
   String toString() => 'AuthApiException($statusCode, $errorCode): $message';
+}
+
+/// Thrown by [AuthApi.resendVerification] when the per-email or per-IP
+/// rate-limit bucket is empty. Carries the server's `Retry-After` so the
+/// UI can show a live countdown on the CTA.
+class ResendThrottledException extends AuthApiException {
+  ResendThrottledException({
+    required this.retryAfterSeconds,
+    required super.message,
+  }) : super(statusCode: 429, errorCode: 'rate_limited');
+
+  final int retryAfterSeconds;
 }
 
 /// Result of GET /v1/auth/verify. The default workspace code lets the SPA

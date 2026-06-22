@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,8 +28,6 @@ class _VerifyEmailLandingScreenState
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Kick the redeem off exactly once, after the first frame so we can
-    // hop to a new route safely.
     if (_started) return;
     _started = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => _verify());
@@ -70,10 +70,12 @@ class _VerifyEmailLandingScreenState
   }
 }
 
-/// "Check your inbox" / resend page. Shown after signup AND after a
-/// failed verify (with an inline error banner).
+/// "Check your inbox" / resend page. Reached three ways:
+///   1. Just after signup — `?email=<addr>` carries the address; CTA is pre-armed.
+///   2. After a failed verify — `?expired=1`; banner shows + resend is the next step.
+///   3. From the login screen's "Didn't get the email?" link — `?email=<typed>`.
 ///
-/// See UI-UX §4.3.
+/// See UI-UX §4.3 and §S-03.
 class VerifyEmailPendingScreen extends ConsumerStatefulWidget {
   const VerifyEmailPendingScreen({super.key});
 
@@ -84,25 +86,112 @@ class VerifyEmailPendingScreen extends ConsumerStatefulWidget {
 
 class _VerifyEmailPendingScreenState
     extends ConsumerState<VerifyEmailPendingScreen> {
+  final _email = TextEditingController();
+  bool _submitting = false;
+  bool _sent = false;
+  int _cooldownRemaining = 0;
+  Timer? _cooldownTimer;
+  String? _error;
+  bool _emailPrefilled = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _cooldownTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _resend(String email) async {
+    if (_submitting || _cooldownRemaining > 0) return;
+    final trimmed = email.trim();
+    if (trimmed.isEmpty || !trimmed.contains('@')) {
+      setState(() => _error = 'Enter the email you signed up with.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final api = await ref.read(authApiProvider.future);
+      await api.resendVerification(trimmed);
+      if (!mounted) return;
+      // Enumeration-safe success copy — same shape whether the email is
+      // known or not. The user always sees "if there's a pending account,
+      // a fresh link is on its way."
+      setState(() {
+        _submitting = false;
+        _sent = true;
+      });
+    } on ResendThrottledException catch (e) {
+      if (!mounted) return;
+      _startCooldown(e.retryAfterSeconds);
+      setState(() {
+        _submitting = false;
+        _error = 'Too many requests. Try again in ${e.retryAfterSeconds}s.';
+      });
+    } on AuthApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = 'Could not request a new link: $e';
+      });
+    }
+  }
+
+  void _startCooldown(int seconds) {
+    _cooldownTimer?.cancel();
+    setState(() => _cooldownRemaining = seconds);
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() {
+        _cooldownRemaining -= 1;
+        if (_cooldownRemaining <= 0) {
+          _cooldownRemaining = 0;
+          t.cancel();
+        }
+      });
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = GoRouterState.of(context);
-    final email = state.uri.queryParameters['email'];
+    final emailFromUrl = state.uri.queryParameters['email'];
     final expired = state.uri.queryParameters['expired'] == '1';
+
+    if (!_emailPrefilled && emailFromUrl != null && emailFromUrl.isNotEmpty) {
+      _email.text = emailFromUrl;
+      _emailPrefilled = true;
+    }
+
+    final showEmailField = emailFromUrl == null || emailFromUrl.isEmpty;
+    final cooldownActive = _cooldownRemaining > 0;
+    final canSubmit = !_submitting && !cooldownActive;
 
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 380),
-          child: Card(
-            margin: const EdgeInsets.all(24),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+          child: SingleChildScrollView(
+            child: Card(
+              margin: const EdgeInsets.all(24),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   Icon(Icons.mark_email_unread_outlined,
                       size: 48, color: theme.colorScheme.primary),
                   const SizedBox(height: 16),
@@ -110,41 +199,115 @@ class _VerifyEmailPendingScreenState
                       textAlign: TextAlign.center,
                       style: theme.textTheme.headlineSmall),
                   const SizedBox(height: 12),
-                  if (expired)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        "That verification link is no longer valid. Sign in to request a new one.",
-                        style: TextStyle(
-                            color: theme.colorScheme.onErrorContainer),
-                      ),
+                  if (expired) ...[
+                    _Banner(
+                      tone: _BannerTone.error,
+                      text:
+                          'That verification link is no longer valid. Request a new one below.',
                     ),
-                  if (expired) const SizedBox(height: 16),
-                  Text(
-                    email == null
-                        ? 'We sent a verification email. Open it to activate your account.'
-                        : 'We sent a verification email to $email.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text('The link expires in 24 hours.',
+                    const SizedBox(height: 16),
+                  ],
+                  if (_sent) ...[
+                    _Banner(
+                      tone: _BannerTone.success,
+                      text:
+                          "If an account is awaiting verification for that email, "
+                          "a new link is on the way. Open the most recent email "
+                          "we sent to activate your account.",
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (!_sent)
+                    Text(
+                      emailFromUrl == null || emailFromUrl.isEmpty
+                          ? 'Enter the email you signed up with and we’ll send a new verification link.'
+                          : 'We sent a verification email to $emailFromUrl. '
+                              'Didn’t get it? Send a new link.',
                       textAlign: TextAlign.center,
-                      style: theme.textTheme.bodySmall),
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  if (!_sent) const SizedBox(height: 8),
+                  if (!_sent)
+                    Text('Links expire 24 hours after they’re sent.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall),
                   const SizedBox(height: 20),
-                  FilledButton.tonal(
-                    onPressed: () => context.go('/login'),
-                    child: const Text('Back to sign in'),
-                  ),
-                ],
+                  if (showEmailField && !_sent) ...[
+                    TextField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [
+                        AutofillHints.email,
+                        AutofillHints.username,
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                      onSubmitted: canSubmit ? _resend : null,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_error != null) ...[
+                    Text(_error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: theme.colorScheme.error)),
+                    const SizedBox(height: 12),
+                  ],
+                  if (!_sent)
+                    FilledButton.icon(
+                      onPressed: canSubmit ? () => _resend(_email.text) : null,
+                      icon: _submitting
+                          ? const SizedBox(
+                              height: 16,
+                              width: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.refresh),
+                      label: Text(cooldownActive
+                          ? 'Resend in ${_cooldownRemaining}s'
+                          : 'Resend verification email'),
+                    ),
+                    if (!_sent) const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => context.go('/login'),
+                      child: const Text('Back to sign in'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+enum _BannerTone { error, success }
+
+class _Banner extends StatelessWidget {
+  const _Banner({required this.tone, required this.text});
+  final _BannerTone tone;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isError = tone == _BannerTone.error;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isError
+            ? theme.colorScheme.errorContainer
+            : theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+            color: isError
+                ? theme.colorScheme.onErrorContainer
+                : theme.colorScheme.onSecondaryContainer),
       ),
     );
   }

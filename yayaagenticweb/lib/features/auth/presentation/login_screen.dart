@@ -152,6 +152,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ],
                     ),
+                    // Distinct from the password row so the resend path is
+                    // visible without crowding it. Carries whatever the
+                    // user typed in the Username field so /verify/pending
+                    // can pre-fill the form.
+                    Center(
+                      child: TextButton(
+                        onPressed: _submitting
+                            ? null
+                            : () {
+                                final typed = _username.text.trim();
+                                final target = typed.isEmpty
+                                    ? '/verify/pending'
+                                    : '/verify/pending?email=${Uri.encodeComponent(typed)}';
+                                context.go(target);
+                              },
+                        child: const Text("Didn't get the verification email?"),
+                      ),
+                    ),
                   ],
                 ),
               ),
