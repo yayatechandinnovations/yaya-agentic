@@ -5,8 +5,11 @@ import com.sendgrid.Request;
 import com.sendgrid.Response;
 import com.sendgrid.SendGrid;
 import com.sendgrid.helpers.mail.Mail;
+import com.sendgrid.helpers.mail.objects.ClickTrackingSetting;
 import com.sendgrid.helpers.mail.objects.Content;
 import com.sendgrid.helpers.mail.objects.Email;
+import com.sendgrid.helpers.mail.objects.OpenTrackingSetting;
+import com.sendgrid.helpers.mail.objects.TrackingSettings;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -128,7 +131,38 @@ public class SendGridMailSender implements MailSender {
         if (replyToAddress != null) {
             mail.setReplyTo(new Email(replyToAddress));
         }
+        mail.setTrackingSettings(noTrackingSettings());
         return mail;
+    }
+
+    /**
+     * Click + open tracking are disabled for every message we send:
+     * <ul>
+     *   <li>Verify / reset / invitation links carry single-use tokens.
+     *       SendGrid's click-tracking proxy issues a {@code GET} against
+     *       the wrapped URL when antivirus or mail-client link previews
+     *       probe it — that {@code GET} hits {@code /v1/auth/verify} and
+     *       consumes the token before the human ever clicks.</li>
+     *   <li>The auto-CNAME (e.g. {@code url1234.example.com}) is served
+     *       with a {@code *.sendgrid.net} cert unless Link Branding is
+     *       fully validated; until then clicks dead-end on browser HSTS
+     *       errors.</li>
+     * </ul>
+     * Both failure modes vanish when we tell SendGrid not to wrap the
+     * link in the first place. If a future marketing surface needs
+     * tracking back on, it should opt-in per-message — never the
+     * default for transactional auth mail.
+     */
+    private static TrackingSettings noTrackingSettings() {
+        TrackingSettings tracking = new TrackingSettings();
+        ClickTrackingSetting click = new ClickTrackingSetting();
+        click.setEnable(false);
+        click.setEnableText(false);
+        tracking.setClickTrackingSetting(click);
+        OpenTrackingSetting open = new OpenTrackingSetting();
+        open.setEnable(false);
+        tracking.setOpenTrackingSetting(open);
+        return tracking;
     }
 
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }

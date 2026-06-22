@@ -1,11 +1,13 @@
 package com.yayatechandinnovations.yayaagentic.email;
 
+import com.sendgrid.Request;
 import com.sendgrid.Response;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -76,6 +78,44 @@ class SendGridMailSenderTest {
     }
 
     @Test
+    void payload_disables_click_and_open_tracking() {
+        // Captures the serialized request body so we can assert the
+        // tracking_settings JSON shape SendGrid expects. This contract
+        // is load-bearing: re-enabling tracking would silently break the
+        // verify flow (link prefetchers consume the token; the
+        // url1234.<host> Link-Branding CNAME serves *.sendgrid.net cert
+        // until validation completes, dead-ending clicks on HSTS).
+        AtomicReference<Request> captured = new AtomicReference<>();
+        var sender = new SendGridMailSender(req -> {
+            captured.set(req);
+            Response r = new Response();
+            r.setStatusCode(202);
+            r.setBody("{}");
+            return r;
+        }, props());
+
+        sender.send(MSG);
+
+        Request req = captured.get();
+        assertThat(req).as("request was captured").isNotNull();
+        String body = req.getBody();
+        assertThat(body).contains("\"tracking_settings\"");
+        // Both knobs must be present and false. SendGrid omits absent
+        // keys, so a missing setting falls back to the account default
+        // (which is "tracking enabled" on most accounts).
+        assertThat(body).contains("\"click_tracking\"");
+        assertThat(body).contains("\"open_tracking\"");
+        // assert each setting's enable=false in a way that survives
+        // whitespace and field-ordering variation in the SDK's JSON.
+        assertThat(stripWhitespace(body))
+                .as("click_tracking disabled")
+                .contains("\"click_tracking\":{\"enable\":false,\"enable_text\":false}");
+        assertThat(stripWhitespace(body))
+                .as("open_tracking disabled")
+                .contains("\"open_tracking\":{\"enable\":false}");
+    }
+
+    @Test
     void blank_api_key_refuses_to_boot() {
         // Production ctor (the one without the Api seam) goes through
         // requireApiKey and must fail fast when the key is missing.
@@ -101,6 +141,10 @@ class SendGridMailSenderTest {
             r.setBody(body);
             return r;
         };
+    }
+
+    private static String stripWhitespace(String s) {
+        return s.replaceAll("\\s+", "");
     }
 
     private static YayaAgenticProperties props() {
