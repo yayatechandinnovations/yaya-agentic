@@ -47,10 +47,25 @@ class WorkspacesApi {
     }
   }
 
-  Future<Workspace> patch(String idOrCode, String displayName) async {
+  /// Each named arg is optional — callers pass only the fields they want
+  /// to change. `null` means "leave untouched"; passing an empty string
+  /// for [hostBaseUrl] clears the value, and an empty list for
+  /// [hostBaseUrlAllowlist] clears the allowlist.
+  Future<Workspace> patch(
+    String idOrCode, {
+    String? displayName,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+  }) async {
     try {
-      final res = await _dio.patch('/v1/admin/workspaces/$idOrCode',
-          data: WorkspacePatchRequest(displayName: displayName).toJson());
+      final res = await _dio.patch(
+        '/v1/admin/workspaces/$idOrCode',
+        data: WorkspacePatchRequest(
+          displayName: displayName,
+          hostBaseUrl: hostBaseUrl,
+          hostBaseUrlAllowlist: hostBaseUrlAllowlist,
+        ).toJson(),
+      );
       return Workspace.fromJson(_asMap(res.data));
     } on DioException catch (e) {
       throw _toException(e);

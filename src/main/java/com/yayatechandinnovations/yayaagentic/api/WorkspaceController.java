@@ -96,7 +96,12 @@ public class WorkspaceController {
         return Mono.fromCallable(() -> {
                     TenantId id = resolveOr404(idOrCode, me);
                     guard.require(me, id, Role.ADMIN);
-                    return workspaces.rename(id, body.displayName(), me, meta);
+                    return workspaces.patch(
+                            id,
+                            body.displayName(),
+                            body.hostBaseUrl(),
+                            body.hostBaseUrlAllowlist(),
+                            me, meta);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(w -> ResponseEntity.ok(WorkspaceDto.of(w)));
@@ -142,7 +147,19 @@ public class WorkspaceController {
     // ---- DTOs ---------------------------------------------------------
 
     public record CreateRequest(String displayName) {}
-    public record PatchRequest(String displayName) {}
+
+    /**
+     * Each field is optional ({@code null} → "leave untouched"). Empty
+     * string in {@code hostBaseUrl} clears the value; an empty list in
+     * {@code hostBaseUrlAllowlist} clears the allowlist. {@code
+     * displayName} when present must be non-blank.
+     */
+    public record PatchRequest(
+            String displayName,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist
+    ) {}
+
     public record ArchiveRequest(String confirmCode) {}
 
     public record WorkspaceDto(
@@ -150,12 +167,16 @@ public class WorkspaceController {
             String code,
             String displayName,
             String status,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist,
             String archivedAt,
             String createdAt
     ) {
         static WorkspaceDto of(WorkspaceService.WorkspaceSummary s) {
             return new WorkspaceDto(
                     s.id(), s.code(), s.displayName(), s.status(),
+                    s.hostBaseUrl(),
+                    s.hostBaseUrlAllowlist() == null ? List.of() : s.hostBaseUrlAllowlist(),
                     s.archivedAt() == null ? null : s.archivedAt().toString(),
                     s.createdAt() == null ? null : s.createdAt().toString());
         }

@@ -1,5 +1,8 @@
 package com.yayatechandinnovations.yayaagentic.operator_auth.workspace;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.AccountAuditWriter;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAccountService;
@@ -10,6 +13,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.TenantEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.UserMembershipEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.UserMembershipRepository;
+import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -30,19 +35,24 @@ import java.util.Optional;
 @Service
 public class WorkspaceService {
 
+    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+
     private final TenantRepository tenants;
     private final UserMembershipRepository memberships;
     private final WorkspaceSlugger slugger;
     private final AccountAuditWriter audit;
+    private final ObjectMapper json;
 
     public WorkspaceService(TenantRepository tenants,
                             UserMembershipRepository memberships,
                             WorkspaceSlugger slugger,
-                            AccountAuditWriter audit) {
+                            AccountAuditWriter audit,
+                            ObjectMapper json) {
         this.tenants = tenants;
         this.memberships = memberships;
         this.slugger = slugger;
         this.audit = audit;
+        this.json = json;
     }
 
     // ------------------------------------------------------------------
@@ -115,20 +125,79 @@ public class WorkspaceService {
         return toSummary(t);
     }
 
-    /** Rename. Only changes {@code displayName} — {@code code} is immutable in M5a. */
+    /**
+     * Patch the workspace. Each argument is optional ({@code null} → "leave
+     * untouched"); the only exception is {@code newDisplayName}, which when
+     * present must be non-blank.
+     *
+     * <p>{@code newHostBaseUrl} and {@code newHostBaseUrlAllowlist} are the
+     * per-workspace HTTP-tool target configuration: the resolver joins them
+     * with the tool's path-only {@code urlTemplate} at dispatch time. They
+     * live on this surface — not on a separate "HTTP settings" screen —
+     * because a workspace with no configured host can't call any HTTP tool
+     * at all, and operators discover that fact here.</p>
+     *
+     * <p>Note: {@code code} is still immutable in M5a.</p>
+     */
     @Transactional
-    public WorkspaceSummary rename(TenantId workspace, String newDisplayName,
-                                   UserId actor, OperatorAccountService.RequestMeta meta) {
-        if (newDisplayName == null || newDisplayName.isBlank()) {
-            throw new IllegalArgumentException("displayName is required");
-        }
+    public WorkspaceSummary patch(TenantId workspace,
+                                  String newDisplayName,
+                                  String newHostBaseUrl,
+                                  List<String> newHostBaseUrlAllowlist,
+                                  UserId actor,
+                                  OperatorAccountService.RequestMeta meta) {
         TenantEntity t = tenants.findById(workspace.value())
                 .orElseThrow(() -> new WorkspaceNotFoundException(workspace, actor));
-        String old = t.getDisplayName();
-        t.setDisplayName(newDisplayName.trim());
-        audit.write("WORKSPACE_RENAME", actor, workspace, meta,
-                Map.of("old", old == null ? "" : old, "new", t.getDisplayName()));
+        boolean requireHttps = t.isRequireHttps();
+        Map<String, Object> changes = new LinkedHashMap<>();
+
+        if (newDisplayName != null) {
+            if (newDisplayName.isBlank()) {
+                throw new IllegalArgumentException("displayName is required");
+            }
+            String trimmed = newDisplayName.trim();
+            if (!Objects.equals(trimmed, t.getDisplayName())) {
+                changes.put("displayName.old", nullToEmpty(t.getDisplayName()));
+                changes.put("displayName.new", trimmed);
+                t.setDisplayName(trimmed);
+            }
+        }
+        if (newHostBaseUrl != null) {
+            // Empty string == clear; non-empty must pass shape validation.
+            String trimmed = newHostBaseUrl.isBlank() ? null : newHostBaseUrl.trim();
+            if (trimmed != null) {
+                BaseUrlValidator.validateHostBaseUrl(trimmed, requireHttps);
+            }
+            if (!Objects.equals(trimmed, t.getHostBaseUrl())) {
+                changes.put("hostBaseUrl.changed", "true");
+                t.setHostBaseUrl(trimmed);
+            }
+        }
+        if (newHostBaseUrlAllowlist != null) {
+            for (String entry : newHostBaseUrlAllowlist) {
+                BaseUrlValidator.validateUrlPattern(entry, requireHttps);
+            }
+            String newJson = writeStringList(newHostBaseUrlAllowlist);
+            if (!Objects.equals(newJson, t.getHostBaseUrlAllowlistJson())) {
+                changes.put("hostBaseUrlAllowlist.changed", "true");
+                t.setHostBaseUrlAllowlistJson(newJson);
+            }
+        }
+
+        if (!changes.isEmpty()) {
+            audit.write("WORKSPACE_UPDATE", actor, workspace, meta, changes);
+        }
         return toSummary(t);
+    }
+
+    /**
+     * Legacy single-field convenience. Kept for callers that only want to
+     * touch the display name (e.g. tests). New code should use
+     * {@link #patch} so it can ship the full patch surface.
+     */
+    public WorkspaceSummary rename(TenantId workspace, String newDisplayName,
+                                   UserId actor, OperatorAccountService.RequestMeta meta) {
+        return patch(workspace, newDisplayName, null, null, actor, meta);
     }
 
     /**
@@ -161,20 +230,49 @@ public class WorkspaceService {
                 code,
                 t.getDisplayName(),
                 t.getStatus(),
+                t.getHostBaseUrl(),
+                readStringList(t.getHostBaseUrlAllowlistJson()),
                 t.getArchivedAt(),
                 t.getCreatedAt());
     }
+
+    private String writeStringList(List<String> list) {
+        try {
+            return json.writeValueAsString(list == null ? List.of() : list);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("workspace: failed to encode allowlist", e);
+        }
+    }
+
+    private List<String> readStringList(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        try {
+            return json.readValue(raw, STRING_LIST);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static String nullToEmpty(String s) { return s == null ? "" : s; }
 
     /**
      * Workspace summary shape. {@code id} and {@code code} happen to be the
      * same string today (since {@code tenants.id} is the slug) — V24 will
      * split them; the field is here now so the UI contract is stable.
+     *
+     * <p>{@code hostBaseUrl} and {@code hostBaseUrlAllowlist} are the
+     * resolver inputs for HTTP-tool dispatch — a workspace with neither
+     * set will fail any HTTP tool call with {@code
+     * tenant_has_no_host_base_url}. They live on this summary so the
+     * General tab can render the live values without a second API call.</p>
      */
     public record WorkspaceSummary(
             String id,
             String code,
             String displayName,
             String status,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist,
             OffsetDateTime archivedAt,
             OffsetDateTime createdAt
     ) {}

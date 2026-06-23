@@ -110,6 +110,11 @@ class _GeneralTab extends ConsumerStatefulWidget {
 class _GeneralTabState extends ConsumerState<_GeneralTab> {
   late final TextEditingController _name =
       TextEditingController(text: widget.workspace.displayName);
+  late final TextEditingController _hostBase =
+      TextEditingController(text: widget.workspace.hostBaseUrl ?? '');
+  // Allowlist surfaces one pattern per line — most operators have ≤3.
+  late final TextEditingController _hostAllowlist = TextEditingController(
+      text: widget.workspace.hostBaseUrlAllowlist.join('\n'));
   bool _saving = false;
   String? _error;
   String? _ok;
@@ -117,6 +122,8 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
   @override
   void dispose() {
     _name.dispose();
+    _hostBase.dispose();
+    _hostAllowlist.dispose();
     super.dispose();
   }
 
@@ -131,7 +138,14 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
     });
     try {
       final api = await ref.read(workspacesApiProvider.future);
-      await api.patch(widget.workspace.code, _name.text.trim());
+      await api.patch(
+        widget.workspace.code,
+        displayName: _name.text.trim(),
+        // Send the literal current contents — backend reads "" as clear,
+        // and only fields that actually changed get persisted/audited.
+        hostBaseUrl: _hostBase.text.trim(),
+        hostBaseUrlAllowlist: _parseAllowlist(_hostAllowlist.text),
+      );
       ref.invalidate(myWorkspacesProvider);
       if (!mounted) return;
       setState(() {
@@ -145,6 +159,14 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
         _error = e.message;
       });
     }
+  }
+
+  static List<String> _parseAllowlist(String raw) {
+    return raw
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
   }
 
   @override
@@ -178,6 +200,41 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
               label: 'Workspace id',
               value: widget.workspace.id,
               hint: 'Stable internal identifier.',
+            ),
+            const SizedBox(height: 24),
+            Text('HTTP tool target', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Outbound HTTP tools (urlTemplate is path-only) join the '
+              'path onto this base URL at dispatch time. Leave empty if '
+              'this workspace only uses Bean tools.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _hostBase,
+              enabled: _canEdit,
+              decoration: const InputDecoration(
+                labelText: 'Host base URL',
+                hintText: 'https://api.example.com',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _hostAllowlist,
+              enabled: _canEdit,
+              minLines: 2,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'Allowed override hosts',
+                hintText:
+                    'One pattern per line, e.g. https://*.example.com',
+                helperText:
+                    'Optional. Lets X-Yaya-Host-Base-Url override the base above for a single call.',
+                border: OutlineInputBorder(),
+              ),
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),

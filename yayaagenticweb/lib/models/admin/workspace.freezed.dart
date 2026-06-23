@@ -25,6 +25,8 @@ mixin _$Workspace {
   String get code => throw _privateConstructorUsedError;
   String get displayName => throw _privateConstructorUsedError;
   String? get status => throw _privateConstructorUsedError;
+  String? get hostBaseUrl => throw _privateConstructorUsedError;
+  List<String> get hostBaseUrlAllowlist => throw _privateConstructorUsedError;
   String? get archivedAt => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
 
@@ -48,6 +50,8 @@ abstract class $WorkspaceCopyWith<$Res> {
     String code,
     String displayName,
     String? status,
+    String? hostBaseUrl,
+    List<String> hostBaseUrlAllowlist,
     String? archivedAt,
     String? createdAt,
   });
@@ -72,6 +76,8 @@ class _$WorkspaceCopyWithImpl<$Res, $Val extends Workspace>
     Object? code = null,
     Object? displayName = null,
     Object? status = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = null,
     Object? archivedAt = freezed,
     Object? createdAt = freezed,
   }) {
@@ -93,6 +99,14 @@ class _$WorkspaceCopyWithImpl<$Res, $Val extends Workspace>
                 ? _value.status
                 : status // ignore: cast_nullable_to_non_nullable
                       as String?,
+            hostBaseUrl: freezed == hostBaseUrl
+                ? _value.hostBaseUrl
+                : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                      as String?,
+            hostBaseUrlAllowlist: null == hostBaseUrlAllowlist
+                ? _value.hostBaseUrlAllowlist
+                : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                      as List<String>,
             archivedAt: freezed == archivedAt
                 ? _value.archivedAt
                 : archivedAt // ignore: cast_nullable_to_non_nullable
@@ -121,6 +135,8 @@ abstract class _$$WorkspaceImplCopyWith<$Res>
     String code,
     String displayName,
     String? status,
+    String? hostBaseUrl,
+    List<String> hostBaseUrlAllowlist,
     String? archivedAt,
     String? createdAt,
   });
@@ -144,6 +160,8 @@ class __$$WorkspaceImplCopyWithImpl<$Res>
     Object? code = null,
     Object? displayName = null,
     Object? status = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = null,
     Object? archivedAt = freezed,
     Object? createdAt = freezed,
   }) {
@@ -165,6 +183,14 @@ class __$$WorkspaceImplCopyWithImpl<$Res>
             ? _value.status
             : status // ignore: cast_nullable_to_non_nullable
                   as String?,
+        hostBaseUrl: freezed == hostBaseUrl
+            ? _value.hostBaseUrl
+            : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                  as String?,
+        hostBaseUrlAllowlist: null == hostBaseUrlAllowlist
+            ? _value._hostBaseUrlAllowlist
+            : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                  as List<String>,
         archivedAt: freezed == archivedAt
             ? _value.archivedAt
             : archivedAt // ignore: cast_nullable_to_non_nullable
@@ -186,9 +212,11 @@ class _$WorkspaceImpl implements _Workspace {
     required this.code,
     required this.displayName,
     this.status,
+    this.hostBaseUrl,
+    final List<String> hostBaseUrlAllowlist = const <String>[],
     this.archivedAt,
     this.createdAt,
-  });
+  }) : _hostBaseUrlAllowlist = hostBaseUrlAllowlist;
 
   factory _$WorkspaceImpl.fromJson(Map<String, dynamic> json) =>
       _$$WorkspaceImplFromJson(json);
@@ -202,13 +230,25 @@ class _$WorkspaceImpl implements _Workspace {
   @override
   final String? status;
   @override
+  final String? hostBaseUrl;
+  final List<String> _hostBaseUrlAllowlist;
+  @override
+  @JsonKey()
+  List<String> get hostBaseUrlAllowlist {
+    if (_hostBaseUrlAllowlist is EqualUnmodifiableListView)
+      return _hostBaseUrlAllowlist;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_hostBaseUrlAllowlist);
+  }
+
+  @override
   final String? archivedAt;
   @override
   final String? createdAt;
 
   @override
   String toString() {
-    return 'Workspace(id: $id, code: $code, displayName: $displayName, status: $status, archivedAt: $archivedAt, createdAt: $createdAt)';
+    return 'Workspace(id: $id, code: $code, displayName: $displayName, status: $status, hostBaseUrl: $hostBaseUrl, hostBaseUrlAllowlist: $hostBaseUrlAllowlist, archivedAt: $archivedAt, createdAt: $createdAt)';
   }
 
   @override
@@ -221,6 +261,12 @@ class _$WorkspaceImpl implements _Workspace {
             (identical(other.displayName, displayName) ||
                 other.displayName == displayName) &&
             (identical(other.status, status) || other.status == status) &&
+            (identical(other.hostBaseUrl, hostBaseUrl) ||
+                other.hostBaseUrl == hostBaseUrl) &&
+            const DeepCollectionEquality().equals(
+              other._hostBaseUrlAllowlist,
+              _hostBaseUrlAllowlist,
+            ) &&
             (identical(other.archivedAt, archivedAt) ||
                 other.archivedAt == archivedAt) &&
             (identical(other.createdAt, createdAt) ||
@@ -235,6 +281,8 @@ class _$WorkspaceImpl implements _Workspace {
     code,
     displayName,
     status,
+    hostBaseUrl,
+    const DeepCollectionEquality().hash(_hostBaseUrlAllowlist),
     archivedAt,
     createdAt,
   );
@@ -259,6 +307,8 @@ abstract class _Workspace implements Workspace {
     required final String code,
     required final String displayName,
     final String? status,
+    final String? hostBaseUrl,
+    final List<String> hostBaseUrlAllowlist,
     final String? archivedAt,
     final String? createdAt,
   }) = _$WorkspaceImpl;
@@ -274,6 +324,10 @@ abstract class _Workspace implements Workspace {
   String get displayName;
   @override
   String? get status;
+  @override
+  String? get hostBaseUrl;
+  @override
+  List<String> get hostBaseUrlAllowlist;
   @override
   String? get archivedAt;
   @override
@@ -646,6 +700,8 @@ WorkspacePatchRequest _$WorkspacePatchRequestFromJson(
 /// @nodoc
 mixin _$WorkspacePatchRequest {
   String? get displayName => throw _privateConstructorUsedError;
+  String? get hostBaseUrl => throw _privateConstructorUsedError;
+  List<String>? get hostBaseUrlAllowlist => throw _privateConstructorUsedError;
 
   /// Serializes this WorkspacePatchRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -664,7 +720,11 @@ abstract class $WorkspacePatchRequestCopyWith<$Res> {
     $Res Function(WorkspacePatchRequest) then,
   ) = _$WorkspacePatchRequestCopyWithImpl<$Res, WorkspacePatchRequest>;
   @useResult
-  $Res call({String? displayName});
+  $Res call({
+    String? displayName,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+  });
 }
 
 /// @nodoc
@@ -684,13 +744,25 @@ class _$WorkspacePatchRequestCopyWithImpl<
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = freezed}) {
+  $Res call({
+    Object? displayName = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = freezed,
+  }) {
     return _then(
       _value.copyWith(
             displayName: freezed == displayName
                 ? _value.displayName
                 : displayName // ignore: cast_nullable_to_non_nullable
                       as String?,
+            hostBaseUrl: freezed == hostBaseUrl
+                ? _value.hostBaseUrl
+                : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                      as String?,
+            hostBaseUrlAllowlist: freezed == hostBaseUrlAllowlist
+                ? _value.hostBaseUrlAllowlist
+                : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                      as List<String>?,
           )
           as $Val,
     );
@@ -706,7 +778,11 @@ abstract class _$$WorkspacePatchRequestImplCopyWith<$Res>
   ) = __$$WorkspacePatchRequestImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String? displayName});
+  $Res call({
+    String? displayName,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+  });
 }
 
 /// @nodoc
@@ -723,13 +799,25 @@ class __$$WorkspacePatchRequestImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = freezed}) {
+  $Res call({
+    Object? displayName = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = freezed,
+  }) {
     return _then(
       _$WorkspacePatchRequestImpl(
         displayName: freezed == displayName
             ? _value.displayName
             : displayName // ignore: cast_nullable_to_non_nullable
                   as String?,
+        hostBaseUrl: freezed == hostBaseUrl
+            ? _value.hostBaseUrl
+            : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                  as String?,
+        hostBaseUrlAllowlist: freezed == hostBaseUrlAllowlist
+            ? _value._hostBaseUrlAllowlist
+            : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                  as List<String>?,
       ),
     );
   }
@@ -738,17 +826,33 @@ class __$$WorkspacePatchRequestImplCopyWithImpl<$Res>
 /// @nodoc
 @JsonSerializable()
 class _$WorkspacePatchRequestImpl implements _WorkspacePatchRequest {
-  const _$WorkspacePatchRequestImpl({this.displayName});
+  const _$WorkspacePatchRequestImpl({
+    this.displayName,
+    this.hostBaseUrl,
+    final List<String>? hostBaseUrlAllowlist,
+  }) : _hostBaseUrlAllowlist = hostBaseUrlAllowlist;
 
   factory _$WorkspacePatchRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$WorkspacePatchRequestImplFromJson(json);
 
   @override
   final String? displayName;
+  @override
+  final String? hostBaseUrl;
+  final List<String>? _hostBaseUrlAllowlist;
+  @override
+  List<String>? get hostBaseUrlAllowlist {
+    final value = _hostBaseUrlAllowlist;
+    if (value == null) return null;
+    if (_hostBaseUrlAllowlist is EqualUnmodifiableListView)
+      return _hostBaseUrlAllowlist;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(value);
+  }
 
   @override
   String toString() {
-    return 'WorkspacePatchRequest(displayName: $displayName)';
+    return 'WorkspacePatchRequest(displayName: $displayName, hostBaseUrl: $hostBaseUrl, hostBaseUrlAllowlist: $hostBaseUrlAllowlist)';
   }
 
   @override
@@ -757,12 +861,23 @@ class _$WorkspacePatchRequestImpl implements _WorkspacePatchRequest {
         (other.runtimeType == runtimeType &&
             other is _$WorkspacePatchRequestImpl &&
             (identical(other.displayName, displayName) ||
-                other.displayName == displayName));
+                other.displayName == displayName) &&
+            (identical(other.hostBaseUrl, hostBaseUrl) ||
+                other.hostBaseUrl == hostBaseUrl) &&
+            const DeepCollectionEquality().equals(
+              other._hostBaseUrlAllowlist,
+              _hostBaseUrlAllowlist,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, displayName);
+  int get hashCode => Object.hash(
+    runtimeType,
+    displayName,
+    hostBaseUrl,
+    const DeepCollectionEquality().hash(_hostBaseUrlAllowlist),
+  );
 
   /// Create a copy of WorkspacePatchRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -783,14 +898,21 @@ class _$WorkspacePatchRequestImpl implements _WorkspacePatchRequest {
 }
 
 abstract class _WorkspacePatchRequest implements WorkspacePatchRequest {
-  const factory _WorkspacePatchRequest({final String? displayName}) =
-      _$WorkspacePatchRequestImpl;
+  const factory _WorkspacePatchRequest({
+    final String? displayName,
+    final String? hostBaseUrl,
+    final List<String>? hostBaseUrlAllowlist,
+  }) = _$WorkspacePatchRequestImpl;
 
   factory _WorkspacePatchRequest.fromJson(Map<String, dynamic> json) =
       _$WorkspacePatchRequestImpl.fromJson;
 
   @override
   String? get displayName;
+  @override
+  String? get hostBaseUrl;
+  @override
+  List<String>? get hostBaseUrlAllowlist;
 
   /// Create a copy of WorkspacePatchRequest
   /// with the given fields replaced by the non-null parameter values.
