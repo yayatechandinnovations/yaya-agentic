@@ -130,12 +130,20 @@ public class WorkspaceService {
      * untouched"); the only exception is {@code newDisplayName}, which when
      * present must be non-blank.
      *
-     * <p>{@code newHostBaseUrl} and {@code newHostBaseUrlAllowlist} are the
-     * per-workspace HTTP-tool target configuration: the resolver joins them
-     * with the tool's path-only {@code urlTemplate} at dispatch time. They
-     * live on this surface — not on a separate "HTTP settings" screen —
-     * because a workspace with no configured host can't call any HTTP tool
-     * at all, and operators discover that fact here.</p>
+     * <p>The three URL fields are independent:
+     * <ul>
+     *   <li>{@code hostBaseUrl} — outbound. Where HTTP tools call.</li>
+     *   <li>{@code hostBaseUrlAllowlist} — outbound. Per-call override
+     *       allowlist for {@code X-Yaya-Host-Base-Url}.</li>
+     *   <li>{@code inboundOriginAllowlist} — INBOUND. Web origins
+     *       allowed to hit {@code /v1/sessions/*}. Empty list +
+     *       configured {@code hostBaseUrl} = origin derived from the
+     *       base URL is the only allowed origin (see
+     *       {@code OriginEnforcer}); empty list + empty
+     *       {@code hostBaseUrl} = enforcement skipped entirely
+     *       (auth still applies).</li>
+     * </ul>
+     * </p>
      *
      * <p>Note: {@code code} is still immutable in M5a.</p>
      */
@@ -144,6 +152,7 @@ public class WorkspaceService {
                                   String newDisplayName,
                                   String newHostBaseUrl,
                                   List<String> newHostBaseUrlAllowlist,
+                                  List<String> newInboundOriginAllowlist,
                                   UserId actor,
                                   OperatorAccountService.RequestMeta meta) {
         TenantEntity t = tenants.findById(workspace.value())
@@ -183,6 +192,16 @@ public class WorkspaceService {
                 t.setHostBaseUrlAllowlistJson(newJson);
             }
         }
+        if (newInboundOriginAllowlist != null) {
+            for (String entry : newInboundOriginAllowlist) {
+                BaseUrlValidator.validateOriginPattern(entry, requireHttps);
+            }
+            String newJson = writeStringList(newInboundOriginAllowlist);
+            if (!Objects.equals(newJson, t.getInboundOriginAllowlistJson())) {
+                changes.put("inboundOriginAllowlist.changed", "true");
+                t.setInboundOriginAllowlistJson(newJson);
+            }
+        }
 
         if (!changes.isEmpty()) {
             audit.write("WORKSPACE_UPDATE", actor, workspace, meta, changes);
@@ -197,7 +216,7 @@ public class WorkspaceService {
      */
     public WorkspaceSummary rename(TenantId workspace, String newDisplayName,
                                    UserId actor, OperatorAccountService.RequestMeta meta) {
-        return patch(workspace, newDisplayName, null, null, actor, meta);
+        return patch(workspace, newDisplayName, null, null, null, actor, meta);
     }
 
     /**
@@ -232,6 +251,7 @@ public class WorkspaceService {
                 t.getStatus(),
                 t.getHostBaseUrl(),
                 readStringList(t.getHostBaseUrlAllowlistJson()),
+                readStringList(t.getInboundOriginAllowlistJson()),
                 t.getArchivedAt(),
                 t.getCreatedAt());
     }
@@ -260,11 +280,11 @@ public class WorkspaceService {
      * same string today (since {@code tenants.id} is the slug) — V24 will
      * split them; the field is here now so the UI contract is stable.
      *
-     * <p>{@code hostBaseUrl} and {@code hostBaseUrlAllowlist} are the
-     * resolver inputs for HTTP-tool dispatch — a workspace with neither
-     * set will fail any HTTP tool call with {@code
-     * tenant_has_no_host_base_url}. They live on this summary so the
-     * General tab can render the live values without a second API call.</p>
+     * <p>{@code hostBaseUrl}, {@code hostBaseUrlAllowlist} are OUTBOUND —
+     * resolver inputs for HTTP-tool dispatch.
+     * {@code inboundOriginAllowlist} is INBOUND — origins allowed to hit
+     * {@code /v1/sessions/*}. All three are surfaced on the General tab
+     * so the operator can see the live values without a second call.</p>
      */
     public record WorkspaceSummary(
             String id,
@@ -273,6 +293,7 @@ public class WorkspaceService {
             String status,
             String hostBaseUrl,
             List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist,
             OffsetDateTime archivedAt,
             OffsetDateTime createdAt
     ) {}

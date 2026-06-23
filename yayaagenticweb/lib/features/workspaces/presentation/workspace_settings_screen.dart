@@ -112,9 +112,11 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
       TextEditingController(text: widget.workspace.displayName);
   late final TextEditingController _hostBase =
       TextEditingController(text: widget.workspace.hostBaseUrl ?? '');
-  // Allowlist surfaces one pattern per line — most operators have ≤3.
+  // Allowlists surface one pattern per line — most operators have ≤3.
   late final TextEditingController _hostAllowlist = TextEditingController(
       text: widget.workspace.hostBaseUrlAllowlist.join('\n'));
+  late final TextEditingController _inboundOrigins = TextEditingController(
+      text: widget.workspace.inboundOriginAllowlist.join('\n'));
   bool _saving = false;
   String? _error;
   String? _ok;
@@ -124,6 +126,7 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
     _name.dispose();
     _hostBase.dispose();
     _hostAllowlist.dispose();
+    _inboundOrigins.dispose();
     super.dispose();
   }
 
@@ -145,6 +148,7 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
         // and only fields that actually changed get persisted/audited.
         hostBaseUrl: _hostBase.text.trim(),
         hostBaseUrlAllowlist: _parseAllowlist(_hostAllowlist.text),
+        inboundOriginAllowlist: _parseAllowlist(_inboundOrigins.text),
       );
       ref.invalidate(myWorkspacesProvider);
       if (!mounted) return;
@@ -202,12 +206,14 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
               hint: 'Stable internal identifier.',
             ),
             const SizedBox(height: 24),
-            Text('HTTP tool target', style: theme.textTheme.titleMedium),
+            Text('Outbound — HTTP tool target',
+                style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
-              'Outbound HTTP tools (urlTemplate is path-only) join the '
-              'path onto this base URL at dispatch time. Leave empty if '
-              'this workspace only uses Bean tools.',
+              'Where outbound HTTP tools dial out. Their urlTemplate is '
+              'path-only; the engine joins it onto this base URL at '
+              'dispatch time. Leave empty if this workspace only uses '
+              'Bean tools.',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.outline),
             ),
@@ -228,11 +234,39 @@ class _GeneralTabState extends ConsumerState<_GeneralTab> {
               minLines: 2,
               maxLines: 6,
               decoration: const InputDecoration(
-                labelText: 'Allowed override hosts',
+                labelText: 'Per-call override hosts (outbound)',
                 hintText:
                     'One pattern per line, e.g. https://*.example.com',
                 helperText:
-                    'Optional. Lets X-Yaya-Host-Base-Url override the base above for a single call.',
+                    'Optional. Lets X-Yaya-Host-Base-Url override the base above for a single tool call.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text('Inbound — allowed web origins',
+                style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Which browser origins are allowed to call /v1/sessions/* '
+              'for this workspace. Leave empty to fall back to the '
+              'outbound host above (rarely what you want). The admin '
+              'console itself must be listed here when it differs from '
+              'the outbound host.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _inboundOrigins,
+              enabled: _canEdit,
+              minLines: 2,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'Allowed origins (inbound)',
+                hintText:
+                    'One per line, e.g. https://yayaagentic.smartlottery.do',
+                helperText:
+                    'Glob wildcards allowed (https://*.example.com). Must include the admin console origin if it differs from the outbound host.',
                 border: OutlineInputBorder(),
               ),
             ),

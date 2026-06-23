@@ -3,15 +3,17 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'workspace.freezed.dart';
 part 'workspace.g.dart';
 
-/// Mirrors backend `WorkspaceController.WorkspaceDto`. {@code id} is the
-/// stable identifier (today the slug; V24 swaps it to UUID); {@code code}
-/// is the human-readable slug surfaced in URLs and UI.
+/// Mirrors backend `WorkspaceController.WorkspaceDto`. `id` is the stable
+/// identifier (today the slug; V24 swaps it to UUID); `code` is the
+/// human-readable slug surfaced in URLs and UI.
 ///
-/// {@code hostBaseUrl} and {@code hostBaseUrlAllowlist} are the resolver
-/// inputs for HTTP-tool dispatch — when both are absent, any HTTP tool
-/// call inside this workspace fails at the resolver. They surface on the
-/// General settings tab so operators can fix that without leaving the
-/// workspace plane.
+/// URL config breaks down into three independent knobs:
+///   * `hostBaseUrl` + `hostBaseUrlAllowlist` — OUTBOUND. Where HTTP
+///     tools dial out to, plus an optional per-call override allowlist.
+///   * `inboundOriginAllowlist` — INBOUND. Web origins allowed to hit
+///     `/v1/sessions/*` for this workspace. When empty, the enforcer
+///     derives the allowed origin from `hostBaseUrl`.
+/// All three surface on the General settings tab.
 @freezed
 class Workspace with _$Workspace {
   const factory Workspace({
@@ -21,6 +23,7 @@ class Workspace with _$Workspace {
     String? status,
     String? hostBaseUrl,
     @Default(<String>[]) List<String> hostBaseUrlAllowlist,
+    @Default(<String>[]) List<String> inboundOriginAllowlist,
     String? archivedAt,
     String? createdAt,
   }) = _Workspace;
@@ -54,15 +57,16 @@ class WorkspaceCreateRequest with _$WorkspaceCreateRequest {
 }
 
 /// Body for `PATCH /v1/admin/workspaces/{idOrCode}`. Every field is
-/// optional — backend treats {@code null} as "leave untouched". Empty
-/// string in {@code hostBaseUrl} clears the value; an empty list in
-/// {@code hostBaseUrlAllowlist} clears the allowlist.
+/// optional — backend treats `null` as "leave untouched". Empty string
+/// in `hostBaseUrl` clears the value; an empty list in either allowlist
+/// clears that allowlist.
 @freezed
 class WorkspacePatchRequest with _$WorkspacePatchRequest {
   const factory WorkspacePatchRequest({
     String? displayName,
     String? hostBaseUrl,
     List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
   }) = _WorkspacePatchRequest;
 
   factory WorkspacePatchRequest.fromJson(Map<String, dynamic> json) =>

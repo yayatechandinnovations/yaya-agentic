@@ -101,6 +101,7 @@ public class WorkspaceController {
                             body.displayName(),
                             body.hostBaseUrl(),
                             body.hostBaseUrlAllowlist(),
+                            body.inboundOriginAllowlist(),
                             me, meta);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -151,13 +152,14 @@ public class WorkspaceController {
     /**
      * Each field is optional ({@code null} → "leave untouched"). Empty
      * string in {@code hostBaseUrl} clears the value; an empty list in
-     * {@code hostBaseUrlAllowlist} clears the allowlist. {@code
-     * displayName} when present must be non-blank.
+     * either allowlist clears that allowlist. {@code displayName} when
+     * present must be non-blank.
      */
     public record PatchRequest(
             String displayName,
             String hostBaseUrl,
-            List<String> hostBaseUrlAllowlist
+            List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist
     ) {}
 
     public record ArchiveRequest(String confirmCode) {}
@@ -169,6 +171,7 @@ public class WorkspaceController {
             String status,
             String hostBaseUrl,
             List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist,
             String archivedAt,
             String createdAt
     ) {
@@ -177,6 +180,7 @@ public class WorkspaceController {
                     s.id(), s.code(), s.displayName(), s.status(),
                     s.hostBaseUrl(),
                     s.hostBaseUrlAllowlist() == null ? List.of() : s.hostBaseUrlAllowlist(),
+                    s.inboundOriginAllowlist() == null ? List.of() : s.inboundOriginAllowlist(),
                     s.archivedAt() == null ? null : s.archivedAt().toString(),
                     s.createdAt() == null ? null : s.createdAt().toString());
         }

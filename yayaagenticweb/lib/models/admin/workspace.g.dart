@@ -18,6 +18,11 @@ _$WorkspaceImpl _$$WorkspaceImplFromJson(Map<String, dynamic> json) =>
               ?.map((e) => e as String)
               .toList() ??
           const <String>[],
+      inboundOriginAllowlist:
+          (json['inboundOriginAllowlist'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const <String>[],
       archivedAt: json['archivedAt'] as String?,
       createdAt: json['createdAt'] as String?,
     );
@@ -30,6 +35,7 @@ Map<String, dynamic> _$$WorkspaceImplToJson(_$WorkspaceImpl instance) =>
       'status': instance.status,
       'hostBaseUrl': instance.hostBaseUrl,
       'hostBaseUrlAllowlist': instance.hostBaseUrlAllowlist,
+      'inboundOriginAllowlist': instance.inboundOriginAllowlist,
       'archivedAt': instance.archivedAt,
       'createdAt': instance.createdAt,
     };
@@ -61,6 +67,9 @@ _$WorkspacePatchRequestImpl _$$WorkspacePatchRequestImplFromJson(
   hostBaseUrlAllowlist: (json['hostBaseUrlAllowlist'] as List<dynamic>?)
       ?.map((e) => e as String)
       .toList(),
+  inboundOriginAllowlist: (json['inboundOriginAllowlist'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
 );
 
 Map<String, dynamic> _$$WorkspacePatchRequestImplToJson(
@@ -69,6 +78,7 @@ Map<String, dynamic> _$$WorkspacePatchRequestImplToJson(
   'displayName': instance.displayName,
   'hostBaseUrl': instance.hostBaseUrl,
   'hostBaseUrlAllowlist': instance.hostBaseUrlAllowlist,
+  'inboundOriginAllowlist': instance.inboundOriginAllowlist,
 };
 
 _$WorkspaceArchiveRequestImpl _$$WorkspaceArchiveRequestImplFromJson(

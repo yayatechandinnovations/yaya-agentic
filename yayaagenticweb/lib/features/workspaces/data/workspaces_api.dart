@@ -49,13 +49,14 @@ class WorkspacesApi {
 
   /// Each named arg is optional — callers pass only the fields they want
   /// to change. `null` means "leave untouched"; passing an empty string
-  /// for [hostBaseUrl] clears the value, and an empty list for
-  /// [hostBaseUrlAllowlist] clears the allowlist.
+  /// for [hostBaseUrl] clears the value, and an empty list for either
+  /// allowlist clears that allowlist.
   Future<Workspace> patch(
     String idOrCode, {
     String? displayName,
     String? hostBaseUrl,
     List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
   }) async {
     try {
       final res = await _dio.patch(
@@ -64,6 +65,7 @@ class WorkspacesApi {
           displayName: displayName,
           hostBaseUrl: hostBaseUrl,
           hostBaseUrlAllowlist: hostBaseUrlAllowlist,
+          inboundOriginAllowlist: inboundOriginAllowlist,
         ).toJson(),
       );
       return Workspace.fromJson(_asMap(res.data));
