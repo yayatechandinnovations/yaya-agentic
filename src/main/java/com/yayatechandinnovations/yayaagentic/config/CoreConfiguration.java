@@ -1,9 +1,11 @@
 package com.yayatechandinnovations.yayaagentic.config;
 
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.cors.CorsConfiguration;
@@ -12,9 +14,29 @@ import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.util.pattern.PathPatternParser;
 
 @Configuration
-@EnableConfigurationProperties(YayaAgenticProperties.class)
+@EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
+
+    /**
+     * Worker pool for inbound channel dispatch. Sits between the webhook
+     * controller (which acks Twilio within 15s) and the engine. Sized for
+     * a moderate-volume cluster; over-provisioned pools waste memory while
+     * under-provisioned pools queue inbound. Tune via
+     * {@code yaya.agentic.channels.dispatch.*}.
+     */
+    @Bean(name = "channelDispatchExecutor", destroyMethod = "shutdown")
+    public ThreadPoolTaskExecutor channelDispatchExecutor() {
+        ThreadPoolTaskExecutor exec = new ThreadPoolTaskExecutor();
+        exec.setThreadNamePrefix("channel-dispatch-");
+        exec.setCorePoolSize(8);
+        exec.setMaxPoolSize(32);
+        exec.setQueueCapacity(2000);
+        exec.setWaitForTasksToCompleteOnShutdown(true);
+        exec.setAwaitTerminationSeconds(30);
+        exec.initialize();
+        return exec;
+    }
 
     @Bean
     public CorsWebFilter corsWebFilter(YayaAgenticProperties props) {

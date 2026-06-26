@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
+import '../models/admin/channel_binding.dart';
+import '../models/admin/channel_opt_out.dart';
 import '../models/admin/clone.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
@@ -14,6 +16,8 @@ import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
+import '../models/admin/whatsapp_sender.dart';
+import '../models/admin/whatsapp_template.dart';
 import 'api_client.dart';
 
 /// Typed wrapper over /v1/admin/*. All methods unwrap the {error,message}
@@ -364,6 +368,160 @@ class AdminApi {
   Future<void> deleteIdentityProfileMapping(String tenantId, int id) async {
     await _dio.delete(
         '/v1/admin/tenants/$tenantId/identity-profile-mappings/$id');
+  }
+
+  // ---- WhatsApp senders ----------------------------------------------
+
+  Future<List<WhatsAppSenderResponse>> listWhatsAppSenders(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/whatsapp-senders');
+    return (res.data as List)
+        .map((e) => WhatsAppSenderResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<WhatsAppSenderResponse> getWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> createWhatsAppSender(
+      String tenantId, WhatsAppSenderRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders',
+        data: body.toJson());
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> updateWhatsAppSender(
+      String tenantId, String senderId, WhatsAppSenderRequest body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId',
+        data: body.toJson());
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> submitWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/submit');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> syncWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/sync');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> suspendWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/suspend');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> resumeWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/resume');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> revokeWhatsAppSender(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/revoke');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- Channel bindings ----------------------------------------------
+
+  Future<List<ChannelBindingResponse>> listChannelBindings(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/channel-bindings');
+    return (res.data as List)
+        .map((e) => ChannelBindingResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<ChannelBindingResponse> createChannelBinding(
+      String tenantId, ChannelBindingRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/channel-bindings',
+        data: body.toJson());
+    return ChannelBindingResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ChannelBindingResponse> updateChannelBinding(
+      String tenantId, int id, ChannelBindingUpdate body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/channel-bindings/$id',
+        data: body.toJson());
+    return ChannelBindingResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteChannelBinding(String tenantId, int id) async {
+    await _dio.delete('/v1/admin/tenants/$tenantId/channel-bindings/$id');
+  }
+
+  // ---- WhatsApp templates --------------------------------------------
+
+  Future<List<WhatsAppTemplateResponse>> listWhatsAppTemplates(
+      String tenantId, String senderId) async {
+    final res = await _dio.get(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates');
+    return (res.data as List)
+        .map((e) => WhatsAppTemplateResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<WhatsAppTemplateResponse> createWhatsAppTemplate(
+      String tenantId, String senderId, WhatsAppTemplateRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates',
+        data: body.toJson());
+    return WhatsAppTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppTemplateResponse> updateWhatsAppTemplate(
+      String tenantId, String senderId, int templateId,
+      WhatsAppTemplateUpdate body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/$templateId',
+        data: body.toJson());
+    return WhatsAppTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppTemplateResponse> submitWhatsAppTemplate(
+      String tenantId, String senderId, int templateId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/$templateId/submit');
+    return WhatsAppTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteWhatsAppTemplate(
+      String tenantId, String senderId, int templateId) async {
+    await _dio.delete(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/$templateId');
+  }
+
+  // ---- WhatsApp opt-outs ---------------------------------------------
+
+  Future<List<ChannelOptOutResponse>> listOptOuts(
+      String tenantId, String senderId) async {
+    final res = await _dio.get(
+        '/v1/admin/tenants/$tenantId/channel-opt-outs',
+        queryParameters: {'senderId': senderId});
+    return (res.data as List)
+        .map((e) => ChannelOptOutResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<void> removeOptOut(String tenantId, String senderId, String phone) async {
+    await _dio.delete(
+        '/v1/admin/tenants/$tenantId/channel-opt-outs/$senderId/${Uri.encodeComponent(phone)}');
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);

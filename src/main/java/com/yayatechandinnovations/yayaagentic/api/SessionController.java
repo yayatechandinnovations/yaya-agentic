@@ -5,10 +5,10 @@ import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.playground.ActAs;
 import com.yayatechandinnovations.yayaagentic.auth.playground.ActAsMaterializer;
 import com.yayatechandinnovations.yayaagentic.auth.playground.PlaygroundActAsRegistry;
+import com.yayatechandinnovations.yayaagentic.channel.websse.WebSseChannelAdapter;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
-import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
 import com.yayatechandinnovations.yayaagentic.persistence.SessionRepository;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
@@ -33,17 +33,20 @@ public class SessionController {
     private final SessionRepository sessions;
     private final ActAsMaterializer actAsMaterializer;
     private final PlaygroundActAsRegistry actAsRegistry;
+    private final WebSseChannelAdapter webSse;
 
     public SessionController(ConversationEngine engine,
                              OriginEnforcer originEnforcer,
                              SessionRepository sessions,
                              ActAsMaterializer actAsMaterializer,
-                             PlaygroundActAsRegistry actAsRegistry) {
+                             PlaygroundActAsRegistry actAsRegistry,
+                             WebSseChannelAdapter webSse) {
         this.engine = engine;
         this.originEnforcer = originEnforcer;
         this.sessions = sessions;
         this.actAsMaterializer = actAsMaterializer;
         this.actAsRegistry = actAsRegistry;
+        this.webSse = webSse;
     }
 
     @PostMapping
@@ -80,7 +83,7 @@ public class SessionController {
             AuthContext auth = authContext(new Ids.TenantId(tenant), exchange);
             auth = actAsMaterializer.applyIfPresent(auth, actAsRegistry.get(sessionId));
             return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
-                    .map(SessionController::toSse);
+                    .map(webSse::toSse);
         }));
     }
 
@@ -116,17 +119,5 @@ public class SessionController {
     private AuthContext authContext(Ids.TenantId tenant, ServerWebExchange exchange) {
         Map<String, String> headers = exchange.getRequest().getHeaders().toSingleValueMap();
         return new AuthContext(tenant, headers, Optional.empty());
-    }
-
-    private static ServerSentEvent<Object> toSse(TurnEvent event) {
-        String name = switch (event) {
-            case TurnEvent.Token t -> "token";
-            case TurnEvent.ToolCall t -> "tool_call";
-            case TurnEvent.ToolResult t -> "tool_result";
-            case TurnEvent.Citation c -> "citation";
-            case TurnEvent.UiHint u -> "ui_hint";
-            case TurnEvent.End e -> "end";
-        };
-        return ServerSentEvent.builder((Object) event).event(name).build();
     }
 }

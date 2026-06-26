@@ -16,6 +16,10 @@ import '../features/admin/recording_strategies/recording_strategies_screen.dart'
 import '../features/admin/tenants/tenants_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
 import '../features/admin/tenants/tenants_screen.dart' show tenantsProvider;
+import '../features/admin/channel_bindings/channel_bindings_screen.dart';
+import '../features/admin/whatsapp_opt_outs/whatsapp_opt_outs_screen.dart';
+import '../features/admin/whatsapp_senders/whatsapp_senders_screen.dart';
+import '../features/admin/whatsapp_templates/whatsapp_templates_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/models/auth_state.dart';
 import '../features/auth/models/operator.dart';
@@ -26,6 +30,7 @@ import '../features/auth/presentation/reset_password_screen.dart';
 import '../features/auth/presentation/signup_screen.dart';
 import '../features/auth/presentation/verify_email_screen.dart';
 import '../features/playground/playground_screen.dart';
+import '../features/playground/whatsapp_playground_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/workspaces/application/workspaces_controller.dart';
 import '../features/workspaces/presentation/workspace_list_screen.dart';
@@ -64,6 +69,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => _AppShell(child: child),
         routes: [
           GoRoute(path: '/playground', builder: (_, __) => const PlaygroundScreen()),
+          GoRoute(path: '/playground/whatsapp', builder: (_, __) => const WhatsAppPlaygroundScreen()),
           GoRoute(path: '/workspaces', builder: (_, __) => const WorkspaceListScreen()),
           GoRoute(
             path: '/workspaces/:code/settings',
@@ -80,6 +86,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),
           GoRoute(path: '/admin/identity-routing', builder: (_, __) => const IdentityRoutingScreen()),
+          GoRoute(path: '/admin/whatsapp-senders', builder: (_, __) => const WhatsAppSendersScreen()),
+          GoRoute(path: '/admin/channel-bindings', builder: (_, __) => const ChannelBindingsScreen()),
+          GoRoute(path: '/admin/whatsapp-templates', builder: (_, __) => const WhatsAppTemplatesScreen()),
+          GoRoute(path: '/admin/whatsapp-opt-outs', builder: (_, __) => const WhatsAppOptOutsScreen()),
           GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
           GoRoute(path: '/admin/audit', builder: (_, __) => const AuditScreen()),
           GoRoute(path: '/admin/operator-auth', builder: (_, __) => const OperatorAuthScreen()),
@@ -195,6 +205,7 @@ class _NavItem {
 
 const _navItems = <_NavItem>[
   _NavItem('Playground', Icons.chat_outlined, Icons.chat, '/playground'),
+  _NavItem('WhatsApp playground', Icons.phone_iphone_outlined, Icons.phone_iphone, '/playground/whatsapp'),
   _NavItem('Workspaces', Icons.workspaces_outline, Icons.workspaces, '/workspaces'),
   _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants',
       platformOnly: true),
@@ -206,6 +217,10 @@ const _navItems = <_NavItem>[
   _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
   _NavItem('JWT secrets', Icons.key_outlined, Icons.key, '/admin/jwt-secrets'),
   _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
+  _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
+  _NavItem('Channel bindings', Icons.swap_horiz_outlined, Icons.swap_horiz, '/admin/channel-bindings'),
+  _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
+  _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),
   _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
   _NavItem('Operator auth', Icons.admin_panel_settings_outlined,

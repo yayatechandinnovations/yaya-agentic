@@ -7,4 +7,6 @@ import java.util.List;
 public interface ProfileRepository extends JpaRepository<ProfileEntity, ProfileEntity.PK> {
     List<ProfileEntity> findByTenantId(String tenantId);
     List<ProfileEntity> findByTenantIdAndIdOrderByVersionDesc(String tenantId, String id);
+    java.util.Optional<ProfileEntity> findByTenantIdAndIdAndVersion(
+            String tenantId, String id, Integer version);
 }
