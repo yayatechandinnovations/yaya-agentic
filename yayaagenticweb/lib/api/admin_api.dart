@@ -437,6 +437,16 @@ class AdminApi {
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 
+  /// Probe whether sender registration is enabled on this instance. Used
+  /// by the admin UI to render an actionable banner BEFORE the operator
+  /// tries to submit a sender for review.
+  Future<bool> isWhatsAppSubmitEnabled(String tenantId) async {
+    final res =
+        await _dio.get('/v1/admin/tenants/$tenantId/whatsapp/readiness');
+    final map = _asMap(res.data);
+    return map['submitsEnabled'] == true;
+  }
+
   // ---- Channel bindings ----------------------------------------------
 
   Future<List<ChannelBindingResponse>> listChannelBindings(String tenantId) async {

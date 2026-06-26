@@ -16,6 +16,16 @@ final whatsAppSendersProvider =
   },
 );
 
+/// Whether sender registration can hit the upstream provisioning service.
+/// When false, the admin UI surfaces a banner explaining that WhatsApp
+/// provisioning isn't enabled and the Submit button on each draft sender
+/// is disabled — drafts can still be edited and revoked.
+final whatsAppSubmitEnabledProvider =
+    FutureProvider.family<bool, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  return api.isWhatsAppSubmitEnabled(tenantId);
+});
+
 /// Tenants register WhatsApp senders here. The list is the canonical view;
 /// adding a sender drops into a 4-step wizard. Twilio is not mentioned
 /// anywhere in this screen — the operator describes a business and a phone
@@ -29,6 +39,13 @@ class WhatsAppSendersScreen extends ConsumerStatefulWidget {
 }
 
 class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
+  /// Tracks which sender is mid-transition so the corresponding action
+  /// button can render a spinner. Without this the operator can click
+  /// Submit and stare at a static row while the BSP call (which can take
+  /// several seconds) is in flight — that's the original "blank page"
+  /// confusion.
+  String? _busySenderId;
+
   void _newSender() {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => const WhatsAppSenderWizard(),
@@ -47,6 +64,7 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
     required Future<WhatsAppSenderResponse> Function(AdminApi api) call,
     required String successCopy,
   }) async {
+    setState(() => _busySenderId = sender.id);
     try {
       final api = await ref.read(adminApiProvider.future);
       await call(api);
@@ -54,6 +72,8 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
       if (mounted) showSnack(context, successCopy);
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busySenderId = null);
     }
   }
 
@@ -83,13 +103,24 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
       return const TenantScopedEmptyState(resourceLabel: 'WhatsApp senders');
     }
     final senders = ref.watch(whatsAppSendersProvider(tenant));
+    final submitsEnabled = ref.watch(whatsAppSubmitEnabledProvider(tenant));
+    final canSubmit = submitsEnabled.maybeWhen(
+      data: (ready) => ready,
+      orElse: () => true,    // optimistic until the probe lands
+    );
 
     return AdminTwoPane(
       title: 'WhatsApp senders',
       subtitle:
           'Phone numbers your customers message. Each sender belongs to one workspace '
           'and can be bound to a profile so messages on that number reach the right bot.',
-      list: senders.when(
+      list: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!canSubmit) const _ProvisioningUnavailableBanner(),
+          if (!canSubmit) const SizedBox(height: 12),
+          Expanded(
+            child: senders.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Text(formatError(e),
             style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -98,6 +129,8 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
             : ListView.separated(
                 itemBuilder: (_, i) => _SenderTile(
                   sender: list[i],
+                  busy: _busySenderId == list[i].id,
+                  canSubmit: canSubmit,
                   onEdit: () => _editSender(list[i]),
                   onSubmit: () async {
                     final confirmed = await _confirm(
@@ -159,6 +192,9 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
                 separatorBuilder: (_, i) => const SizedBox(height: 8),
                 itemCount: list.length,
               ),
+            ),
+          ),
+        ],
       ),
       form: SingleChildScrollView(
         child: FormCard(
@@ -224,6 +260,8 @@ class _EmptySendersState extends StatelessWidget {
 class _SenderTile extends StatelessWidget {
   const _SenderTile({
     required this.sender,
+    required this.busy,
+    required this.canSubmit,
     required this.onEdit,
     required this.onSubmit,
     required this.onSuspend,
@@ -233,6 +271,8 @@ class _SenderTile extends StatelessWidget {
   });
 
   final WhatsAppSenderResponse sender;
+  final bool busy;
+  final bool canSubmit;
   final VoidCallback onEdit;
   final VoidCallback onSubmit;
   final VoidCallback onSuspend;
@@ -243,6 +283,11 @@ class _SenderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = SenderStatusInfo.of(sender.status);
+    Widget spinnerOr(IconData icon) => busy
+        ? const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2))
+        : Icon(icon, size: 18);
     return EditableRecordCard(
       onCloneEdit: onEdit,
       leading: _StatusChip(status: sender.status),
@@ -285,37 +330,90 @@ class _SenderTile extends StatelessWidget {
       extraActions: [
         if (sender.status == 'SUBMITTING' || sender.status == 'PENDING_REVIEW')
           TextButton.icon(
-            onPressed: onSync,
-            icon: const Icon(Icons.refresh, size: 18),
+            onPressed: busy ? null : onSync,
+            icon: spinnerOr(Icons.refresh),
             label: const Text('Refresh status'),
           ),
         if (sender.status == 'DRAFT')
           FilledButton.tonalIcon(
-            onPressed: onSubmit,
-            icon: const Icon(Icons.send, size: 18),
-            label: const Text('Submit for review'),
+            onPressed: (busy || !canSubmit) ? null : onSubmit,
+            icon: spinnerOr(Icons.send),
+            label: Text(canSubmit
+                ? 'Submit for review'
+                : 'Submit unavailable'),
           ),
         if (sender.status == 'ACTIVE')
           TextButton.icon(
-            onPressed: onSuspend,
-            icon: const Icon(Icons.pause_circle_outline, size: 18),
+            onPressed: busy ? null : onSuspend,
+            icon: spinnerOr(Icons.pause_circle_outline),
             label: const Text('Pause'),
           ),
         if (sender.status == 'SUSPENDED')
           FilledButton.tonalIcon(
-            onPressed: onResume,
-            icon: const Icon(Icons.play_circle_outline, size: 18),
+            onPressed: busy ? null : onResume,
+            icon: spinnerOr(Icons.play_circle_outline),
             label: const Text('Resume'),
           ),
         if (sender.status != 'REVOKED')
           TextButton.icon(
-            onPressed: onRevoke,
-            icon: const Icon(Icons.delete_outline, size: 18),
+            onPressed: busy ? null : onRevoke,
+            icon: spinnerOr(Icons.delete_outline),
             label: const Text('Remove'),
             style: TextButton.styleFrom(
                 foregroundColor: Theme.of(context).colorScheme.error),
           ),
       ],
+    );
+  }
+}
+
+/// Surfaces "WhatsApp provisioning isn't available on this instance" when
+/// the readiness probe says the platform can't submit senders to the
+/// upstream service. Tenant-facing copy: never names the BSP, never
+/// instructs the operator to do something they can't (the fix is platform
+/// admin work).
+class _ProvisioningUnavailableBanner extends StatelessWidget {
+  const _ProvisioningUnavailableBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.tertiary.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: scheme.onTertiaryContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'WhatsApp message provisioning is currently unavailable',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: scheme.onTertiaryContainer,
+                      fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'You can still draft, edit, and remove senders on this workspace. '
+                  'Submitting a sender for review is disabled until your platform '
+                  'administrator finishes setup. Contact your administrator to '
+                  'enable WhatsApp on this instance.',
+                  style: TextStyle(
+                      color: scheme.onTertiaryContainer, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
