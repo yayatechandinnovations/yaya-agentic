@@ -2,19 +2,40 @@ package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
+import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.BindingPolicyResolver;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WhatsAppPhoneAuthenticatorTest {
 
-    private final WhatsAppPhoneAuthenticator auth = new WhatsAppPhoneAuthenticator();
+    /** Lightweight stand-in for {@link BindingPolicyResolver}; Mockito's
+     *  inline mock-maker can't subclass it cleanly on JDK 25. */
+    private static class StubResolver extends BindingPolicyResolver {
+        private DefaultPrincipalPolicy next = new DefaultPrincipalPolicy.Anonymous();
+        final AtomicInteger calls = new AtomicInteger();
+        StubResolver() { super((ChannelBindingService) null); }
+        @Override public DefaultPrincipalPolicy policyFor(Ids.TenantId t, SenderId s) {
+            calls.incrementAndGet();
+            return next;
+        }
+        StubResolver thenReturn(DefaultPrincipalPolicy p) { this.next = p; return this; }
+    }
+
+    private final StubResolver resolver = new StubResolver();
+    private final PrincipalPolicyMaterializer materializer = new PrincipalPolicyMaterializer();
+    private final WhatsAppPhoneAuthenticator auth =
+            new WhatsAppPhoneAuthenticator(resolver, materializer);
 
     @Test
     void mints_principal_when_channel_headers_present() throws AuthenticationException {
@@ -45,6 +66,7 @@ class WhatsAppPhoneAuthenticatorTest {
                 Map.of("Authorization", "Bearer something"),
                 Optional.empty());
         assertThat(auth.tryAuthenticate(ctx)).isEmpty();
+        assertThat(resolver.calls.get()).isZero();
     }
 
     @Test
@@ -59,6 +81,7 @@ class WhatsAppPhoneAuthenticatorTest {
         assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
                 .isInstanceOf(AuthenticationException.class)
                 .hasMessageContaining("malformed end-user phone");
+        assertThat(resolver.calls.get()).isZero();
     }
 
     @Test
@@ -73,5 +96,41 @@ class WhatsAppPhoneAuthenticatorTest {
         Optional<Principal> result = auth.tryAuthenticate(ctx);
         assertThat(result).isPresent();
         assertThat(result.get().subject()).isEqualTo("whatsapp:+15551234567");
+    }
+
+    @Test
+    void phone_as_principal_policy_merges_extra_scopes_and_claims() throws AuthenticationException {
+        resolver.thenReturn(new DefaultPrincipalPolicy.PhoneAsPrincipal(
+                java.util.Set.of("order:read", "shipment:read"),
+                java.util.Map.of("role", "guest")));
+        AuthContext ctx = new AuthContext(
+                new Ids.TenantId("acme"),
+                Map.of(
+                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
+                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x"
+                ),
+                Optional.empty());
+        Principal p = auth.tryAuthenticate(ctx).orElseThrow();
+        assertThat(p.scopes()).containsExactlyInAnyOrder(
+                "channel:whatsapp", "channel:read", "order:read", "shipment:read");
+        assertThat(p.claims()).containsEntry("role", "guest");
+        // channel-reserved claims still stamped
+        assertThat(p.claims()).containsEntry("phone", "+15551234567");
+        assertThat(p.claims()).containsEntry("channel.sender", "snd_x");
+    }
+
+    @Test
+    void lookup_principal_policy_is_not_yet_implemented_in_W_A1() {
+        resolver.thenReturn(new DefaultPrincipalPolicy.LookupPrincipal("my-resolver", true));
+        AuthContext ctx = new AuthContext(
+                new Ids.TenantId("acme"),
+                Map.of(
+                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
+                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x"
+                ),
+                Optional.empty());
+        assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("W-A2");
     }
 }

@@ -3,15 +3,14 @@ package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.BindingPolicyResolver;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Mints the end-user {@link Principal} for an inbound WhatsApp message. The
@@ -26,14 +25,15 @@ import java.util.Set;
  * ({@code @Order(150)}) — JWT-backed callers stay JWT-backed; WhatsApp
  * inbound never wins authentication against an explicit Bearer.
  *
- * <p>Scopes are deliberately narrow ({@code channel:whatsapp} + {@code
- * channel:read}). Any sensitive tool a profile exposes requires a wider
- * scope, which a phone-only principal can't unlock without an explicit
- * identity-binding step (§9.4). The
- * {@link com.yayatechandinnovations.yayaagentic.auth.Authorizer} chain is
- * the enforcement point — never the tool.
+ * <p>The actual scope/claim composition lives in {@link
+ * PrincipalPolicyMaterializer}; the {@link
+ * com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding}'s
+ * {@link DefaultPrincipalPolicy} drives the materialization. The
+ * {@link com.yayatechandinnovations.yayaagentic.auth.Authorizer} chain stays
+ * the enforcement point — never the tool, and never this authenticator.
  *
- * <p>See {@code whatsapp-channel-design.md} §9.3.
+ * <p>See {@code whatsapp-channel-design.md} §9.3 and
+ * {@code whatsapp-channel-auth-design.md} §5.
  */
 @Component
 @Order(900)
@@ -45,6 +45,15 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
     public static final String HEADER_SENDER_ID    = "x-channel-sender-id";
     public static final String HEADER_LOCALE       = "x-channel-locale";
     public static final String HEADER_TWILIO_FROM  = "x-channel-twilio-contact-sid";
+
+    private final BindingPolicyResolver bindingPolicyResolver;
+    private final PrincipalPolicyMaterializer materializer;
+
+    public WhatsAppPhoneAuthenticator(BindingPolicyResolver bindingPolicyResolver,
+                                      PrincipalPolicyMaterializer materializer) {
+        this.bindingPolicyResolver = bindingPolicyResolver;
+        this.materializer = materializer;
+    }
 
     @Override
     public String name() {
@@ -61,23 +70,10 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
         if (!from.startsWith("+")) {
             throw new AuthenticationException(name() + ": malformed end-user phone");
         }
-        String locale = headerCi(ctx, HEADER_LOCALE);
-        String twilioContactSid = headerCi(ctx, HEADER_TWILIO_FROM);
 
-        Map<String, Object> claims = new LinkedHashMap<>();
-        claims.put("phone", from);
-        claims.put("channel.sender", sender);
-        claims.put("channel.kind", "whatsapp");
-        if (locale != null && !locale.isBlank()) claims.put("locale", locale);
-        if (twilioContactSid != null && !twilioContactSid.isBlank()) {
-            claims.put("twilioContactSid", twilioContactSid);
-        }
-        return Optional.of(new Principal(
-                "whatsapp:" + from,
-                ctx.tenant(),
-                Set.of("channel:whatsapp", "channel:read"),
-                claims,
-                Instant.now()));
+        DefaultPrincipalPolicy policy =
+                bindingPolicyResolver.policyFor(ctx.tenant(), new SenderId(sender));
+        return Optional.of(materializer.materialize(policy, from, sender, ctx));
     }
 
     private static String headerCi(AuthContext ctx, String name) {

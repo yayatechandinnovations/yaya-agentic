@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.channel.binding;
 
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -22,12 +23,23 @@ class SessionPolicyTest {
         assertThat(defaults.endSessionKeywords()).contains("bye", "done", "thanks bye");
         assertThat(defaults.exposeEndUserPhoneToProfile()).isTrue();
         assertThat(defaults.greetOnReengagement()).isFalse();
+        assertThat(defaults.defaultPrincipalPolicy())
+                .isInstanceOf(DefaultPrincipalPolicy.Anonymous.class);
+    }
+
+    @Test
+    void null_default_principal_policy_normalizes_to_anonymous() {
+        SessionPolicy p = new SessionPolicy(
+                Duration.ofHours(24), Set.of(), Set.of(), false, null, true, null);
+        assertThat(p.defaultPrincipalPolicy())
+                .isInstanceOf(DefaultPrincipalPolicy.Anonymous.class);
     }
 
     @Test
     void zero_or_negative_idle_is_rejected() {
         assertThatThrownBy(() -> new SessionPolicy(
-                Duration.ZERO, Set.of(), Set.of(), false, null, true))
+                Duration.ZERO, Set.of(), Set.of(), false, null, true,
+                new DefaultPrincipalPolicy.Anonymous()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("idleTimeout must be positive");
     }
@@ -35,7 +47,8 @@ class SessionPolicyTest {
     @Test
     void idle_beyond_168h_is_rejected() {
         assertThatThrownBy(() -> new SessionPolicy(
-                Duration.ofHours(200), Set.of(), Set.of(), false, null, true))
+                Duration.ofHours(200), Set.of(), Set.of(), false, null, true,
+                new DefaultPrincipalPolicy.Anonymous()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("idleTimeout exceeds");
     }
@@ -43,7 +56,8 @@ class SessionPolicyTest {
     @Test
     void greet_requires_template() {
         assertThatThrownBy(() -> new SessionPolicy(
-                Duration.ofHours(24), Set.of(), Set.of(), true, "", true))
+                Duration.ofHours(24), Set.of(), Set.of(), true, "", true,
+                new DefaultPrincipalPolicy.Anonymous()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("reengagementTemplate is required");
     }

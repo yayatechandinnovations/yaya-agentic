@@ -33,6 +33,9 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   final _localesCtrl = TextEditingController();
   final _claimCtrl = TextEditingController();
   final _claimValueCtrl = TextEditingController();
+  final _addScopeCtrl = TextEditingController();
+  final _addClaimKeyCtrl = TextEditingController();
+  final _addClaimValueCtrl = TextEditingController();
 
   String? _senderId;
   String? _profileSlug;             // "<id>@<version>"
@@ -41,6 +44,10 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   int? _editingId;
   bool _saving = false;
 
+  String _principalKind = 'Anonymous';
+  final List<String> _principalExtraScopes = [];
+  final Map<String, String> _principalExtraClaims = {};
+
   @override
   void dispose() {
     _priorityCtrl.dispose();
@@ -48,6 +55,9 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     _localesCtrl.dispose();
     _claimCtrl.dispose();
     _claimValueCtrl.dispose();
+    _addScopeCtrl.dispose();
+    _addClaimKeyCtrl.dispose();
+    _addClaimValueCtrl.dispose();
     super.dispose();
   }
 
@@ -63,6 +73,12 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _localesCtrl.clear();
       _claimCtrl.clear();
       _claimValueCtrl.clear();
+      _addScopeCtrl.clear();
+      _addClaimKeyCtrl.clear();
+      _addClaimValueCtrl.clear();
+      _principalKind = 'Anonymous';
+      _principalExtraScopes.clear();
+      _principalExtraClaims.clear();
     });
   }
 
@@ -88,7 +104,59 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
           _claimValueCtrl.text = (row.routing.json['equals'] ?? '') as String;
           break;
       }
+      final policy = row.sessionPolicy.defaultPrincipalPolicy;
+      _principalKind = policy.kind;
+      _principalExtraScopes
+        ..clear()
+        ..addAll(policy.additionalScopes);
+      _principalExtraClaims
+        ..clear()
+        ..addEntries(policy.additionalClaims.entries
+            .map((e) => MapEntry(e.key, e.value.toString())));
     });
+  }
+
+  DefaultPrincipalPolicyWire _buildPrincipalPolicy() {
+    switch (_principalKind) {
+      case 'PhoneAsPrincipal':
+        return DefaultPrincipalPolicyWire.phoneAsPrincipal(
+          additionalScopes: List.unmodifiable(_principalExtraScopes),
+          additionalClaims:
+              Map<String, dynamic>.unmodifiable(_principalExtraClaims),
+        );
+      case 'LookupPrincipal':
+        // Not reachable in W-A1 — option is disabled in the form.
+        return DefaultPrincipalPolicyWire.anonymous();
+      default:
+        return DefaultPrincipalPolicyWire.anonymous();
+    }
+  }
+
+  String? _addScopeChip() {
+    final raw = _addScopeCtrl.text.trim();
+    if (raw.isEmpty) return 'Type a scope name first.';
+    if (_principalExtraScopes.contains(raw)) return 'Scope already added.';
+    setState(() {
+      _principalExtraScopes.add(raw);
+      _addScopeCtrl.clear();
+    });
+    return null;
+  }
+
+  String? _addClaimChip() {
+    final key = _addClaimKeyCtrl.text.trim();
+    final value = _addClaimValueCtrl.text.trim();
+    if (key.isEmpty || value.isEmpty) return 'Claim key and value required.';
+    if (DefaultPrincipalPolicyWire.reservedClaimKeys.contains(key)) {
+      return 'Reserved channel claim — pick a different key '
+          '(${DefaultPrincipalPolicyWire.reservedClaimKeys.join(", ")}).';
+    }
+    setState(() {
+      _principalExtraClaims[key] = value;
+      _addClaimKeyCtrl.clear();
+      _addClaimValueCtrl.clear();
+    });
+    return null;
   }
 
   RoutingRuleWire _buildRoutingRule() {
@@ -154,7 +222,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     final profileId = parts[0];
     final profileVersion = int.tryParse(parts.length > 1 ? parts[1] : '1') ?? 1;
     final priority = int.tryParse(_priorityCtrl.text.trim()) ?? 100;
-    final policy = SessionPolicyWire.defaults();
+    final policy = SessionPolicyWire.defaults()
+        .copyWith(defaultPrincipalPolicy: _buildPrincipalPolicy());
 
     setState(() => _saving = true);
     try {
@@ -395,6 +464,29 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         onChanged: (v) =>
                             setState(() => _status = v ?? 'ACTIVE'),
                       ),
+                      const SizedBox(height: 16),
+                      _IdentityPolicyCard(
+                        kind: _principalKind,
+                        extraScopes: _principalExtraScopes,
+                        extraClaims: _principalExtraClaims,
+                        onKindChanged: (v) =>
+                            setState(() => _principalKind = v ?? 'Anonymous'),
+                        addScopeCtrl: _addScopeCtrl,
+                        addClaimKeyCtrl: _addClaimKeyCtrl,
+                        addClaimValueCtrl: _addClaimValueCtrl,
+                        onAddScope: () {
+                          final err = _addScopeChip();
+                          if (err != null) showSnack(context, err, error: true);
+                        },
+                        onRemoveScope: (s) =>
+                            setState(() => _principalExtraScopes.remove(s)),
+                        onAddClaim: () {
+                          final err = _addClaimChip();
+                          if (err != null) showSnack(context, err, error: true);
+                        },
+                        onRemoveClaim: (k) =>
+                            setState(() => _principalExtraClaims.remove(k)),
+                      ),
                     ],
                   );
                 },
@@ -444,6 +536,9 @@ class _BindingTile extends StatelessWidget {
           DetailRow(
               label: 'Expose end-user phone to profile',
               value: row.sessionPolicy.exposeEndUserPhoneToProfile ? 'yes' : 'no'),
+          DetailRow(
+              label: 'Identity policy',
+              value: row.sessionPolicy.defaultPrincipalPolicy.humanLabel()),
           if (row.createdAt != null)
             DetailRow(label: 'Created', value: row.createdAt!),
         ],
@@ -483,6 +578,187 @@ class _PriorityChip extends StatelessWidget {
           fontWeight: FontWeight.w700,
           color: scheme.onSecondaryContainer,
         ),
+      ),
+    );
+  }
+}
+
+class _IdentityPolicyCard extends StatelessWidget {
+  const _IdentityPolicyCard({
+    required this.kind,
+    required this.extraScopes,
+    required this.extraClaims,
+    required this.onKindChanged,
+    required this.addScopeCtrl,
+    required this.addClaimKeyCtrl,
+    required this.addClaimValueCtrl,
+    required this.onAddScope,
+    required this.onRemoveScope,
+    required this.onAddClaim,
+    required this.onRemoveClaim,
+  });
+
+  final String kind;
+  final List<String> extraScopes;
+  final Map<String, String> extraClaims;
+  final ValueChanged<String?> onKindChanged;
+  final TextEditingController addScopeCtrl;
+  final TextEditingController addClaimKeyCtrl;
+  final TextEditingController addClaimValueCtrl;
+  final VoidCallback onAddScope;
+  final ValueChanged<String> onRemoveScope;
+  final VoidCallback onAddClaim;
+  final ValueChanged<String> onRemoveClaim;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Identity policy',
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            "How the inbound authenticator builds the end-user's Principal. "
+            "A profile that requires user identity needs more than Anonymous; "
+            "step-up for sensitive actions is configured per Authorizer.",
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          RadioListTile<String>(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: 'Anonymous',
+            groupValue: kind,
+            onChanged: onKindChanged,
+            title: const Text('Anonymous (no identity beyond verified phone)'),
+            subtitle: const Text(
+                'Channel scopes only. Suitable for FAQ / public flows.'),
+          ),
+          RadioListTile<String>(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: 'PhoneAsPrincipal',
+            groupValue: kind,
+            onChanged: onKindChanged,
+            title: const Text('Phone as principal'),
+            subtitle: const Text(
+                'Phone is the identity. Add scopes and claims that ride along.'),
+          ),
+          if (kind == 'PhoneAsPrincipal') ...[
+            const SizedBox(height: 4),
+            Text('Additional scopes',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final scope in extraScopes)
+                  InputChip(
+                    label: Text(scope),
+                    onDeleted: () => onRemoveScope(scope),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: addScopeCtrl,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'e.g. order:read',
+                    ),
+                    onSubmitted: (_) => onAddScope(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: onAddScope,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add scope'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('Additional claims',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final entry in extraClaims.entries)
+                  InputChip(
+                    label: Text('${entry.key}: ${entry.value}'),
+                    onDeleted: () => onRemoveClaim(entry.key),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: addClaimKeyCtrl,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'claim key',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: addClaimValueCtrl,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'value',
+                    ),
+                    onSubmitted: (_) => onAddClaim(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: onAddClaim,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add claim'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Reserved keys (silently overridden by the channel): '
+              '${DefaultPrincipalPolicyWire.reservedClaimKeys.join(", ")}.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                  ),
+            ),
+          ],
+          Tooltip(
+            message: 'Coming in W-A2 — needs a tenant PhoneToPrincipalResolver bean.',
+            child: RadioListTile<String>(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              value: 'LookupPrincipal',
+              groupValue: kind,
+              onChanged: null, // disabled in W-A1
+              title: const Text('Lookup principal (coming soon)'),
+              subtitle: const Text(
+                  'Resolve the phone against a tenant resolver. Requires W-A2.'),
+            ),
+          ),
+        ],
       ),
     );
   }

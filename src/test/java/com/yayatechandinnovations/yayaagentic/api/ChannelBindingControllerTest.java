@@ -177,7 +177,7 @@ class ChannelBindingControllerTest {
                 new RoutingRule.KeywordPrefix(List.of("#sales"), true),
                 new SessionPolicy(Duration.ofHours(12),
                         Set.of("#new"), Set.of("bye"),
-                        false, null, true),
+                        false, null, true, null),
                 50,
                 BindingStatus.ACTIVE);
         var res = client.post()

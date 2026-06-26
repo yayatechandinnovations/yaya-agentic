@@ -69,6 +69,24 @@ public class ChannelBindingService {
      * the first whose {@link RoutingRule} matches the message context.
      * Returns empty when nothing matches — the resolver chain falls through.
      */
+    /**
+     * Routing-agnostic lookup of the lowest-priority ACTIVE binding for an
+     * endpoint. Used by {@code BindingPolicyResolver} on the auth path — where
+     * the Principal isn't minted yet so routing rules can't be evaluated.
+     * Returns empty when the endpoint has no ACTIVE binding.
+     */
+    public Optional<ChannelBinding> findLowestPriorityActiveForEndpoint(
+            Ids.TenantId tenant, ChannelEndpointRef endpoint) {
+        return repo.findByTenantIdAndEndpointKindAndEndpointIdAndStatusOrderByPriorityAscIdAsc(
+                        tenant.value(),
+                        endpoint.kindName(),
+                        endpoint.externalId(),
+                        BindingStatus.ACTIVE.name())
+                .stream()
+                .findFirst()
+                .map(this::toDomain);
+    }
+
     public Optional<ChannelBinding> findFor(Ids.TenantId tenant,
                                             ChannelEndpointRef endpoint,
                                             Principal endUser,

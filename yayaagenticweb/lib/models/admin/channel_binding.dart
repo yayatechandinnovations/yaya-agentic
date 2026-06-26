@@ -116,6 +116,82 @@ class RoutingRuleWire {
   }
 }
 
+/// How the inbound WhatsApp authenticator mints the end-user Principal. The
+/// admin form exposes three kinds; LookupPrincipal is declared for forward-
+/// compatibility but ships disabled in W-A1 (the resolver registry arrives in
+/// W-A2). Reserved channel claim keys are rejected client-side and server-side.
+///
+/// See `whatsapp-channel-auth-design.md` §5.
+class DefaultPrincipalPolicyWire {
+  DefaultPrincipalPolicyWire({required this.kind, this.json = const {}});
+  final String kind; // 'Anonymous' | 'PhoneAsPrincipal' | 'LookupPrincipal'
+  final Map<String, dynamic> json;
+
+  static const Set<String> reservedClaimKeys = {
+    'phone',
+    'channel.sender',
+    'channel.kind',
+    'locale',
+    'twilioContactSid',
+  };
+
+  factory DefaultPrincipalPolicyWire.fromJson(Map<String, dynamic> json) {
+    final kind = (json['kind'] ?? 'Anonymous') as String;
+    return DefaultPrincipalPolicyWire(kind: kind, json: json);
+  }
+
+  Map<String, dynamic> toJson() => {...json, 'kind': kind};
+
+  static DefaultPrincipalPolicyWire anonymous() =>
+      DefaultPrincipalPolicyWire(kind: 'Anonymous', json: {'kind': 'Anonymous'});
+
+  static DefaultPrincipalPolicyWire phoneAsPrincipal({
+    List<String> additionalScopes = const [],
+    Map<String, dynamic> additionalClaims = const {},
+  }) =>
+      DefaultPrincipalPolicyWire(kind: 'PhoneAsPrincipal', json: {
+        'kind': 'PhoneAsPrincipal',
+        'additionalScopes': additionalScopes,
+        'additionalClaims': additionalClaims,
+      });
+
+  static DefaultPrincipalPolicyWire lookupPrincipal({
+    required String resolverId,
+    bool denyOnUnknown = true,
+  }) =>
+      DefaultPrincipalPolicyWire(kind: 'LookupPrincipal', json: {
+        'kind': 'LookupPrincipal',
+        'resolverId': resolverId,
+        'denyOnUnknown': denyOnUnknown,
+      });
+
+  List<String> get additionalScopes => ((json['additionalScopes'] as List?) ??
+          const [])
+      .map((e) => e.toString())
+      .toList();
+
+  Map<String, dynamic> get additionalClaims =>
+      Map<String, dynamic>.from((json['additionalClaims'] as Map?) ?? const {});
+
+  String? get resolverId => json['resolverId'] as String?;
+
+  String humanLabel() {
+    switch (kind) {
+      case 'Anonymous':
+        return 'Anonymous (phone only)';
+      case 'PhoneAsPrincipal':
+        final count = additionalScopes.length + additionalClaims.length;
+        return count == 0
+            ? 'Phone as principal'
+            : 'Phone as principal · +$count';
+      case 'LookupPrincipal':
+        return 'Lookup principal · ${resolverId ?? "?"}';
+      default:
+        return kind;
+    }
+  }
+}
+
 class SessionPolicyWire {
   SessionPolicyWire({
     required this.idleTimeout,
@@ -124,6 +200,7 @@ class SessionPolicyWire {
     required this.greetOnReengagement,
     this.reengagementTemplate,
     required this.exposeEndUserPhoneToProfile,
+    required this.defaultPrincipalPolicy,
   });
 
   /// Stored as ISO-8601 duration string, e.g. "PT24H".
@@ -133,6 +210,7 @@ class SessionPolicyWire {
   final bool greetOnReengagement;
   final String? reengagementTemplate;
   final bool exposeEndUserPhoneToProfile;
+  final DefaultPrincipalPolicyWire defaultPrincipalPolicy;
 
   factory SessionPolicyWire.fromJson(Map<String, dynamic> json) =>
       SessionPolicyWire(
@@ -147,6 +225,10 @@ class SessionPolicyWire {
         reengagementTemplate: json['reengagementTemplate'] as String?,
         exposeEndUserPhoneToProfile:
             json['exposeEndUserPhoneToProfile'] != false,
+        defaultPrincipalPolicy: json['defaultPrincipalPolicy'] == null
+            ? DefaultPrincipalPolicyWire.anonymous()
+            : DefaultPrincipalPolicyWire.fromJson(
+                Map<String, dynamic>.from(json['defaultPrincipalPolicy'] as Map)),
       );
 
   Map<String, dynamic> toJson() => {
@@ -157,7 +239,20 @@ class SessionPolicyWire {
         if (reengagementTemplate != null && reengagementTemplate!.isNotEmpty)
           'reengagementTemplate': reengagementTemplate,
         'exposeEndUserPhoneToProfile': exposeEndUserPhoneToProfile,
+        'defaultPrincipalPolicy': defaultPrincipalPolicy.toJson(),
       };
+
+  SessionPolicyWire copyWith({DefaultPrincipalPolicyWire? defaultPrincipalPolicy}) =>
+      SessionPolicyWire(
+        idleTimeout: idleTimeout,
+        newSessionKeywords: newSessionKeywords,
+        endSessionKeywords: endSessionKeywords,
+        greetOnReengagement: greetOnReengagement,
+        reengagementTemplate: reengagementTemplate,
+        exposeEndUserPhoneToProfile: exposeEndUserPhoneToProfile,
+        defaultPrincipalPolicy:
+            defaultPrincipalPolicy ?? this.defaultPrincipalPolicy,
+      );
 
   static SessionPolicyWire defaults() => SessionPolicyWire(
         idleTimeout: 'PT24H',
@@ -165,6 +260,7 @@ class SessionPolicyWire {
         endSessionKeywords: const ['bye', 'done', 'thanks bye'],
         greetOnReengagement: false,
         exposeEndUserPhoneToProfile: true,
+        defaultPrincipalPolicy: DefaultPrincipalPolicyWire.anonymous(),
       );
 
   String humanIdle() {

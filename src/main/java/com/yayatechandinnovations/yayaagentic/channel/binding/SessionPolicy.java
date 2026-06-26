@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.channel.binding;
 
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
+
 import java.time.Duration;
 import java.util.Set;
 
@@ -27,14 +29,22 @@ import java.util.Set;
  *                                    Default {@code true} for WhatsApp; flip
  *                                    to {@code false} for anonymous-feedback
  *                                    bots that should never see the phone.
+ * @param defaultPrincipalPolicy      how the {@code WhatsAppPhoneAuthenticator}
+ *                                    mints the end-user Principal. Defaults to
+ *                                    {@link DefaultPrincipalPolicy.Anonymous}
+ *                                    — the pre-W-A1 behavior — when absent
+ *                                    from the persisted JSON.
+ *                                    See {@code whatsapp-channel-auth-design.md}
+ *                                    §5.
  */
 public record SessionPolicy(
-        Duration             idleTimeout,
-        Set<String>          newSessionKeywords,
-        Set<String>          endSessionKeywords,
-        boolean              greetOnReengagement,
-        String               reengagementTemplate,
-        boolean              exposeEndUserPhoneToProfile
+        Duration                 idleTimeout,
+        Set<String>              newSessionKeywords,
+        Set<String>              endSessionKeywords,
+        boolean                  greetOnReengagement,
+        String                   reengagementTemplate,
+        boolean                  exposeEndUserPhoneToProfile,
+        DefaultPrincipalPolicy   defaultPrincipalPolicy
 ) {
 
     public static final Duration DEFAULT_IDLE = Duration.ofHours(24);
@@ -64,6 +74,9 @@ public record SessionPolicy(
             throw new IllegalArgumentException(
                     "reengagementTemplate is required when greetOnReengagement=true");
         }
+        defaultPrincipalPolicy = defaultPrincipalPolicy == null
+                ? new DefaultPrincipalPolicy.Anonymous()
+                : defaultPrincipalPolicy;
     }
 
     public static SessionPolicy defaults() {
@@ -73,7 +86,8 @@ public record SessionPolicy(
                 DEFAULT_END_SESSION_KEYWORDS,
                 false,
                 null,
-                true
+                true,
+                new DefaultPrincipalPolicy.Anonymous()
         );
     }
 }
