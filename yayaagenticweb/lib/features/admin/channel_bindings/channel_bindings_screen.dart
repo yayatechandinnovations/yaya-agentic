@@ -16,6 +16,14 @@ final channelBindingsProvider =
   },
 );
 
+final phonePrincipalResolversProvider =
+    FutureProvider.family<List<PhonePrincipalResolverSummary>, String>(
+  (ref, tenantId) async {
+    final api = await ref.watch(adminApiProvider.future);
+    return api.listPhonePrincipalResolvers(tenantId);
+  },
+);
+
 /// Routes inbound messages on a registered WhatsApp sender to a profile.
 /// One sender can have multiple bindings — first matching rule (by lowest
 /// priority) wins.
@@ -47,6 +55,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   String _principalKind = 'Anonymous';
   final List<String> _principalExtraScopes = [];
   final Map<String, String> _principalExtraClaims = {};
+  String? _principalResolverId;
+  bool _principalDenyOnUnknown = true;
 
   @override
   void dispose() {
@@ -79,6 +89,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _principalKind = 'Anonymous';
       _principalExtraScopes.clear();
       _principalExtraClaims.clear();
+      _principalResolverId = null;
+      _principalDenyOnUnknown = true;
     });
   }
 
@@ -113,6 +125,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
         ..clear()
         ..addEntries(policy.additionalClaims.entries
             .map((e) => MapEntry(e.key, e.value.toString())));
+      _principalResolverId = policy.resolverId;
+      _principalDenyOnUnknown = policy.json['denyOnUnknown'] != false;
     });
   }
 
@@ -125,8 +139,10 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               Map<String, dynamic>.unmodifiable(_principalExtraClaims),
         );
       case 'LookupPrincipal':
-        // Not reachable in W-A1 — option is disabled in the form.
-        return DefaultPrincipalPolicyWire.anonymous();
+        return DefaultPrincipalPolicyWire.lookupPrincipal(
+          resolverId: _principalResolverId ?? '',
+          denyOnUnknown: _principalDenyOnUnknown,
+        );
       default:
         return DefaultPrincipalPolicyWire.anonymous();
     }
@@ -206,6 +222,10 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
           return 'Both claim and value are required.';
         }
         break;
+    }
+    if (_principalKind == 'LookupPrincipal' &&
+        (_principalResolverId == null || _principalResolverId!.isEmpty)) {
+      return 'Choose a phone-to-principal resolver.';
     }
     return null;
   }
@@ -306,6 +326,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     final bindings = ref.watch(channelBindingsProvider(tenant));
     final senders = ref.watch(whatsAppSendersProvider(tenant));
     final profiles = ref.watch(profilesProvider);
+    final resolvers = ref.watch(phonePrincipalResolversProvider(tenant));
 
     return AdminTwoPane(
       title: 'Channel bindings',
@@ -469,6 +490,9 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         kind: _principalKind,
                         extraScopes: _principalExtraScopes,
                         extraClaims: _principalExtraClaims,
+                        resolverId: _principalResolverId,
+                        denyOnUnknown: _principalDenyOnUnknown,
+                        resolvers: resolvers,
                         onKindChanged: (v) =>
                             setState(() => _principalKind = v ?? 'Anonymous'),
                         addScopeCtrl: _addScopeCtrl,
@@ -486,6 +510,10 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         },
                         onRemoveClaim: (k) =>
                             setState(() => _principalExtraClaims.remove(k)),
+                        onResolverChanged: (v) =>
+                            setState(() => _principalResolverId = v),
+                        onDenyOnUnknownChanged: (v) =>
+                            setState(() => _principalDenyOnUnknown = v),
                       ),
                     ],
                   );
@@ -588,6 +616,9 @@ class _IdentityPolicyCard extends StatelessWidget {
     required this.kind,
     required this.extraScopes,
     required this.extraClaims,
+    required this.resolverId,
+    required this.denyOnUnknown,
+    required this.resolvers,
     required this.onKindChanged,
     required this.addScopeCtrl,
     required this.addClaimKeyCtrl,
@@ -596,11 +627,16 @@ class _IdentityPolicyCard extends StatelessWidget {
     required this.onRemoveScope,
     required this.onAddClaim,
     required this.onRemoveClaim,
+    required this.onResolverChanged,
+    required this.onDenyOnUnknownChanged,
   });
 
   final String kind;
   final List<String> extraScopes;
   final Map<String, String> extraClaims;
+  final String? resolverId;
+  final bool denyOnUnknown;
+  final AsyncValue<List<PhonePrincipalResolverSummary>> resolvers;
   final ValueChanged<String?> onKindChanged;
   final TextEditingController addScopeCtrl;
   final TextEditingController addClaimKeyCtrl;
@@ -609,6 +645,8 @@ class _IdentityPolicyCard extends StatelessWidget {
   final ValueChanged<String> onRemoveScope;
   final VoidCallback onAddClaim;
   final ValueChanged<String> onRemoveClaim;
+  final ValueChanged<String?> onResolverChanged;
+  final ValueChanged<bool> onDenyOnUnknownChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -745,21 +783,156 @@ class _IdentityPolicyCard extends StatelessWidget {
                   ),
             ),
           ],
-          Tooltip(
-            message: 'Coming in W-A2 — needs a tenant PhoneToPrincipalResolver bean.',
-            child: RadioListTile<String>(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: 'LookupPrincipal',
+          resolvers.when(
+            loading: () => const _LookupPrincipalLoading(),
+            error: (e, _) => _LookupPrincipalUnavailable(
+              kind: kind,
               groupValue: kind,
-              onChanged: null, // disabled in W-A1
-              title: const Text('Lookup principal (coming soon)'),
-              subtitle: const Text(
-                  'Resolve the phone against a tenant resolver. Requires W-A2.'),
+              onKindChanged: onKindChanged,
+              reason: formatError(e),
             ),
+            data: (list) {
+              if (list.isEmpty) {
+                return _LookupPrincipalUnavailable(
+                  kind: kind,
+                  groupValue: kind,
+                  onKindChanged: onKindChanged,
+                  reason: 'No phone-to-principal resolvers are registered on '
+                      'this instance. Add one in deployment configuration.',
+                );
+              }
+              return _LookupPrincipalSection(
+                kind: kind,
+                resolverId: resolverId,
+                denyOnUnknown: denyOnUnknown,
+                resolvers: list,
+                onKindChanged: onKindChanged,
+                onResolverChanged: onResolverChanged,
+                onDenyOnUnknownChanged: onDenyOnUnknownChanged,
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LookupPrincipalLoading extends StatelessWidget {
+  const _LookupPrincipalLoading();
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 8),
+      child: SizedBox(
+        height: 16,
+        child: LinearProgressIndicator(),
+      ),
+    );
+  }
+}
+
+class _LookupPrincipalUnavailable extends StatelessWidget {
+  const _LookupPrincipalUnavailable({
+    required this.kind,
+    required this.groupValue,
+    required this.onKindChanged,
+    required this.reason,
+  });
+  final String kind;
+  final String groupValue;
+  final ValueChanged<String?> onKindChanged;
+  final String reason;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: reason,
+      child: RadioListTile<String>(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: 'LookupPrincipal',
+        groupValue: groupValue,
+        onChanged: null,
+        title: const Text('Lookup principal (unavailable)'),
+        subtitle: Text(reason,
+            style: Theme.of(context).textTheme.bodySmall),
+      ),
+    );
+  }
+}
+
+class _LookupPrincipalSection extends StatelessWidget {
+  const _LookupPrincipalSection({
+    required this.kind,
+    required this.resolverId,
+    required this.denyOnUnknown,
+    required this.resolvers,
+    required this.onKindChanged,
+    required this.onResolverChanged,
+    required this.onDenyOnUnknownChanged,
+  });
+
+  final String kind;
+  final String? resolverId;
+  final bool denyOnUnknown;
+  final List<PhonePrincipalResolverSummary> resolvers;
+  final ValueChanged<String?> onKindChanged;
+  final ValueChanged<String?> onResolverChanged;
+  final ValueChanged<bool> onDenyOnUnknownChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final knownIds = resolvers.map((r) => r.id).toSet();
+    final selectedId =
+        (resolverId != null && knownIds.contains(resolverId!)) ? resolverId : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RadioListTile<String>(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          value: 'LookupPrincipal',
+          groupValue: kind,
+          onChanged: onKindChanged,
+          title: const Text('Lookup principal'),
+          subtitle: const Text(
+              'Resolve the phone against a tenant-side user record.'),
+        ),
+        if (kind == 'LookupPrincipal') ...[
+          const SizedBox(height: 4),
+          DropdownButtonFormField<String>(
+            initialValue: selectedId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Phone-to-principal resolver',
+              isDense: true,
+            ),
+            items: [
+              for (final r in resolvers)
+                DropdownMenuItem(
+                  value: r.id,
+                  child: Text(r.description.isEmpty
+                      ? r.id
+                      : '${r.id} — ${r.description}'),
+                ),
+            ],
+            onChanged: onResolverChanged,
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: denyOnUnknown,
+            onChanged: onDenyOnUnknownChanged,
+            title: const Text('Deny unknown phones'),
+            subtitle: const Text(
+                'When ON, an unrecognised phone is rejected. When OFF, the '
+                'binding falls back to Anonymous (channel scopes only). '
+                'Default ON — recommended for identity-gated profiles.'),
+          ),
+        ],
+      ],
     );
   }
 }

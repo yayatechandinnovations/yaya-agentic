@@ -303,6 +303,21 @@ class ChannelBindingRequest {
       };
 }
 
+/// One entry returned by GET /v1/admin/tenants/{t}/phone-principal-resolvers.
+/// Used to populate the resolver dropdown when the operator picks
+/// LookupPrincipal as the binding's identity policy.
+class PhonePrincipalResolverSummary {
+  PhonePrincipalResolverSummary({required this.id, required this.description});
+  final String id;
+  final String description;
+
+  factory PhonePrincipalResolverSummary.fromJson(Map<String, dynamic> json) =>
+      PhonePrincipalResolverSummary(
+        id: (json['id'] ?? '') as String,
+        description: (json['description'] ?? '') as String,
+      );
+}
+
 class ChannelBindingUpdate {
   ChannelBindingUpdate({
     required this.profileId,

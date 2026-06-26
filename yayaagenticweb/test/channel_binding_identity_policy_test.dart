@@ -67,7 +67,41 @@ void main() {
       );
     });
 
-    test('humanLabel reflects the policy shape', () {
+    test('LookupPrincipal preserves denyOnUnknown when toggled off', () {
+      // Default constructor sets denyOnUnknown=true; admin flips it to false.
+      final original = SessionPolicyWire.defaults().copyWith(
+        defaultPrincipalPolicy: DefaultPrincipalPolicyWire.lookupPrincipal(
+          resolverId: 'retail-customer-lookup',
+          denyOnUnknown: false,
+        ),
+      );
+      final decoded = SessionPolicyWire.fromJson(original.toJson());
+      expect(decoded.defaultPrincipalPolicy.kind, equals('LookupPrincipal'));
+      expect(decoded.defaultPrincipalPolicy.resolverId,
+          equals('retail-customer-lookup'));
+      expect(decoded.defaultPrincipalPolicy.json['denyOnUnknown'], isFalse);
+    });
+  });
+
+  group('PhonePrincipalResolverSummary', () {
+    test('decodes id and description from the admin endpoint payload', () {
+      final s = PhonePrincipalResolverSummary.fromJson({
+        'id': 'retail-customer-lookup',
+        'description': 'Maps phones to retail customer IDs',
+      });
+      expect(s.id, equals('retail-customer-lookup'));
+      expect(s.description, equals('Maps phones to retail customer IDs'));
+    });
+
+    test('tolerates a missing description field', () {
+      final s = PhonePrincipalResolverSummary.fromJson({'id': 'r1'});
+      expect(s.id, equals('r1'));
+      expect(s.description, isEmpty);
+    });
+  });
+
+  group('humanLabel (sanity from W-A1, kept for parity)', () {
+    test('reflects the policy shape', () {
       expect(DefaultPrincipalPolicyWire.anonymous().humanLabel(),
           equals('Anonymous (phone only)'));
 

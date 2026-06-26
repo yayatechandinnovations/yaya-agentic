@@ -5,11 +5,14 @@ import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.BindingPolicyResolver;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PhoneToPrincipalResolverRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -33,7 +36,10 @@ class WhatsAppPhoneAuthenticatorTest {
     }
 
     private final StubResolver resolver = new StubResolver();
-    private final PrincipalPolicyMaterializer materializer = new PrincipalPolicyMaterializer();
+    private final PhoneToPrincipalResolverRegistry registry =
+            new PhoneToPrincipalResolverRegistry(List.of(), Duration.ofMinutes(5));
+    private final PrincipalPolicyMaterializer materializer =
+            new PrincipalPolicyMaterializer(registry);
     private final WhatsAppPhoneAuthenticator auth =
             new WhatsAppPhoneAuthenticator(resolver, materializer);
 
@@ -120,7 +126,7 @@ class WhatsAppPhoneAuthenticatorTest {
     }
 
     @Test
-    void lookup_principal_policy_is_not_yet_implemented_in_W_A1() {
+    void lookup_principal_with_no_registered_resolver_throws_illegal_state() {
         resolver.thenReturn(new DefaultPrincipalPolicy.LookupPrincipal("my-resolver", true));
         AuthContext ctx = new AuthContext(
                 new Ids.TenantId("acme"),
@@ -129,8 +135,10 @@ class WhatsAppPhoneAuthenticatorTest {
                         WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x"
                 ),
                 Optional.empty());
+        // No PhoneToPrincipalResolver beans registered → IllegalStateException
+        // surfaces as an operator-misconfig alarm, not a tenant-fault denial.
         assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("W-A2");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("my-resolver");
     }
 }
