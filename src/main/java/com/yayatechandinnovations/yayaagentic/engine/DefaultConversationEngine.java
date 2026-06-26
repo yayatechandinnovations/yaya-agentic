@@ -1280,11 +1280,12 @@ public class DefaultConversationEngine implements ConversationEngine {
                                        UserMessage message,
                                        String callIdHint,
                                        boolean llmDriven) {
-        String email = stringClaim(session.principal(), "email");
-        if (email == null) {
-            // No deliverable address — fall through to denial. The user-safe
-            // reason from the original DenyOfferStepUp explains why; we don't
-            // promise step-up.
+        String targetAddress = targetAddressForMethod(session.principal(), stepUp.hint());
+        if (targetAddress == null) {
+            // No deliverable address for this method — fall through to denial.
+            // OtpEmail needs `email`; OtpSmsSecondary needs `phone_secondary`;
+            // DeepLink needs no per-user address. A principal missing the
+            // required claim can't be stepped-up; the bot just denies normally.
             return denialFlow(toolDescriptor, args, stepUp, personality, session, exec,
                     recorder, turnId, message, callIdHint, llmDriven);
         }
@@ -1295,8 +1296,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                         session.id(),
                         null,                                  // sender id — channel-bound calls fill this in W-A6
                         session.principal().subject(),
-                        email,
-                        maskEmail(email),
+                        targetAddress,
+                        maskForMethod(targetAddress, stepUp.hint()),
                         stepUp.userSafeReason(),
                         stepUp.hint()));
 
@@ -1359,11 +1360,51 @@ public class DefaultConversationEngine implements ConversationEngine {
         return s.isBlank() ? null : s;
     }
 
+    private static String targetAddressForMethod(Principal p,
+            com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpHint hint) {
+        return switch (hint.method()) {
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.OtpEmail e ->
+                    stringClaim(p, "email");
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.OtpSmsSecondary s ->
+                    stringClaim(p, "phone_secondary");
+            // DeepLink doesn't need a per-user address — the URL is the
+            // delivery medium and the user sees it directly in chat. We pass
+            // the subject as a placeholder so the masking helper has something
+            // to work with.
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.DeepLink d ->
+                    p == null ? null : p.subject();
+            // Custom providers carry their own contact lookup; the engine
+            // can't know which claim to pull, so it hands the principal's
+            // subject as a placeholder and lets the provider decide.
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.Custom c ->
+                    p == null ? null : p.subject();
+        };
+    }
+
+    private static String maskForMethod(String address,
+            com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpHint hint) {
+        return switch (hint.method()) {
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.OtpEmail e ->
+                    maskEmail(address);
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.OtpSmsSecondary s ->
+                    maskPhone(address);
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.DeepLink d ->
+                    "[link sent]";
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpMethod.Custom c ->
+                    "***";
+        };
+    }
+
     private static String maskEmail(String email) {
         if (email == null) return "***";
         int at = email.indexOf('@');
         if (at <= 1) return "***" + (at < 0 ? "" : email.substring(at));
         return email.charAt(0) + "***" + email.substring(at);
+    }
+
+    private static String maskPhone(String phone) {
+        if (phone == null || phone.length() < 5) return "***";
+        return phone.substring(0, 2) + "***" + phone.substring(phone.length() - 4);
     }
 
     private Flux<TurnEvent> denialFlow(ToolDescriptor toolDescriptor,
