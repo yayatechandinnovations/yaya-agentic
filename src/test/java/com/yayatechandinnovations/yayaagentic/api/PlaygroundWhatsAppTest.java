@@ -87,7 +87,7 @@ class PlaygroundWhatsAppTest {
                 "profileId", "playground-wa-profile",
                 "profileVersion", 1);
         var receipt = client.post()
-                .uri("/v1/playground/whatsapp/{t}/inbound", TENANT)
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
@@ -110,7 +110,7 @@ class PlaygroundWhatsAppTest {
     @Test
     void outbound_poll_returns_empty_for_unknown_session() {
         var drain = client.get()
-                .uri("/v1/playground/whatsapp/{t}/outbound/{s}", TENANT, "no-such-session")
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/outbound/{s}", TENANT, "no-such-session")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(PlaygroundWhatsAppController.OutboundDrain.class)

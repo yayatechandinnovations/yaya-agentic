@@ -61,7 +61,7 @@ class _WhatsAppPlaygroundScreenState
     try {
       final dio = await ref.read(dioProvider.future);
       final res = await dio.get(
-          '/v1/playground/whatsapp/$tenant/outbound/$_sessionId',
+          '/v1/admin/tenants/$tenant/whatsapp-playground/outbound/$_sessionId',
           queryParameters:
               _lastSeenId == null ? null : {'after': _lastSeenId});
       final messages = (res.data['messages'] as List?) ?? const [];
@@ -116,7 +116,7 @@ class _WhatsAppPlaygroundScreenState
       final profileVersion = int.tryParse(parts.length > 1 ? parts[1] : '1') ?? 1;
       final dio = await ref.read(dioProvider.future);
       await dio.post(
-        '/v1/playground/whatsapp/$tenant/inbound',
+        '/v1/admin/tenants/$tenant/whatsapp-playground/inbound',
         data: {
           'text': text,
           'fromPhone': '+15558675309',
@@ -146,7 +146,7 @@ class _WhatsAppPlaygroundScreenState
     if (tenant == null) return;
     try {
       final dio = await ref.read(dioProvider.future);
-      await dio.delete('/v1/playground/whatsapp/$tenant/outbound/$_sessionId');
+      await dio.delete('/v1/admin/tenants/$tenant/whatsapp-playground/outbound/$_sessionId');
     } catch (_) {}
     setState(_resetSession);
   }

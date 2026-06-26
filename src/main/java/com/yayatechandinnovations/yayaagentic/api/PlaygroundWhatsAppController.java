@@ -27,18 +27,20 @@ import java.util.UUID;
 
 /**
  * Playground-only inbound + outbound surface for the simulated WhatsApp
- * sender. Tenant operators (ADMIN+) use these endpoints to exercise a
+ * sender. Tenant operators (MEMBER+) use these endpoints to exercise a
  * profile through the WhatsApp channel without a real Twilio dependency.
  *
- * <p>Signature verification is intentionally bypassed — the controller is
- * gated by the operator-tier workspace access, NOT by Twilio's HMAC. A
- * separate URL prefix ({@code /v1/playground/whatsapp/**}) keeps this path
- * fully out of the {@code /v1/channels/whatsapp/twilio/**} trust edge.
+ * <p>Mounted under {@code /v1/admin/**} so the {@code OperatorAuthWebFilter}
+ * populates the exchange's {@code OperatorContext} from the
+ * {@code YAYA_SESSION} cookie. {@code workspaceAccess.require} then resolves
+ * the operator and gates on tenant membership the same way every other
+ * admin-tier controller does. Signature verification is bypassed (this is
+ * not the Twilio trust edge — that lives at {@code /v1/channels/whatsapp/twilio/**}).
  *
  * <p>See {@code whatsapp-channel-design.md} §15.3.
  */
 @RestController
-@RequestMapping("/v1/playground/whatsapp/{tenantId}")
+@RequestMapping("/v1/admin/tenants/{tenantId}/whatsapp-playground")
 public class PlaygroundWhatsAppController {
 
     private final TenantGuard tenantGuard;
