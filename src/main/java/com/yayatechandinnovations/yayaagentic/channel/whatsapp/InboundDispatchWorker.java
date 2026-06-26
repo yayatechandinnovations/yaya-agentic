@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
+import com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
 import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
 import com.yayatechandinnovations.yayaagentic.channel.SyntheticToolIds;
@@ -82,6 +83,7 @@ public class InboundDispatchWorker {
     private final ChannelTracing tracing;
     private final int maxAudioMinutes;
     private final long maxAudioBytes;
+    private final StepUpCoordinator stepUp;
 
     public InboundDispatchWorker(
             @Qualifier("channelDispatchExecutor") ThreadPoolTaskExecutor executor,
@@ -97,7 +99,8 @@ public class InboundDispatchWorker {
             OptOutService optOuts,
             ChannelTracing tracing,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-minutes:5}") int maxAudioMinutes,
-            @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes) {
+            @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes,
+            StepUpCoordinator stepUp) {
         this.executor = executor;
         this.inbound = inbound;
         this.senders = senders;
@@ -112,6 +115,7 @@ public class InboundDispatchWorker {
         this.tracing = tracing;
         this.maxAudioMinutes = maxAudioMinutes;
         this.maxAudioBytes = maxAudioBytes;
+        this.stepUp = stepUp;
     }
 
     /**
@@ -341,12 +345,20 @@ public class InboundDispatchWorker {
         } else {
             captureEntities(sessionId, sender, row, transcription, policy);
             if (!userText.isBlank()) {
-                outboundDispatcher.dispatchTurn(
-                        new Ids.TenantId(row.getTenantId()),
-                        new SenderId(row.getSenderId()),
-                        row.getEndUserPhone(),
-                        sessionId,
-                        engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                // §6.6 — when an OTP-shaped pending exists for this session,
+                // interpret the inbound as the user's verification code BEFORE
+                // routing to the engine. The LLM never sees the OTP digits.
+                if (stepUp.hasOpenOtpPending(sessionId)
+                        && handleStepUpVerify(row, sessionId, userText)) {
+                    // Step-up dispatcher already sent the response; skip engine.
+                } else {
+                    outboundDispatcher.dispatchTurn(
+                            new Ids.TenantId(row.getTenantId()),
+                            new SenderId(row.getSenderId()),
+                            row.getEndUserPhone(),
+                            sessionId,
+                            engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                }
             }
         }
 
@@ -471,6 +483,53 @@ public class InboundDispatchWorker {
     }
 
     private record InteractiveSelection(String id, String label, String kind) {}
+
+    /**
+     * Intercept the inbound as a step-up OTP. Returns {@code true} when the
+     * inbound was consumed by the verification flow (and an appropriate
+     * outbound was dispatched); {@code false} when the body didn't match an
+     * OTP shape, in which case the worker falls through to the engine.
+     *
+     * <p>See {@code whatsapp-channel-auth-design.md} §6.4 + §6.6.
+     */
+    private boolean handleStepUpVerify(InboundMessageEntity row,
+                                       Ids.SessionId sessionId,
+                                       String userText) {
+        String trimmed = userText.trim();
+        if (!trimmed.matches("\\d{6}")) {
+            // Not OTP-shaped; the user typed something else (cancellation,
+            // unrelated message). Route to the engine — the bot can decide
+            // whether to remind them about the verification or pivot.
+            return false;
+        }
+        Ids.TenantId tenant = new Ids.TenantId(row.getTenantId());
+        StepUpCoordinator.VerifyOutcome outcome = stepUp.verifyOtp(
+                new StepUpCoordinator.VerifyContext(
+                        tenant,
+                        sessionId,
+                        "whatsapp:" + row.getEndUserPhone(),
+                        trimmed,
+                        Duration.ofHours(1)));
+
+        SenderId senderId = new SenderId(row.getSenderId());
+        String endUserPhone = row.getEndUserPhone();
+        String text = switch (outcome) {
+            case StepUpCoordinator.VerifyOutcome.NoPending p -> null;
+            case StepUpCoordinator.VerifyOutcome.Verified v ->
+                    "Verified! What would you like to do?";
+            case StepUpCoordinator.VerifyOutcome.WrongCode w -> w.attemptsRemaining() == 1
+                    ? "That code didn't match. You have 1 attempt left."
+                    : "That code didn't match. You have " + w.attemptsRemaining()
+                            + " attempts left.";
+            case StepUpCoordinator.VerifyOutcome.Exhausted e ->
+                    "Too many incorrect attempts. Please try the original request again "
+                            + "to get a fresh code.";
+        };
+        if (text == null) return false;
+        outboundDispatcher.dispatchGreeting(tenant, senderId, endUserPhone, sessionId,
+                text, List.of());
+        return true;
+    }
 
     private Map<String, String> authHeaders(InboundMessageEntity row, WhatsAppSender sender,
                                             String detectedLanguage,

@@ -75,6 +75,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final EntityMemory entityMemory;
     private final EntityConflictDetector entityConflictDetector;
     private final JsonPointerExtractor entityExtractor;
+    private final com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator stepUpCoordinator;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
@@ -99,7 +100,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      YayaAgenticProperties props,
                                      EntityMemory entityMemory,
                                      EntityConflictDetector entityConflictDetector,
-                                     ObjectMapper sharedObjectMapper) {
+                                     ObjectMapper sharedObjectMapper,
+                                     com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator stepUpCoordinator) {
         this.personalityProvider = personalityProvider;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
@@ -125,6 +127,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.entityMemory = entityMemory;
         this.entityConflictDetector = entityConflictDetector;
         this.entityExtractor = new JsonPointerExtractor(sharedObjectMapper);
+        this.stepUpCoordinator = stepUpCoordinator;
     }
 
     @Override
@@ -899,11 +902,16 @@ public class DefaultConversationEngine implements ConversationEngine {
                         Map.of("toolId", toolDescriptor.id().value(),
                                 "boundEntities", bindResult.bound())));
 
-        // Both Deny shapes route to denialFlow. W-A4: DenyOfferStepUp is
-        // treated exactly like Deny (LLM sees a normal denial). W-A5 will
-        // introduce a step-up coordinator that intercepts before this branch
-        // and mounts the verification flow; for now the hint is dropped after
-        // the chain's audit row logs it.
+        // W-A5: DenyOfferStepUp goes through the coordinator first. If the
+        // coordinator mounts a Pending verification cycle, the turn ends
+        // with a step-up prompt and the next inbound (the user's OTP) is
+        // intercepted BEFORE this code path runs again. Cool-off or
+        // unrecoverable provider failures fall through to denialFlow with a
+        // user-safe reason. Plain Deny always routes to denialFlow.
+        if (decision instanceof AuthzDecision.DenyOfferStepUp stepUp) {
+            return stepUpFlow(toolDescriptor, effectiveArgs, stepUp, personality, session,
+                    exec, recorder, turnId, message, callIdHint, llmDriven);
+        }
         if (decision.isDenied()) {
             return denialFlow(toolDescriptor, effectiveArgs, decision, personality, session, exec,
                     recorder, turnId, message, callIdHint, llmDriven);
@@ -1253,6 +1261,111 @@ public class DefaultConversationEngine implements ConversationEngine {
      * The {@code callIdHint} preserves the LLM's tool_use id so Anthropic's
      * continuation round matches results to calls correctly.
      */
+    /**
+     * W-A5 step-up: mount a verification cycle via {@link
+     * com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator}.
+     * On {@code Pending} outcome, end the turn with a step-up prompt — the
+     * next inbound is the user's OTP, which the worker intercepts BEFORE the
+     * engine runs. On {@code CoolOff} or {@code Unrecoverable}, fall through
+     * to {@link #denialFlow} so the user gets a normal refusal.
+     */
+    private Flux<TurnEvent> stepUpFlow(ToolDescriptor toolDescriptor,
+                                       Map<String, Object> args,
+                                       AuthzDecision.DenyOfferStepUp stepUp,
+                                       PersonalityFragment personality,
+                                       Session session,
+                                       ExecutionContext exec,
+                                       ConversationRecorder recorder,
+                                       Ids.TurnId turnId,
+                                       UserMessage message,
+                                       String callIdHint,
+                                       boolean llmDriven) {
+        String email = stringClaim(session.principal(), "email");
+        if (email == null) {
+            // No deliverable address — fall through to denial. The user-safe
+            // reason from the original DenyOfferStepUp explains why; we don't
+            // promise step-up.
+            return denialFlow(toolDescriptor, args, stepUp, personality, session, exec,
+                    recorder, turnId, message, callIdHint, llmDriven);
+        }
+
+        var outcome = stepUpCoordinator.handleDeny(
+                new com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator.HandleContext(
+                        session.tenant(),
+                        session.id(),
+                        null,                                  // sender id — channel-bound calls fill this in W-A6
+                        session.principal().subject(),
+                        email,
+                        maskEmail(email),
+                        stepUp.userSafeReason(),
+                        stepUp.hint()));
+
+        return switch (outcome) {
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator.HandleOutcome
+                    .Pending p -> emitStepUpPrompt(toolDescriptor, args, p, session, exec, recorder,
+                    turnId, message, callIdHint);
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator.HandleOutcome
+                    .CoolOff c -> denialFlow(toolDescriptor, args,
+                    new AuthzDecision.Deny(c.userSafeReason(), "step_up_cool_off"),
+                    personality, session, exec, recorder, turnId, message, callIdHint, llmDriven);
+            case com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator.HandleOutcome
+                    .Unrecoverable u -> denialFlow(toolDescriptor, args,
+                    new AuthzDecision.Deny(u.userSafeReason(), "step_up_unrecoverable"),
+                    personality, session, exec, recorder, turnId, message, callIdHint, llmDriven);
+        };
+    }
+
+    private Flux<TurnEvent> emitStepUpPrompt(ToolDescriptor toolDescriptor,
+                                             Map<String, Object> args,
+                                             com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator.HandleOutcome.Pending p,
+                                             Session session,
+                                             ExecutionContext exec,
+                                             ConversationRecorder recorder,
+                                             Ids.TurnId turnId,
+                                             UserMessage message,
+                                             String callIdHint) {
+        String callId = (callIdHint == null || callIdHint.isBlank())
+                ? UUID.randomUUID().toString() : callIdHint;
+        // ToolResult marked DENIED with a step_up: true marker — the LLM-side
+        // never sees a continuation round this turn, so the marker is for
+        // audit / replay (W-A9 admin timeline). The user-visible text is the
+        // separate Token below.
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("reason", "step_up_required");
+        payload.put("step_up", true);
+        payload.put("masked_target", p.maskedTargetAddress());
+        payload.put("pending_id", p.pendingId());
+        payload.put("audit_id", p.auditId());
+
+        Turn.ToolCall recordedCall = new Turn.ToolCall(callId, toolDescriptor.id(), args);
+        Turn.ToolResult recordedResult = new Turn.ToolResult(
+                callId, Turn.ToolResult.Status.DENIED, payload, null);
+
+        String spoken = p.userPromptHint();
+
+        return Flux.<TurnEvent>just(
+                        new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),
+                        new TurnEvent.ToolResult(callId, Turn.ToolResult.Status.DENIED, payload, null),
+                        new TurnEvent.Token(spoken))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
+                        List.of(recordedCall), List.of(recordedResult)));
+    }
+
+    private static String stringClaim(Principal p, String key) {
+        if (p == null || p.claims() == null) return null;
+        Object v = p.claims().get(key);
+        if (v == null) return null;
+        String s = v.toString();
+        return s.isBlank() ? null : s;
+    }
+
+    private static String maskEmail(String email) {
+        if (email == null) return "***";
+        int at = email.indexOf('@');
+        if (at <= 1) return "***" + (at < 0 ? "" : email.substring(at));
+        return email.charAt(0) + "***" + email.substring(at);
+    }
+
     private Flux<TurnEvent> denialFlow(ToolDescriptor toolDescriptor,
                                        Map<String, Object> args,
                                        AuthzDecision deny,

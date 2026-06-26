@@ -82,6 +82,16 @@ public class TenantEntity {
     @Column(name = "settings_json", columnDefinition = "jsonb", nullable = false)
     private String settingsJson = "{}";
 
+    /**
+     * Tenant-configured secondary communication channels — where step-up OTPs
+     * are delivered. Stored as JSON: {@code {emailRelay:{from:…,providerId:…},
+     * smsBackup:{providerId:…,fromNumber:…}}}. See
+     * {@code whatsapp-channel-auth-design.md} §9.5.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "secondary_comms_json", columnDefinition = "jsonb", nullable = false)
+    private String secondaryCommsJson = "{}";
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -149,4 +159,8 @@ public class TenantEntity {
     public void setSettingsJson(String v) { this.settingsJson = v; }
     public void setCreatedBy(String v) { this.createdBy = v; }
     public void setArchivedAt(OffsetDateTime v) { this.archivedAt = v; }
+    public String getSecondaryCommsJson() { return secondaryCommsJson; }
+    public void setSecondaryCommsJson(String v) {
+        this.secondaryCommsJson = v == null || v.isBlank() ? "{}" : v;
+    }
 }
