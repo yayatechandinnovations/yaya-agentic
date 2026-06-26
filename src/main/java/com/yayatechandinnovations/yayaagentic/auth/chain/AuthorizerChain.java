@@ -56,16 +56,29 @@ public class AuthorizerChain implements Authorizer {
             AuthzDecision decision = a.authorize(principal, requirement, args, ctx);
             trace.add(Map.of(
                     "authorizer", a.getClass().getSimpleName(),
-                    "decision", decision instanceof AuthzDecision.Allow ? "ALLOW" : "DENY"));
-            if (decision instanceof AuthzDecision.Deny deny) {
+                    "decision", decisionLabel(decision)));
+            // Both Deny shapes short-circuit the chain. DenyOfferStepUp carries
+            // a hint the engine MAY honor by mounting a verification flow, but
+            // that decision belongs upstream — here it's a denial just like
+            // plain Deny. NEVER skip the Step-Up variant or it could silently
+            // pass through and re-enter as Allow at the bottom of the loop.
+            if (decision.isDenied()) {
                 writeAudit(principal, ctx, args, "DENY",
-                        deny.userSafeReason(), deny.auditReason(), trace);
+                        decision.userSafeReason(), decision.auditReason(), trace);
                 return decision;
             }
         }
         writeAudit(principal, ctx, args, "ALLOW",
                 null, "all authorizers passed", trace);
         return AuthzDecision.Allow.none();
+    }
+
+    private static String decisionLabel(AuthzDecision decision) {
+        return switch (decision) {
+            case AuthzDecision.Allow a            -> "ALLOW";
+            case AuthzDecision.Deny d             -> "DENY";
+            case AuthzDecision.DenyOfferStepUp d  -> "DENY_OFFER_STEP_UP";
+        };
     }
 
     private void writeAudit(Principal principal, AuthzContext ctx, Object args,

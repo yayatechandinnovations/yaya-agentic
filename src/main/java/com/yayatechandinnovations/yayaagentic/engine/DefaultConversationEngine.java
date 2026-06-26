@@ -899,8 +899,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                         Map.of("toolId", toolDescriptor.id().value(),
                                 "boundEntities", bindResult.bound())));
 
-        if (decision instanceof AuthzDecision.Deny deny) {
-            return denialFlow(toolDescriptor, effectiveArgs, deny, personality, session, exec,
+        // Both Deny shapes route to denialFlow. W-A4: DenyOfferStepUp is
+        // treated exactly like Deny (LLM sees a normal denial). W-A5 will
+        // introduce a step-up coordinator that intercepts before this branch
+        // and mounts the verification flow; for now the hint is dropped after
+        // the chain's audit row logs it.
+        if (decision.isDenied()) {
+            return denialFlow(toolDescriptor, effectiveArgs, decision, personality, session, exec,
                     recorder, turnId, message, callIdHint, llmDriven);
         }
 
@@ -1250,7 +1255,7 @@ public class DefaultConversationEngine implements ConversationEngine {
      */
     private Flux<TurnEvent> denialFlow(ToolDescriptor toolDescriptor,
                                        Map<String, Object> args,
-                                       AuthzDecision.Deny deny,
+                                       AuthzDecision deny,
                                        PersonalityFragment personality,
                                        Session session,
                                        ExecutionContext exec,
@@ -1259,6 +1264,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                                        UserMessage message,
                                        String callIdHint,
                                        boolean llmDriven) {
+        if (!deny.isDenied()) {
+            throw new IllegalArgumentException(
+                    "denialFlow called with non-deny decision: " + deny.getClass().getSimpleName());
+        }
         String callId = (callIdHint == null || callIdHint.isBlank())
                 ? UUID.randomUUID().toString() : callIdHint;
         Map<String, Object> denialPayload = Map.of(

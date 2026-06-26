@@ -93,7 +93,10 @@ public class PgVectorRetriever implements Retriever {
                             ctx.execution().turnId(),
                             ctx.execution().traceId(),
                             Map.of("knowledgeSourceId", sid.value())));
-            if (decision instanceof AuthzDecision.Deny) {
+            // Both Deny shapes drop the knowledge source from retrieval. W-A4:
+            // DenyOfferStepUp is silently treated like Deny — RAG doesn't get
+            // a step-up affordance, and we don't leak source existence.
+            if (decision.isDenied()) {
                 denied.add(sid);
                 continue;
             }
