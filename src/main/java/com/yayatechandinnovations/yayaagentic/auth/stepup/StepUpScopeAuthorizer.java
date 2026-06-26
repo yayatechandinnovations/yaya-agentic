@@ -3,11 +3,13 @@ package com.yayatechandinnovations.yayaagentic.auth.stepup;
 import com.yayatechandinnovations.yayaagentic.auth.Authorizer;
 import com.yayatechandinnovations.yayaagentic.auth.AuthzContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthzDecision;
+import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.PermissionRequirement;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
@@ -48,9 +50,12 @@ import java.util.Set;
 public class StepUpScopeAuthorizer implements Authorizer {
 
     private final StepUpAuthorizerProperties props;
+    private final StepUpCoordinator coordinator;
 
-    public StepUpScopeAuthorizer(StepUpAuthorizerProperties props) {
+    public StepUpScopeAuthorizer(StepUpAuthorizerProperties props,
+                                 StepUpCoordinator coordinator) {
         this.props = props;
+        this.coordinator = coordinator;
     }
 
     @Override
@@ -71,7 +76,20 @@ public class StepUpScopeAuthorizer implements Authorizer {
             return AuthzDecision.Allow.none();
         }
         StepUpAuthorizerProperties.Rule rule = match.get();
-        Set<String> have = principal.scopes() == null ? Set.of() : principal.scopes();
+        Set<String> have = new HashSet<>(principal.scopes() == null
+                ? Set.of() : principal.scopes());
+        // The session may have an active step-up elevation row whose scopes
+        // aren't on the cached Session.principal yet. Merge them in for the
+        // duration of THIS authorize() call so a verified OTP / deep link
+        // makes the next tool call go through without forcing the user to
+        // start a new conversation.
+        if (ctx != null && ctx.sessionId() != null) {
+            coordinator.activeElevation(new Ids.SessionId(ctx.sessionId().value()))
+                    .ifPresent(elevation -> {
+                        String[] scopes = elevation.getAddedScopes();
+                        if (scopes != null) have.addAll(Arrays.asList(scopes));
+                    });
+        }
         String requiredElevation = "stepup:" + rule.audience();
         if (have.contains(requiredElevation)) {
             return AuthzDecision.Allow.none();
