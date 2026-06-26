@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.InboundDispatchWorker;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PhoneToPrincipalResolverRegistry;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
@@ -50,6 +53,7 @@ public class PlaygroundWhatsAppController {
     private final InboundDispatchWorker worker;
     private final PlaygroundOutboundSink sink;
     private final ObjectMapper json;
+    private final PhoneToPrincipalResolverRegistry resolverRegistry;
 
     public PlaygroundWhatsAppController(TenantGuard tenantGuard,
                                         WorkspaceAccessHelper workspaceAccess,
@@ -57,7 +61,8 @@ public class PlaygroundWhatsAppController {
                                         InboundMessageRepository inbound,
                                         InboundDispatchWorker worker,
                                         PlaygroundOutboundSink sink,
-                                        ObjectMapper json) {
+                                        ObjectMapper json,
+                                        PhoneToPrincipalResolverRegistry resolverRegistry) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.playgroundSenders = playgroundSenders;
@@ -65,7 +70,15 @@ public class PlaygroundWhatsAppController {
         this.worker = worker;
         this.sink = sink;
         this.json = json;
+        this.resolverRegistry = resolverRegistry;
     }
+
+    /** Reserved key inside {@code raw_payload_json} the
+     *  {@code InboundDispatchWorker} reads to stamp the playground identity
+     *  override header. Never collides with Twilio fields — Twilio's are
+     *  TitleCase. */
+    public static final String RAW_PLAYGROUND_POLICY_OVERRIDE_KEY =
+            "_playgroundDefaultPrincipalPolicyOverride";
 
     /** Forge a Twilio-shape inbound payload through the same dispatch worker
      *  the real webhook controller uses. Runs the worker synchronously so the
@@ -104,6 +117,14 @@ public class PlaygroundWhatsAppController {
         if (req.interactiveId() != null && !req.interactiveId().isBlank()) {
             raw.put("ButtonText", req.text());
             raw.put("ButtonPayload", req.interactiveId());
+        }
+        if (req.defaultPrincipalPolicyOverride() != null) {
+            validatePolicyOverride(req.defaultPrincipalPolicyOverride());
+            // Convert through Jackson's typed serializer so @JsonTypeInfo
+            // emits the `kind` discriminator — a raw put(...) would lose it
+            // because the static type at the map entry is Object.
+            raw.put(RAW_PLAYGROUND_POLICY_OVERRIDE_KEY,
+                    json.convertValue(req.defaultPrincipalPolicyOverride(), Map.class));
         }
 
         InboundMessageEntity row = new InboundMessageEntity(
@@ -160,8 +181,37 @@ public class PlaygroundWhatsAppController {
         }
     }
 
+    /** Reject operator-supplied overrides that don't make sense for the
+     *  playground — same set of rules the materializer enforces at mint time,
+     *  surfaced here so the operator sees a clear 400 instead of a server-side
+     *  exception arriving as a worker failure. */
+    private void validatePolicyOverride(DefaultPrincipalPolicy override) {
+        switch (override) {
+            case DefaultPrincipalPolicy.Anonymous a -> { /* always valid */ }
+            case DefaultPrincipalPolicy.PhoneAsPrincipal p -> {
+                for (String claim : p.additionalClaims().keySet()) {
+                    if (PrincipalPolicyMaterializer.RESERVED_CLAIM_KEYS.contains(claim)) {
+                        throw AdminApiException.badRequest("reserved_claim_in_override",
+                                "additionalClaims contains reserved channel key '"
+                                        + claim + "'");
+                    }
+                }
+            }
+            case DefaultPrincipalPolicy.LookupPrincipal l -> {
+                boolean known = resolverRegistry.all().stream()
+                        .anyMatch(r -> r.id().equals(l.resolverId()));
+                if (!known) {
+                    throw AdminApiException.badRequest("unknown_resolver",
+                            "no phone-to-principal resolver named '"
+                                    + l.resolverId() + "' is registered");
+                }
+            }
+        }
+    }
+
     public record InboundRequest(String text, String fromPhone, String interactiveId,
-                                 String profileId, Integer profileVersion) {}
+                                 String profileId, Integer profileVersion,
+                                 DefaultPrincipalPolicy defaultPrincipalPolicyOverride) {}
     public record InboundReceipt(String messageSid, Instant receivedAt) {}
     public record OutboundDrain(String sessionId,
                                 List<PlaygroundOutboundSink.Message> messages) {}

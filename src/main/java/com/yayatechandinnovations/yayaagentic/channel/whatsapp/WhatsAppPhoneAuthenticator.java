@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
@@ -46,13 +48,26 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
     public static final String HEADER_LOCALE       = "x-channel-locale";
     public static final String HEADER_TWILIO_FROM  = "x-channel-twilio-contact-sid";
 
+    /**
+     * Playground-only: when present, the authenticator skips the binding
+     * policy lookup and decodes this header's JSON payload as the override
+     * {@link DefaultPrincipalPolicy}. The {@code InboundDispatchWorker}
+     * stamps it from a reserved key in the playground inbound's raw payload;
+     * real Twilio inbound never carries it.
+     */
+    public static final String HEADER_PLAYGROUND_POLICY_OVERRIDE =
+            "x-playground-default-principal-policy-override";
+
     private final BindingPolicyResolver bindingPolicyResolver;
     private final PrincipalPolicyMaterializer materializer;
+    private final ObjectMapper json;
 
     public WhatsAppPhoneAuthenticator(BindingPolicyResolver bindingPolicyResolver,
-                                      PrincipalPolicyMaterializer materializer) {
+                                      PrincipalPolicyMaterializer materializer,
+                                      ObjectMapper json) {
         this.bindingPolicyResolver = bindingPolicyResolver;
         this.materializer = materializer;
+        this.json = json;
     }
 
     @Override
@@ -71,9 +86,27 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
             throw new AuthenticationException(name() + ": malformed end-user phone");
         }
 
-        DefaultPrincipalPolicy policy =
-                bindingPolicyResolver.policyFor(ctx.tenant(), new SenderId(sender));
+        DefaultPrincipalPolicy policy = playgroundOverridePolicy(ctx)
+                .orElseGet(() -> bindingPolicyResolver.policyFor(
+                        ctx.tenant(), new SenderId(sender)));
         return Optional.of(materializer.materialize(policy, from, sender, ctx));
+    }
+
+    /** Decode the playground override header when present. Returns empty for
+     *  real inbound (the worker never stamps the header). */
+    private Optional<DefaultPrincipalPolicy> playgroundOverridePolicy(AuthContext ctx)
+            throws AuthenticationException {
+        String raw = headerCi(ctx, HEADER_PLAYGROUND_POLICY_OVERRIDE);
+        if (raw == null || raw.isBlank()) return Optional.empty();
+        try {
+            return Optional.of(json.readValue(raw, DefaultPrincipalPolicy.class));
+        } catch (JsonProcessingException e) {
+            // The worker is the only writer; a malformed payload here is a
+            // platform-side bug (or a hostile injection attempt against a
+            // non-playground caller). Refuse rather than silently degrade.
+            throw new AuthenticationException(
+                    name() + ": malformed playground override header");
+        }
     }
 
     private static String headerCi(AuthContext ctx, String name) {

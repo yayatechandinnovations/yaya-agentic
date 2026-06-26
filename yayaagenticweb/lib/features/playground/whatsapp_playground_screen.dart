@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/api_client.dart';
 import '../../app/selected_tenant.dart';
+import '../../models/admin/channel_binding.dart';
+import '../admin/channel_bindings/channel_bindings_screen.dart'
+    show phonePrincipalResolversProvider;
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import '../admin/shared/admin_shared.dart';
 
@@ -32,6 +35,14 @@ class _WhatsAppPlaygroundScreenState
   final List<_Message> _transcript = [];
   Timer? _pollTimer;
   bool _sending = false;
+
+  // Identity override — when 'default-policy', _send omits the field and the
+  // dispatch worker uses the binding's actual policy.
+  String _identityKind = 'default-policy';
+  final List<String> _identityScopes = [];
+  final Map<String, String> _identityClaims = {};
+  String? _identityResolverId;
+  bool _identityDenyOnUnknown = true;
 
   @override
   void initState() {
@@ -115,6 +126,7 @@ class _WhatsAppPlaygroundScreenState
       final profileId = parts[0];
       final profileVersion = int.tryParse(parts.length > 1 ? parts[1] : '1') ?? 1;
       final dio = await ref.read(dioProvider.future);
+      final override = _buildIdentityOverride();
       await dio.post(
         '/v1/admin/tenants/$tenant/whatsapp-playground/inbound',
         data: {
@@ -123,6 +135,7 @@ class _WhatsAppPlaygroundScreenState
           'profileId': profileId,
           'profileVersion': profileVersion,
           if (interactiveId != null) 'interactiveId': interactiveId,
+          if (override != null) 'defaultPrincipalPolicyOverride': override.toJson(),
         },
         options: Options(contentType: 'application/json'),
       );
@@ -139,6 +152,77 @@ class _WhatsAppPlaygroundScreenState
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  DefaultPrincipalPolicyWire? _buildIdentityOverride() {
+    switch (_identityKind) {
+      case 'anonymous':
+        return DefaultPrincipalPolicyWire.anonymous();
+      case 'phone-as-principal':
+        return DefaultPrincipalPolicyWire.phoneAsPrincipal(
+          additionalScopes: List.unmodifiable(_identityScopes),
+          additionalClaims:
+              Map<String, dynamic>.unmodifiable(_identityClaims),
+        );
+      case 'lookup-principal':
+        if (_identityResolverId == null || _identityResolverId!.isEmpty) {
+          return null;   // omits the override; binding default kicks in
+        }
+        return DefaultPrincipalPolicyWire.lookupPrincipal(
+          resolverId: _identityResolverId!,
+          denyOnUnknown: _identityDenyOnUnknown,
+        );
+      default:
+        return null;
+    }
+  }
+
+  String _identitySummary() {
+    switch (_identityKind) {
+      case 'anonymous':
+        return 'Force Anonymous';
+      case 'phone-as-principal':
+        final extra = _identityScopes.length + _identityClaims.length;
+        return extra == 0
+            ? 'Force Phone-as-principal'
+            : 'Force Phone-as-principal · +$extra';
+      case 'lookup-principal':
+        return _identityResolverId == null
+            ? 'Force Lookup principal · (pick resolver)'
+            : 'Force Lookup principal · ${_identityResolverId!}';
+      default:
+        return 'Use binding default';
+    }
+  }
+
+  Future<void> _openIdentityEditor() async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    final resolvers = ref.read(phonePrincipalResolversProvider(tenant));
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _IdentityEditorDialog(
+        initialKind: _identityKind,
+        initialScopes: List.from(_identityScopes),
+        initialClaims: Map.from(_identityClaims),
+        initialResolverId: _identityResolverId,
+        initialDenyOnUnknown: _identityDenyOnUnknown,
+        resolvers: resolvers,
+        onApply: (kind, scopes, claims, resolverId, denyOnUnknown) {
+          setState(() {
+            _identityKind = kind;
+            _identityScopes
+              ..clear()
+              ..addAll(scopes);
+            _identityClaims
+              ..clear()
+              ..addAll(claims);
+            _identityResolverId = resolverId;
+            _identityDenyOnUnknown = denyOnUnknown;
+          });
+        },
+      ),
+    );
   }
 
   Future<void> _resetConversation() async {
@@ -207,7 +291,26 @@ class _WhatsAppPlaygroundScreenState
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.fingerprint, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Identity: ${_identitySummary()}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _openIdentityEditor,
+                icon: const Icon(Icons.edit, size: 16),
+                label: const Text('Edit identity'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Expanded(
             child: Card(
               child: Padding(
@@ -260,6 +363,315 @@ class _Message {
   final String body;
   final Map<String, dynamic>? interactive;
   final bool isError;
+}
+
+class _IdentityEditorDialog extends StatefulWidget {
+  const _IdentityEditorDialog({
+    required this.initialKind,
+    required this.initialScopes,
+    required this.initialClaims,
+    required this.initialResolverId,
+    required this.initialDenyOnUnknown,
+    required this.resolvers,
+    required this.onApply,
+  });
+
+  final String initialKind;
+  final List<String> initialScopes;
+  final Map<String, String> initialClaims;
+  final String? initialResolverId;
+  final bool initialDenyOnUnknown;
+  final AsyncValue<List<PhonePrincipalResolverSummary>> resolvers;
+  final void Function(
+    String kind,
+    List<String> scopes,
+    Map<String, String> claims,
+    String? resolverId,
+    bool denyOnUnknown,
+  ) onApply;
+
+  @override
+  State<_IdentityEditorDialog> createState() => _IdentityEditorDialogState();
+}
+
+class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
+  late String _kind;
+  late List<String> _scopes;
+  late Map<String, String> _claims;
+  String? _resolverId;
+  late bool _denyOnUnknown;
+  final _scopeCtrl = TextEditingController();
+  final _claimKeyCtrl = TextEditingController();
+  final _claimValueCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _kind = widget.initialKind;
+    _scopes = List.from(widget.initialScopes);
+    _claims = Map.from(widget.initialClaims);
+    _resolverId = widget.initialResolverId;
+    _denyOnUnknown = widget.initialDenyOnUnknown;
+  }
+
+  @override
+  void dispose() {
+    _scopeCtrl.dispose();
+    _claimKeyCtrl.dispose();
+    _claimValueCtrl.dispose();
+    super.dispose();
+  }
+
+  void _addScope() {
+    final s = _scopeCtrl.text.trim();
+    if (s.isEmpty || _scopes.contains(s)) return;
+    setState(() {
+      _scopes.add(s);
+      _scopeCtrl.clear();
+    });
+  }
+
+  void _addClaim() {
+    final k = _claimKeyCtrl.text.trim();
+    final v = _claimValueCtrl.text.trim();
+    if (k.isEmpty || v.isEmpty) return;
+    if (DefaultPrincipalPolicyWire.reservedClaimKeys.contains(k)) {
+      showSnack(context,
+          'Reserved channel claim — pick a different key '
+          '(${DefaultPrincipalPolicyWire.reservedClaimKeys.join(", ")}).',
+          error: true);
+      return;
+    }
+    setState(() {
+      _claims[k] = v;
+      _claimKeyCtrl.clear();
+      _claimValueCtrl.clear();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Playground identity'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                  'Override how the dispatch worker mints the end-user '
+                  "Principal. Pick 'Use binding default' to run with the "
+                  'binding policy unchanged.',
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: 'default-policy',
+                groupValue: _kind,
+                onChanged: (v) => setState(() => _kind = v ?? 'default-policy'),
+                title: const Text('Use binding default'),
+                subtitle: const Text("Don't override; production-faithful."),
+              ),
+              RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: 'anonymous',
+                groupValue: _kind,
+                onChanged: (v) => setState(() => _kind = v ?? 'anonymous'),
+                title: const Text('Force Anonymous'),
+                subtitle: const Text('Channel scopes only.'),
+              ),
+              RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: 'phone-as-principal',
+                groupValue: _kind,
+                onChanged: (v) =>
+                    setState(() => _kind = v ?? 'phone-as-principal'),
+                title: const Text('Force Phone as principal'),
+                subtitle: const Text(
+                    'Phone is the identity; supply extra scopes/claims.'),
+              ),
+              if (_kind == 'phone-as-principal') _phoneAsPrincipalEditor(),
+              RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: 'lookup-principal',
+                groupValue: _kind,
+                onChanged: (v) =>
+                    setState(() => _kind = v ?? 'lookup-principal'),
+                title: const Text('Force Lookup principal'),
+                subtitle: const Text(
+                    'Resolve phone via a registered tenant resolver.'),
+              ),
+              if (_kind == 'lookup-principal') _lookupPrincipalEditor(),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            widget.onApply(
+                _kind, _scopes, _claims, _resolverId, _denyOnUnknown);
+            Navigator.of(context).pop();
+          },
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+
+  Widget _phoneAsPrincipalEditor() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 4, 0, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Additional scopes',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final s in _scopes)
+                InputChip(
+                  label: Text(s),
+                  onDeleted: () => setState(() => _scopes.remove(s)),
+                ),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _scopeCtrl,
+                  decoration: const InputDecoration(
+                      isDense: true, hintText: 'e.g. order:read'),
+                  onSubmitted: (_) => _addScope(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _addScope,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text('Additional claims',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final e in _claims.entries)
+                InputChip(
+                  label: Text('${e.key}: ${e.value}'),
+                  onDeleted: () => setState(() => _claims.remove(e.key)),
+                ),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(
+                  child: TextField(
+                controller: _claimKeyCtrl,
+                decoration: const InputDecoration(
+                    isDense: true, hintText: 'claim key'),
+              )),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: TextField(
+                controller: _claimValueCtrl,
+                decoration: const InputDecoration(
+                    isDense: true, hintText: 'value'),
+                onSubmitted: (_) => _addClaim(),
+              )),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _addClaim,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add'),
+              ),
+            ],
+          ),
+          Text(
+            'Reserved: ${DefaultPrincipalPolicyWire.reservedClaimKeys.join(", ")}.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lookupPrincipalEditor() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 4, 0, 8),
+      child: widget.resolvers.when(
+        loading: () => const LinearProgressIndicator(),
+        error: (e, _) => Text('Could not load resolvers: ${formatError(e)}',
+            style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        data: (list) {
+          if (list.isEmpty) {
+            return Text(
+                'No phone-to-principal resolvers are registered on this '
+                'instance. Force Lookup is unavailable.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.error));
+          }
+          final known = list.map((r) => r.id).toSet();
+          final selected =
+              (_resolverId != null && known.contains(_resolverId!)) ? _resolverId : null;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: selected,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                    labelText: 'Phone-to-principal resolver',
+                    isDense: true),
+                items: [
+                  for (final r in list)
+                    DropdownMenuItem(
+                      value: r.id,
+                      child: Text(r.description.isEmpty
+                          ? r.id
+                          : '${r.id} — ${r.description}'),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _resolverId = v),
+              ),
+              SwitchListTile.adaptive(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: _denyOnUnknown,
+                onChanged: (v) => setState(() => _denyOnUnknown = v),
+                title: const Text('Deny unknown phones'),
+                subtitle: const Text(
+                    'When OFF, unknown phones fall back to Anonymous.'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _MessageBubble extends StatelessWidget {

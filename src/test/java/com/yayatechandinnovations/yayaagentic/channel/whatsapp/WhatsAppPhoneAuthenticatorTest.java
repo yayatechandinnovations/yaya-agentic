@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
@@ -15,6 +16,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,8 +42,9 @@ class WhatsAppPhoneAuthenticatorTest {
             new PhoneToPrincipalResolverRegistry(List.of(), Duration.ofMinutes(5));
     private final PrincipalPolicyMaterializer materializer =
             new PrincipalPolicyMaterializer(registry);
+    private final ObjectMapper json = new ObjectMapper();
     private final WhatsAppPhoneAuthenticator auth =
-            new WhatsAppPhoneAuthenticator(resolver, materializer);
+            new WhatsAppPhoneAuthenticator(resolver, materializer, json);
 
     @Test
     void mints_principal_when_channel_headers_present() throws AuthenticationException {
@@ -123,6 +126,69 @@ class WhatsAppPhoneAuthenticatorTest {
         // channel-reserved claims still stamped
         assertThat(p.claims()).containsEntry("phone", "+15551234567");
         assertThat(p.claims()).containsEntry("channel.sender", "snd_x");
+    }
+
+    @Test
+    void playground_override_header_short_circuits_binding_lookup()
+            throws Exception {
+        // The binding would say PhoneAsPrincipal with one scope...
+        resolver.thenReturn(new DefaultPrincipalPolicy.PhoneAsPrincipal(
+                Set.of("order:read"), Map.of()));
+        // ...but the override pins Anonymous; we expect baseline-only.
+        String overrideJson = json.writeValueAsString(
+                new DefaultPrincipalPolicy.Anonymous());
+        AuthContext ctx = new AuthContext(
+                new Ids.TenantId("acme"),
+                Map.of(
+                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
+                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
+                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
+                        overrideJson
+                ),
+                Optional.empty());
+        Principal p = auth.tryAuthenticate(ctx).orElseThrow();
+        // Anonymous → no extra scopes
+        assertThat(p.scopes()).containsExactlyInAnyOrder(
+                "channel:whatsapp", "channel:read");
+        // Resolver was never consulted because the override won
+        assertThat(resolver.calls.get()).isZero();
+    }
+
+    @Test
+    void playground_override_header_can_force_phone_as_principal()
+            throws Exception {
+        String overrideJson = json.writeValueAsString(
+                new DefaultPrincipalPolicy.PhoneAsPrincipal(
+                        Set.of("shipment:read"),
+                        Map.of("role", "operator-test")));
+        AuthContext ctx = new AuthContext(
+                new Ids.TenantId("acme"),
+                Map.of(
+                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
+                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
+                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
+                        overrideJson
+                ),
+                Optional.empty());
+        Principal p = auth.tryAuthenticate(ctx).orElseThrow();
+        assertThat(p.scopes()).contains("shipment:read");
+        assertThat(p.claims()).containsEntry("role", "operator-test");
+    }
+
+    @Test
+    void playground_override_header_with_malformed_json_throws_authentication_exception() {
+        AuthContext ctx = new AuthContext(
+                new Ids.TenantId("acme"),
+                Map.of(
+                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
+                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
+                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
+                        "not even json"
+                ),
+                Optional.empty());
+        assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
+                .isInstanceOf(AuthenticationException.class)
+                .hasMessageContaining("malformed playground override header");
     }
 
     @Test
