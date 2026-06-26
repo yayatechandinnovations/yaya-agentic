@@ -35,4 +35,12 @@ public interface StepUpPendingRepository extends JpaRepository<StepUpPendingEnti
     @Query("SELECT p FROM StepUpPendingEntity p " +
            "WHERE p.completion IS NULL AND p.expiresAt < :cutoff")
     List<StepUpPendingEntity> findExpiredOpen(@Param("cutoff") OffsetDateTime cutoff);
+
+    /** Look up the open deep-link pending row matching the JTI carried by the
+     *  callback's JWT. JTIs are globally unique. */
+    @WorkspaceUnscoped("deep_link_jti is globally unique (UUID v4 minted by yaya-agentic)")
+    @Query("SELECT p FROM StepUpPendingEntity p " +
+           "WHERE p.deepLinkJti = :jti " +
+           "  AND p.completion IS NULL")
+    Optional<StepUpPendingEntity> findOpenByDeepLinkJti(@Param("jti") String jti);
 }

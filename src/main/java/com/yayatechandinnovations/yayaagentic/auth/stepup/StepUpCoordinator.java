@@ -212,6 +212,92 @@ public class StepUpCoordinator {
         return VerifyOutcome.noPending();
     }
 
+    /**
+     * Callback endpoint call site: verify a JWT delivered by the tenant's web
+     * app after the user completed OIDC there. Found by JTI, not session id —
+     * the URL the user clicked carries the JTI that names the pending row.
+     *
+     * <p>Returns the same {@link VerifyOutcome} shape as the OTP path so the
+     * callback controller doesn't need to switch on which verification path
+     * succeeded.
+     */
+    @Transactional
+    public VerifyOutcome verifyDeepLinkCallback(String jwtToken) {
+        StepUpProvider provider = providersByMethod.get(StepUpMethod.DeepLink.class);
+        if (provider == null) {
+            return VerifyOutcome.noPending();
+        }
+        StepUpPendingEntity row = pending.findOpenByDeepLinkJti(extractJti(jwtToken))
+                .orElse(null);
+        if (row == null) return VerifyOutcome.noPending();
+        if (isExpired(row)) {
+            row.setCompletion("expired");
+            row.setCompletedAt(now());
+            pending.save(row);
+            writeAuditFromPending(new Ids.TenantId(row.getTenantId()),
+                    new Ids.SessionId(row.getSessionId()), row, "expired",
+                    "anonymous", null);
+            return VerifyOutcome.noPending();
+        }
+
+        StepUpHint hint = new StepUpHint(
+                new StepUpMethod.DeepLink(),
+                row.getAudience(),
+                Duration.ofHours(1),
+                Map.of());
+        StepUpProvider.VerifyResult res = provider.verify(
+                new StepUpProvider.StepUpVerifyContext(
+                        new Ids.TenantId(row.getTenantId()),
+                        new Ids.SessionId(row.getSessionId()),
+                        row.getAudience(),
+                        hint,
+                        null,                          // no OTP hash for DeepLink
+                        row.getDeepLinkJti(),
+                        jwtToken));
+
+        row.setAttempts(row.getAttempts() + 1);
+        if (res.success()) {
+            row.setCompletion("verified");
+            row.setCompletedAt(now());
+            row.setElevatedSubject(res.elevatedSubject());
+            row.setAddedScopes(res.addedScopes().toArray(new String[0]));
+            row.setAddedClaimsJson(writeJson(res.addedClaims()));
+            pending.save(row);
+            writeElevation(row,
+                    new VerifyContext(
+                            new Ids.TenantId(row.getTenantId()),
+                            new Ids.SessionId(row.getSessionId()),
+                            "anonymous", jwtToken, Duration.ofHours(1)),
+                    res);
+            Long auditId = writeAuditFromPending(
+                    new Ids.TenantId(row.getTenantId()),
+                    new Ids.SessionId(row.getSessionId()), row,
+                    "verified", "anonymous", res.elevatedSubject());
+            return VerifyOutcome.verified(row.getAudience(),
+                    res.elevatedSubject(), res.addedScopes(), res.addedClaims(),
+                    auditId);
+        }
+        pending.save(row);
+        writeAuditFromPending(
+                new Ids.TenantId(row.getTenantId()),
+                new Ids.SessionId(row.getSessionId()), row,
+                "failed:" + res.auditReason(), "anonymous", null);
+        return VerifyOutcome.wrongCode(row.getAudience(),
+                Math.max(0, row.getMaxAttempts() - row.getAttempts()));
+    }
+
+    /** Best-effort JTI extraction from a signed JWT — used for the pending-row
+     *  lookup. The provider re-verifies the full signature; this just gives us
+     *  the lookup key without forcing JWT parsing into the coordinator. */
+    private static String extractJti(String jwt) {
+        if (jwt == null) return "";
+        try {
+            return com.nimbusds.jwt.SignedJWT.parse(jwt).getJWTClaimsSet().getJWTID();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** Worker call site: is there an active elevation for this session? Used
      *  to merge scopes/claims into the Principal the authenticator produces. */
     public Optional<ChannelSessionElevationEntity> activeElevation(Ids.SessionId sessionId) {
