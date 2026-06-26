@@ -183,27 +183,46 @@ class _BootstrapSplash extends StatelessWidget {
 // App shell — wraps every authenticated route with the nav rail + top bar.
 // ---------------------------------------------------------------------------
 
-class _NavItem {
-  const _NavItem(
-    this.label,
-    this.icon,
-    this.selectedIcon,
-    this.location, {
-    this.platformOnly = false,
-  });
+/// Common surface for both leaf nav items and expandable groups.
+sealed class _NavEntry {
+  const _NavEntry(this.label, this.icon, this.selectedIcon, {this.platformOnly = false});
   final String label;
   final IconData icon;
   final IconData selectedIcon;
-  final String location;
 
-  /// True for surfaces that operate above the workspace plane — the
-  /// platform-admin cross-tenant view and the bootstrap / HTTP-delegate
-  /// operator-auth config. Hidden from regular users; even direct
-  /// navigation to the route is bounced (see redirect below).
+  /// Platform-tier-only entries are filtered out for non-platform-admin users
+  /// (the route redirect below also bounces direct URL hits).
   final bool platformOnly;
 }
 
-const _navItems = <_NavItem>[
+/// A single nav destination. Tapping navigates to {@code location}.
+class _NavItem extends _NavEntry {
+  const _NavItem(
+    super.label,
+    super.icon,
+    super.selectedIcon,
+    this.location, {
+    super.platformOnly,
+  });
+  final String location;
+}
+
+/// A collapsible group with a header tile and a list of child destinations.
+/// Auto-expanded when one of the children matches the current route. Groups
+/// themselves are never platform-only — the platform-only flag lives on the
+/// children, since hiding a whole group from non-platform admins is a UX
+/// choice we don't currently need (and the redirect already protects routes).
+class _NavGroup extends _NavEntry {
+  const _NavGroup(
+    super.label,
+    super.icon,
+    super.selectedIcon, {
+    required this.children,
+  });
+  final List<_NavItem> children;
+}
+
+const _navItems = <_NavEntry>[
   _NavItem('Playground', Icons.chat_outlined, Icons.chat, '/playground'),
   _NavItem('WhatsApp playground', Icons.phone_iphone_outlined, Icons.phone_iphone, '/playground/whatsapp'),
   _NavItem('Workspaces', Icons.workspaces_outline, Icons.workspaces, '/workspaces'),
@@ -217,10 +236,15 @@ const _navItems = <_NavItem>[
   _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
   _NavItem('JWT secrets', Icons.key_outlined, Icons.key, '/admin/jwt-secrets'),
   _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
-  _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
-  _NavItem('Channel bindings', Icons.swap_horiz_outlined, Icons.swap_horiz, '/admin/channel-bindings'),
-  _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
-  _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),
+  // Channel surface — WhatsApp is the only BSP today; the group is named
+  // generically so SMS / Telegram / Meta-Cloud slot in beside WhatsApp
+  // without nav churn.
+  _NavGroup('Inbound channels', Icons.inbox_outlined, Icons.inbox, children: [
+    _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
+    _NavItem('Bindings', Icons.swap_horiz_outlined, Icons.swap_horiz, '/admin/channel-bindings'),
+    _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
+    _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),
+  ]),
   _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
   _NavItem('Operator auth', Icons.admin_panel_settings_outlined,
@@ -228,6 +252,7 @@ const _navItems = <_NavItem>[
       platformOnly: true),
   _NavItem('Settings', Icons.tune_outlined, Icons.tune, '/settings'),
 ];
+
 
 /// Routes that should bounce back to `/playground` when a non-platform-admin
 /// lands on them directly (typed URL, deep link). Mirrors the platformOnly
@@ -240,13 +265,6 @@ const _platformOnlyRoutes = <String>{
 class _AppShell extends ConsumerWidget {
   const _AppShell({required this.child});
   final Widget child;
-
-  int _selectedIndex(String location, List<_NavItem> items) {
-    for (var i = 0; i < items.length; i++) {
-      if (location.startsWith(items[i].location)) return i;
-    }
-    return 0;
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -263,12 +281,24 @@ class _AppShell extends ConsumerWidget {
     final isPlatformAdmin =
         auth is AuthAuthenticated && auth.operator.platformAdmin;
 
-    // Strip platform-only items for regular users so the nav rail doesn't
-    // dangle dead links. The redirect below also bounces direct URL hits.
-    final visibleItems = isPlatformAdmin
+    // Strip platform-only entries (top-level AND nested) for regular users
+    // so the nav doesn't dangle dead links. The redirect below also bounces
+    // direct URL hits.
+    final visibleEntries = isPlatformAdmin
         ? _navItems
-        : _navItems.where((i) => !i.platformOnly).toList();
-    final selected = _selectedIndex(location, visibleItems);
+        : _navItems
+            .where((e) => !e.platformOnly)
+            .map<_NavEntry>((e) {
+              if (e is _NavGroup) {
+                return _NavGroup(e.label, e.icon, e.selectedIcon,
+                    children: e.children
+                        .where((c) => !c.platformOnly)
+                        .toList());
+              }
+              return e;
+            })
+            .where((e) => e is! _NavGroup || e.children.isNotEmpty)
+            .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -281,22 +311,200 @@ class _AppShell extends ConsumerWidget {
       ),
       body: Row(
         children: [
-          NavigationRail(
-            extended: wide,
-            selectedIndex: selected,
-            onDestinationSelected: (i) => context.go(visibleItems[i].location),
-            labelType: wide ? NavigationRailLabelType.none : NavigationRailLabelType.all,
-            destinations: visibleItems
-                .map((item) => NavigationRailDestination(
-                      icon: Icon(item.icon),
-                      selectedIcon: Icon(item.selectedIcon),
-                      label: Text(item.label),
-                    ))
-                .toList(),
+          _SideNav(
+            entries: visibleEntries,
+            currentLocation: location,
+            wide: wide,
+            onSelect: context.go,
           ),
           const VerticalDivider(width: 1),
           Expanded(child: child),
         ],
+      ),
+    );
+  }
+}
+
+/// Custom side nav supporting both leaf items and expandable groups. Built
+/// against the M3 NavigationRail visual language: same widths, same icon
+/// sizes, same selected-state pill. Lives in this file because the only
+/// caller is {@link _AppShell}.
+class _SideNav extends StatefulWidget {
+  const _SideNav({
+    required this.entries,
+    required this.currentLocation,
+    required this.wide,
+    required this.onSelect,
+  });
+  final List<_NavEntry> entries;
+  final String currentLocation;
+  final bool wide;
+  final void Function(String location) onSelect;
+
+  @override
+  State<_SideNav> createState() => _SideNavState();
+}
+
+class _SideNavState extends State<_SideNav> {
+  /// Per-group expansion state, keyed by group label. Groups containing the
+  /// current route force-expand on mount and whenever the route changes.
+  final Set<String> _expanded = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _autoExpandForRoute();
+  }
+
+  @override
+  void didUpdateWidget(_SideNav old) {
+    super.didUpdateWidget(old);
+    if (old.currentLocation != widget.currentLocation) {
+      _autoExpandForRoute();
+    }
+  }
+
+  void _autoExpandForRoute() {
+    for (final entry in widget.entries) {
+      if (entry is _NavGroup &&
+          entry.children.any((c) => widget.currentLocation.startsWith(c.location))) {
+        _expanded.add(entry.label);
+      }
+    }
+  }
+
+  bool _isSelectedLocation(String loc) =>
+      widget.currentLocation.startsWith(loc);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.wide ? 260 : 80,
+      child: Material(
+        color: Theme.of(context).colorScheme.surface,
+        child: ListView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: widget.entries.map(_renderEntry).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _renderEntry(_NavEntry entry) {
+    if (entry is _NavItem) {
+      return _navTile(
+        label: entry.label,
+        icon: entry.icon,
+        selectedIcon: entry.selectedIcon,
+        selected: _isSelectedLocation(entry.location),
+        indent: 0,
+        onTap: () => widget.onSelect(entry.location),
+      );
+    }
+    if (entry is _NavGroup) {
+      final hasSelectedChild =
+          entry.children.any((c) => _isSelectedLocation(c.location));
+      final expanded = _expanded.contains(entry.label) || hasSelectedChild;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _navTile(
+            label: entry.label,
+            icon: entry.icon,
+            selectedIcon: entry.selectedIcon,
+            selected: hasSelectedChild && !expanded,
+            indent: 0,
+            trailing: widget.wide
+                ? Icon(expanded ? Icons.expand_less : Icons.expand_more)
+                : null,
+            onTap: () => setState(() {
+              if (_expanded.contains(entry.label)) {
+                _expanded.remove(entry.label);
+              } else {
+                _expanded.add(entry.label);
+              }
+            }),
+          ),
+          if (expanded)
+            ...entry.children.map((c) => _navTile(
+                  label: c.label,
+                  icon: c.icon,
+                  selectedIcon: c.selectedIcon,
+                  selected: _isSelectedLocation(c.location),
+                  indent: 1,
+                  onTap: () => widget.onSelect(c.location),
+                )),
+        ],
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _navTile({
+    required String label,
+    required IconData icon,
+    required IconData selectedIcon,
+    required bool selected,
+    required int indent,
+    required VoidCallback onTap,
+    Widget? trailing,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final pill = selected ? scheme.secondaryContainer : Colors.transparent;
+    final fg = selected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant;
+
+    final iconWidget = Icon(selected ? selectedIcon : icon, color: fg);
+
+    if (!widget.wide) {
+      // Compact mode — icon only, like the M3 NavigationRail unextended look.
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Tooltip(
+          message: label,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onTap,
+            child: Container(
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: pill,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: iconWidget,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(8 + indent * 16.0, 2, 8, 2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: pill,
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Row(
+            children: [
+              iconWidget,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(label,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: fg,
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.w500,
+                        )),
+              ),
+              if (trailing != null) IconTheme(data: IconThemeData(color: fg), child: trailing),
+            ],
+          ),
+        ),
       ),
     );
   }
