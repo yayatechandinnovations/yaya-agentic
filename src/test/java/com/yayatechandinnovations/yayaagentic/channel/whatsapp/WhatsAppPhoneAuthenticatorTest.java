@@ -1,53 +1,23 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
-import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.BindingPolicyResolver;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PhoneToPrincipalResolverRegistry;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WhatsAppPhoneAuthenticatorTest {
 
-    /** Lightweight stand-in for {@link BindingPolicyResolver}; Mockito's
-     *  inline mock-maker can't subclass it cleanly on JDK 25. */
-    private static class StubResolver extends BindingPolicyResolver {
-        private DefaultPrincipalPolicy next = new DefaultPrincipalPolicy.Anonymous();
-        final AtomicInteger calls = new AtomicInteger();
-        StubResolver() { super((ChannelBindingService) null); }
-        @Override public DefaultPrincipalPolicy policyFor(Ids.TenantId t, SenderId s) {
-            calls.incrementAndGet();
-            return next;
-        }
-        StubResolver thenReturn(DefaultPrincipalPolicy p) { this.next = p; return this; }
-    }
-
-    private final StubResolver resolver = new StubResolver();
-    private final PhoneToPrincipalResolverRegistry registry =
-            new PhoneToPrincipalResolverRegistry(List.of(), Duration.ofMinutes(5));
-    private final PrincipalPolicyMaterializer materializer =
-            new PrincipalPolicyMaterializer(registry);
-    private final ObjectMapper json = new ObjectMapper();
-    private final WhatsAppPhoneAuthenticator auth =
-            new WhatsAppPhoneAuthenticator(resolver, materializer, json);
+    private final WhatsAppPhoneAuthenticator auth = new WhatsAppPhoneAuthenticator();
 
     @Test
-    void mints_principal_when_channel_headers_present() throws AuthenticationException {
+    void mints_baseline_principal_when_channel_headers_present() throws AuthenticationException {
         AuthContext ctx = new AuthContext(
                 new Ids.TenantId("acme"),
                 Map.of(
@@ -75,7 +45,6 @@ class WhatsAppPhoneAuthenticatorTest {
                 Map.of("Authorization", "Bearer something"),
                 Optional.empty());
         assertThat(auth.tryAuthenticate(ctx)).isEmpty();
-        assertThat(resolver.calls.get()).isZero();
     }
 
     @Test
@@ -90,7 +59,6 @@ class WhatsAppPhoneAuthenticatorTest {
         assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
                 .isInstanceOf(AuthenticationException.class)
                 .hasMessageContaining("malformed end-user phone");
-        assertThat(resolver.calls.get()).isZero();
     }
 
     @Test
@@ -108,103 +76,16 @@ class WhatsAppPhoneAuthenticatorTest {
     }
 
     @Test
-    void phone_as_principal_policy_merges_extra_scopes_and_claims() throws AuthenticationException {
-        resolver.thenReturn(new DefaultPrincipalPolicy.PhoneAsPrincipal(
-                java.util.Set.of("order:read", "shipment:read"),
-                java.util.Map.of("role", "guest")));
-        AuthContext ctx = new AuthContext(
-                new Ids.TenantId("acme"),
-                Map.of(
-                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
-                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x"
-                ),
-                Optional.empty());
-        Principal p = auth.tryAuthenticate(ctx).orElseThrow();
-        assertThat(p.scopes()).containsExactlyInAnyOrder(
-                "channel:whatsapp", "channel:read", "order:read", "shipment:read");
-        assertThat(p.claims()).containsEntry("role", "guest");
-        // channel-reserved claims still stamped
-        assertThat(p.claims()).containsEntry("phone", "+15551234567");
-        assertThat(p.claims()).containsEntry("channel.sender", "snd_x");
-    }
-
-    @Test
-    void playground_override_header_short_circuits_binding_lookup()
-            throws Exception {
-        // The binding would say PhoneAsPrincipal with one scope...
-        resolver.thenReturn(new DefaultPrincipalPolicy.PhoneAsPrincipal(
-                Set.of("order:read"), Map.of()));
-        // ...but the override pins Anonymous; we expect baseline-only.
-        String overrideJson = json.writeValueAsString(
-                new DefaultPrincipalPolicy.Anonymous());
+    void twilio_contact_sid_header_is_stamped_as_claim() throws AuthenticationException {
         AuthContext ctx = new AuthContext(
                 new Ids.TenantId("acme"),
                 Map.of(
                         WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
                         WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
-                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
-                        overrideJson
+                        WhatsAppPhoneAuthenticator.HEADER_TWILIO_FROM, "CT_abc123"
                 ),
                 Optional.empty());
         Principal p = auth.tryAuthenticate(ctx).orElseThrow();
-        // Anonymous → no extra scopes
-        assertThat(p.scopes()).containsExactlyInAnyOrder(
-                "channel:whatsapp", "channel:read");
-        // Resolver was never consulted because the override won
-        assertThat(resolver.calls.get()).isZero();
-    }
-
-    @Test
-    void playground_override_header_can_force_phone_as_principal()
-            throws Exception {
-        String overrideJson = json.writeValueAsString(
-                new DefaultPrincipalPolicy.PhoneAsPrincipal(
-                        Set.of("shipment:read"),
-                        Map.of("role", "operator-test")));
-        AuthContext ctx = new AuthContext(
-                new Ids.TenantId("acme"),
-                Map.of(
-                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
-                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
-                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
-                        overrideJson
-                ),
-                Optional.empty());
-        Principal p = auth.tryAuthenticate(ctx).orElseThrow();
-        assertThat(p.scopes()).contains("shipment:read");
-        assertThat(p.claims()).containsEntry("role", "operator-test");
-    }
-
-    @Test
-    void playground_override_header_with_malformed_json_throws_authentication_exception() {
-        AuthContext ctx = new AuthContext(
-                new Ids.TenantId("acme"),
-                Map.of(
-                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
-                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x",
-                        WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
-                        "not even json"
-                ),
-                Optional.empty());
-        assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
-                .isInstanceOf(AuthenticationException.class)
-                .hasMessageContaining("malformed playground override header");
-    }
-
-    @Test
-    void lookup_principal_with_no_registered_resolver_throws_illegal_state() {
-        resolver.thenReturn(new DefaultPrincipalPolicy.LookupPrincipal("my-resolver", true));
-        AuthContext ctx = new AuthContext(
-                new Ids.TenantId("acme"),
-                Map.of(
-                        WhatsAppPhoneAuthenticator.HEADER_END_USER, "+15551234567",
-                        WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, "snd_x"
-                ),
-                Optional.empty());
-        // No PhoneToPrincipalResolver beans registered → IllegalStateException
-        // surfaces as an operator-misconfig alarm, not a tenant-fault denial.
-        assertThatThrownBy(() -> auth.tryAuthenticate(ctx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("my-resolver");
+        assertThat(p.claims()).containsEntry("twilioContactSid", "CT_abc123");
     }
 }

@@ -42,6 +42,12 @@ public class SessionEntity {
     @Column(name = "summary_updated_at")
     private OffsetDateTime summaryUpdatedAt;
 
+    @Column(name = "auth_token_ciphertext")
+    private String authTokenCiphertext;
+
+    @Column(name = "auth_token_iv", length = 64)
+    private String authTokenIv;
+
     protected SessionEntity() {}
 
     public SessionEntity(UUID id, String tenantId, String principalSubject,
@@ -71,7 +77,13 @@ public class SessionEntity {
     public Integer getSummaryThroughTurnIdx() { return summaryThroughTurnIdx; }
     public OffsetDateTime getSummaryUpdatedAt() { return summaryUpdatedAt; }
 
+    public String getAuthTokenCiphertext() { return authTokenCiphertext; }
+    public String getAuthTokenIv() { return authTokenIv; }
+
     public void setSummaryText(String v) { this.summaryText = v; }
     public void setSummaryThroughTurnIdx(Integer v) { this.summaryThroughTurnIdx = v; }
     public void setSummaryUpdatedAt(OffsetDateTime v) { this.summaryUpdatedAt = v; }
+
+    public void setAuthTokenCiphertext(String v) { this.authTokenCiphertext = v; }
+    public void setAuthTokenIv(String v) { this.authTokenIv = v; }
 }

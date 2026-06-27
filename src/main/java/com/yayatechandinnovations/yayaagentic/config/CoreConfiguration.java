@@ -13,6 +13,8 @@ import org.springframework.web.cors.reactive.CorsWebFilter;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.util.pattern.PathPatternParser;
 
+import java.time.Clock;
+
 @Configuration
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class})
 @EnableScheduling
@@ -60,5 +62,15 @@ public class CoreConfiguration {
     @Bean
     public PasswordEncoder operatorPasswordEncoder() {
         return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
+    }
+
+    /**
+     * UTC clock for components that need time-of-now access and want it to
+     * be substitutable in tests. New code should prefer injecting a Clock
+     * over calling {@code Instant.now()} directly.
+     */
+    @Bean
+    public Clock systemClock() {
+        return Clock.systemUTC();
     }
 }

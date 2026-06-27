@@ -55,6 +55,12 @@ public class ChannelBindingEntity {
     @Column(name = "deactivated_at")
     private OffsetDateTime deactivatedAt;
 
+    @Column(name = "auth_resolver_id")
+    private Long authResolverId;
+
+    @Column(name = "on_unresolved", nullable = false, length = 16)
+    private String onUnresolved = "REJECT";
+
     protected ChannelBindingEntity() {}
 
     public ChannelBindingEntity(String tenantId, String endpointKind, String endpointId,
@@ -85,6 +91,9 @@ public class ChannelBindingEntity {
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getDeactivatedAt() { return deactivatedAt; }
 
+    public Long getAuthResolverId() { return authResolverId; }
+    public String getOnUnresolved() { return onUnresolved; }
+
     public void setProfileId(String v) { this.profileId = v; }
     public void setProfileVersion(Integer v) { this.profileVersion = v; }
     public void setRoutingJson(String v) { this.routingJson = v; }
@@ -92,4 +101,6 @@ public class ChannelBindingEntity {
     public void setPriority(int v) { this.priority = v; }
     public void setStatus(String v) { this.status = v; }
     public void setDeactivatedAt(OffsetDateTime v) { this.deactivatedAt = v; }
+    public void setAuthResolverId(Long v) { this.authResolverId = v; }
+    public void setOnUnresolved(String v) { this.onUnresolved = v; }
 }

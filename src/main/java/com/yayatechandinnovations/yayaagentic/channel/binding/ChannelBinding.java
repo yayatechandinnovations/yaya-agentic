@@ -11,7 +11,9 @@ import java.util.Optional;
  * {@link ChannelBindingService} from the persistence-layer entity; never
  * leaked from the service.
  *
- * <p>See {@code whatsapp-channel-design.md} §8 (binding shape).
+ * <p>See {@code whatsapp-channel-design.md} §8 (binding shape) and
+ * {@code docs/design/channel-auth-resolver-design.md} §7
+ * ({@code authResolverId} + {@code onUnresolved}).
  *
  * @param id             the binding row id; null when transient
  * @param tenant         owning tenant
@@ -22,6 +24,14 @@ import java.util.Optional;
  * @param sessionPolicy  per-binding session knobs
  * @param priority       lower = checked first (§8.1)
  * @param status         {@code ACTIVE | PAUSED | DEACTIVATED}
+ * @param authResolverId optional FK to {@code channel_auth_resolvers.id}.
+ *                       Null = "FAQ mode": the inbound dispatch worker
+ *                       skips identity resolution and uses the baseline
+ *                       {@code whatsapp:+E164} Principal directly.
+ * @param onUnresolved   what to do when the resolver returns empty (404
+ *                       from the tenant's webhook). {@code REJECT} drops
+ *                       the message; {@code ANONYMOUS} falls through to
+ *                       the baseline Principal.
  */
 public record ChannelBinding(
         BindingId             id,
@@ -34,7 +44,9 @@ public record ChannelBinding(
         int                   priority,
         BindingStatus         status,
         Instant               createdAt,
-        Instant               deactivatedAt
+        Instant               deactivatedAt,
+        Long                  authResolverId,
+        OnUnresolvedPolicy    onUnresolved
 ) {
 
     public ChannelBinding {
@@ -45,5 +57,6 @@ public record ChannelBinding(
         if (sessionPolicy == null) throw new IllegalArgumentException("sessionPolicy required");
         if (status == null)        throw new IllegalArgumentException("status required");
         profileVersion = profileVersion == null ? Optional.empty() : profileVersion;
+        onUnresolved = onUnresolved == null ? OnUnresolvedPolicy.REJECT : onUnresolved;
     }
 }

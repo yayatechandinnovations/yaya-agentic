@@ -64,16 +64,10 @@ public class ChannelBindingService {
     }
 
     /**
-     * Hot-path lookup driven by {@code ChannelProfileResolver}. Walks the
-     * tenant's bindings for the given endpoint in priority order and returns
-     * the first whose {@link RoutingRule} matches the message context.
-     * Returns empty when nothing matches — the resolver chain falls through.
-     */
-    /**
      * Routing-agnostic lookup of the lowest-priority ACTIVE binding for an
-     * endpoint. Used by {@code BindingPolicyResolver} on the auth path — where
-     * the Principal isn't minted yet so routing rules can't be evaluated.
-     * Returns empty when the endpoint has no ACTIVE binding.
+     * endpoint. Used on the auth path — where the Principal isn't minted yet
+     * so routing rules can't be evaluated. Returns empty when the endpoint
+     * has no ACTIVE binding.
      */
     public Optional<ChannelBinding> findLowestPriorityActiveForEndpoint(
             Ids.TenantId tenant, ChannelEndpointRef endpoint) {
@@ -294,7 +288,9 @@ public class ChannelBindingService {
                 entity.getPriority(),
                 BindingStatus.valueOf(entity.getStatus()),
                 toInstant(entity.getCreatedAt()),
-                toInstant(entity.getDeactivatedAt())
+                toInstant(entity.getDeactivatedAt()),
+                entity.getAuthResolverId(),
+                OnUnresolvedPolicy.parse(entity.getOnUnresolved())
         );
     }
 

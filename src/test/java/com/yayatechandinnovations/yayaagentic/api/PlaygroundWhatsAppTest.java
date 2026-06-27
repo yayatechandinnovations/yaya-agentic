@@ -4,7 +4,6 @@ import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
 import com.yayatechandinnovations.yayaagentic.operator_auth.TestAuthDance;
 import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.LoginRateLimiter;
-import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
 import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +35,6 @@ class PlaygroundWhatsAppTest {
 
     @Autowired WebTestClient client;
     @Autowired LoginRateLimiter rateLimiter;
-    @Autowired InboundMessageRepository inboundMessages;
 
     private static final String TENANT = "playground-wa-test";
 
@@ -106,52 +104,6 @@ class PlaygroundWhatsAppTest {
     }
 
     @Test
-    void inbound_with_anonymous_override_persists_to_raw_payload() {
-        var body = Map.of(
-                "text", "test with override",
-                "fromPhone", "+15558675309",
-                "profileId", "playground-wa-profile",
-                "profileVersion", 1,
-                "defaultPrincipalPolicyOverride", Map.of("kind", "Anonymous"));
-        var receipt = client.post()
-                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchange()
-                .expectStatus().isAccepted()
-                .expectBody(PlaygroundWhatsAppController.InboundReceipt.class)
-                .returnResult().getResponseBody();
-        assertThat(receipt).isNotNull();
-        var row = inboundMessages.findById(receipt.messageSid()).orElseThrow();
-        // PostgreSQL JSONB re-emits with spaces around colons, so don't pin
-        // the assertion to the wire format; just confirm both fields landed.
-        assertThat(row.getRawPayloadJson())
-                .contains(PlaygroundWhatsAppController.RAW_PLAYGROUND_POLICY_OVERRIDE_KEY)
-                .contains("Anonymous");
-    }
-
-    @Test
-    void inbound_rejects_reserved_claim_in_phone_as_principal_override() {
-        var body = Map.of(
-                "text", "test",
-                "fromPhone", "+15558675309",
-                "profileId", "playground-wa-profile",
-                "profileVersion", 1,
-                "defaultPrincipalPolicyOverride", Map.of(
-                        "kind", "PhoneAsPrincipal",
-                        "additionalScopes", List.of(),
-                        "additionalClaims", Map.of("phone", "+15559999999")));
-        client.post()
-                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchange()
-                .expectStatus().isBadRequest()
-                .expectBody(AdminDtos.ApiError.class)
-                .value(err -> assertThat(err.error()).isEqualTo("reserved_claim_in_override"));
-    }
-
-    @Test
     void inbound_rejects_pre_elevation_with_missing_subject() {
         var body = Map.of(
                 "text", "test",
@@ -194,27 +146,6 @@ class PlaygroundWhatsAppTest {
                 .expectBody(AdminDtos.ApiError.class)
                 .value(err -> assertThat(err.error())
                         .isEqualTo("reserved_scope_in_pre_elevation"));
-    }
-
-    @Test
-    void inbound_rejects_lookup_override_with_unknown_resolver() {
-        var body = Map.of(
-                "text", "test",
-                "fromPhone", "+15558675309",
-                "profileId", "playground-wa-profile",
-                "profileVersion", 1,
-                "defaultPrincipalPolicyOverride", Map.of(
-                        "kind", "LookupPrincipal",
-                        "resolverId", "nonexistent-resolver",
-                        "denyOnUnknown", true));
-        client.post()
-                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchange()
-                .expectStatus().isBadRequest()
-                .expectBody(AdminDtos.ApiError.class)
-                .value(err -> assertThat(err.error()).isEqualTo("unknown_resolver"));
     }
 
     /** Sanity probe — bean wires up and serves a 200 with an empty list when

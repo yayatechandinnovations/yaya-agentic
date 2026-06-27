@@ -1,5 +1,26 @@
 # WhatsApp Channel — End-User Authentication & Step-Up (v1)
 
+> ⚠️ **PARTIALLY SUPERSEDED — 2026-06-27**
+>
+> **Layer 1 (`defaultPrincipalPolicy` / `PhoneToPrincipalResolver` SPI /
+> `LookupPrincipal` / `PhoneAsPrincipal` / `Anonymous` policy variants)** is
+> superseded by [`channel-auth-resolver-design.md`](./channel-auth-resolver-design.md).
+> The replacement collapses the resolver + materializer + reserved-claim
+> guard into a single `AuthResolver` SPI that returns a tenant-signed JWT,
+> verified by the existing `tenant_jwt_secrets` / `tenant_oidc_issuers`
+> trust roots. Do not implement Layer 1 from this doc.
+>
+> **Layer 2 (engine-managed step-up: `StepUpHint` / `StepUpCoordinator` /
+> OTP + deep-link verification)** remains in scope and unchanged. The
+> step-up audit table, secondary-comms admin, `OtpVerifier`, and operator
+> runbook shipped in W-A4 → W-A9 all carry forward as-is.
+>
+> **Layer 3 (WhatsApp playground auth chooser)** remains in scope; will
+> be re-shaped to pick an `AuthResolver` + sentinel `callerPhone` once
+> the engine wiring lands (see open question #5 in the replacement doc).
+>
+> ---
+>
 > Companion to `whatsapp-channel-design.md` §9.3 (end-user principal), §9.4
 > (account linking, previously deferred — this doc supersedes that sketch),
 > §12 (PII / audit), §8 (channel binding); to

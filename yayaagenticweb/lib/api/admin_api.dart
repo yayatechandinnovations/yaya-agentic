@@ -477,15 +477,6 @@ class AdminApi {
     await _dio.delete('/v1/admin/tenants/$tenantId/channel-bindings/$id');
   }
 
-  Future<List<PhonePrincipalResolverSummary>> listPhonePrincipalResolvers(
-      String tenantId) async {
-    final res = await _dio.get(
-        '/v1/admin/tenants/$tenantId/phone-principal-resolvers');
-    return (res.data as List)
-        .map((e) => PhonePrincipalResolverSummary.fromJson(_asMap(e)))
-        .toList();
-  }
-
   // ---- Tenant secondary comms (W-A9) ---------------------------------
 
   Future<SecondaryComms> getSecondaryComms(String tenantId) async {

@@ -4,16 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.InboundDispatchWorker;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.DefaultPrincipalPolicy;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PhoneToPrincipalResolverRegistry;
-import com.yayatechandinnovations.yayaagentic.channel.whatsapp.auth.PrincipalPolicyMaterializer;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
-import com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationRepository;
-import com.yayatechandinnovations.yayaagentic.persistence.StepUpAuditEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.StepUpAuditRepository;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
@@ -30,6 +25,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -50,6 +46,12 @@ import java.util.UUID;
 @RequestMapping("/v1/admin/tenants/{tenantId}/whatsapp-playground")
 public class PlaygroundWhatsAppController {
 
+    /** Channel-reserved claim keys; the W-A8 pre-elevation rejects these as
+     *  added scopes — they would collide with the WhatsApp authenticator's
+     *  stamp and silently lose at materialization. */
+    static final Set<String> RESERVED_CHANNEL_CLAIM_KEYS = Set.of(
+            "phone", "channel.sender", "channel.kind", "locale", "twilioContactSid");
+
     private final TenantGuard tenantGuard;
     private final WorkspaceAccessHelper workspaceAccess;
     private final PlaygroundSenderService playgroundSenders;
@@ -57,7 +59,6 @@ public class PlaygroundWhatsAppController {
     private final InboundDispatchWorker worker;
     private final PlaygroundOutboundSink sink;
     private final ObjectMapper json;
-    private final PhoneToPrincipalResolverRegistry resolverRegistry;
     private final ChannelSessionElevationRepository elevations;
     private final StepUpAuditRepository stepUpAudit;
 
@@ -68,7 +69,6 @@ public class PlaygroundWhatsAppController {
                                         InboundDispatchWorker worker,
                                         PlaygroundOutboundSink sink,
                                         ObjectMapper json,
-                                        PhoneToPrincipalResolverRegistry resolverRegistry,
                                         ChannelSessionElevationRepository elevations,
                                         StepUpAuditRepository stepUpAudit) {
         this.tenantGuard = tenantGuard;
@@ -78,17 +78,9 @@ public class PlaygroundWhatsAppController {
         this.worker = worker;
         this.sink = sink;
         this.json = json;
-        this.resolverRegistry = resolverRegistry;
         this.elevations = elevations;
         this.stepUpAudit = stepUpAudit;
     }
-
-    /** Reserved key inside {@code raw_payload_json} the
-     *  {@code InboundDispatchWorker} reads to stamp the playground identity
-     *  override header. Never collides with Twilio fields — Twilio's are
-     *  TitleCase. */
-    public static final String RAW_PLAYGROUND_POLICY_OVERRIDE_KEY =
-            "_playgroundDefaultPrincipalPolicyOverride";
 
     /** Reserved key for the W-A8 pre-elevation marker. The worker reads it
      *  AFTER session resolution and stamps a channel_session_elevation row
@@ -138,14 +130,6 @@ public class PlaygroundWhatsAppController {
         if (req.interactiveId() != null && !req.interactiveId().isBlank()) {
             raw.put("ButtonText", req.text());
             raw.put("ButtonPayload", req.interactiveId());
-        }
-        if (req.defaultPrincipalPolicyOverride() != null) {
-            validatePolicyOverride(req.defaultPrincipalPolicyOverride());
-            // Convert through Jackson's typed serializer so @JsonTypeInfo
-            // emits the `kind` discriminator — a raw put(...) would lose it
-            // because the static type at the map entry is Object.
-            raw.put(RAW_PLAYGROUND_POLICY_OVERRIDE_KEY,
-                    json.convertValue(req.defaultPrincipalPolicyOverride(), Map.class));
         }
         if (req.preElevation() != null) {
             validatePreElevation(req.preElevation());
@@ -207,34 +191,6 @@ public class PlaygroundWhatsAppController {
         }
     }
 
-    /** Reject operator-supplied overrides that don't make sense for the
-     *  playground — same set of rules the materializer enforces at mint time,
-     *  surfaced here so the operator sees a clear 400 instead of a server-side
-     *  exception arriving as a worker failure. */
-    private void validatePolicyOverride(DefaultPrincipalPolicy override) {
-        switch (override) {
-            case DefaultPrincipalPolicy.Anonymous a -> { /* always valid */ }
-            case DefaultPrincipalPolicy.PhoneAsPrincipal p -> {
-                for (String claim : p.additionalClaims().keySet()) {
-                    if (PrincipalPolicyMaterializer.RESERVED_CLAIM_KEYS.contains(claim)) {
-                        throw AdminApiException.badRequest("reserved_claim_in_override",
-                                "additionalClaims contains reserved channel key '"
-                                        + claim + "'");
-                    }
-                }
-            }
-            case DefaultPrincipalPolicy.LookupPrincipal l -> {
-                boolean known = resolverRegistry.all().stream()
-                        .anyMatch(r -> r.id().equals(l.resolverId()));
-                if (!known) {
-                    throw AdminApiException.badRequest("unknown_resolver",
-                            "no phone-to-principal resolver named '"
-                                    + l.resolverId() + "' is registered");
-                }
-            }
-        }
-    }
-
     /** Reject pre-elevations that violate the security invariants — the
      *  channel-reserved scope guard, the audience requirement, the no-empty-
      *  subject rule. The worker enforces a matching set when it stamps the
@@ -253,7 +209,7 @@ public class PlaygroundWhatsAppController {
                     "preElevation.addedScopes must contain at least one scope");
         }
         for (String scope : pe.addedScopes()) {
-            if (PrincipalPolicyMaterializer.RESERVED_CLAIM_KEYS.contains(scope)) {
+            if (RESERVED_CHANNEL_CLAIM_KEYS.contains(scope)) {
                 throw AdminApiException.badRequest("reserved_scope_in_pre_elevation",
                         "preElevation.addedScopes contains a reserved channel key '"
                                 + scope + "'");
@@ -263,7 +219,6 @@ public class PlaygroundWhatsAppController {
 
     public record InboundRequest(String text, String fromPhone, String interactiveId,
                                  String profileId, Integer profileVersion,
-                                 DefaultPrincipalPolicy defaultPrincipalPolicyOverride,
                                  PreElevation preElevation) {}
 
     /**

@@ -593,22 +593,6 @@ public class InboundDispatchWorker {
         headers.put(WhatsAppPhoneAuthenticator.HEADER_SENDER_ID, row.getSenderId());
         headers.put(WhatsAppPhoneAuthenticator.HEADER_LOCALE,
                 detectedLanguage == null ? sender.defaultLocale() : detectedLanguage);
-        // §W-A3 — the playground stamps an identity-policy override into the
-        // raw payload's reserved key. Pass it through as a header so the
-        // authenticator can short-circuit binding-policy lookup. Real Twilio
-        // inbound never carries this key (no path writes it).
-        Object override = raw == null ? null : raw.get(
-                com.yayatechandinnovations.yayaagentic.api.PlaygroundWhatsAppController
-                        .RAW_PLAYGROUND_POLICY_OVERRIDE_KEY);
-        if (override != null) {
-            try {
-                headers.put(WhatsAppPhoneAuthenticator.HEADER_PLAYGROUND_POLICY_OVERRIDE,
-                        json.writeValueAsString(override));
-            } catch (JsonProcessingException e) {
-                throw new IllegalStateException(
-                        "could not encode playground policy override", e);
-            }
-        }
         return headers;
     }
 
