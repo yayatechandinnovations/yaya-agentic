@@ -298,6 +298,62 @@ public class StepUpCoordinator {
         }
     }
 
+    /**
+     * Playground-only: stamp a {@link ChannelSessionElevationEntity} directly
+     * without running an OTP / deep-link cycle. Writes a paired
+     * {@code step_up_audit} row so the trail still looks like a normal
+     * elevation. Caller (the playground worker path) is responsible for
+     * gating on operator role.
+     *
+     * <p>See {@code whatsapp-channel-auth-design.md} §7.1.
+     */
+    @Transactional
+    public ChannelSessionElevationEntity recordPlaygroundPreElevation(
+            Ids.TenantId tenant,
+            Ids.SessionId sessionId,
+            String elevatedSubject,
+            String audience,
+            Set<String> addedScopes,
+            Map<String, Object> addedClaims,
+            Duration ttl) {
+        Duration safeTtl = ttl == null || ttl.isZero() || ttl.isNegative()
+                ? Duration.ofHours(1) : ttl;
+        OffsetDateTime expiresAt = OffsetDateTime.now(ZoneOffset.UTC).plus(safeTtl);
+
+        ChannelSessionElevationEntity row = elevations.findBySessionId(sessionId.value())
+                .map(existing -> {
+                    Set<String> merged = new java.util.HashSet<>(java.util.Arrays.asList(
+                            existing.getAddedScopes() == null
+                                    ? new String[0] : existing.getAddedScopes()));
+                    merged.addAll(addedScopes == null ? Set.of() : addedScopes);
+                    existing.setAddedScopes(merged.toArray(new String[0]));
+                    existing.setExpiresAt(expiresAt);
+                    return existing;
+                })
+                .orElseGet(() -> new ChannelSessionElevationEntity(
+                        sessionId.value(),
+                        tenant.value(),
+                        elevatedSubject,
+                        addedScopes == null ? new String[0]
+                                : addedScopes.toArray(new String[0]),
+                        writeJson(addedClaims),
+                        audience,
+                        "playground_pre_elevation",
+                        expiresAt,
+                        null));
+        elevations.save(row);
+
+        StepUpAuditEntity audit_row = new StepUpAuditEntity(
+                tenant.value(), null, sessionId.value(),
+                audience, "playground_pre_elevation",
+                "playground", elevatedSubject,
+                "verified:playground_pre_elevated",
+                now(), null, newCorrelationId(), null);
+        audit.save(audit_row);
+
+        return row;
+    }
+
     /** Worker call site: is there an active elevation for this session? Used
      *  to merge scopes/claims into the Principal the authenticator produces. */
     public Optional<ChannelSessionElevationEntity> activeElevation(Ids.SessionId sessionId) {

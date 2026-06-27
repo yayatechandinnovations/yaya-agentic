@@ -207,6 +207,63 @@ class StepUpCoordinatorTest {
     }
 
     @Test
+    void record_playground_pre_elevation_writes_row_and_audit() {
+        when(elevations.findBySessionId(session.value())).thenReturn(Optional.empty());
+        when(elevations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(audit.save(any())).thenAnswer(inv -> auditSpyWithId(inv.getArgument(0), 1L));
+
+        StepUpCoordinator c = coordinator();
+        var row = c.recordPlaygroundPreElevation(
+                tenant, session,
+                "u_42", "tool:transfer_funds",
+                Set.of("stepup:tool:transfer_funds"),
+                Map.of("stepup.audience", "tool:transfer_funds"),
+                Duration.ofMinutes(15));
+
+        assertThat(row.getElevatedSubject()).isEqualTo("u_42");
+        assertThat(row.getAddedScopes()).contains("stepup:tool:transfer_funds");
+        assertThat(row.getMethod()).isEqualTo("playground_pre_elevation");
+        verify(elevations, times(1)).save(any());
+        verify(audit, times(1)).save(any());
+    }
+
+    @Test
+    void record_playground_pre_elevation_caps_ttl_with_sane_default() {
+        when(elevations.findBySessionId(session.value())).thenReturn(Optional.empty());
+        when(elevations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(audit.save(any())).thenAnswer(inv -> auditSpyWithId(inv.getArgument(0), 1L));
+
+        StepUpCoordinator c = coordinator();
+        var row = c.recordPlaygroundPreElevation(
+                tenant, session, "u_42", "tool:x",
+                Set.of("stepup:tool:x"), Map.of(),
+                null);                                  // null TTL → 1h default
+        assertThat(row.getExpiresAt()).isAfter(java.time.OffsetDateTime.now(ZoneOffset.UTC));
+    }
+
+    @Test
+    void record_playground_pre_elevation_merges_with_existing_row() {
+        var existing = new com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationEntity(
+                session.value(), tenant.value(), "u_42",
+                new String[] {"stepup:tool:read"},
+                "{}", "tool:read", "otp_email",
+                OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(30), 1L);
+        when(elevations.findBySessionId(session.value())).thenReturn(Optional.of(existing));
+        when(elevations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(audit.save(any())).thenAnswer(inv -> auditSpyWithId(inv.getArgument(0), 1L));
+
+        StepUpCoordinator c = coordinator();
+        var row = c.recordPlaygroundPreElevation(
+                tenant, session, "u_42", "tool:write",
+                Set.of("stepup:tool:write"), Map.of(),
+                Duration.ofMinutes(30));
+
+        // Pre-elevation merges new scope on top of existing scope.
+        assertThat(row.getAddedScopes()).contains(
+                "stepup:tool:read", "stepup:tool:write");
+    }
+
+    @Test
     void active_elevation_returns_empty_when_row_expired() {
         ChannelSessionElevationEntity row = new ChannelSessionElevationEntity(
                 "sess-1", "acme", "u_42",

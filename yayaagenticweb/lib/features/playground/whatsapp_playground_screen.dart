@@ -43,6 +43,11 @@ class _WhatsAppPlaygroundScreenState
   final Map<String, String> _identityClaims = {};
   String? _identityResolverId;
   bool _identityDenyOnUnknown = true;
+  // W-A8 pre-elevation — only used when _identityKind == 'pre-elevated'.
+  String _preElevationSubject = '';
+  String _preElevationAudience = '';
+  final List<String> _preElevationScopes = [];
+  int _preElevationTtlSeconds = 1800;
 
   @override
   void initState() {
@@ -127,6 +132,7 @@ class _WhatsAppPlaygroundScreenState
       final profileVersion = int.tryParse(parts.length > 1 ? parts[1] : '1') ?? 1;
       final dio = await ref.read(dioProvider.future);
       final override = _buildIdentityOverride();
+      final preElevation = _buildPreElevation();
       await dio.post(
         '/v1/admin/tenants/$tenant/whatsapp-playground/inbound',
         data: {
@@ -136,6 +142,7 @@ class _WhatsAppPlaygroundScreenState
           'profileVersion': profileVersion,
           if (interactiveId != null) 'interactiveId': interactiveId,
           if (override != null) 'defaultPrincipalPolicyOverride': override.toJson(),
+          if (preElevation != null) 'preElevation': preElevation,
         },
         options: Options(contentType: 'application/json'),
       );
@@ -190,9 +197,32 @@ class _WhatsAppPlaygroundScreenState
         return _identityResolverId == null
             ? 'Force Lookup principal · (pick resolver)'
             : 'Force Lookup principal · ${_identityResolverId!}';
+      case 'pre-elevated':
+        if (_preElevationSubject.isEmpty || _preElevationAudience.isEmpty) {
+          return 'Pre-elevated · (incomplete)';
+        }
+        return 'Pre-elevated · $_preElevationSubject for $_preElevationAudience';
       default:
         return 'Use binding default';
     }
+  }
+
+  /// Builds the {subject, audience, addedScopes, ttlSeconds} payload the
+  /// backend writes into channel_session_elevation. Returns null when not in
+  /// pre-elevated mode or when required fields are missing — the controller
+  /// would 400, but failing client-side keeps the UX snappy.
+  Map<String, dynamic>? _buildPreElevation() {
+    if (_identityKind != 'pre-elevated') return null;
+    if (_preElevationSubject.isEmpty || _preElevationAudience.isEmpty
+        || _preElevationScopes.isEmpty) {
+      return null;
+    }
+    return {
+      'subject': _preElevationSubject,
+      'audience': _preElevationAudience,
+      'addedScopes': List<String>.from(_preElevationScopes),
+      'ttlSeconds': _preElevationTtlSeconds,
+    };
   }
 
   Future<void> _openIdentityEditor() async {
@@ -207,8 +237,13 @@ class _WhatsAppPlaygroundScreenState
         initialClaims: Map.from(_identityClaims),
         initialResolverId: _identityResolverId,
         initialDenyOnUnknown: _identityDenyOnUnknown,
+        initialPreElevationSubject: _preElevationSubject,
+        initialPreElevationAudience: _preElevationAudience,
+        initialPreElevationScopes: List.from(_preElevationScopes),
+        initialPreElevationTtl: _preElevationTtlSeconds,
         resolvers: resolvers,
-        onApply: (kind, scopes, claims, resolverId, denyOnUnknown) {
+        onApply: (kind, scopes, claims, resolverId, denyOnUnknown,
+            preSubject, preAudience, preScopes, preTtl) {
           setState(() {
             _identityKind = kind;
             _identityScopes
@@ -219,6 +254,12 @@ class _WhatsAppPlaygroundScreenState
               ..addAll(claims);
             _identityResolverId = resolverId;
             _identityDenyOnUnknown = denyOnUnknown;
+            _preElevationSubject = preSubject;
+            _preElevationAudience = preAudience;
+            _preElevationScopes
+              ..clear()
+              ..addAll(preScopes);
+            _preElevationTtlSeconds = preTtl;
           });
         },
       ),
@@ -372,6 +413,10 @@ class _IdentityEditorDialog extends StatefulWidget {
     required this.initialClaims,
     required this.initialResolverId,
     required this.initialDenyOnUnknown,
+    required this.initialPreElevationSubject,
+    required this.initialPreElevationAudience,
+    required this.initialPreElevationScopes,
+    required this.initialPreElevationTtl,
     required this.resolvers,
     required this.onApply,
   });
@@ -381,6 +426,10 @@ class _IdentityEditorDialog extends StatefulWidget {
   final Map<String, String> initialClaims;
   final String? initialResolverId;
   final bool initialDenyOnUnknown;
+  final String initialPreElevationSubject;
+  final String initialPreElevationAudience;
+  final List<String> initialPreElevationScopes;
+  final int initialPreElevationTtl;
   final AsyncValue<List<PhonePrincipalResolverSummary>> resolvers;
   final void Function(
     String kind,
@@ -388,6 +437,10 @@ class _IdentityEditorDialog extends StatefulWidget {
     Map<String, String> claims,
     String? resolverId,
     bool denyOnUnknown,
+    String preElevationSubject,
+    String preElevationAudience,
+    List<String> preElevationScopes,
+    int preElevationTtl,
   ) onApply;
 
   @override
@@ -403,6 +456,12 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
   final _scopeCtrl = TextEditingController();
   final _claimKeyCtrl = TextEditingController();
   final _claimValueCtrl = TextEditingController();
+  // W-A8 pre-elevation editors.
+  late TextEditingController _preSubjectCtrl;
+  late TextEditingController _preAudienceCtrl;
+  final _preScopeCtrl = TextEditingController();
+  late List<String> _preScopes;
+  late TextEditingController _preTtlCtrl;
 
   @override
   void initState() {
@@ -412,6 +471,10 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
     _claims = Map.from(widget.initialClaims);
     _resolverId = widget.initialResolverId;
     _denyOnUnknown = widget.initialDenyOnUnknown;
+    _preSubjectCtrl = TextEditingController(text: widget.initialPreElevationSubject);
+    _preAudienceCtrl = TextEditingController(text: widget.initialPreElevationAudience);
+    _preScopes = List.from(widget.initialPreElevationScopes);
+    _preTtlCtrl = TextEditingController(text: widget.initialPreElevationTtl.toString());
   }
 
   @override
@@ -419,7 +482,25 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
     _scopeCtrl.dispose();
     _claimKeyCtrl.dispose();
     _claimValueCtrl.dispose();
+    _preSubjectCtrl.dispose();
+    _preAudienceCtrl.dispose();
+    _preScopeCtrl.dispose();
+    _preTtlCtrl.dispose();
     super.dispose();
+  }
+
+  void _addPreScope() {
+    final s = _preScopeCtrl.text.trim();
+    if (s.isEmpty || _preScopes.contains(s)) return;
+    if (DefaultPrincipalPolicyWire.reservedClaimKeys.contains(s)) {
+      showSnack(context, 'Reserved channel claim key — pick a different scope.',
+          error: true);
+      return;
+    }
+    setState(() {
+      _preScopes.add(s);
+      _preScopeCtrl.clear();
+    });
   }
 
   void _addScope() {
@@ -508,6 +589,19 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
                     'Resolve phone via a registered tenant resolver.'),
               ),
               if (_kind == 'lookup-principal') _lookupPrincipalEditor(),
+              RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: 'pre-elevated',
+                groupValue: _kind,
+                onChanged: (v) =>
+                    setState(() => _kind = v ?? 'pre-elevated'),
+                title: const Text('Pre-elevated (skip step-up)'),
+                subtitle: const Text(
+                    'Operator-tested. Stamps channel_session_elevation '
+                    'directly. Needs workspace ADMIN.'),
+              ),
+              if (_kind == 'pre-elevated') _preElevatedEditor(),
             ],
           ),
         ),
@@ -518,8 +612,12 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
             child: const Text('Cancel')),
         FilledButton(
           onPressed: () {
+            final ttl = int.tryParse(_preTtlCtrl.text.trim()) ?? 1800;
             widget.onApply(
-                _kind, _scopes, _claims, _resolverId, _denyOnUnknown);
+                _kind, _scopes, _claims, _resolverId, _denyOnUnknown,
+                _preSubjectCtrl.text.trim(),
+                _preAudienceCtrl.text.trim(),
+                List.from(_preScopes), ttl);
             Navigator.of(context).pop();
           },
           child: const Text('Apply'),
@@ -669,6 +767,73 @@ class _IdentityEditorDialogState extends State<_IdentityEditorDialog> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _preElevatedEditor() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 4, 0, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _preSubjectCtrl,
+            decoration: const InputDecoration(
+                isDense: true, labelText: 'Subject (e.g. u_42)'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _preAudienceCtrl,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Audience (matches StepUpAuthorizer rule)',
+                hintText: 'e.g. tool:transfer_funds'),
+          ),
+          const SizedBox(height: 8),
+          Text('Added scopes',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final s in _preScopes)
+                InputChip(
+                  label: Text(s),
+                  onDeleted: () => setState(() => _preScopes.remove(s)),
+                ),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _preScopeCtrl,
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'e.g. stepup:tool:transfer_funds'),
+                  onSubmitted: (_) => _addPreScope(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _addPreScope,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _preTtlCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'TTL (seconds)',
+                helperText: 'Capped server-side at 3600 (1 hour).'),
+          ),
+        ],
       ),
     );
   }

@@ -11,6 +11,10 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.Playgr
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.StepUpAuditEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.StepUpAuditRepository;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
@@ -54,6 +58,8 @@ public class PlaygroundWhatsAppController {
     private final PlaygroundOutboundSink sink;
     private final ObjectMapper json;
     private final PhoneToPrincipalResolverRegistry resolverRegistry;
+    private final ChannelSessionElevationRepository elevations;
+    private final StepUpAuditRepository stepUpAudit;
 
     public PlaygroundWhatsAppController(TenantGuard tenantGuard,
                                         WorkspaceAccessHelper workspaceAccess,
@@ -62,7 +68,9 @@ public class PlaygroundWhatsAppController {
                                         InboundDispatchWorker worker,
                                         PlaygroundOutboundSink sink,
                                         ObjectMapper json,
-                                        PhoneToPrincipalResolverRegistry resolverRegistry) {
+                                        PhoneToPrincipalResolverRegistry resolverRegistry,
+                                        ChannelSessionElevationRepository elevations,
+                                        StepUpAuditRepository stepUpAudit) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.playgroundSenders = playgroundSenders;
@@ -71,6 +79,8 @@ public class PlaygroundWhatsAppController {
         this.sink = sink;
         this.json = json;
         this.resolverRegistry = resolverRegistry;
+        this.elevations = elevations;
+        this.stepUpAudit = stepUpAudit;
     }
 
     /** Reserved key inside {@code raw_payload_json} the
@@ -80,6 +90,12 @@ public class PlaygroundWhatsAppController {
     public static final String RAW_PLAYGROUND_POLICY_OVERRIDE_KEY =
             "_playgroundDefaultPrincipalPolicyOverride";
 
+    /** Reserved key for the W-A8 pre-elevation marker. The worker reads it
+     *  AFTER session resolution and stamps a channel_session_elevation row
+     *  the StepUpScopeAuthorizer will pick up on the next tool call. */
+    public static final String RAW_PLAYGROUND_PRE_ELEVATION_KEY =
+            "_playgroundPreElevation";
+
     /** Forge a Twilio-shape inbound payload through the same dispatch worker
      *  the real webhook controller uses. Runs the worker synchronously so the
      *  Flutter test can render the bot's reply on the next outbound poll. */
@@ -87,7 +103,12 @@ public class PlaygroundWhatsAppController {
     public ResponseEntity<InboundReceipt> sendInbound(@PathVariable("tenantId") String tenantId,
                                                       @RequestBody InboundRequest req,
                                                       ServerWebExchange exchange) {
+        // Default require — every playground inbound is MEMBER+. Pre-elevation
+        // demands ADMIN; we escalate the check only when present.
         workspaceAccess.require(tenantId, exchange, Role.MEMBER);
+        if (req != null && req.preElevation() != null) {
+            workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        }
         tenantGuard.requireExists(tenantId);
         if (req == null || req.text() == null) {
             throw AdminApiException.badRequest("missing_body", "text required");
@@ -125,6 +146,11 @@ public class PlaygroundWhatsAppController {
             // because the static type at the map entry is Object.
             raw.put(RAW_PLAYGROUND_POLICY_OVERRIDE_KEY,
                     json.convertValue(req.defaultPrincipalPolicyOverride(), Map.class));
+        }
+        if (req.preElevation() != null) {
+            validatePreElevation(req.preElevation());
+            raw.put(RAW_PLAYGROUND_PRE_ELEVATION_KEY,
+                    json.convertValue(req.preElevation(), Map.class));
         }
 
         InboundMessageEntity row = new InboundMessageEntity(
@@ -209,9 +235,52 @@ public class PlaygroundWhatsAppController {
         }
     }
 
+    /** Reject pre-elevations that violate the security invariants — the
+     *  channel-reserved scope guard, the audience requirement, the no-empty-
+     *  subject rule. The worker enforces a matching set when it stamps the
+     *  elevation row; this is the loud, operator-facing version. */
+    private void validatePreElevation(PreElevation pe) {
+        if (pe.subject() == null || pe.subject().isBlank()) {
+            throw AdminApiException.badRequest("missing_pre_elevation_subject",
+                    "preElevation.subject is required");
+        }
+        if (pe.audience() == null || pe.audience().isBlank()) {
+            throw AdminApiException.badRequest("missing_pre_elevation_audience",
+                    "preElevation.audience is required");
+        }
+        if (pe.addedScopes() == null || pe.addedScopes().isEmpty()) {
+            throw AdminApiException.badRequest("missing_pre_elevation_scopes",
+                    "preElevation.addedScopes must contain at least one scope");
+        }
+        for (String scope : pe.addedScopes()) {
+            if (PrincipalPolicyMaterializer.RESERVED_CLAIM_KEYS.contains(scope)) {
+                throw AdminApiException.badRequest("reserved_scope_in_pre_elevation",
+                        "preElevation.addedScopes contains a reserved channel key '"
+                                + scope + "'");
+            }
+        }
+    }
+
     public record InboundRequest(String text, String fromPhone, String interactiveId,
                                  String profileId, Integer profileVersion,
-                                 DefaultPrincipalPolicy defaultPrincipalPolicyOverride) {}
+                                 DefaultPrincipalPolicy defaultPrincipalPolicyOverride,
+                                 PreElevation preElevation) {}
+
+    /**
+     * Playground-only shortcut that skips the OTP / deep-link dance. The
+     * operator declares "this simulated session is already verified for
+     * {@code audience} with these scopes" — the worker stamps a
+     * {@code channel_session_elevation} row before the engine runs.
+     *
+     * @param subject     elevated subject id stamped on the elevation row
+     * @param audience    audience string the elevation grants
+     *                    (matches StepUpAuthorizer rule.audience())
+     * @param addedScopes scopes merged into the principal — typically
+     *                    {@code [stepup:<audience>]}
+     * @param ttlSeconds  how long the elevation lasts; capped at 1 hour
+     */
+    public record PreElevation(String subject, String audience,
+                               List<String> addedScopes, Integer ttlSeconds) {}
     public record InboundReceipt(String messageSid, Instant receivedAt) {}
     public record OutboundDrain(String sessionId,
                                 List<PlaygroundOutboundSink.Message> messages) {}

@@ -152,6 +152,51 @@ class PlaygroundWhatsAppTest {
     }
 
     @Test
+    void inbound_rejects_pre_elevation_with_missing_subject() {
+        var body = Map.of(
+                "text", "test",
+                "fromPhone", "+15558675309",
+                "profileId", "playground-wa-profile",
+                "profileVersion", 1,
+                "preElevation", Map.of(
+                        "audience", "tool:transfer_funds",
+                        "addedScopes", List.of("stepup:tool:transfer_funds"),
+                        "ttlSeconds", 600));
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.error())
+                        .isEqualTo("missing_pre_elevation_subject"));
+    }
+
+    @Test
+    void inbound_rejects_pre_elevation_with_reserved_scope() {
+        var body = Map.of(
+                "text", "test",
+                "fromPhone", "+15558675309",
+                "profileId", "playground-wa-profile",
+                "profileVersion", 1,
+                "preElevation", Map.of(
+                        "subject", "u_42",
+                        "audience", "tool:transfer_funds",
+                        "addedScopes", List.of("phone"),   // reserved channel claim key
+                        "ttlSeconds", 600));
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.error())
+                        .isEqualTo("reserved_scope_in_pre_elevation"));
+    }
+
+    @Test
     void inbound_rejects_lookup_override_with_unknown_resolver() {
         var body = Map.of(
                 "text", "test",

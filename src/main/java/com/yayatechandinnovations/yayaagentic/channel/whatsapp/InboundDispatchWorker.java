@@ -38,6 +38,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -327,6 +328,10 @@ public class InboundDispatchWorker {
                     row.getEndUserPhone(),
                     sessionId);
             captureEntities(sessionId, sender, row, transcription, policy);
+            // W-A8 — playground pre-elevation: stamp the elevation row BEFORE
+            // engine.send so the very first tool call sees it via the
+            // StepUpScopeAuthorizer's elevation-merge path.
+            applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             outboundDispatcher.dispatchGreeting(
                     new Ids.TenantId(row.getTenantId()),
                     new SenderId(row.getSenderId()),
@@ -344,6 +349,7 @@ public class InboundDispatchWorker {
             }
         } else {
             captureEntities(sessionId, sender, row, transcription, policy);
+            applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             if (!userText.isBlank()) {
                 // §6.6 — when an OTP-shaped pending exists for this session,
                 // interpret the inbound as the user's verification code BEFORE
@@ -483,6 +489,54 @@ public class InboundDispatchWorker {
     }
 
     private record InteractiveSelection(String id, String label, String kind) {}
+
+    /**
+     * W-A8 — playground pre-elevation: the controller stashed an elevation
+     * spec in {@code raw_payload_json._playgroundPreElevation}. After session
+     * resolution we stamp the elevation row so the very first tool call sees
+     * it via the StepUpScopeAuthorizer's elevation-merge path. No-op when the
+     * marker isn't present.
+     */
+    @SuppressWarnings("unchecked")
+    private void applyPlaygroundPreElevationIfPresent(Map<String, Object> raw,
+                                                       InboundMessageEntity row,
+                                                       Ids.SessionId sessionId) {
+        if (raw == null) return;
+        Object marker = raw.get(
+                com.yayatechandinnovations.yayaagentic.api.PlaygroundWhatsAppController
+                        .RAW_PLAYGROUND_PRE_ELEVATION_KEY);
+        if (!(marker instanceof Map)) return;
+        Map<String, Object> spec = (Map<String, Object>) marker;
+        String subject = (String) spec.get("subject");
+        String audience = (String) spec.get("audience");
+        List<String> scopes = (List<String>) spec.get("addedScopes");
+        Object ttlObj = spec.get("ttlSeconds");
+        Duration ttl;
+        if (ttlObj instanceof Number n) {
+            ttl = Duration.ofSeconds(Math.min(n.longValue(), 3600));
+        } else {
+            ttl = Duration.ofHours(1);
+        }
+        if (subject == null || subject.isBlank()
+                || audience == null || audience.isBlank()
+                || scopes == null || scopes.isEmpty()) {
+            log.warn("playground pre-elevation marker malformed; skipping (sessionId={})",
+                    sessionId.value());
+            return;
+        }
+        stepUp.recordPlaygroundPreElevation(
+                new Ids.TenantId(row.getTenantId()),
+                sessionId,
+                subject,
+                audience,
+                new LinkedHashSet<>(scopes),
+                Map.of(
+                        "stepup.audience", audience,
+                        "stepup.method", "playground_pre_elevation"),
+                ttl);
+        log.info("playground pre-elevation applied (sessionId={} audience={})",
+                sessionId.value(), audience);
+    }
 
     /**
      * Intercept the inbound as a step-up OTP. Returns {@code true} when the
