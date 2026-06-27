@@ -45,8 +45,31 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
     public static final String HEADER_LOCALE       = "x-channel-locale";
     public static final String HEADER_TWILIO_FROM  = "x-channel-twilio-contact-sid";
 
-    static final Set<String> BASELINE_SCOPES =
+    public static final Set<String> BASELINE_SCOPES =
             Set.of("channel:whatsapp", "channel:read");
+
+    public static final Set<String> RESERVED_CLAIM_KEYS = Set.of(
+            "phone", "channel.sender", "channel.kind", "locale", "twilioContactSid");
+
+    /** Channel-reserved claims derived from {@link AuthContext} headers.
+     *  Used by {@link tryAuthenticate} and by the channel auth integrator
+     *  (which stamps these AFTER a JWT-verified Principal so the
+     *  resolver's tenant cannot override them — §3 non-negotiable #5). */
+    public static Map<String, Object> channelClaims(AuthContext ctx) {
+        Map<String, Object> claims = new LinkedHashMap<>();
+        String phone = headerCi(ctx, HEADER_END_USER);
+        if (phone != null) claims.put("phone", phone);
+        String sender = headerCi(ctx, HEADER_SENDER_ID);
+        if (sender != null) claims.put("channel.sender", sender);
+        claims.put("channel.kind", "whatsapp");
+        String locale = headerCi(ctx, HEADER_LOCALE);
+        if (locale != null && !locale.isBlank()) claims.put("locale", locale);
+        String twilioContactSid = headerCi(ctx, HEADER_TWILIO_FROM);
+        if (twilioContactSid != null && !twilioContactSid.isBlank()) {
+            claims.put("twilioContactSid", twilioContactSid);
+        }
+        return claims;
+    }
 
     @Override
     public String name() {
@@ -64,24 +87,11 @@ public class WhatsAppPhoneAuthenticator implements Authenticator {
             throw new AuthenticationException(name() + ": malformed end-user phone");
         }
 
-        Map<String, Object> claims = new LinkedHashMap<>();
-        claims.put("phone", from);
-        claims.put("channel.sender", sender);
-        claims.put("channel.kind", "whatsapp");
-
-        String locale = headerCi(ctx, HEADER_LOCALE);
-        if (locale != null && !locale.isBlank()) claims.put("locale", locale);
-
-        String twilioContactSid = headerCi(ctx, HEADER_TWILIO_FROM);
-        if (twilioContactSid != null && !twilioContactSid.isBlank()) {
-            claims.put("twilioContactSid", twilioContactSid);
-        }
-
         return Optional.of(new Principal(
                 "whatsapp:" + from,
                 ctx.tenant(),
                 BASELINE_SCOPES,
-                Map.copyOf(claims),
+                Map.copyOf(channelClaims(ctx)),
                 Instant.now()));
     }
 

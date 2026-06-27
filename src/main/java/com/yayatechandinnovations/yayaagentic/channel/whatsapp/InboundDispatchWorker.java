@@ -85,6 +85,10 @@ public class InboundDispatchWorker {
     private final int maxAudioMinutes;
     private final long maxAudioBytes;
     private final StepUpCoordinator stepUp;
+    private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator
+            authIntegrator;
+    private final com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore
+            authTokenStore;
 
     public InboundDispatchWorker(
             @Qualifier("channelDispatchExecutor") ThreadPoolTaskExecutor executor,
@@ -101,7 +105,9 @@ public class InboundDispatchWorker {
             ChannelTracing tracing,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-minutes:5}") int maxAudioMinutes,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes,
-            StepUpCoordinator stepUp) {
+            StepUpCoordinator stepUp,
+            com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator authIntegrator,
+            com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore authTokenStore) {
         this.executor = executor;
         this.inbound = inbound;
         this.senders = senders;
@@ -117,6 +123,8 @@ public class InboundDispatchWorker {
         this.maxAudioMinutes = maxAudioMinutes;
         this.maxAudioBytes = maxAudioBytes;
         this.stepUp = stepUp;
+        this.authIntegrator = authIntegrator;
+        this.authTokenStore = authTokenStore;
     }
 
     /**
@@ -306,10 +314,32 @@ public class InboundDispatchWorker {
                 hints);
 
         Map<String, Object> rawForAuth = readRaw(row.getRawPayloadJson());
-        AuthContext auth = new AuthContext(
+        AuthContext baseAuth = new AuthContext(
                 new Ids.TenantId(row.getTenantId()),
                 authHeaders(row, sender, transcription.detectedLanguage, rawForAuth),
                 Optional.empty());
+
+        // 5b. binding-driven identity resolution (§9). For bindings with
+        //     auth_resolver_id, fire the resolver, verify the returned JWT
+        //     via the existing chain, stamp channel claims, and present the
+        //     verified Principal to the engine via alreadyVerified. For
+        //     bindings without one (FAQ mode), this is a no-op pass-through.
+        com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator.Resolved
+                authResolved = authIntegrator.resolve(
+                binding, baseAuth, sessionId,
+                new SenderId(row.getSenderId()),
+                sender.phoneE164(),
+                row.getEndUserPhone());
+        if (authResolved.decision()
+                == com.yayatechandinnovations.yayaagentic.channel.auth
+                        .ChannelAuthIntegrator.Resolved.Decision.REJECT) {
+            // Binding's on_unresolved=REJECT — the verified caller phone
+            // doesn't map to a known tenant identity. Drop the message
+            // (same shape as no_binding_matched: no user-facing reply).
+            markFailed(messageSid, "auth_resolver_rejected");
+            return;
+        }
+        AuthContext auth = authResolved.authContextForEngine(baseAuth);
 
         // 6. release any parked outbound — the inbound just reopened the
         //    24h service window, so anything queued can fire now.
@@ -327,6 +357,12 @@ public class InboundDispatchWorker {
                     new SenderId(row.getSenderId()),
                     row.getEndUserPhone(),
                     sessionId);
+            // §9 step 3e — persist the resolver-minted JWT on the freshly
+            // created session row so the engine can forward it to tool calls
+            // and refresh it on tool-level 401 (PR 6c).
+            Ids.SessionId freshId = sessionId;
+            authResolved.jwt().ifPresent(jwt ->
+                    authTokenStore.persist(freshId, jwt));
             captureEntities(sessionId, sender, row, transcription, policy);
             // W-A8 — playground pre-elevation: stamp the elevation row BEFORE
             // engine.send so the very first tool call sees it via the
@@ -348,6 +384,11 @@ public class InboundDispatchWorker {
                         engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
             }
         } else {
+            // §9 step 3e on continuation — refresh the session row's JWT
+            // copy if the integrator produced a (possibly cache-hit) token.
+            Ids.SessionId reusedId = sessionId;
+            authResolved.jwt().ifPresent(jwt ->
+                    authTokenStore.persist(reusedId, jwt));
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             if (!userText.isBlank()) {

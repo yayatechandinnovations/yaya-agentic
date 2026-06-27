@@ -216,6 +216,11 @@ public class PostgresConversationRecorder implements ConversationRecorder {
                     ? OffsetDateTime.now(ZoneOffset.UTC)
                     : ctx.endedAt().atOffset(ZoneOffset.UTC);
             entity.setEndedAt(endedAt);
+            // §9 step 6 — wipe the per-session JWT on end. The Redis cache
+            // keeps the token until natural TTL so the next session for the
+            // same (tenant, sender, caller) can reuse it.
+            entity.setAuthTokenCiphertext(null);
+            entity.setAuthTokenIv(null);
         });
     }
 
