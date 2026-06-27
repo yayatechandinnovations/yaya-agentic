@@ -6,6 +6,7 @@ import '../models/admin/auth_binding.dart';
 import '../models/admin/capability.dart';
 import '../models/admin/channel_binding.dart';
 import '../models/admin/channel_opt_out.dart';
+import '../models/admin/secondary_comms.dart';
 import '../models/admin/clone.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
@@ -483,6 +484,21 @@ class AdminApi {
     return (res.data as List)
         .map((e) => PhonePrincipalResolverSummary.fromJson(_asMap(e)))
         .toList();
+  }
+
+  // ---- Tenant secondary comms (W-A9) ---------------------------------
+
+  Future<SecondaryComms> getSecondaryComms(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/secondary-comms');
+    return SecondaryComms.fromJson(_asMap(res.data));
+  }
+
+  Future<SecondaryComms> updateSecondaryComms(
+      String tenantId, SecondaryComms body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/secondary-comms',
+        data: body.toJson());
+    return SecondaryComms.fromJson(_asMap(res.data));
   }
 
   // ---- WhatsApp templates --------------------------------------------
