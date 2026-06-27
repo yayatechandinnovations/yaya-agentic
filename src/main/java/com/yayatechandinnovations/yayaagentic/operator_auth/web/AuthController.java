@@ -14,6 +14,7 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.RateLimite
 import com.yayatechandinnovations.yayaagentic.operator_auth.session.OperatorSessionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RejectForApiKeys;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -158,6 +159,7 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
+    @RejectForApiKeys(status = HttpStatus.BAD_REQUEST, reason = "api_key_session_endpoint")
     public Mono<ResponseEntity<Void>> logout(ServerWebExchange exchange) {
         var cookie = exchange.getRequest().getCookies().getFirst(cookieName);
         String token = cookie == null ? null : cookie.getValue();
@@ -169,6 +171,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @RejectForApiKeys(status = HttpStatus.BAD_REQUEST, reason = "api_key_session_endpoint")
     public Mono<ResponseEntity<MeResponse>> me(ServerWebExchange exchange) {
         return Mono.justOrEmpty(OperatorContext.current(exchange))
                 .flatMap(op -> Mono.fromCallable(() -> ResponseEntity.ok(meResponseFor(op)))

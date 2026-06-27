@@ -21,6 +21,7 @@ import '../features/admin/channel_bindings/channel_bindings_screen.dart';
 import '../features/admin/whatsapp_opt_outs/whatsapp_opt_outs_screen.dart';
 import '../features/admin/whatsapp_senders/whatsapp_senders_screen.dart';
 import '../features/admin/whatsapp_templates/whatsapp_templates_screen.dart';
+import '../features/api_keys/presentation/api_keys_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/models/auth_state.dart';
 import '../features/auth/models/operator.dart';
@@ -96,6 +97,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/audit', builder: (_, __) => const AuditScreen()),
           GoRoute(path: '/admin/operator-auth', builder: (_, __) => const OperatorAuthScreen()),
           GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
+          GoRoute(path: '/settings/api-keys', builder: (_, __) => const ApiKeysScreen()),
         ],
       ),
     ],
@@ -224,21 +226,39 @@ class _NavGroup extends _NavEntry {
   final List<_NavItem> children;
 }
 
+// Nav information architecture: related destinations are grouped so the rail
+// stays scannable as the surface grows. Groups auto-expand when the current
+// route is one of their children (see _SideNav). The platform-only flag lives
+// on individual items; the app shell strips them for non-platform admins and
+// drops any group left empty — so the "Platform" group simply vanishes for
+// regular users.
 const _navItems = <_NavEntry>[
-  _NavItem('Playground', Icons.chat_outlined, Icons.chat, '/playground'),
-  _NavItem('WhatsApp playground', Icons.phone_iphone_outlined, Icons.phone_iphone, '/playground/whatsapp'),
-  _NavItem('Workspaces', Icons.workspaces_outline, Icons.workspaces, '/workspaces'),
-  _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants',
-      platformOnly: true),
-  _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
-  _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
-  _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
-  _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
-  _NavItem('Auth bindings', Icons.lock_outlined, Icons.lock, '/admin/auth-bindings'),
-  _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
-  _NavItem('JWT secrets', Icons.key_outlined, Icons.key, '/admin/jwt-secrets'),
-  _NavItem('Auth resolvers', Icons.fingerprint_outlined, Icons.fingerprint, '/admin/auth-resolvers'),
-  _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
+  // Daily-use test surfaces.
+  _NavGroup('Playground', Icons.science_outlined, Icons.science, children: [
+    _NavItem('Chat', Icons.chat_outlined, Icons.chat, '/playground'),
+    _NavItem('WhatsApp', Icons.phone_iphone_outlined, Icons.phone_iphone, '/playground/whatsapp'),
+  ]),
+
+  // Bot composition primitives — Personality/Profile/Capability/Tool/Knowledge
+  // plus how conversations are recorded (design §5.2–§5.3, §5.8–§5.9).
+  _NavGroup('Agent design', Icons.smart_toy_outlined, Icons.smart_toy, children: [
+    _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
+    _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
+    _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
+    _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
+    _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
+  ]),
+
+  // Conversational-plane identity config — who the runtime trusts and how
+  // verified claims route to a profile (design §5.4, §5.6).
+  _NavGroup('Authentication', Icons.shield_outlined, Icons.shield, children: [
+    _NavItem('Auth bindings', Icons.lock_outlined, Icons.lock, '/admin/auth-bindings'),
+    _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
+    _NavItem('JWT secrets', Icons.key_outlined, Icons.key, '/admin/jwt-secrets'),
+    _NavItem('Auth resolvers', Icons.fingerprint_outlined, Icons.fingerprint, '/admin/auth-resolvers'),
+    _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
+  ]),
+
   // Channel surface — WhatsApp is the only BSP today; the group is named
   // generically so SMS / Telegram / Meta-Cloud slot in beside WhatsApp
   // without nav churn.
@@ -248,11 +268,25 @@ const _navItems = <_NavEntry>[
     _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
     _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),
   ]),
-  _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
-  _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
-  _NavItem('Operator auth', Icons.admin_panel_settings_outlined,
-      Icons.admin_panel_settings, '/admin/operator-auth',
-      platformOnly: true),
+
+  // Workspace-scoped operations: the workspaces the operator belongs to, the
+  // keys minted against them, and the per-workspace authz audit trail.
+  _NavGroup('Workspace', Icons.workspaces_outline, Icons.workspaces, children: [
+    _NavItem('Workspaces', Icons.grid_view_outlined, Icons.grid_view, '/workspaces'),
+    _NavItem('API keys', Icons.vpn_key_outlined, Icons.vpn_key, '/settings/api-keys'),
+    _NavItem('Audit', Icons.policy_outlined, Icons.policy, '/admin/audit'),
+  ]),
+
+  // Platform-admin only — the whole group disappears for regular operators
+  // once its platform-only children are filtered out.
+  _NavGroup('Platform', Icons.admin_panel_settings_outlined, Icons.admin_panel_settings, children: [
+    _NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants',
+        platformOnly: true),
+    _NavItem('Operator auth', Icons.security_outlined, Icons.security, '/admin/operator-auth',
+        platformOnly: true),
+  ]),
+
+  // App-level config (backend base URL) — the conventional bottom item.
   _NavItem('Settings', Icons.tune_outlined, Icons.tune, '/settings'),
 ];
 

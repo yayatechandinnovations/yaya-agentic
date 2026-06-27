@@ -10,6 +10,7 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.delegate.HttpDelegat
 import com.yayatechandinnovations.yayaagentic.operator_auth.delegate.IdentityMapping;
 import com.yayatechandinnovations.yayaagentic.operator_auth.delegate.RequestShape;
 import com.yayatechandinnovations.yayaagentic.operator_auth.delegate.SuccessCriteria;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RejectForApiKeys;
 import com.yayatechandinnovations.yayaagentic.persistence.AuditOperatorLoginRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,6 +41,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/v1/admin/auth/strategies")
+@RejectForApiKeys(reason = "api_key_cannot_configure_auth_strategies")
 public class OperatorAuthStrategiesController {
 
     private final OperatorAuthConfigService configService;

@@ -1,6 +1,8 @@
 package com.yayatechandinnovations.yayaagentic.config;
 
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProperties;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.ApiKeysProperties;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.AuditProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,7 +18,8 @@ import org.springframework.web.util.pattern.PathPatternParser;
 import java.time.Clock;
 
 @Configuration
-@EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class})
+@EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
+        ApiKeysProperties.class, AuditProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 

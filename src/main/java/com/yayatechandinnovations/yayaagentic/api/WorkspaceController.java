@@ -4,6 +4,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.OperatorAccountService.RequestMeta;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.UserId;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RejectForApiKeys;
 import com.yayatechandinnovations.yayaagentic.operator_auth.web.OperatorContext;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.OperatorIdentity;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessGuard;
@@ -109,6 +110,7 @@ public class WorkspaceController {
     }
 
     @DeleteMapping("/{idOrCode}")
+    @RejectForApiKeys(reason = "api_key_cannot_delete_workspace")
     public Mono<ResponseEntity<Void>> archive(@PathVariable("idOrCode") String idOrCode,
                                               @RequestBody ArchiveRequest body,
                                               ServerWebExchange exchange) {

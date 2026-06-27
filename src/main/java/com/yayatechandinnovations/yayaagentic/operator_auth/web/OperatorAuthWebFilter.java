@@ -82,6 +82,13 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // A higher-precedence filter (ApiKeyAuthFilter) may have already bound
+        // an operator from a Bearer token. Bearer wins: don't read the cookie
+        // or touch the server-side session row. (api-keys-design §5)
+        if (OperatorContext.current(exchange).isPresent()) {
+            return chain.filter(exchange);
+        }
+
         var cookie = request.getCookies().getFirst(cookieName);
         if (cookie == null || cookie.getValue().isBlank()) {
             if (softAuthPath) return chain.filter(exchange);   // anon visitor, no session

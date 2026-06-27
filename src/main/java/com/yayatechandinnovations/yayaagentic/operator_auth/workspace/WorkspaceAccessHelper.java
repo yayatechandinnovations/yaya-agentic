@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.operator_auth.workspace;
 
 import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
+import com.yayatechandinnovations.yayaagentic.operator_auth.Operator;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.UserId;
 import com.yayatechandinnovations.yayaagentic.operator_auth.web.OperatorContext;
@@ -48,6 +49,13 @@ public class WorkspaceAccessHelper {
      *         has no membership at the requested role — same body for both
      */
     public String require(String tenant, ServerWebExchange exchange, Role minRole) {
+        // API-key requests are pre-pinned to one workspace by the filter; the
+        // key's stored role IS the role — no membership row to consult (§6.1).
+        // Checked before the feature gate so it is independent of legacy mode.
+        if (OperatorContext.current(exchange)
+                .map(op -> op.source() == Operator.Source.API_KEY).orElse(false)) {
+            return requireApiKey(tenant, exchange, minRole);
+        }
         if (!userAccountsEnabled) {
             return legacyDefault(tenant);
         }
@@ -61,6 +69,31 @@ public class WorkspaceAccessHelper {
                 .orElseThrow(() -> new WorkspaceNotFoundException(new TenantId(tenant), userId));
         guard.require(userId, resolved, minRole);
         return resolved.value();
+    }
+
+    /**
+     * Pinned-workspace path for API-key operators (§6.1). A request for any
+     * workspace other than the pinned one returns 404 (existence non-leak),
+     * never 403; an insufficient key role returns 403.
+     */
+    private String requireApiKey(String tenant, ServerWebExchange exchange, Role minRole) {
+        TenantId pinned = exchange.getAttribute(WorkspaceContext.PINNED_ATTR);
+        Role keyRole = exchange.getAttribute(WorkspaceContext.PINNED_ROLE_ATTR);
+        if (pinned == null || keyRole == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "api_key_context_missing");
+        }
+        // No explicit workspace on the request → default to the pinned one.
+        if (tenant != null && !tenant.isBlank()) {
+            TenantId requested = workspaces.resolveToId(tenant)
+                    .orElseThrow(() -> new WorkspaceNotFoundException(new TenantId(tenant), null));
+            if (!requested.equals(pinned)) {
+                throw new WorkspaceNotFoundException(requested, null);   // 404, not 403
+            }
+        }
+        if (!keyRole.atLeast(minRole)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "insufficient_role");
+        }
+        return pinned.value();
     }
 
     private static String legacyDefault(String tenant) {

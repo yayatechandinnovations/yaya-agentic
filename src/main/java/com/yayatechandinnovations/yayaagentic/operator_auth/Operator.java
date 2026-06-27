@@ -19,5 +19,5 @@ public record Operator(
         Map<String, Object> attributes,
         Instant verifiedAt
 ) {
-    public enum Source { BOOTSTRAP, HTTP_DELEGATE, USER_PASSWORD }
+    public enum Source { BOOTSTRAP, HTTP_DELEGATE, USER_PASSWORD, API_KEY }
 }

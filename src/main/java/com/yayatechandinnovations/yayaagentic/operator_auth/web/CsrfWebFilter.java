@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.operator_auth.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
+import com.yayatechandinnovations.yayaagentic.operator_auth.Operator;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
@@ -68,6 +69,15 @@ public class CsrfWebFilter implements WebFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
         if (!isProtected(request)) return chain.filter(exchange);
+
+        // Bearer (API-key) requests are CSRF-exempt by construction: a CSRF
+        // attacker can't read the bearer to inject it cross-origin. The
+        // higher-precedence ApiKeyAuthFilter has already bound the operator
+        // by the time we run. Cookie sessions remain CSRF-checked. (§10)
+        if (OperatorContext.current(exchange)
+                .map(op -> op.source() == Operator.Source.API_KEY).orElse(false)) {
+            return chain.filter(exchange);
+        }
 
         var cookie = request.getCookies().getFirst(COOKIE_NAME);
         String token = cookie == null ? null : cookie.getValue();

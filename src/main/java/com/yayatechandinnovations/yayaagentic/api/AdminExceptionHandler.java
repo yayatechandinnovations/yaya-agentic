@@ -4,6 +4,9 @@ import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.AccountTokenException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.LastOwnerException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.PasswordPolicyException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.ApiKeyNotFoundException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.KeyCapExceededException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RoleExceedsCreatorException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -50,6 +53,30 @@ public class AdminExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new AdminDtos.ApiError(
                 "workspace_not_found",
                 "Workspace not found."));
+    }
+
+    /** Key not found in the resolved workspace — same 404 existence-non-leak. */
+    @ExceptionHandler(ApiKeyNotFoundException.class)
+    public ResponseEntity<AdminDtos.ApiError> handle(ApiKeyNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new AdminDtos.ApiError(
+                "api_key_not_found",
+                "API key not found."));
+    }
+
+    /** Per-workspace active-key cap reached (§14 D2). */
+    @ExceptionHandler(KeyCapExceededException.class)
+    public ResponseEntity<AdminDtos.ApiError> handle(KeyCapExceededException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new AdminDtos.ApiError(
+                "api_key_cap_reached",
+                ex.getMessage()));
+    }
+
+    /** Requested key role exceeds the creator's own tier (§6.2). */
+    @ExceptionHandler(RoleExceedsCreatorException.class)
+    public ResponseEntity<AdminDtos.ApiError> handle(RoleExceedsCreatorException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new AdminDtos.ApiError(
+                "role_exceeds_creator",
+                ex.getMessage()));
     }
 
     @ExceptionHandler(AccountTokenException.class)

@@ -22,6 +22,18 @@ public final class OperatorIdentity {
     public static final UserId SYNTHETIC_PLATFORM_ADMIN =
             new UserId(UUID.fromString("00000000-0000-0000-0000-000000000001"));
 
+    /**
+     * Identity for an API key whose creator was deleted ({@code created_by_user_id
+     * SET NULL}). Deliberately the all-zero UUID — a non-existent, non-member,
+     * non-platform-admin row — so any {@code WorkspaceAccessGuard} lookup fails
+     * CLOSED. An API key must NEVER inherit the bootstrap synthetic-admin
+     * identity; that would turn an orphaned key into a god. See api-keys-design
+     * §5.1 / §6.1 (the pinned branch is the only authority for keys; guard-direct
+     * endpoints simply refuse them).
+     */
+    public static final UserId API_KEY_NO_CREATOR =
+            new UserId(UUID.fromString("00000000-0000-0000-0000-000000000000"));
+
     private OperatorIdentity() {}
 
     /**
@@ -30,12 +42,20 @@ public final class OperatorIdentity {
      */
     public static UserId userIdOf(Operator op) {
         if (op == null) throw new IllegalStateException("operator is required");
+        // API keys are authorized SOLELY by the pinned workspace + key role
+        // (WorkspaceAccessHelper §6.1). They must never resolve to a member
+        // (or platform-admin) identity, so any guard-direct endpoint fails
+        // closed for them. Audit actors for key-initiated mutations are derived
+        // from the key's own attributes, not from this method.
+        if (op.source() == Operator.Source.API_KEY) {
+            return API_KEY_NO_CREATOR;
+        }
         Object attr = op.attributes() == null ? null : op.attributes().get("user_id");
         if (attr instanceof String s && !s.isBlank()) {
             try {
                 return UserId.parse(s);
             } catch (IllegalArgumentException ignored) {
-                // Fall through to the bootstrap path; subject is not a UUID.
+                // Fall through; subject is not a UUID.
             }
         }
         // Bootstrap (or any source without a user_id attribute) → synthetic.
