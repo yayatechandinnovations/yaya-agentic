@@ -246,7 +246,7 @@ public class AuthResolverTokenCache {
         }
     }
 
-    static String sha256LowerHex(String input) {
+    public static String sha256LowerHex(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));

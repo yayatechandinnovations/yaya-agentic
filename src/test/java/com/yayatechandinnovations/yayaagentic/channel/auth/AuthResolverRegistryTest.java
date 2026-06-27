@@ -112,6 +112,23 @@ class AuthResolverRegistryTest {
         assertThat(reg.registeredBeanNames()).containsExactly("alpha", "mike", "zeta");
     }
 
+    /** §13.7 — Bean lookup is exact-match; a row pointing at
+     *  {@code acme-customer-lookup} does not accidentally resolve to
+     *  {@code acme-customer-lookup-staging} just because the prefix overlaps. */
+    @Test
+    void bean_lookup_is_exact_match_with_overlapping_names() {
+        StubBean primary = new StubBean("acme-customer-lookup");
+        StubBean staging = new StubBean("acme-customer-lookup-staging");
+        StubRepo repo = new StubRepo();
+        repo.put(beanRow("acme", "rowName", "acme-customer-lookup"));
+        AuthResolverRegistry reg = new AuthResolverRegistry(repo, neverFactory,
+                List.of(primary, staging));
+
+        AuthResolver resolved = reg.lookup("acme", "rowName").orElseThrow();
+        assertThat(resolved).isSameAs(primary);
+        assertThat(resolved).isNotSameAs(staging);
+    }
+
     // ---- fixtures -----------------------------------------------------
 
     private static ChannelAuthResolverEntity beanRow(String tenant, String name, String beanName) {
