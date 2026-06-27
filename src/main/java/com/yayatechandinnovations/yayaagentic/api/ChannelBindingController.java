@@ -68,7 +68,9 @@ public class ChannelBindingController {
                 Optional.ofNullable(req.profileVersion()),
                 req.routing() == null ? new RoutingRule.MatchAny() : req.routing(),
                 req.sessionPolicy() == null ? SessionPolicy.defaults() : req.sessionPolicy(),
-                req.priority() == null ? 100 : req.priority());
+                req.priority() == null ? 100 : req.priority(),
+                req.authResolverId(),
+                req.onUnresolved());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ChannelBindingDtos.BindingResponse.of(saved));
     }
@@ -95,7 +97,9 @@ public class ChannelBindingController {
                 req.routing() == null ? new RoutingRule.MatchAny() : req.routing(),
                 req.sessionPolicy() == null ? SessionPolicy.defaults() : req.sessionPolicy(),
                 req.priority() == null ? 100 : req.priority(),
-                req.status() == null ? BindingStatus.ACTIVE : req.status());
+                req.status() == null ? BindingStatus.ACTIVE : req.status(),
+                req.authResolverId(),
+                req.onUnresolved());
         return ChannelBindingDtos.BindingResponse.of(saved);
     }
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
 import com.yayatechandinnovations.yayaagentic.channel.binding.BindingStatus;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
 import com.yayatechandinnovations.yayaagentic.channel.binding.RoutingRule;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
 
@@ -14,7 +15,16 @@ public final class ChannelBindingDtos {
 
     private ChannelBindingDtos() {}
 
-    /** POST body. {@code id} fields are inferred from path on PUT. */
+    /**
+     * POST body. {@code id} fields are inferred from path on PUT.
+     *
+     * @param authResolverId  optional FK to {@code channel_auth_resolvers.id}.
+     *                        Null = FAQ-mode binding (no resolver). The
+     *                        admin form looks the row up by name and sends
+     *                        its id here.
+     * @param onUnresolved    'REJECT' | 'ANONYMOUS'. Defaults to REJECT
+     *                        server-side when null.
+     */
     public record BindingRequest(
             EndpointRequest endpoint,
             String          profileId,
@@ -22,7 +32,9 @@ public final class ChannelBindingDtos {
             RoutingRule     routing,
             SessionPolicy   sessionPolicy,
             Integer         priority,
-            BindingStatus   status
+            BindingStatus   status,
+            Long            authResolverId,
+            OnUnresolvedPolicy onUnresolved
     ) {}
 
     /** PUT-only update body (endpoint immutable post-create). */
@@ -32,7 +44,9 @@ public final class ChannelBindingDtos {
             RoutingRule     routing,
             SessionPolicy   sessionPolicy,
             Integer         priority,
-            BindingStatus   status
+            BindingStatus   status,
+            Long            authResolverId,
+            OnUnresolvedPolicy onUnresolved
     ) {}
 
     /** Wire representation of {@link ChannelEndpointRef}. */
@@ -50,7 +64,9 @@ public final class ChannelBindingDtos {
             int             priority,
             BindingStatus   status,
             Instant         createdAt,
-            Instant         deactivatedAt
+            Instant         deactivatedAt,
+            Long            authResolverId,
+            OnUnresolvedPolicy onUnresolved
     ) {
 
         public static BindingResponse of(ChannelBinding b) {
@@ -65,7 +81,9 @@ public final class ChannelBindingDtos {
                     b.priority(),
                     b.status(),
                     b.createdAt(),
-                    b.deactivatedAt());
+                    b.deactivatedAt(),
+                    b.authResolverId(),
+                    b.onUnresolved());
         }
     }
 }

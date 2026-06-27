@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/admin/audit.dart';
 import '../models/admin/auth_binding.dart';
+import '../models/admin/auth_resolver.dart';
 import '../models/admin/capability.dart';
 import '../models/admin/channel_binding.dart';
 import '../models/admin/channel_opt_out.dart';
@@ -475,6 +476,59 @@ class AdminApi {
 
   Future<void> deleteChannelBinding(String tenantId, int id) async {
     await _dio.delete('/v1/admin/tenants/$tenantId/channel-bindings/$id');
+  }
+
+  // ---- Auth resolvers (channel-auth-resolver) ------------------------
+
+  Future<AuthResolverListResponse> listAuthResolvers(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/auth-resolvers');
+    return AuthResolverListResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverResponse> getAuthResolver(
+      String tenantId, String name) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/auth-resolvers/${Uri.encodeComponent(name)}');
+    return AuthResolverResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverResponse> createAuthResolver(
+      String tenantId, AuthResolverRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/auth-resolvers',
+        data: body.toJson());
+    return AuthResolverResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverResponse> updateAuthResolver(
+      String tenantId, String name, AuthResolverRequest body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/auth-resolvers/${Uri.encodeComponent(name)}',
+        data: body.toJson());
+    return AuthResolverResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverDeleteResponse> deleteAuthResolver(
+      String tenantId, String name) async {
+    final res = await _dio.delete(
+        '/v1/admin/tenants/$tenantId/auth-resolvers/${Uri.encodeComponent(name)}');
+    return AuthResolverDeleteResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverProbeResult> testAuthResolver(
+      String tenantId, String name, AuthResolverProbeInput input) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/auth-resolvers/${Uri.encodeComponent(name)}/test',
+        data: input.toJson());
+    return AuthResolverProbeResult.fromJson(_asMap(res.data));
+  }
+
+  Future<AuthResolverInvalidateResponse> invalidateAuthResolverCache(
+      String tenantId, AuthResolverInvalidateRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/auth-resolvers/invalidate-cache',
+        data: body.toJson());
+    return AuthResolverInvalidateResponse.fromJson(_asMap(res.data));
   }
 
   // ---- Tenant secondary comms (W-A9) ---------------------------------

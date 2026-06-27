@@ -148,7 +148,8 @@ class WhatsAppWebhookE2ETest {
                 new RoutingRule.MatchAny(),
                 SessionPolicy.defaults(),
                 100,
-                BindingStatus.ACTIVE);
+                BindingStatus.ACTIVE,
+                null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)

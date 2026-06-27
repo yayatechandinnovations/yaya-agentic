@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/admin/audit/audit_screen.dart';
 import '../features/admin/auth_bindings/auth_bindings_screen.dart';
+import '../features/admin/auth_resolvers/auth_resolvers_screen.dart';
 import '../features/admin/capabilities/capabilities_screen.dart';
 import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
@@ -85,6 +86,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
           GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),
+          GoRoute(path: '/admin/auth-resolvers', builder: (_, __) => const AuthResolversScreen()),
           GoRoute(path: '/admin/identity-routing', builder: (_, __) => const IdentityRoutingScreen()),
           GoRoute(path: '/admin/whatsapp-senders', builder: (_, __) => const WhatsAppSendersScreen()),
           GoRoute(path: '/admin/channel-bindings', builder: (_, __) => const ChannelBindingsScreen()),
@@ -235,6 +237,7 @@ const _navItems = <_NavEntry>[
   _NavItem('Auth bindings', Icons.lock_outlined, Icons.lock, '/admin/auth-bindings'),
   _NavItem('OIDC issuers', Icons.vpn_key_outlined, Icons.vpn_key, '/admin/oidc-issuers'),
   _NavItem('JWT secrets', Icons.key_outlined, Icons.key, '/admin/jwt-secrets'),
+  _NavItem('Auth resolvers', Icons.fingerprint_outlined, Icons.fingerprint, '/admin/auth-resolvers'),
   _NavItem('Identity routing', Icons.alt_route_outlined, Icons.alt_route, '/admin/identity-routing'),
   // Channel surface — WhatsApp is the only BSP today; the group is named
   // generically so SMS / Telegram / Meta-Cloud slot in beside WhatsApp

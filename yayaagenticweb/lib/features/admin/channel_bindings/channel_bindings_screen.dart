@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
+import '../../../models/admin/auth_resolver.dart';
 import '../../../models/admin/channel_binding.dart';
+import '../auth_resolvers/auth_resolvers_screen.dart' show authResolversProvider;
 import '../profiles/profiles_screen.dart' show profilesProvider;
 import '../shared/admin_shared.dart';
 import '../whatsapp_senders/whatsapp_senders_screen.dart' show whatsAppSendersProvider;
@@ -40,6 +42,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   String _status = 'ACTIVE';
   int? _editingId;
   bool _saving = false;
+  int? _authResolverId;             // null = FAQ mode (no resolver)
+  String _onUnresolved = 'REJECT';
 
   @override
   void dispose() {
@@ -63,6 +67,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _localesCtrl.clear();
       _claimCtrl.clear();
       _claimValueCtrl.clear();
+      _authResolverId = null;
+      _onUnresolved = 'REJECT';
     });
   }
 
@@ -88,6 +94,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
           _claimValueCtrl.text = (row.routing.json['equals'] ?? '') as String;
           break;
       }
+      _authResolverId = row.authResolverId;
+      _onUnresolved = row.onUnresolved;
     });
   }
 
@@ -171,6 +179,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               sessionPolicy: policy,
               priority: priority,
               status: _status,
+              authResolverId: _authResolverId,
+              onUnresolved: _onUnresolved,
             ));
       } else {
         await api.updateChannelBinding(
@@ -183,6 +193,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               sessionPolicy: policy,
               priority: priority,
               status: _status,
+              authResolverId: _authResolverId,
+              onUnresolved: _onUnresolved,
             ));
       }
       ref.invalidate(channelBindingsProvider(tenant));
@@ -237,6 +249,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     final bindings = ref.watch(channelBindingsProvider(tenant));
     final senders = ref.watch(whatsAppSendersProvider(tenant));
     final profiles = ref.watch(profilesProvider);
+    final resolvers = ref.watch(authResolversProvider(tenant));
 
     return AdminTwoPane(
       title: 'Channel bindings',
@@ -395,6 +408,16 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         onChanged: (v) =>
                             setState(() => _status = v ?? 'ACTIVE'),
                       ),
+                      const SizedBox(height: 16),
+                      _AuthResolverSection(
+                        resolvers: resolvers,
+                        selectedId: _authResolverId,
+                        onUnresolved: _onUnresolved,
+                        onResolverChanged: (id) =>
+                            setState(() => _authResolverId = id),
+                        onUnresolvedChanged: (v) =>
+                            setState(() => _onUnresolved = v ?? 'REJECT'),
+                      ),
                     ],
                   );
                 },
@@ -402,6 +425,98 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
             },
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AuthResolverSection extends StatelessWidget {
+  const _AuthResolverSection({
+    required this.resolvers,
+    required this.selectedId,
+    required this.onUnresolved,
+    required this.onResolverChanged,
+    required this.onUnresolvedChanged,
+  });
+
+  final AsyncValue<AuthResolverListResponse> resolvers;
+  final int? selectedId;
+  final String onUnresolved;
+  final ValueChanged<int?> onResolverChanged;
+  final ValueChanged<String?> onUnresolvedChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Identity (auth resolver)',
+              style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+              'When set, every inbound on this sender runs the resolver to '
+              'mint a tenant JWT before the engine starts. Leave empty for '
+              'an FAQ-shape bot — the engine sees only the verified WhatsApp '
+              'phone with no tenant identity.',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          resolvers.when(
+            loading: () => const LinearProgressIndicator(),
+            error: (e, _) => Text(formatError(e),
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            data: (data) {
+              final items = <DropdownMenuItem<int?>>[
+                const DropdownMenuItem<int?>(
+                    value: null, child: Text('(none — FAQ mode)')),
+                for (final r in data.resolvers
+                    .where((r) => r.status == 'ACTIVE'))
+                  DropdownMenuItem<int?>(
+                    value: r.id,
+                    child: Text('${r.name} · ${r.kind}'),
+                  ),
+              ];
+              final knownIds = data.resolvers.map((r) => r.id).toSet();
+              final value =
+                  selectedId != null && knownIds.contains(selectedId)
+                      ? selectedId
+                      : null;
+              return DropdownButtonFormField<int?>(
+                initialValue: value,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                    labelText: 'Auth resolver', isDense: true),
+                items: items,
+                onChanged: onResolverChanged,
+              );
+            },
+          ),
+          if (selectedId != null) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: onUnresolved,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'When the resolver returns "user not found"',
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(
+                    value: 'REJECT',
+                    child: Text('REJECT — drop the message')),
+                DropdownMenuItem(
+                    value: 'ANONYMOUS',
+                    child: Text('ANONYMOUS — fall back to baseline channel auth')),
+              ],
+              onChanged: onUnresolvedChanged,
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -444,6 +559,11 @@ class _BindingTile extends StatelessWidget {
           DetailRow(
               label: 'Expose end-user phone to profile',
               value: row.sessionPolicy.exposeEndUserPhoneToProfile ? 'yes' : 'no'),
+          DetailRow(
+              label: 'Auth resolver',
+              value: row.authResolverId == null
+                  ? '(none — FAQ mode)'
+                  : '#${row.authResolverId} · on_unresolved=${row.onUnresolved}'),
           if (row.createdAt != null)
             DetailRow(label: 'Created', value: row.createdAt!),
         ],

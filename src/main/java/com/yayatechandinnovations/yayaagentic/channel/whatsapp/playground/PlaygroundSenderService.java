@@ -108,7 +108,9 @@ public class PlaygroundSenderService {
                     Optional.of(profile.version()),
                     new RoutingRule.MatchAny(),
                     SessionPolicy.defaults(),
-                    100);
+                    100,
+                    null,
+                    com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy.ANONYMOUS);
         }
         ChannelBinding current = existing.get(0);
         if (current.profile().equals(profile) && current.status() == BindingStatus.ACTIVE) {
@@ -119,7 +121,9 @@ public class PlaygroundSenderService {
                 new RoutingRule.MatchAny(),
                 SessionPolicy.defaults(),
                 100,
-                BindingStatus.ACTIVE);
+                BindingStatus.ACTIVE,
+                current.authResolverId(),
+                current.onUnresolved());
     }
 
     private static BusinessProfile playgroundBusinessProfile() {

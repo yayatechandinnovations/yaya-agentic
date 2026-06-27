@@ -117,7 +117,9 @@ class ChannelBindingControllerTest {
                 new RoutingRule.MatchAny(),
                 SessionPolicy.defaults(),
                 100,
-                BindingStatus.ACTIVE);
+                BindingStatus.ACTIVE,
+                null,
+                null);
         var res = client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -142,7 +144,8 @@ class ChannelBindingControllerTest {
                 new ChannelBindingDtos.EndpointRequest(
                         "WHATSAPP_SENDER", OTHER_TENANT_SENDER_ID.get()),
                 "binding-test-profile", 1,
-                new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE);
+                new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE,
+                null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -158,7 +161,8 @@ class ChannelBindingControllerTest {
         var req = new ChannelBindingDtos.BindingRequest(
                 new ChannelBindingDtos.EndpointRequest("WHATSAPP_SENDER", SENDER_ID.get()),
                 "no-such-profile", 1,
-                new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE);
+                new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE,
+                null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -179,7 +183,8 @@ class ChannelBindingControllerTest {
                         Set.of("#new"), Set.of("bye"),
                         false, null, true),
                 50,
-                BindingStatus.ACTIVE);
+                BindingStatus.ACTIVE,
+                null, null);
         var res = client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -216,7 +221,8 @@ class ChannelBindingControllerTest {
                 new RoutingRule.MatchAny(),
                 SessionPolicy.defaults(),
                 10,
-                BindingStatus.PAUSED);
+                BindingStatus.PAUSED,
+                null, null);
         var res = client.put()
                 .uri("/v1/admin/tenants/{t}/channel-bindings/{id}", TENANT, BINDING_ID.get())
                 .contentType(MediaType.APPLICATION_JSON)

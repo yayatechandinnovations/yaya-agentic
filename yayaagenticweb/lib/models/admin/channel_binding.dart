@@ -16,6 +16,8 @@ class ChannelBindingResponse {
     required this.status,
     this.createdAt,
     this.deactivatedAt,
+    this.authResolverId,
+    required this.onUnresolved,
   });
 
   final int id;
@@ -29,6 +31,8 @@ class ChannelBindingResponse {
   final String status;
   final String? createdAt;
   final String? deactivatedAt;
+  final int? authResolverId;
+  final String onUnresolved; // 'REJECT' | 'ANONYMOUS'
 
   factory ChannelBindingResponse.fromJson(Map<String, dynamic> json) =>
       ChannelBindingResponse(
@@ -46,6 +50,8 @@ class ChannelBindingResponse {
         status: (json['status'] ?? 'ACTIVE') as String,
         createdAt: json['createdAt']?.toString(),
         deactivatedAt: json['deactivatedAt']?.toString(),
+        authResolverId: (json['authResolverId'] as num?)?.toInt(),
+        onUnresolved: (json['onUnresolved'] ?? 'REJECT') as String,
       );
 }
 
@@ -186,6 +192,8 @@ class ChannelBindingRequest {
     required this.sessionPolicy,
     required this.priority,
     required this.status,
+    this.authResolverId,
+    this.onUnresolved = 'REJECT',
   });
 
   final ChannelEndpointWire endpoint;
@@ -195,6 +203,8 @@ class ChannelBindingRequest {
   final SessionPolicyWire sessionPolicy;
   final int priority;
   final String status;
+  final int? authResolverId;
+  final String onUnresolved;
 
   Map<String, dynamic> toJson() => {
         'endpoint': endpoint.toJson(),
@@ -204,6 +214,8 @@ class ChannelBindingRequest {
         'sessionPolicy': sessionPolicy.toJson(),
         'priority': priority,
         'status': status,
+        if (authResolverId != null) 'authResolverId': authResolverId,
+        'onUnresolved': onUnresolved,
       };
 }
 
@@ -215,6 +227,8 @@ class ChannelBindingUpdate {
     required this.sessionPolicy,
     required this.priority,
     required this.status,
+    this.authResolverId,
+    this.onUnresolved = 'REJECT',
   });
 
   final String profileId;
@@ -223,6 +237,8 @@ class ChannelBindingUpdate {
   final SessionPolicyWire sessionPolicy;
   final int priority;
   final String status;
+  final int? authResolverId;
+  final String onUnresolved;
 
   Map<String, dynamic> toJson() => {
         'profileId': profileId,
@@ -231,5 +247,7 @@ class ChannelBindingUpdate {
         'sessionPolicy': sessionPolicy.toJson(),
         'priority': priority,
         'status': status,
+        if (authResolverId != null) 'authResolverId': authResolverId,
+        'onUnresolved': onUnresolved,
       };
 }

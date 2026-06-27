@@ -158,7 +158,9 @@ public class ChannelBindingService {
                                  Optional<Integer> profileVersion,
                                  RoutingRule routing,
                                  SessionPolicy sessionPolicy,
-                                 int priority) {
+                                 int priority,
+                                 Long authResolverId,
+                                 OnUnresolvedPolicy onUnresolved) {
         validateEndpointBelongsToTenant(tenant, endpoint);
         validateProfileExists(tenant, profile, profileVersion);
 
@@ -172,6 +174,9 @@ public class ChannelBindingService {
                 writeJson(sessionPolicy),
                 priority,
                 BindingStatus.ACTIVE.name());
+        entity.setAuthResolverId(authResolverId);
+        entity.setOnUnresolved((onUnresolved == null
+                ? OnUnresolvedPolicy.REJECT : onUnresolved).name());
         return toDomain(repo.save(entity));
     }
 
@@ -183,7 +188,9 @@ public class ChannelBindingService {
                                  RoutingRule routing,
                                  SessionPolicy sessionPolicy,
                                  int priority,
-                                 BindingStatus status) {
+                                 BindingStatus status,
+                                 Long authResolverId,
+                                 OnUnresolvedPolicy onUnresolved) {
         ChannelBindingEntity entity = repo.findByTenantIdAndId(tenant.value(), id.value())
                 .orElseThrow(() -> AdminApiException.notFound("binding_not_found",
                         "no such binding " + id.value()));
@@ -194,6 +201,8 @@ public class ChannelBindingService {
         entity.setRoutingJson(writeJson(routing));
         entity.setSessionPolicyJson(writeJson(sessionPolicy));
         entity.setPriority(priority);
+        entity.setAuthResolverId(authResolverId);
+        if (onUnresolved != null) entity.setOnUnresolved(onUnresolved.name());
         if (status == BindingStatus.DEACTIVATED
                 && !entity.getStatus().equals(BindingStatus.DEACTIVATED.name())) {
             entity.setDeactivatedAt(OffsetDateTime.now(ZoneOffset.UTC));
