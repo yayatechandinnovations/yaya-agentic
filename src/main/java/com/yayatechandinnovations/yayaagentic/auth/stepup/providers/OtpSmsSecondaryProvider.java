@@ -7,7 +7,7 @@ import com.yayatechandinnovations.yayaagentic.auth.stepup.TenantSecondaryComms;
 import com.yayatechandinnovations.yayaagentic.auth.stepup.TenantSecondaryCommsService;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsMessage;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSendException;
-import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSender;
+import com.yayatechandinnovations.yayaagentic.channel.sms.SmsTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCrypt;
@@ -44,12 +44,12 @@ public class OtpSmsSecondaryProvider implements StepUpProvider {
     private static final SecureRandom RNG = new SecureRandom();
 
     private final TenantSecondaryCommsService secondaryComms;
-    private final SmsSender smsSender;
+    private final SmsTransport smsTransport;
 
     public OtpSmsSecondaryProvider(TenantSecondaryCommsService secondaryComms,
-                                   SmsSender smsSender) {
+                                   SmsTransport smsTransport) {
         this.secondaryComms = secondaryComms;
-        this.smsSender = smsSender;
+        this.smsTransport = smsTransport;
     }
 
     @Override
@@ -78,7 +78,7 @@ public class OtpSmsSecondaryProvider implements StepUpProvider {
         Instant expiresAt = Instant.now().plus(ttl);
 
         try {
-            smsSender.send(new SmsMessage(
+            smsTransport.send(new SmsMessage(
                     ctx.targetAddress(),
                     backup.fromNumber(),
                     "Your verification code is " + code

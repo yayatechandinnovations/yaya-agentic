@@ -3,7 +3,7 @@ package com.yayatechandinnovations.yayaagentic.auth.stepup;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.stepup.providers.OtpSmsSecondaryProvider;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsMessage;
-import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSender;
+import com.yayatechandinnovations.yayaagentic.channel.sms.SmsTransport;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSendException;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
@@ -22,9 +22,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class OtpSmsSecondaryProviderTest {
 
     private final StubSecondary secondary = new StubSecondary();
-    private final StubSmsSender smsSender = new StubSmsSender();
+    private final StubSmsTransport smsTransport = new StubSmsTransport();
     private final OtpSmsSecondaryProvider provider =
-            new OtpSmsSecondaryProvider(secondary, smsSender);
+            new OtpSmsSecondaryProvider(secondary, smsTransport);
 
     private final Ids.TenantId tenant = new Ids.TenantId("acme");
     private final Ids.SessionId session = new Ids.SessionId("sess-1");
@@ -80,8 +80,8 @@ class OtpSmsSecondaryProviderTest {
         assertThat(result.maskedTargetAddress()).isEqualTo("+1***4567");
         assertThat(result.userPromptHint()).contains("6-digit code");
         assertThat(result.userPromptHint()).contains("+1***4567");
-        assertThat(smsSender.sent).hasSize(1);
-        SmsMessage msg = smsSender.sent.get(0);
+        assertThat(smsTransport.sent).hasSize(1);
+        SmsMessage msg = smsTransport.sent.get(0);
         assertThat(msg.toPhone()).isEqualTo("+15551234567");
         assertThat(msg.fromPhone()).isEqualTo("+15550100123");
         assertThat(msg.bodyText()).containsPattern("\\d{6}");
@@ -94,7 +94,7 @@ class OtpSmsSecondaryProviderTest {
                 Optional.empty(),
                 Optional.of(new TenantSecondaryComms.SmsBackup(
                         "+15550100123", "dev-console")));
-        smsSender.willFail = true;
+        smsTransport.willFail = true;
         var ctx = new StepUpProvider.StepUpStartContext(
                 tenant, session, null, "u_42",
                 "tool:transfer_funds", hint, "+15551234567", Map.of());
@@ -145,7 +145,7 @@ class OtpSmsSecondaryProviderTest {
         @Override public TenantSecondaryComms forTenant(Ids.TenantId tenant) { return next; }
     }
 
-    private static class StubSmsSender implements SmsSender {
+    private static class StubSmsTransport implements SmsTransport {
         final List<SmsMessage> sent = new ArrayList<>();
         boolean willFail = false;
         @Override public String name() { return "stub"; }

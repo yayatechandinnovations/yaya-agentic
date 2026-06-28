@@ -5,18 +5,18 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class DevConsoleSmsSenderTest {
+class DevConsoleSmsTransportTest {
 
     @Test
     void name_is_dev_console() {
-        assertThat(new DevConsoleSmsSender().name()).isEqualTo("dev-console");
+        assertThat(new DevConsoleSmsTransport().name()).isEqualTo("dev-console");
     }
 
     @Test
     void send_does_not_throw_for_valid_message() throws SmsSendException {
         // Just log; no assertions beyond "doesn't throw" (declared because the
         // SPI signature permits SmsSendException — dev console doesn't use it).
-        new DevConsoleSmsSender().send(new SmsMessage("+15551234567", "+15550100000",
+        new DevConsoleSmsTransport().send(new SmsMessage("+15551234567", "+15550100000",
                 "Your code is 123456.", "test-idem-1"));
     }
 

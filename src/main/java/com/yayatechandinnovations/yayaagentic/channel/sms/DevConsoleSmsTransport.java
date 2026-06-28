@@ -8,16 +8,16 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * Logs the rendered SMS to the console. Wired as the unconditional fallback
- * via {@link DevConsoleSmsSender.Auto} so a deployment with no real SMS
+ * via {@link DevConsoleSmsTransport.Auto} so a deployment with no real SMS
  * provider still works in dev — OTP codes land in the log where an operator
  * can paste them.
  *
- * <p>In production a typed {@link SmsSender} bean takes over and this
+ * <p>In production a typed {@link SmsTransport} bean takes over and this
  * fallback never runs.
  */
-public class DevConsoleSmsSender implements SmsSender {
+public class DevConsoleSmsTransport implements SmsTransport {
 
-    private static final Logger log = LoggerFactory.getLogger(DevConsoleSmsSender.class);
+    private static final Logger log = LoggerFactory.getLogger(DevConsoleSmsTransport.class);
 
     @Override
     public String name() { return "dev-console"; }
@@ -31,7 +31,7 @@ public class DevConsoleSmsSender implements SmsSender {
     @Configuration
     public static class Auto {
         @Bean
-        @ConditionalOnMissingBean(SmsSender.class)
-        public SmsSender devConsoleSmsSender() { return new DevConsoleSmsSender(); }
+        @ConditionalOnMissingBean(SmsTransport.class)
+        public SmsTransport devConsoleSmsTransport() { return new DevConsoleSmsTransport(); }
     }
 }
