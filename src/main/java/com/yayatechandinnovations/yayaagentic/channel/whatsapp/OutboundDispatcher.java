@@ -69,6 +69,8 @@ public class OutboundDispatcher {
     private final OptOutService optOuts;
     private final ChannelMetrics metrics;
     private final PlaygroundOutboundSink playgroundSink;
+    private final com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
+            .PlaygroundSessionRegistry playgroundSessions;
     private final ObjectMapper json;
 
     public OutboundDispatcher(TwilioMessagingChannelProvider twilio,
@@ -81,6 +83,8 @@ public class OutboundDispatcher {
                               OptOutService optOuts,
                               ChannelMetrics metrics,
                               PlaygroundOutboundSink playgroundSink,
+                              com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
+                                      .PlaygroundSessionRegistry playgroundSessions,
                               ObjectMapper json) {
         this.twilio = twilio;
         this.credsResolver = credsResolver;
@@ -92,6 +96,7 @@ public class OutboundDispatcher {
         this.optOuts = optOuts;
         this.metrics = metrics;
         this.playgroundSink = playgroundSink;
+        this.playgroundSessions = playgroundSessions;
         this.json = json;
     }
 
@@ -209,7 +214,12 @@ public class OutboundDispatcher {
             InteractivePayload payload = renderer.render(body, hint,
                     new InteractiveRenderer.RenderContext(new ChannelKind.WhatsApp(), null));
             String renderedBody = payloadBody(payload, body);
-            playgroundSink.append(sessionId, renderedBody, payload);
+            // The engine session id is an internal UUID the playground UI can't
+            // know; route the reply to the client-chosen id it actually polls.
+            Ids.SessionId sinkKey = playgroundSessions.clientFor(sessionId)
+                    .map(Ids.SessionId::new)
+                    .orElse(sessionId);
+            playgroundSink.append(sinkKey, renderedBody, payload);
             metrics.outbound(tenant.value(), sender.value(), "freeform", "playground");
             return;
         }

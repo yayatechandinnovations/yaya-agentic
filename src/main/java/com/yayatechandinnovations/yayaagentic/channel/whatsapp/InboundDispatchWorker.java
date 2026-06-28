@@ -82,6 +82,8 @@ public class InboundDispatchWorker {
     private final OutboundDispatcher outboundDispatcher;
     private final OptOutService optOuts;
     private final ChannelTracing tracing;
+    private final com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
+            .PlaygroundSessionRegistry playgroundSessions;
     private final int maxAudioMinutes;
     private final long maxAudioBytes;
     private final StepUpCoordinator stepUp;
@@ -103,6 +105,8 @@ public class InboundDispatchWorker {
             OutboundDispatcher outboundDispatcher,
             OptOutService optOuts,
             ChannelTracing tracing,
+            com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
+                    .PlaygroundSessionRegistry playgroundSessions,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-minutes:5}") int maxAudioMinutes,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes,
             StepUpCoordinator stepUp,
@@ -120,6 +124,7 @@ public class InboundDispatchWorker {
         this.outboundDispatcher = outboundDispatcher;
         this.optOuts = optOuts;
         this.tracing = tracing;
+        this.playgroundSessions = playgroundSessions;
         this.maxAudioMinutes = maxAudioMinutes;
         this.maxAudioBytes = maxAudioBytes;
         this.stepUp = stepUp;
@@ -357,6 +362,7 @@ public class InboundDispatchWorker {
                     new SenderId(row.getSenderId()),
                     row.getEndUserPhone(),
                     sessionId);
+            registerPlaygroundClientSession(rawForAuth, sessionId);
             // §9 step 3e — persist the resolver-minted JWT on the freshly
             // created session row so the engine can forward it to tool calls
             // and refresh it on tool-level 401 (PR 6c).
@@ -389,6 +395,7 @@ public class InboundDispatchWorker {
             Ids.SessionId reusedId = sessionId;
             authResolved.jwt().ifPresent(jwt ->
                     authTokenStore.persist(reusedId, jwt));
+            registerPlaygroundClientSession(rawForAuth, sessionId);
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             if (!userText.isBlank()) {
@@ -530,6 +537,24 @@ public class InboundDispatchWorker {
     }
 
     private record InteractiveSelection(String id, String label, String kind) {}
+
+    /**
+     * Map the engine's internal session id to the client-chosen id the
+     * playground UI polls with (stashed by the controller in
+     * {@code raw_payload_json._playgroundClientSessionId}). No-op for the real
+     * Twilio path, where the marker is absent. See {@link
+     * com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSessionRegistry}.
+     */
+    private void registerPlaygroundClientSession(Map<String, Object> raw,
+                                                 Ids.SessionId sessionId) {
+        if (raw == null) return;
+        Object clientId = raw.get(
+                com.yayatechandinnovations.yayaagentic.api.PlaygroundWhatsAppController
+                        .RAW_PLAYGROUND_CLIENT_SESSION_KEY);
+        if (clientId instanceof String s && !s.isBlank()) {
+            playgroundSessions.register(sessionId, s);
+        }
+    }
 
     /**
      * W-A8 — playground pre-elevation: the controller stashed an elevation

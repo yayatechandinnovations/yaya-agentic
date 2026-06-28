@@ -88,6 +88,14 @@ public class PlaygroundWhatsAppController {
     public static final String RAW_PLAYGROUND_PRE_ELEVATION_KEY =
             "_playgroundPreElevation";
 
+    /** Reserved key for the client-chosen session id the Flutter playground
+     *  polls {@code /outbound/{sessionId}} with. The worker reads it after
+     *  session resolution and registers a {@code PlaygroundSessionRegistry}
+     *  mapping so the engine's internal UUID session id routes outbound to a
+     *  sink bucket the client can actually drain. */
+    public static final String RAW_PLAYGROUND_CLIENT_SESSION_KEY =
+            "_playgroundClientSessionId";
+
     /** Forge a Twilio-shape inbound payload through the same dispatch worker
      *  the real webhook controller uses. Runs the worker synchronously so the
      *  Flutter test can render the bot's reply on the next outbound poll. */
@@ -135,6 +143,9 @@ public class PlaygroundWhatsAppController {
             validatePreElevation(req.preElevation());
             raw.put(RAW_PLAYGROUND_PRE_ELEVATION_KEY,
                     json.convertValue(req.preElevation(), Map.class));
+        }
+        if (req.sessionId() != null && !req.sessionId().isBlank()) {
+            raw.put(RAW_PLAYGROUND_CLIENT_SESSION_KEY, req.sessionId());
         }
 
         InboundMessageEntity row = new InboundMessageEntity(
@@ -219,7 +230,7 @@ public class PlaygroundWhatsAppController {
 
     public record InboundRequest(String text, String fromPhone, String interactiveId,
                                  String profileId, Integer profileVersion,
-                                 PreElevation preElevation) {}
+                                 PreElevation preElevation, String sessionId) {}
 
     /**
      * Playground-only shortcut that skips the OTP / deep-link dance. The

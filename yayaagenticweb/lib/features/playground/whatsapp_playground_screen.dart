@@ -28,6 +28,10 @@ class _WhatsAppPlaygroundScreenState
   final _scrollCtrl = ScrollController();
   String? _profileSlug;
   String _sessionId = '';
+  // A distinct synthetic end-user phone per session so each conversation is a
+  // separate engine session — otherwise a shared phone makes "Reset" reuse the
+  // prior session and the bot remembers across resets.
+  String _fromPhone = '';
   String? _lastSeenId;
   final List<_Message> _transcript = [];
   Timer? _pollTimer;
@@ -57,7 +61,10 @@ class _WhatsAppPlaygroundScreenState
   }
 
   void _resetSession() {
-    _sessionId = 'wa-${DateTime.now().millisecondsSinceEpoch}';
+    final ms = DateTime.now().millisecondsSinceEpoch;
+    _sessionId = 'wa-$ms';
+    // E.164-shaped (+1 555 + 7 digits) and unique per session.
+    _fromPhone = '+1555${(ms % 10000000).toString().padLeft(7, '0')}';
     _lastSeenId = null;
     _transcript.clear();
     _pollTimer?.cancel();
@@ -129,7 +136,8 @@ class _WhatsAppPlaygroundScreenState
         '/v1/admin/tenants/$tenant/whatsapp-playground/inbound',
         data: {
           'text': text,
-          'fromPhone': '+15558675309',
+          'fromPhone': _fromPhone,
+          'sessionId': _sessionId,
           'profileId': profileId,
           'profileVersion': profileVersion,
           if (interactiveId != null) 'interactiveId': interactiveId,

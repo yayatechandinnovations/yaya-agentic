@@ -14,10 +14,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 /**
@@ -101,6 +103,38 @@ class PlaygroundWhatsAppTest {
         // end "sink has a message" assertion lives in WhatsAppWebhookE2ETest's
         // analogue; this test just defends the public surface of the
         // playground controller (sync-block-free, typed 202 receipt).
+    }
+
+    @Test
+    void inbound_reply_is_drainable_by_client_session_id() {
+        // Regression: the engine mints an internal UUID session id, but the UI
+        // polls /outbound by the client-chosen id it sends on /inbound. The
+        // reply must land in the sink under THAT id, not the engine's UUID.
+        String clientSession = "wa-" + System.currentTimeMillis();
+        var body = Map.of(
+                "text", "hello playground",
+                "fromPhone", "+15557654321",
+                "sessionId", clientSession,
+                "profileId", "playground-wa-profile",
+                "profileVersion", 1);
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isAccepted();
+
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+            var drain = client.get()
+                    .uri("/v1/admin/tenants/{t}/whatsapp-playground/outbound/{s}",
+                            TENANT, clientSession)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody(PlaygroundWhatsAppController.OutboundDrain.class)
+                    .returnResult().getResponseBody();
+            assertThat(drain).isNotNull();
+            assertThat(drain.messages()).isNotEmpty();
+        });
     }
 
     @Test
