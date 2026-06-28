@@ -98,31 +98,62 @@ public class WorkspaceService {
     // Writes
     // ------------------------------------------------------------------
 
-    /** Mint a new workspace owned by {@code actor}. Emits WORKSPACE_CREATE. */
+    /**
+     * Mint a new workspace owned by {@code actor}. When {@code explicitCode}
+     * is non-null/non-blank it is validated and used verbatim (so the code
+     * can match an external integration byte-for-byte); otherwise a slug is
+     * derived from {@code displayName} as before. Collisions on the explicit
+     * path raise {@link WorkspaceCodeConflictException} → 409. Emits
+     * WORKSPACE_CREATE with the audit {@code source} discriminating
+     * {@code explicit} vs {@code derived}.
+     */
     @Transactional
-    public WorkspaceSummary create(UserId actor, String displayName, OperatorAccountService.RequestMeta meta) {
+    public WorkspaceSummary create(UserId actor,
+                                   String displayName,
+                                   String explicitCode,
+                                   OperatorAccountService.RequestMeta meta) {
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName is required");
         }
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        String slug = slugger.allocate(displayName, tenants::existsById);
 
-        TenantEntity t = new TenantEntity(slug, displayName.trim());
+        String code;
+        String source;
+        if (explicitCode != null && !explicitCode.isBlank()) {
+            String trimmed = explicitCode.trim();
+            slugger.validateExplicit(trimmed);
+            if (tenants.existsById(trimmed)) {
+                throw new WorkspaceCodeConflictException(trimmed);
+            }
+            code = trimmed;
+            source = "explicit";
+        } else {
+            code = slugger.allocate(displayName, tenants::existsById);
+            source = "derived";
+        }
+
+        TenantEntity t = new TenantEntity(code, displayName.trim());
         t.setCreatedBy(actor.toString());
-        t.setCode(slug);
+        t.setCode(code);
         t.setOwnerUserId(actor.value());
         tenants.save(t);
 
         memberships.save(new UserMembershipEntity(
                 actor.value(),
-                slug,
+                code,
                 Role.OWNER.name(),
                 actor.value(),
                 now));
 
-        audit.write("WORKSPACE_CREATE", actor, new TenantId(slug), meta,
-                Map.of("code", slug, "source", "explicit"));
+        audit.write("WORKSPACE_CREATE", actor, new TenantId(code), meta,
+                Map.of("code", code, "source", source));
         return toSummary(t);
+    }
+
+    /** Back-compat overload — derives the code from {@code displayName}. */
+    @Transactional
+    public WorkspaceSummary create(UserId actor, String displayName, OperatorAccountService.RequestMeta meta) {
+        return create(actor, displayName, null, meta);
     }
 
     /**

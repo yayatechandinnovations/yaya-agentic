@@ -29,8 +29,11 @@ public class WorkspaceSlugger {
     private static final SecureRandom RAND = new SecureRandom();
     private static final char[] SUFFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
     private static final int MAX_LEN = 32;
+    private static final int MIN_LEN = 2;
     private static final int SUFFIX_LEN = 3;
     private static final int MAX_COLLISION_ATTEMPTS = 5;
+    private static final java.util.regex.Pattern EXPLICIT_PATTERN =
+            java.util.regex.Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
 
     /** Pure transform — does not consult the DB. */
     public String baseSlug(String displayName) {
@@ -76,6 +79,35 @@ public class WorkspaceSlugger {
             if (!exists.test(candidate)) return candidate;
         }
         throw new SlugAllocationException("could not allocate slug for: " + displayName);
+    }
+
+    /**
+     * Strict shape check for an operator-supplied code. Unlike {@link #baseSlug}
+     * this never normalises — the whole point of explicit codes is that they
+     * match an external system byte-for-byte, so an invalid input is rejected,
+     * not silently rewritten.
+     *
+     * <p>Rules: 2–{@value #MAX_LEN} chars, lowercase ASCII alphanumeric plus
+     * single internal dashes (no leading/trailing or doubled dashes), and not
+     * in the reserved-path set.</p>
+     *
+     * @throws IllegalArgumentException if the code violates any rule
+     */
+    public void validateExplicit(String code) {
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("code is required");
+        }
+        if (code.length() < MIN_LEN || code.length() > MAX_LEN) {
+            throw new IllegalArgumentException(
+                    "code must be " + MIN_LEN + "–" + MAX_LEN + " characters");
+        }
+        if (!EXPLICIT_PATTERN.matcher(code).matches()) {
+            throw new IllegalArgumentException(
+                    "code must be lowercase letters, digits, and single internal dashes");
+        }
+        if (RESERVED.contains(code)) {
+            throw new IllegalArgumentException("code is reserved");
+        }
     }
 
     private static String randomSuffix() {

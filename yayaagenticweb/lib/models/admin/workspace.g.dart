@@ -53,11 +53,17 @@ Map<String, dynamic> _$$WorkspaceListItemImplToJson(
 
 _$WorkspaceCreateRequestImpl _$$WorkspaceCreateRequestImplFromJson(
   Map<String, dynamic> json,
-) => _$WorkspaceCreateRequestImpl(displayName: json['displayName'] as String);
+) => _$WorkspaceCreateRequestImpl(
+  displayName: json['displayName'] as String,
+  code: json['code'] as String?,
+);
 
 Map<String, dynamic> _$$WorkspaceCreateRequestImplToJson(
   _$WorkspaceCreateRequestImpl instance,
-) => <String, dynamic>{'displayName': instance.displayName};
+) => <String, dynamic>{
+  'displayName': instance.displayName,
+  'code': instance.code,
+};
 
 _$WorkspacePatchRequestImpl _$$WorkspacePatchRequestImplFromJson(
   Map<String, dynamic> json,

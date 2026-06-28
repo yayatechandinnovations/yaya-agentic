@@ -570,6 +570,7 @@ WorkspaceCreateRequest _$WorkspaceCreateRequestFromJson(
 /// @nodoc
 mixin _$WorkspaceCreateRequest {
   String get displayName => throw _privateConstructorUsedError;
+  String? get code => throw _privateConstructorUsedError;
 
   /// Serializes this WorkspaceCreateRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -588,7 +589,7 @@ abstract class $WorkspaceCreateRequestCopyWith<$Res> {
     $Res Function(WorkspaceCreateRequest) then,
   ) = _$WorkspaceCreateRequestCopyWithImpl<$Res, WorkspaceCreateRequest>;
   @useResult
-  $Res call({String displayName});
+  $Res call({String displayName, String? code});
 }
 
 /// @nodoc
@@ -608,13 +609,17 @@ class _$WorkspaceCreateRequestCopyWithImpl<
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = null}) {
+  $Res call({Object? displayName = null, Object? code = freezed}) {
     return _then(
       _value.copyWith(
             displayName: null == displayName
                 ? _value.displayName
                 : displayName // ignore: cast_nullable_to_non_nullable
                       as String,
+            code: freezed == code
+                ? _value.code
+                : code // ignore: cast_nullable_to_non_nullable
+                      as String?,
           )
           as $Val,
     );
@@ -630,7 +635,7 @@ abstract class _$$WorkspaceCreateRequestImplCopyWith<$Res>
   ) = __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String displayName});
+  $Res call({String displayName, String? code});
 }
 
 /// @nodoc
@@ -647,13 +652,17 @@ class __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = null}) {
+  $Res call({Object? displayName = null, Object? code = freezed}) {
     return _then(
       _$WorkspaceCreateRequestImpl(
         displayName: null == displayName
             ? _value.displayName
             : displayName // ignore: cast_nullable_to_non_nullable
                   as String,
+        code: freezed == code
+            ? _value.code
+            : code // ignore: cast_nullable_to_non_nullable
+                  as String?,
       ),
     );
   }
@@ -662,17 +671,19 @@ class __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>
 /// @nodoc
 @JsonSerializable()
 class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
-  const _$WorkspaceCreateRequestImpl({required this.displayName});
+  const _$WorkspaceCreateRequestImpl({required this.displayName, this.code});
 
   factory _$WorkspaceCreateRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$WorkspaceCreateRequestImplFromJson(json);
 
   @override
   final String displayName;
+  @override
+  final String? code;
 
   @override
   String toString() {
-    return 'WorkspaceCreateRequest(displayName: $displayName)';
+    return 'WorkspaceCreateRequest(displayName: $displayName, code: $code)';
   }
 
   @override
@@ -681,12 +692,13 @@ class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
         (other.runtimeType == runtimeType &&
             other is _$WorkspaceCreateRequestImpl &&
             (identical(other.displayName, displayName) ||
-                other.displayName == displayName));
+                other.displayName == displayName) &&
+            (identical(other.code, code) || other.code == code));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, displayName);
+  int get hashCode => Object.hash(runtimeType, displayName, code);
 
   /// Create a copy of WorkspaceCreateRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -707,14 +719,18 @@ class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
 }
 
 abstract class _WorkspaceCreateRequest implements WorkspaceCreateRequest {
-  const factory _WorkspaceCreateRequest({required final String displayName}) =
-      _$WorkspaceCreateRequestImpl;
+  const factory _WorkspaceCreateRequest({
+    required final String displayName,
+    final String? code,
+  }) = _$WorkspaceCreateRequestImpl;
 
   factory _WorkspaceCreateRequest.fromJson(Map<String, dynamic> json) =
       _$WorkspaceCreateRequestImpl.fromJson;
 
   @override
   String get displayName;
+  @override
+  String? get code;
 
   /// Create a copy of WorkspaceCreateRequest
   /// with the given fields replaced by the non-null parameter values.

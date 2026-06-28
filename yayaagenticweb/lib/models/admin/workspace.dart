@@ -45,11 +45,15 @@ class WorkspaceListItem with _$WorkspaceListItem {
       _$WorkspaceListItemFromJson(json);
 }
 
-/// Body for `POST /v1/admin/workspaces`.
+/// Body for `POST /v1/admin/workspaces`. `code` is optional — when supplied
+/// the backend uses it verbatim (after shape/reserved/uniqueness checks)
+/// instead of deriving a slug from `displayName`. Useful when the workspace
+/// code must match an external system byte-for-byte.
 @freezed
 class WorkspaceCreateRequest with _$WorkspaceCreateRequest {
   const factory WorkspaceCreateRequest({
     required String displayName,
+    String? code,
   }) = _WorkspaceCreateRequest;
 
   factory WorkspaceCreateRequest.fromJson(Map<String, dynamic> json) =>

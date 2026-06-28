@@ -7,6 +7,7 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.PasswordPol
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.ApiKeyNotFoundException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.KeyCapExceededException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RoleExceedsCreatorException;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceCodeConflictException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -102,6 +103,17 @@ public class AdminExceptionHandler {
     public ResponseEntity<AdminDtos.ApiError> handle(LastOwnerException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new AdminDtos.ApiError(
                 "last_owner",
+                ex.getMessage()));
+    }
+
+    /**
+     * Operator-supplied workspace code collides with an existing one.
+     * UI keeps the form open and renders the message under the code field.
+     */
+    @ExceptionHandler(WorkspaceCodeConflictException.class)
+    public ResponseEntity<AdminDtos.ApiError> handle(WorkspaceCodeConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new AdminDtos.ApiError(
+                "workspace_code_taken",
                 ex.getMessage()));
     }
 }

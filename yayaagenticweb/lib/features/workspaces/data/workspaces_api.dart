@@ -28,10 +28,17 @@ class WorkspacesApi {
     }
   }
 
-  Future<Workspace> create(String displayName) async {
+  /// [code] is optional. When non-null/non-empty the backend uses it
+  /// verbatim instead of deriving a slug from [displayName] — pass it when
+  /// the workspace code must match an external integration. 409 with
+  /// `workspace_code_taken` surfaces if the code is already in use.
+  Future<Workspace> create(String displayName, {String? code}) async {
     try {
       final res = await _dio.post('/v1/admin/workspaces',
-          data: WorkspaceCreateRequest(displayName: displayName).toJson());
+          data: WorkspaceCreateRequest(
+            displayName: displayName,
+            code: (code == null || code.isEmpty) ? null : code,
+          ).toJson());
       return Workspace.fromJson(_asMap(res.data));
     } on DioException catch (e) {
       throw _toException(e);
@@ -118,6 +125,11 @@ class WorkspaceApiException implements Exception {
   /// workspace doesn't exist. The two cases are deliberately indistinguishable.
   bool get isNotFound =>
       statusCode == 404 || errorCode == 'workspace_not_found';
+
+  /// True when the server rejected an explicit workspace code because it
+  /// is already in use. The create dialog binds this to a field-level error.
+  bool get isCodeTaken =>
+      statusCode == 409 && errorCode == 'workspace_code_taken';
 
   @override
   String toString() => 'WorkspaceApiException($statusCode, $errorCode): $message';

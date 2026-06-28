@@ -68,7 +68,7 @@ public class WorkspaceController {
         }
         UserId me = currentUserId(exchange);
         RequestMeta meta = metaOf(exchange);
-        return Mono.fromCallable(() -> workspaces.create(me, body.displayName(), meta))
+        return Mono.fromCallable(() -> workspaces.create(me, body.displayName(), body.code(), meta))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(w -> ResponseEntity.status(HttpStatus.CREATED).body(WorkspaceDto.of(w)));
     }
@@ -149,7 +149,14 @@ public class WorkspaceController {
 
     // ---- DTOs ---------------------------------------------------------
 
-    public record CreateRequest(String displayName) {}
+    /**
+     * {@code displayName} is required. {@code code} is optional — when
+     * supplied it is used verbatim (after validation) instead of being
+     * derived from {@code displayName}, so the workspace code can match an
+     * external system byte-for-byte. Invalid shapes return 400; collisions
+     * return 409 {@code workspace_code_taken}.
+     */
+    public record CreateRequest(String displayName, String code) {}
 
     /**
      * Each field is optional ({@code null} → "leave untouched"). Empty
