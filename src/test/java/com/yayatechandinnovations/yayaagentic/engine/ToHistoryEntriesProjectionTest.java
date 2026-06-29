@@ -128,6 +128,54 @@ class ToHistoryEntriesProjectionTest {
     }
 
     @Test
+    void failed_tool_result_carries_its_error_to_the_llm() {
+        // Regression: a FAILED dispatch records value=null + error="...".
+        // The projection MUST hand the LLM a non-null, self-describing payload
+        // — otherwise the model receives an empty tool_result, assumes the data
+        // was simply unavailable, and fabricates plausible answers (e.g. made-up
+        // lotteries). The error text + a non-OK status must survive.
+        String callId = "call-failed";
+        List<Turn> turns = List.of(
+                user(0, "which lotteries are open"),
+                assistant(1, "",
+                        List.of(new Turn.ToolCall(callId, ECHO, Map.of("q", "open"))),
+                        List.of(new Turn.ToolResult(callId, Turn.ToolResult.Status.FAILED,
+                                null, "lottery service timeout"))));
+
+        List<LlmClient.HistoryEntry> projected = DefaultConversationEngine.toHistoryEntries(turns);
+
+        LlmClient.HistoryEntry.ToolResults results =
+                (LlmClient.HistoryEntry.ToolResults) projected.get(2);
+        LlmClient.ToolResultSpec spec = results.results().get(0);
+        assertThat(spec.isError()).isTrue();
+        assertThat(spec.value()).isNotNull();
+        assertThat(spec.value().toString()).contains("lottery service timeout");
+    }
+
+    @Test
+    void denied_tool_result_keeps_its_structured_user_safe_reason() {
+        // Denials already pack a user-safe reason into value; the projection
+        // must NOT clobber or re-wrap it — the LLM paraphrases that reason.
+        String callId = "call-denied";
+        List<Turn> turns = List.of(
+                user(0, "transfer funds"),
+                assistant(1, "",
+                        List.of(new Turn.ToolCall(callId, ECHO, Map.of("amt", "100"))),
+                        List.of(new Turn.ToolResult(callId, Turn.ToolResult.Status.DENIED,
+                                Map.of("reason", "needs step-up verification"), null))));
+
+        List<LlmClient.HistoryEntry> projected = DefaultConversationEngine.toHistoryEntries(turns);
+
+        LlmClient.ToolResultSpec spec =
+                ((LlmClient.HistoryEntry.ToolResults) projected.get(2)).results().get(0);
+        assertThat(spec.isError()).isTrue();
+        assertThat(spec.value()).isInstanceOf(Map.class);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> value = (Map<String, Object>) spec.value();
+        assertThat(value).containsEntry("reason", "needs step-up verification");
+    }
+
+    @Test
     void empty_text_with_orphan_call_only_collapses_to_nothing() {
         // Edge case: if a future code path ever records an assistant turn
         // with ONLY an orphan tool_call (no spoken text), the projection

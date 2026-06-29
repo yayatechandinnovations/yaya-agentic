@@ -138,6 +138,40 @@ class PlaygroundWhatsAppTest {
     }
 
     @Test
+    void fresh_session_opened_with_a_message_sends_only_the_reply() {
+        // Regression: a fresh session used to dispatch BOTH the static greeting
+        // AND the engine reply, so the user got two back-to-back "intro"
+        // messages. When the first inbound carries content, only the reply
+        // should land.
+        String clientSession = "wa-once-" + System.currentTimeMillis();
+        var body = Map.of(
+                "text", "which lotteries are open",
+                "fromPhone", "+15557650001",
+                "sessionId", clientSession,
+                "profileId", "playground-wa-profile",
+                "profileVersion", 1);
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isAccepted();
+
+        // Wait for the reply to arrive, then confirm no SECOND (greeting)
+        // message shows up — drain stays at exactly one.
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+            var drain = client.get()
+                    .uri("/v1/admin/tenants/{t}/whatsapp-playground/outbound/{s}", TENANT, clientSession)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody(PlaygroundWhatsAppController.OutboundDrain.class)
+                    .returnResult().getResponseBody();
+            assertThat(drain).isNotNull();
+            assertThat(drain.messages()).hasSize(1);
+        });
+    }
+
+    @Test
     void inbound_rejects_pre_elevation_with_missing_subject() {
         var body = Map.of(
                 "text", "test",
