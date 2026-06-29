@@ -43,11 +43,20 @@ public interface ConversationEngine {
      * name ({@code OK} / {@code FAILED} / {@code DENIED} / …). {@code result}
      * is the returned value on success or the structured error payload on
      * failure; {@code error} carries the raw failure text when present.
+     *
+     * <p>The auth fields are HTTP-tool dispatch diagnostics for the playground
+     * auth-flow inspector: {@code authForwarding} is the forwarding mode
+     * (NONE/PRINCIPAL_TOKEN/SERVICE_TOKEN), {@code authHeaderPresent} is whether
+     * an auth header was actually attached, {@code httpStatus} is the response
+     * status (e.g. 401). All null for non-HTTP tools.
      */
     record ToolActivity(String callId,
                         String toolId,
                         java.util.Map<String, Object> args,
                         String status,
                         Object result,
-                        String error) {}
+                        String error,
+                        String authForwarding,
+                        Boolean authHeaderPresent,
+                        Integer httpStatus) {}
 }

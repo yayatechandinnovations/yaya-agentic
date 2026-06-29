@@ -172,6 +172,43 @@ class PlaygroundWhatsAppTest {
     }
 
     @Test
+    void inspector_exposes_auth_flow_for_the_session() {
+        // After an inbound runs, the WhatsApp inspector endpoint must expose the
+        // auth-flow trace: binding stage + verification decision. The default
+        // playground binding has no resolver (FAQ mode), so the decision is
+        // ANONYMOUS — the operator can see the identity path at a glance.
+        String clientSession = "wa-auth-" + System.currentTimeMillis();
+        var body = Map.of(
+                "text", "hello",
+                "fromPhone", "+15557650002",
+                "sessionId", clientSession,
+                "profileId", "playground-wa-profile",
+                "profileVersion", 1);
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-playground/inbound", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange()
+                .expectStatus().isAccepted();
+
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
+            var snap = client.get()
+                    .uri("/v1/admin/tenants/{t}/whatsapp-playground/outbound/{s}/inspector",
+                            TENANT, clientSession)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody(com.yayatechandinnovations.yayaagentic.api.dto.InspectorDtos.InspectorSnapshot.class)
+                    .returnResult().getResponseBody();
+            assertThat(snap).isNotNull();
+            assertThat(snap.authFlow()).isNotNull();
+            assertThat(snap.authFlow().binding()).isNotNull();
+            assertThat(snap.authFlow().binding().resolverId()).isNull(); // FAQ mode
+            assertThat(snap.authFlow().verification()).isNotNull();
+            assertThat(snap.authFlow().verification().decision()).isEqualTo("ANONYMOUS");
+        });
+    }
+
+    @Test
     void inbound_rejects_pre_elevation_with_missing_subject() {
         var body = Map.of(
                 "text", "test",

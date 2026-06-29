@@ -652,24 +652,31 @@ public class DefaultConversationEngine implements ConversationEngine {
         lastToolActivityBySession
                 .computeIfAbsent(sessionId, k -> new java.util.concurrent.CopyOnWriteArrayList<>())
                 .add(new ToolActivity(callId, toolId,
-                        args == null ? Map.of() : args, "PENDING", null, null));
+                        args == null ? Map.of() : args, "PENDING", null, null,
+                        null, null, null));
     }
 
     private void recordToolResult(Ids.SessionId sessionId, TurnEvent.ToolResult tr) {
         java.util.List<ToolActivity> acts = lastToolActivityBySession.get(sessionId);
         if (acts == null) return;
         String status = tr.status() == null ? "OK" : tr.status().name();
+        Map<String, Object> diag = tr.diagnostics() == null ? Map.of() : tr.diagnostics();
+        String authForwarding = (String) diag.get("authForwarding");
+        Boolean authHeaderPresent = (Boolean) diag.get("authHeaderPresent");
+        Integer httpStatus = diag.get("httpStatus") instanceof Number n ? n.intValue() : null;
         for (int i = 0; i < acts.size(); i++) {
             ToolActivity a = acts.get(i);
             if (a.callId().equals(tr.callId()) && "PENDING".equals(a.status())) {
                 acts.set(i, new ToolActivity(a.callId(), a.toolId(), a.args(),
-                        status, tr.value(), tr.error()));
+                        status, tr.value(), tr.error(),
+                        authForwarding, authHeaderPresent, httpStatus));
                 return;
             }
         }
         // No matching pending call (e.g. a synthetic dispatch); append it.
         acts.add(new ToolActivity(tr.callId(), tr.callId(), Map.of(),
-                status, tr.value(), tr.error()));
+                status, tr.value(), tr.error(),
+                authForwarding, authHeaderPresent, httpStatus));
     }
 
     /**
@@ -1072,7 +1079,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         List<TurnEvent> events = new java.util.ArrayList<>(5);
         events.add(new TurnEvent.ToolCall(call.callId(), toolDescriptor.id(), args));
         events.add(new TurnEvent.ToolResult(call.callId(), recordedResult.status(),
-                recordedResult.value(), recordedResult.error()));
+                recordedResult.value(), recordedResult.error(), recordedResult.diagnostics()));
         if (captureOutcome.conflictUiHint() != null) {
             events.add(captureOutcome.conflictUiHint());
         }

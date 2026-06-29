@@ -25,7 +25,8 @@ public final class InspectorDtos {
             PromptDto lastPrompt,
             DenialDto lastDenial,
             RetrievalDto lastRetrieval,
-            List<ToolActivityDto> toolActivity
+            List<ToolActivityDto> toolActivity,
+            AuthFlowDto authFlow
     ) {
         public static InspectorSnapshot of(IntentFrame intent,
                                            Map<String, Object> wm,
@@ -33,6 +34,7 @@ public final class InspectorDtos {
                                            AuditAuthzEntity denial,
                                            RetrievalResult retrieval,
                                            List<com.yayatechandinnovations.yayaagentic.engine.ConversationEngine.ToolActivity> toolActivity,
+                                           AuthFlowDto authFlow,
                                            ObjectMapper json) {
             return new InspectorSnapshot(
                     intent == null ? null : IntentDto.of(intent),
@@ -41,23 +43,55 @@ public final class InspectorDtos {
                             : new PromptDto(prompt.cacheablePrefix(), prompt.variableSuffix()),
                     denial == null ? null : DenialDto.of(denial, json),
                     retrieval == null ? null : RetrievalDto.of(retrieval),
-                    ToolActivityDto.of(toolActivity));
+                    ToolActivityDto.of(toolActivity),
+                    authFlow);
         }
     }
+
+    /**
+     * The identity flow behind a session: which binding matched, the resolver
+     * call(s), the JWT-verification decision, the session-token state, and a
+     * computed list of "where it failed" hints. Built by {@code
+     * InspectorService}; null (section hidden) when the session used no channel
+     * auth. See {@code playground-auth-flow-inspector-design.md}.
+     */
+    public record AuthFlowDto(
+            BindingStageDto binding,
+            List<ResolverCallDto> resolverCalls,
+            VerificationDto verification,
+            String sessionToken,
+            List<HintDto> hints
+    ) {}
+
+    public record BindingStageDto(String bindingId, String profileId,
+                                  Long resolverId, String onUnresolved) {}
+
+    public record ResolverCallDto(String resolver, String reason, String cacheState,
+                                  String status, Integer httpStatus, Integer elapsedMs,
+                                  String errorSummary, String startedAt) {}
+
+    public record VerificationDto(String decision, String detail) {}
+
+    /** {@code severity} ∈ {info, warn, fail}. */
+    public record HintDto(String severity, String message) {}
 
     public record ToolActivityDto(String callId,
                                   String toolId,
                                   Map<String, Object> args,
                                   String status,
                                   Object result,
-                                  String error) {
+                                  String error,
+                                  String authForwarding,
+                                  Boolean authHeaderPresent,
+                                  Integer httpStatus) {
         static List<ToolActivityDto> of(
                 List<com.yayatechandinnovations.yayaagentic.engine.ConversationEngine.ToolActivity> acts) {
             return acts == null ? List.of()
                     : acts.stream()
                             .map(a -> new ToolActivityDto(a.callId(), a.toolId(),
                                     a.args() == null ? Map.of() : a.args(),
-                                    a.status(), a.result(), a.error()))
+                                    a.status(), a.result(), a.error(),
+                                    a.authForwarding(), a.authHeaderPresent(), a.httpStatus()))
                             .toList();
         }
     }

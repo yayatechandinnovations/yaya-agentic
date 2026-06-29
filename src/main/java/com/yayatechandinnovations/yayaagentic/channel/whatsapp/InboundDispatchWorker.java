@@ -91,6 +91,7 @@ public class InboundDispatchWorker {
             authIntegrator;
     private final com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore
             authTokenStore;
+    private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace;
 
     public InboundDispatchWorker(
             @Qualifier("channelDispatchExecutor") ThreadPoolTaskExecutor executor,
@@ -111,7 +112,8 @@ public class InboundDispatchWorker {
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes,
             StepUpCoordinator stepUp,
             com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator authIntegrator,
-            com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore authTokenStore) {
+            com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore authTokenStore,
+            com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace) {
         this.executor = executor;
         this.inbound = inbound;
         this.senders = senders;
@@ -130,6 +132,7 @@ public class InboundDispatchWorker {
         this.stepUp = stepUp;
         this.authIntegrator = authIntegrator;
         this.authTokenStore = authTokenStore;
+        this.authTrace = authTrace;
     }
 
     /**
@@ -369,6 +372,7 @@ public class InboundDispatchWorker {
             Ids.SessionId freshId = sessionId;
             authResolved.jwt().ifPresent(jwt ->
                     authTokenStore.persist(freshId, jwt));
+            recordAuthFlowTrace(sessionId, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             // W-A8 — playground pre-elevation: stamp the elevation row BEFORE
             // engine.send so the very first tool call sees it via the
@@ -403,6 +407,7 @@ public class InboundDispatchWorker {
             authResolved.jwt().ifPresent(jwt ->
                     authTokenStore.persist(reusedId, jwt));
             registerPlaygroundClientSession(rawForAuth, sessionId);
+            recordAuthFlowTrace(sessionId, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             if (!userText.isBlank()) {
@@ -561,6 +566,48 @@ public class InboundDispatchWorker {
         if (clientId instanceof String s && !s.isBlank()) {
             playgroundSessions.register(sessionId, s);
         }
+    }
+
+    /**
+     * Record the binding / JWT-verification / session-token stages for the
+     * playground auth-flow inspector. No-op-safe: the trace is in-memory and
+     * bounded. The resolver-call detail (status, http_status, latency) is
+     * already in {@code auth_resolver_calls}; this captures only what the
+     * worker computes that isn't otherwise persisted. See
+     * {@code playground-auth-flow-inspector-design.md} §6.2.
+     */
+    private void recordAuthFlowTrace(
+            Ids.SessionId sessionId,
+            ChannelBinding binding,
+            com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator.Resolved authResolved) {
+        authTrace.recordBinding(sessionId,
+                String.valueOf(binding.id().value()),
+                binding.profile().value(),
+                binding.authResolverId(),
+                binding.onUnresolved() == null ? null : binding.onUnresolved().name());
+
+        String decision = authResolved.decision().name();
+        String detail = switch (authResolved.decision()) {
+            case JWT_VERIFIED -> "Resolver JWT verified by the trust chain.";
+            case ANONYMOUS -> binding.authResolverId() == null
+                    ? "No auth resolver on this binding (FAQ mode) — anonymous principal."
+                    : "Resolver did not yield a verified identity; on_unresolved=ANONYMOUS.";
+            case REJECT -> "Identity could not be resolved/verified; on_unresolved=REJECT.";
+        };
+        authTrace.recordVerification(sessionId, decision, detail);
+
+        com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace.TokenState tokenState;
+        if (authResolved.jwt().isEmpty()) {
+            tokenState = com.yayatechandinnovations.yayaagentic.channel.auth
+                    .ChannelAuthTrace.TokenState.ABSENT;
+        } else if (!authTokenStore.isPersistable()) {
+            tokenState = com.yayatechandinnovations.yayaagentic.channel.auth
+                    .ChannelAuthTrace.TokenState.CIPHER_DISABLED;
+        } else {
+            tokenState = com.yayatechandinnovations.yayaagentic.channel.auth
+                    .ChannelAuthTrace.TokenState.STORED;
+        }
+        authTrace.recordSessionToken(sessionId, tokenState);
     }
 
     /**

@@ -112,6 +112,12 @@ public class HttpToolDispatcher {
             spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, richArgs, toolId)));
         }
         applyAuthForwarding(spec.authForwarding(), ctx, headers);
+        // Diagnostics for the playground auth-flow inspector: which forwarding
+        // mode this tool uses and whether an auth header actually got attached.
+        // A PRINCIPAL_TOKEN tool with authHeaderPresent=false is the smoking gun
+        // for a 401 (no token was forwarded). See
+        // playground-auth-flow-inspector-design.md §6.3.
+        Map<String, Object> diag = authDiagnostics(spec.authForwarding(), headers);
 
         String body = null;
         if (spec.body() != null && spec.body().template() != null
@@ -144,13 +150,34 @@ public class HttpToolDispatcher {
                         .filter(HttpToolDispatcher::isTransient));
             }
             String responseBody = mono.block();
-            return project(callId, spec.response(), responseBody);
+            return project(callId, spec.response(), responseBody).withDiagnostics(diag);
         } catch (WebClientResponseException e) {
-            return failed(callId, formatHttpFailure(e));
+            diag.put("httpStatus", e.getStatusCode().value());
+            return failed(callId, formatHttpFailure(e)).withDiagnostics(diag);
         } catch (Exception e) {
+            Throwable root = rootCause(e);
+            if (root instanceof WebClientResponseException w) {
+                diag.put("httpStatus", w.getStatusCode().value());
+            }
             return failed(callId, "HTTP tool '" + descriptor.id().value() + "' failed: "
-                    + describeCause(e));
+                    + describeCause(e)).withDiagnostics(diag);
         }
+    }
+
+    /** Auth-forwarding diagnostics for the inspector — the mode and whether an
+     *  auth header was actually attached after {@link #applyAuthForwarding}. */
+    private static Map<String, Object> authDiagnostics(HttpToolSpec.AuthForwarding mode,
+                                                       Map<String, String> headers) {
+        HttpToolSpec.AuthForwarding m = mode == null ? HttpToolSpec.AuthForwarding.NONE : mode;
+        boolean present = switch (m) {
+            case PRINCIPAL_TOKEN -> headers.containsKey(HttpHeaders.AUTHORIZATION);
+            case SERVICE_TOKEN -> headers.containsKey("X-Yaya-Service-Token");
+            case NONE -> false;
+        };
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("authForwarding", m.name());
+        d.put("authHeaderPresent", present);
+        return d;
     }
 
     /** Retry only what's worth retrying. Everything else fails fast. */

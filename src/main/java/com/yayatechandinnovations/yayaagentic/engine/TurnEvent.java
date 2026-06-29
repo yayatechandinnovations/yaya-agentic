@@ -22,8 +22,21 @@ public sealed interface TurnEvent
 
     record ToolCall(String callId, Ids.ToolId tool, Map<String, Object> args) implements TurnEvent {}
 
-    record ToolResult(String callId, Turn.ToolResult.Status status, Object value, String error)
-            implements TurnEvent {}
+    record ToolResult(String callId, Turn.ToolResult.Status status, Object value, String error,
+                      Map<String, Object> diagnostics)
+            implements TurnEvent {
+
+        public ToolResult {
+            diagnostics = diagnostics == null ? Map.of() : Map.copyOf(diagnostics);
+        }
+
+        /** Compat constructor — denial/synthetic results carry no dispatch
+         *  diagnostics. HTTP-tool results thread them through from the
+         *  dispatcher (auth forwarding mode, header presence, HTTP status). */
+        public ToolResult(String callId, Turn.ToolResult.Status status, Object value, String error) {
+            this(callId, status, value, error, Map.of());
+        }
+    }
 
     record Citation(String chunkId, Ids.KnowledgeSourceId source, String title, String url)
             implements TurnEvent {}

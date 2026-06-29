@@ -36,6 +36,13 @@ public class SessionAuthTokenStore {
         this.cipher = cipher;
     }
 
+    /** Whether {@link #persist} can actually write a token to disk. False when
+     *  the envelope cipher key isn't configured — surfaced to the inspector so
+     *  an operator sees "cipher not configured" rather than a silent no-store. */
+    public boolean isPersistable() {
+        return cipher.isConfigured();
+    }
+
     /** Encrypt + persist a JWT to the session row. No-op when the session
      *  is gone (race against session end) or when the cipher isn't
      *  configured (operator misconfig — surfaces in the warning log). */

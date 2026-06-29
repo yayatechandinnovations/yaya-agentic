@@ -65,6 +65,7 @@ public class PlaygroundWhatsAppController {
     private final StepUpAuditRepository stepUpAudit;
     private final PlaygroundSessionRegistry sessionRegistry;
     private final InspectorService inspector;
+    private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace;
 
     public PlaygroundWhatsAppController(TenantGuard tenantGuard,
                                         WorkspaceAccessHelper workspaceAccess,
@@ -76,7 +77,8 @@ public class PlaygroundWhatsAppController {
                                         ChannelSessionElevationRepository elevations,
                                         StepUpAuditRepository stepUpAudit,
                                         PlaygroundSessionRegistry sessionRegistry,
-                                        InspectorService inspector) {
+                                        InspectorService inspector,
+                                        com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.playgroundSenders = playgroundSenders;
@@ -88,6 +90,7 @@ public class PlaygroundWhatsAppController {
         this.stepUpAudit = stepUpAudit;
         this.sessionRegistry = sessionRegistry;
         this.inspector = inspector;
+        this.authTrace = authTrace;
     }
 
     /** Reserved key for the W-A8 pre-elevation marker. The worker reads it
@@ -217,6 +220,9 @@ public class PlaygroundWhatsAppController {
         workspaceAccess.require(tenantId, exchange, Role.MEMBER);
         tenantGuard.requireExists(tenantId);
         sink.clearSession(new Ids.SessionId(sessionId));
+        // Drop the auth-flow trace for the engine session this client id maps
+        // to, so a reset starts the inspector clean (design §13.1).
+        sessionRegistry.engineFor(sessionId).ifPresent(authTrace::wipe);
         return ResponseEntity.noContent().build();
     }
 

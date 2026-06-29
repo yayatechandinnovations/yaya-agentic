@@ -9,6 +9,7 @@ class InspectorSnapshot {
     this.lastDenial,
     this.lastRetrieval,
     this.toolActivity = const [],
+    this.authFlow,
   });
 
   final IntentSnapshot? intent;
@@ -17,6 +18,7 @@ class InspectorSnapshot {
   final DenialSnapshot? lastDenial;
   final RetrievalSnapshot? lastRetrieval;
   final List<ToolActivitySnapshot> toolActivity;
+  final AuthFlowSnapshot? authFlow;
 
   factory InspectorSnapshot.fromJson(Map<String, dynamic> json) => InspectorSnapshot(
         intent: json['intent'] == null
@@ -37,6 +39,115 @@ class InspectorSnapshot {
         toolActivity: (json['toolActivity'] as List? ?? const [])
             .map((e) => ToolActivitySnapshot.fromJson(Map<String, dynamic>.from(e)))
             .toList(),
+        authFlow: json['authFlow'] == null
+            ? null
+            : AuthFlowSnapshot.fromJson(Map<String, dynamic>.from(json['authFlow'])),
+      );
+}
+
+class AuthFlowSnapshot {
+  AuthFlowSnapshot({
+    this.binding,
+    this.resolverCalls = const [],
+    this.verification,
+    this.sessionToken,
+    this.hints = const [],
+  });
+  final BindingStageSnapshot? binding;
+  final List<ResolverCallSnapshot> resolverCalls;
+  final VerificationSnapshot? verification;
+  final String? sessionToken;
+  final List<AuthHintSnapshot> hints;
+
+  factory AuthFlowSnapshot.fromJson(Map<String, dynamic> json) => AuthFlowSnapshot(
+        binding: json['binding'] == null
+            ? null
+            : BindingStageSnapshot.fromJson(Map<String, dynamic>.from(json['binding'])),
+        resolverCalls: (json['resolverCalls'] as List? ?? const [])
+            .map((e) => ResolverCallSnapshot.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        verification: json['verification'] == null
+            ? null
+            : VerificationSnapshot.fromJson(Map<String, dynamic>.from(json['verification'])),
+        sessionToken: json['sessionToken'] as String?,
+        hints: (json['hints'] as List? ?? const [])
+            .map((e) => AuthHintSnapshot.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
+}
+
+class BindingStageSnapshot {
+  BindingStageSnapshot({this.bindingId, this.profileId, this.resolverId, this.onUnresolved});
+  final String? bindingId;
+  final String? profileId;
+  final int? resolverId;
+  final String? onUnresolved;
+
+  bool get hasResolver => resolverId != null;
+
+  factory BindingStageSnapshot.fromJson(Map<String, dynamic> json) => BindingStageSnapshot(
+        bindingId: json['bindingId'] as String?,
+        profileId: json['profileId'] as String?,
+        resolverId: (json['resolverId'] as num?)?.toInt(),
+        onUnresolved: json['onUnresolved'] as String?,
+      );
+}
+
+class ResolverCallSnapshot {
+  ResolverCallSnapshot({
+    this.resolver,
+    this.reason,
+    this.cacheState,
+    this.status,
+    this.httpStatus,
+    this.elapsedMs,
+    this.errorSummary,
+    this.startedAt,
+  });
+  final String? resolver;
+  final String? reason;
+  final String? cacheState;
+  final String? status;
+  final int? httpStatus;
+  final int? elapsedMs;
+  final String? errorSummary;
+  final String? startedAt;
+
+  bool get isOk => status == 'ok';
+
+  factory ResolverCallSnapshot.fromJson(Map<String, dynamic> json) => ResolverCallSnapshot(
+        resolver: json['resolver'] as String?,
+        reason: json['reason'] as String?,
+        cacheState: json['cacheState'] as String?,
+        status: json['status'] as String?,
+        httpStatus: (json['httpStatus'] as num?)?.toInt(),
+        elapsedMs: (json['elapsedMs'] as num?)?.toInt(),
+        errorSummary: json['errorSummary'] as String?,
+        startedAt: json['startedAt'] as String?,
+      );
+}
+
+class VerificationSnapshot {
+  VerificationSnapshot({this.decision, this.detail});
+  final String? decision;
+  final String? detail;
+
+  bool get isVerified => decision == 'JWT_VERIFIED';
+
+  factory VerificationSnapshot.fromJson(Map<String, dynamic> json) => VerificationSnapshot(
+        decision: json['decision'] as String?,
+        detail: json['detail'] as String?,
+      );
+}
+
+class AuthHintSnapshot {
+  AuthHintSnapshot({required this.severity, required this.message});
+  final String severity; // info | warn | fail
+  final String message;
+
+  factory AuthHintSnapshot.fromJson(Map<String, dynamic> json) => AuthHintSnapshot(
+        severity: (json['severity'] ?? 'info') as String,
+        message: (json['message'] ?? '') as String,
       );
 }
 
@@ -48,6 +159,9 @@ class ToolActivitySnapshot {
     required this.status,
     this.result,
     this.error,
+    this.authForwarding,
+    this.authHeaderPresent,
+    this.httpStatus,
   });
   final String callId;
   final String toolId;
@@ -55,6 +169,9 @@ class ToolActivitySnapshot {
   final String status;
   final Object? result;
   final String? error;
+  final String? authForwarding;
+  final bool? authHeaderPresent;
+  final int? httpStatus;
 
   bool get isOk => status == 'OK';
   bool get isPending => status == 'PENDING';
@@ -66,6 +183,9 @@ class ToolActivitySnapshot {
         status: (json['status'] ?? '') as String,
         result: json['result'],
         error: json['error'] as String?,
+        authForwarding: json['authForwarding'] as String?,
+        authHeaderPresent: json['authHeaderPresent'] as bool?,
+        httpStatus: (json['httpStatus'] as num?)?.toInt(),
       );
 }
 

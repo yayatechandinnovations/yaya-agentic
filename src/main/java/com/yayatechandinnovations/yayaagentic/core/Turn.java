@@ -40,12 +40,19 @@ public record Turn(
             Status status,
             Object value,
             String error,
-            List<EntityRef> capturedEntities
+            List<EntityRef> capturedEntities,
+            Map<String, Object> diagnostics
     ) {
         public enum Status { OK, DENIED, FAILED }
 
         public ToolResult {
             capturedEntities = capturedEntities == null ? List.of() : List.copyOf(capturedEntities);
+            // Transient dispatch metadata (e.g. HTTP tool auth: forwarding mode,
+            // whether an Authorization header was attached, the response status).
+            // NOT part of the recorded transcript contract — the recorder and the
+            // LLM-history projection ignore it; only the playground inspector reads
+            // it. See playground-auth-flow-inspector-design.md §6.3.
+            diagnostics = diagnostics == null ? Map.of() : Map.copyOf(diagnostics);
         }
 
         /**
@@ -54,12 +61,21 @@ public record Turn(
          * rebuilding the record via {@link #withCapturedEntities(List)}.
          */
         public ToolResult(String callId, Status status, Object value, String error) {
-            this(callId, status, value, error, List.of());
+            this(callId, status, value, error, List.of(), Map.of());
+        }
+
+        public ToolResult(String callId, Status status, Object value, String error,
+                          List<EntityRef> capturedEntities) {
+            this(callId, status, value, error, capturedEntities, Map.of());
         }
 
         public ToolResult withCapturedEntities(List<EntityRef> captured) {
             return new ToolResult(callId, status, value, error,
-                    captured == null ? List.of() : captured);
+                    captured == null ? List.of() : captured, diagnostics);
+        }
+
+        public ToolResult withDiagnostics(Map<String, Object> diag) {
+            return new ToolResult(callId, status, value, error, capturedEntities, diag);
         }
     }
 
