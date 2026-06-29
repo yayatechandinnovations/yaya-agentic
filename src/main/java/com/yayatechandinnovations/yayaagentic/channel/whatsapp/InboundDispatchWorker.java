@@ -372,7 +372,7 @@ public class InboundDispatchWorker {
             Ids.SessionId freshId = sessionId;
             authResolved.jwt().ifPresent(jwt ->
                     authTokenStore.persist(freshId, jwt));
-            recordAuthFlowTrace(sessionId, binding, authResolved);
+            recordAuthFlowTrace(sessionId, row, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             // W-A8 — playground pre-elevation: stamp the elevation row BEFORE
             // engine.send so the very first tool call sees it via the
@@ -407,7 +407,7 @@ public class InboundDispatchWorker {
             authResolved.jwt().ifPresent(jwt ->
                     authTokenStore.persist(reusedId, jwt));
             registerPlaygroundClientSession(rawForAuth, sessionId);
-            recordAuthFlowTrace(sessionId, binding, authResolved);
+            recordAuthFlowTrace(sessionId, row, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             if (!userText.isBlank()) {
@@ -578,13 +578,23 @@ public class InboundDispatchWorker {
      */
     private void recordAuthFlowTrace(
             Ids.SessionId sessionId,
+            InboundMessageEntity row,
             ChannelBinding binding,
             com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator.Resolved authResolved) {
+        // Caller hash matches how AuthResolverDispatcher keys auth_resolver_calls,
+        // so the inspector can recover the FRESH-session resolver call (audited
+        // with a null session_id because resolve() runs before the engine mints
+        // the session id). The playground uses a unique phone per session, so
+        // this hash is effectively session-unique.
+        String callerHash = com.yayatechandinnovations.yayaagentic.channel.auth.cache
+                .AuthResolverTokenCache.sha256LowerHex(row.getEndUserPhone());
         authTrace.recordBinding(sessionId,
                 String.valueOf(binding.id().value()),
                 binding.profile().value(),
                 binding.authResolverId(),
-                binding.onUnresolved() == null ? null : binding.onUnresolved().name());
+                binding.onUnresolved() == null ? null : binding.onUnresolved().name(),
+                row.getTenantId(),
+                callerHash);
 
         String decision = authResolved.decision().name();
         String detail = switch (authResolved.decision()) {

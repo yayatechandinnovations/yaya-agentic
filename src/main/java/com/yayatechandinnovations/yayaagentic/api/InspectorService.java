@@ -82,6 +82,24 @@ public class InspectorService {
             calls = resolverCalls.findBySessionIdOrderByStartedAtAsc(uuid);
         }
 
+        // FRESH-session fallback: the INITIAL resolver call is audited with a
+        // null session_id (it runs before the engine mints the session id), so
+        // the session-keyed query misses it. Recover it by the caller hash —
+        // unique per playground session — keeping only rows not tied to a
+        // DIFFERENT session (null = this fresh session's pre-id call).
+        if (calls.isEmpty() && trace != null
+                && trace.tenantId() != null && trace.callerSha256() != null) {
+            var recent = resolverCalls.findByTenantIdAndCallerSha256OrderByStartedAtDesc(
+                    trace.tenantId(), trace.callerSha256(), PageRequest.of(0, 20)).getContent();
+            List<AuthResolverCallEntity> recovered = new ArrayList<>();
+            for (AuthResolverCallEntity c : recent) {
+                UUID cs = c.getSessionId();
+                if (cs == null || sid.value().equals(cs.toString())) recovered.add(c);
+            }
+            java.util.Collections.reverse(recovered); // back to chronological
+            calls = recovered;
+        }
+
         // Section hidden when the session had no channel auth at all (e.g. the
         // standard SSE playground): no binding trace AND no resolver calls.
         if (trace == null && calls.isEmpty()) return null;

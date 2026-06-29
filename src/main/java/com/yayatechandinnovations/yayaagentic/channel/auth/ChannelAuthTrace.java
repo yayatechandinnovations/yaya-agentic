@@ -32,24 +32,31 @@ public class ChannelAuthTrace {
     public enum TokenState { STORED, ABSENT, CIPHER_DISABLED }
 
     /** Immutable snapshot the inspector reads. Any stage may be null if the
-     *  worker hadn't reached it (e.g. message rejected before verification). */
+     *  worker hadn't reached it (e.g. message rejected before verification).
+     *  {@code tenantId} + {@code callerSha256} let the inspector recover the
+     *  resolver-call row for a FRESH session, where the call was audited with a
+     *  null session_id (it runs before the engine mints the session id). */
     public record Snapshot(String bindingId,
                            String profileId,
                            Long resolverId,
                            String onUnresolved,
                            String verificationDecision,
                            String verificationDetail,
-                           String tokenState) {}
+                           String tokenState,
+                           String tenantId,
+                           String callerSha256) {}
 
     private static final class Mutable {
         String bindingId, profileId, onUnresolved;
         Long resolverId;
         String verificationDecision, verificationDetail;
         String tokenState;
+        String tenantId, callerSha256;
 
         Snapshot snapshot() {
             return new Snapshot(bindingId, profileId, resolverId, onUnresolved,
-                    verificationDecision, verificationDetail, tokenState);
+                    verificationDecision, verificationDetail, tokenState,
+                    tenantId, callerSha256);
         }
     }
 
@@ -62,7 +69,8 @@ public class ChannelAuthTrace {
             });
 
     public void recordBinding(Ids.SessionId session, String bindingId, String profileId,
-                              Long resolverId, String onUnresolved) {
+                              Long resolverId, String onUnresolved,
+                              String tenantId, String callerSha256) {
         if (session == null) return;
         Mutable m = entry(session);
         synchronized (m) {
@@ -70,6 +78,8 @@ public class ChannelAuthTrace {
             m.profileId = profileId;
             m.resolverId = resolverId;
             m.onUnresolved = onUnresolved;
+            m.tenantId = tenantId;
+            m.callerSha256 = callerSha256;
         }
     }
 
