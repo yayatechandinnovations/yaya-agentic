@@ -8,6 +8,7 @@ class InspectorSnapshot {
     this.lastPrompt,
     this.lastDenial,
     this.lastRetrieval,
+    this.toolActivity = const [],
   });
 
   final IntentSnapshot? intent;
@@ -15,6 +16,7 @@ class InspectorSnapshot {
   final PromptSnapshot? lastPrompt;
   final DenialSnapshot? lastDenial;
   final RetrievalSnapshot? lastRetrieval;
+  final List<ToolActivitySnapshot> toolActivity;
 
   factory InspectorSnapshot.fromJson(Map<String, dynamic> json) => InspectorSnapshot(
         intent: json['intent'] == null
@@ -32,6 +34,38 @@ class InspectorSnapshot {
         lastRetrieval: json['lastRetrieval'] == null
             ? null
             : RetrievalSnapshot.fromJson(Map<String, dynamic>.from(json['lastRetrieval'])),
+        toolActivity: (json['toolActivity'] as List? ?? const [])
+            .map((e) => ToolActivitySnapshot.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
+}
+
+class ToolActivitySnapshot {
+  ToolActivitySnapshot({
+    required this.callId,
+    required this.toolId,
+    this.args = const {},
+    required this.status,
+    this.result,
+    this.error,
+  });
+  final String callId;
+  final String toolId;
+  final Map<String, dynamic> args;
+  final String status;
+  final Object? result;
+  final String? error;
+
+  bool get isOk => status == 'OK';
+  bool get isPending => status == 'PENDING';
+
+  factory ToolActivitySnapshot.fromJson(Map<String, dynamic> json) => ToolActivitySnapshot(
+        callId: (json['callId'] ?? '') as String,
+        toolId: (json['toolId'] ?? '') as String,
+        args: json['args'] == null ? const {} : Map<String, dynamic>.from(json['args']),
+        status: (json['status'] ?? '') as String,
+        result: json['result'],
+        error: json['error'] as String?,
       );
 }
 

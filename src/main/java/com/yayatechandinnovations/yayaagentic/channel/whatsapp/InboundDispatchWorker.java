@@ -374,14 +374,21 @@ public class InboundDispatchWorker {
             // engine.send so the very first tool call sees it via the
             // StepUpScopeAuthorizer's elevation-merge path.
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
-            outboundDispatcher.dispatchGreeting(
-                    new Ids.TenantId(row.getTenantId()),
-                    new SenderId(row.getSenderId()),
-                    row.getEndUserPhone(),
-                    sessionId,
-                    result.greeting(),
-                    result.quickReplies());
-            if (!userText.isBlank()) {
+            // A fresh session that opens WITHOUT a user message (a consumed
+            // new-session keyword) gets the proactive greeting + quick-replies.
+            // When the first inbound already carries content, ALSO sending the
+            // static greeting double-introduces the bot — the engine reply
+            // introduces itself on first contact via the personality "greet"
+            // rule. Send only the reply in that case.
+            if (userText.isBlank()) {
+                outboundDispatcher.dispatchGreeting(
+                        new Ids.TenantId(row.getTenantId()),
+                        new SenderId(row.getSenderId()),
+                        row.getEndUserPhone(),
+                        sessionId,
+                        result.greeting(),
+                        result.quickReplies());
+            } else {
                 outboundDispatcher.dispatchTurn(
                         new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),

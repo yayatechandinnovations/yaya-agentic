@@ -24,13 +24,15 @@ public final class InspectorDtos {
             Map<String, Object> workingMemory,
             PromptDto lastPrompt,
             DenialDto lastDenial,
-            RetrievalDto lastRetrieval
+            RetrievalDto lastRetrieval,
+            List<ToolActivityDto> toolActivity
     ) {
         public static InspectorSnapshot of(IntentFrame intent,
                                            Map<String, Object> wm,
                                            PromptBuilder.PromptPayload prompt,
                                            AuditAuthzEntity denial,
                                            RetrievalResult retrieval,
+                                           List<com.yayatechandinnovations.yayaagentic.engine.ConversationEngine.ToolActivity> toolActivity,
                                            ObjectMapper json) {
             return new InspectorSnapshot(
                     intent == null ? null : IntentDto.of(intent),
@@ -38,7 +40,25 @@ public final class InspectorDtos {
                     prompt == null ? null
                             : new PromptDto(prompt.cacheablePrefix(), prompt.variableSuffix()),
                     denial == null ? null : DenialDto.of(denial, json),
-                    retrieval == null ? null : RetrievalDto.of(retrieval));
+                    retrieval == null ? null : RetrievalDto.of(retrieval),
+                    ToolActivityDto.of(toolActivity));
+        }
+    }
+
+    public record ToolActivityDto(String callId,
+                                  String toolId,
+                                  Map<String, Object> args,
+                                  String status,
+                                  Object result,
+                                  String error) {
+        static List<ToolActivityDto> of(
+                List<com.yayatechandinnovations.yayaagentic.engine.ConversationEngine.ToolActivity> acts) {
+            return acts == null ? List.of()
+                    : acts.stream()
+                            .map(a -> new ToolActivityDto(a.callId(), a.toolId(),
+                                    a.args() == null ? Map.of() : a.args(),
+                                    a.status(), a.result(), a.error()))
+                            .toList();
         }
     }
 

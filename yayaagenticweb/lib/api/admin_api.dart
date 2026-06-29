@@ -16,6 +16,7 @@ import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
+import '../models/admin/sms_channel.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
 import '../models/admin/whatsapp_sender.dart';
@@ -447,6 +448,92 @@ class AdminApi {
         await _dio.get('/v1/admin/tenants/$tenantId/whatsapp/readiness');
     final map = _asMap(res.data);
     return map['submitsEnabled'] == true;
+  }
+
+  // ---- SMS A2P 10DLC: brand ------------------------------------------
+
+  /// The tenant's SMS brand, or null if none has been created yet (404).
+  Future<SmsBrandResponse?> getSmsBrand(String tenantId) async {
+    try {
+      final res = await _dio.get('/v1/admin/tenants/$tenantId/sms/brand');
+      return SmsBrandResponse.fromJson(_asMap(res.data));
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<SmsBrandResponse> createSmsBrand(
+      String tenantId, SmsBrandRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/sms/brand',
+        data: body.toJson());
+    return SmsBrandResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SmsBrandResponse> updateSmsBrand(
+      String tenantId, SmsBrandRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/sms/brand',
+        data: body.toJson());
+    return SmsBrandResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SmsBrandResponse> submitSmsBrand(String tenantId) async {
+    final res =
+        await _dio.post('/v1/admin/tenants/$tenantId/sms/brand/submit');
+    return SmsBrandResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- SMS A2P 10DLC: campaigns --------------------------------------
+
+  Future<List<SmsCampaignResponse>> listSmsCampaigns(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/sms/campaigns');
+    return (res.data as List)
+        .map((e) => SmsCampaignResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<SmsCampaignResponse> createSmsCampaign(
+      String tenantId, SmsCampaignRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/sms/campaigns',
+        data: body.toJson());
+    return SmsCampaignResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SmsCampaignResponse> submitSmsCampaign(
+      String tenantId, String campaignId) async {
+    final res = await _dio
+        .post('/v1/admin/tenants/$tenantId/sms/campaigns/$campaignId/submit');
+    return SmsCampaignResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- SMS senders ---------------------------------------------------
+
+  Future<List<SmsSenderResponse>> listSmsSenders(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/sms/senders');
+    return (res.data as List)
+        .map((e) => SmsSenderResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<SmsSenderResponse> createSmsSender(
+      String tenantId, SmsSenderRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/sms/senders',
+        data: body.toJson());
+    return SmsSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SmsSenderResponse> submitSmsSender(
+      String tenantId, String senderId) async {
+    final res = await _dio
+        .post('/v1/admin/tenants/$tenantId/sms/senders/$senderId/submit');
+    return SmsSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SmsSenderResponse> syncSmsSender(
+      String tenantId, String senderId) async {
+    final res = await _dio
+        .post('/v1/admin/tenants/$tenantId/sms/senders/$senderId/sync');
+    return SmsSenderResponse.fromJson(_asMap(res.data));
   }
 
   // ---- Channel bindings ----------------------------------------------

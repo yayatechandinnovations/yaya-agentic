@@ -38,12 +38,28 @@ public class PlaygroundSessionRegistry {
                 }
             });
 
+    // Reverse direction: the inspector endpoint receives the client-chosen id
+    // the UI polls with and needs the engine UUID to read engine state.
+    private final Map<String, String> clientToEngine = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    return size() > MAX_ENTRIES;
+                }
+            });
+
     public void register(Ids.SessionId engineSession, String clientSessionId) {
         if (clientSessionId == null || clientSessionId.isBlank()) return;
         engineToClient.put(engineSession.value(), clientSessionId);
+        clientToEngine.put(clientSessionId, engineSession.value());
     }
 
     public Optional<String> clientFor(Ids.SessionId engineSession) {
         return Optional.ofNullable(engineToClient.get(engineSession.value()));
+    }
+
+    public Optional<Ids.SessionId> engineFor(String clientSessionId) {
+        if (clientSessionId == null || clientSessionId.isBlank()) return Optional.empty();
+        return Optional.ofNullable(clientToEngine.get(clientSessionId)).map(Ids.SessionId::new);
     }
 }

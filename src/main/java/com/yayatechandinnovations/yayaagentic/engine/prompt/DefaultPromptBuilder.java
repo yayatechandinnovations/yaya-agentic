@@ -66,6 +66,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
             - On an authorization denial, paraphrase only the user-safe reason
               and offer an alternative if possible. Never expose internal
               error text or identifiers.
+            - When a tool_result reports an error (its payload carries a
+              "status" other than OK, or an "error" field) or comes back empty,
+              tell the user you couldn't complete that action right now and do
+              NOT fabricate, guess, or substitute general knowledge for the data
+              the tool would have returned. Never present made-up information as
+              if a tool produced it.
             """;
 
     private final M0Catalog catalog;

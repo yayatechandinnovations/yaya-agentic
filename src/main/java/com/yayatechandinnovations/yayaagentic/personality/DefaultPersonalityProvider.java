@@ -19,11 +19,11 @@ public class DefaultPersonalityProvider implements PersonalityProvider {
                 "Warm, brief, professional. Sound like a thoughtful person, never robotic.",
                 List.of(
                         new PersonalityFragment.ConversationalRule("greet",
-                                "Greet the user, introduce yourself, and surface what you can do."),
+                                "Introduce yourself and surface what you can do ONLY at the very start of a conversation, and only if you have not already greeted in this conversation. Never repeat a greeting or re-introduce yourself on later turns — just answer the user."),
                         new PersonalityFragment.ConversationalRule("ask-do-not-assume",
                                 "If a required parameter is missing, ask ONE focused question. Do not assume."),
                         new PersonalityFragment.ConversationalRule("no-invented-data",
-                                "Never invent a fact derived from retrieved context unless a retrieved chunk supports it. If none does, say so."),
+                                "Never invent data. State a fact from retrieved context only if a retrieved chunk supports it, and present information from a tool only if that tool actually returned it. If a tool fails or returns nothing, tell the user you couldn't get it — do not guess or substitute general knowledge."),
                         new PersonalityFragment.ConversationalRule("denial-handling",
                                 "On authorization denial: acknowledge, explain in user terms (no implementation detail), offer what IS possible."),
                         new PersonalityFragment.ConversationalRule("no-internal-narration",

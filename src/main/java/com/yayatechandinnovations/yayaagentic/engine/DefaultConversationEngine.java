@@ -82,6 +82,12 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final Map<Ids.SessionId, java.util.concurrent.atomic.AtomicInteger> nextTurnIdx = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, PromptBuilder.PromptPayload> lastPromptBySession = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, RetrievalResult> lastRetrievalBySession = new ConcurrentHashMap<>();
+    // Tool calls + results from the most recent user turn, surfaced to the
+    // playground inspector ("which tools were called, any error"). Reset at the
+    // start of each turn; a CopyOnWriteArrayList tolerates the streaming
+    // append/update racing the inspector read on another thread.
+    private final Map<Ids.SessionId, java.util.List<ToolActivity>> lastToolActivityBySession =
+            new ConcurrentHashMap<>();
 
     public DefaultConversationEngine(PersonalityProvider personalityProvider,
                                      ProfileResolverChain resolverChain,
@@ -462,7 +468,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                     List<LlmClient.ToolResultSpec> results = rawResults.stream()
                             .filter(r -> callIds.contains(r.callId()))
                             .map(r -> new LlmClient.ToolResultSpec(
-                                    r.callId(), r.value(),
+                                    r.callId(), llmToolValue(r.status(), r.value(), r.error()),
                                     r.status() != Turn.ToolResult.Status.OK))
                             .toList();
 
@@ -578,7 +584,8 @@ public class DefaultConversationEngine implements ConversationEngine {
             history.add(new LlmClient.HistoryEntry.Assistant("",
                     List.of(new LlmClient.ToolCallSpec(callIdHint, toolId.value(), args))));
             history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
-                    new LlmClient.ToolResultSpec(callIdHint, result.value(),
+                    new LlmClient.ToolResultSpec(callIdHint,
+                            llmToolValue(result.status(), result.value(), result.error()),
                             result.status() != Turn.ToolResult.Status.OK))));
 
             List<RetrievedChunk> retrieved = retrieveForTurn(profile, session, intent, exec, message);
@@ -600,6 +607,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         nextTurnIdx.remove(sessionId);
         lastPromptBySession.remove(sessionId);
         lastRetrievalBySession.remove(sessionId);
+        lastToolActivityBySession.remove(sessionId);
         workingMemory.clear(sessionId);
         if (entityMemory != null) {
             entityMemory.clearScope(sessionId, com.yayatechandinnovations.yayaagentic.core.entity.EntityScope.SESSION);
@@ -623,6 +631,62 @@ public class DefaultConversationEngine implements ConversationEngine {
     @Override
     public java.util.Optional<RetrievalResult> lastRetrieval(Ids.SessionId sessionId) {
         return java.util.Optional.ofNullable(lastRetrievalBySession.get(sessionId));
+    }
+
+    @Override
+    public java.util.Optional<java.util.List<ToolActivity>> lastToolActivity(Ids.SessionId sessionId) {
+        java.util.List<ToolActivity> acts = lastToolActivityBySession.get(sessionId);
+        return acts == null || acts.isEmpty()
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(java.util.List.copyOf(acts));
+    }
+
+    /** Begin a fresh tool-activity log for this user turn (clears the prior
+     *  turn's calls so the inspector only ever shows the latest turn). */
+    private void resetToolActivity(Ids.SessionId sessionId) {
+        lastToolActivityBySession.put(sessionId, new java.util.concurrent.CopyOnWriteArrayList<>());
+    }
+
+    private void recordToolCall(Ids.SessionId sessionId, String callId, String toolId,
+                                Map<String, Object> args) {
+        lastToolActivityBySession
+                .computeIfAbsent(sessionId, k -> new java.util.concurrent.CopyOnWriteArrayList<>())
+                .add(new ToolActivity(callId, toolId,
+                        args == null ? Map.of() : args, "PENDING", null, null));
+    }
+
+    private void recordToolResult(Ids.SessionId sessionId, TurnEvent.ToolResult tr) {
+        java.util.List<ToolActivity> acts = lastToolActivityBySession.get(sessionId);
+        if (acts == null) return;
+        String status = tr.status() == null ? "OK" : tr.status().name();
+        for (int i = 0; i < acts.size(); i++) {
+            ToolActivity a = acts.get(i);
+            if (a.callId().equals(tr.callId()) && "PENDING".equals(a.status())) {
+                acts.set(i, new ToolActivity(a.callId(), a.toolId(), a.args(),
+                        status, tr.value(), tr.error()));
+                return;
+            }
+        }
+        // No matching pending call (e.g. a synthetic dispatch); append it.
+        acts.add(new ToolActivity(tr.callId(), tr.callId(), Map.of(),
+                status, tr.value(), tr.error()));
+    }
+
+    /**
+     * The value handed to the LLM for a tool result. On success it's the raw
+     * value; on a non-OK status we MUST send a non-null, self-describing
+     * payload — otherwise the model receives an empty tool_result and
+     * fabricates plausible data instead of admitting the failure. Denials
+     * already carry a structured user-safe reason in {@code value}, so that's
+     * preserved as-is; bare failures are wrapped with their error text.
+     */
+    private static Object llmToolValue(Turn.ToolResult.Status status, Object value, String error) {
+        if (status == Turn.ToolResult.Status.OK) return value;
+        if (value != null) return value;
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("status", status == null ? "FAILED" : status.name());
+        payload.put("error", error == null || error.isBlank() ? "tool_failed" : error);
+        return payload;
     }
 
     // ---- Internals --------------------------------------------------
@@ -661,6 +725,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         Flux<TurnEvent> citations = Flux.fromIterable(retrieved)
                 .map(this::toCitationEvent);
 
+        resetToolActivity(session.id());
         Flux<TurnEvent> body = streamLlmRound(personality, profile, session, intent, message,
                 recorder, exec, turnId, initial, retrieved, priorTurns, earlierSummary, 0, anyDispatch);
 
@@ -748,6 +813,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                                                             Map<String, Object> args) -> {
                         anyDispatch.set(true);
                         roundCalls.add(new LlmClient.ToolCallSpec(callId, toolName, args));
+                        recordToolCall(session.id(), callId, toolName, args);
                         Ids.ToolId toolId = new Ids.ToolId(toolName);
                         // Pass the LLM-assigned call id through so the
                         // dispatched ToolResult carries the same id Anthropic
@@ -767,8 +833,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                         yield dispatched.doOnNext(ev -> {
                             if (ev instanceof TurnEvent.ToolResult tr) {
                                 roundResults.add(new LlmClient.ToolResultSpec(
-                                        tr.callId(), tr.value(),
+                                        tr.callId(),
+                                        llmToolValue(tr.status(), tr.value(), tr.error()),
                                         tr.status() != Turn.ToolResult.Status.OK));
+                                recordToolResult(session.id(), tr);
                             }
                         });
                     }
@@ -1185,7 +1253,8 @@ public class DefaultConversationEngine implements ConversationEngine {
             history.add(new LlmClient.HistoryEntry.Assistant("",
                     List.of(new LlmClient.ToolCallSpec(callIdHint, rollbackToolId.value(), Map.of()))));
             history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
-                    new LlmClient.ToolResultSpec(callIdHint, result.value(),
+                    new LlmClient.ToolResultSpec(callIdHint,
+                            llmToolValue(result.status(), result.value(), result.error()),
                             result.status() != Turn.ToolResult.Status.OK))));
 
             List<RetrievedChunk> retrieved = retrieveForTurn(profile, session, intent, exec, message);

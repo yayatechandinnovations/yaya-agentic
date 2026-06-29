@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/api_client.dart';
 import '../../app/selected_tenant.dart';
+import '../../models/inspector_snapshot.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import '../admin/shared/admin_shared.dart';
 
@@ -36,6 +37,10 @@ class _WhatsAppPlaygroundScreenState
   final List<_Message> _transcript = [];
   Timer? _pollTimer;
   bool _sending = false;
+  // Inspector snapshot (tools called, errors, intent, retrieval, prompt) for
+  // the side panel — polled from the WhatsApp-playground inspector endpoint,
+  // which maps our client session id to the engine session behind the scenes.
+  InspectorSnapshot? _inspector;
 
   // Identity override — 'default' uses the binding's authentication chain
   // unchanged (production-faithful); 'pre-elevated' stamps a W-A8 step-up
@@ -67,8 +72,29 @@ class _WhatsAppPlaygroundScreenState
     _fromPhone = '+1555${(ms % 10000000).toString().padLeft(7, '0')}';
     _lastSeenId = null;
     _transcript.clear();
+    _inspector = null;
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) => _poll());
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      _poll();
+      _pollInspector();
+    });
+  }
+
+  Future<void> _pollInspector() async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    try {
+      final dio = await ref.read(dioProvider.future);
+      final res = await dio.get(
+          '/v1/admin/tenants/$tenant/whatsapp-playground/outbound/$_sessionId/inspector');
+      if (!mounted) return;
+      setState(() {
+        _inspector = InspectorSnapshot.fromJson(
+            Map<String, dynamic>.from(res.data as Map));
+      });
+    } catch (e) {
+      // Quiet — the inspector is best-effort diagnostics, not core chat.
+    }
   }
 
   Future<void> _poll() async {
@@ -301,16 +327,28 @@ class _WhatsAppPlaygroundScreenState
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: ListView.builder(
-                  controller: _scrollCtrl,
-                  itemCount: _transcript.length,
-                  itemBuilder: (_, i) =>
-                      _MessageBubble(message: _transcript[i], onTap: _send),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: ListView.builder(
+                        controller: _scrollCtrl,
+                        itemCount: _transcript.length,
+                        itemBuilder: (_, i) => _MessageBubble(
+                            message: _transcript[i], onTap: _send),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 340,
+                  child: _InspectorPanel(snapshot: _inspector),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),
@@ -613,5 +651,260 @@ class _MessageBubble extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Right-side diagnostics panel for the WhatsApp playground. Mirrors the
+/// standard playground inspector, but sourced from the polled WhatsApp
+/// inspector endpoint (no live SSE on this path). Surfaces the tool calls a
+/// turn made, their results/errors, plus intent, retrieval, denial, working
+/// memory and the last prompt halves.
+class _InspectorPanel extends StatelessWidget {
+  const _InspectorPanel({required this.snapshot});
+  final InspectorSnapshot? snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = snapshot;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.insights, size: 18),
+                const SizedBox(width: 6),
+                Text('Inspector',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ],
+            ),
+            const Divider(),
+            Expanded(
+              child: s == null
+                  ? Center(
+                      child: Text('Send a message to inspect the turn.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                          textAlign: TextAlign.center))
+                  : ListView(
+                      children: [
+                        _toolActivitySection(context, s),
+                        _denialSection(context, s),
+                        _intentSection(context, s),
+                        _retrievalSection(context, s),
+                        _workingMemorySection(context, s),
+                        _promptSection(context, s),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _section(BuildContext context, String title, List<Widget> children) {
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title.toUpperCase(),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _toolActivitySection(BuildContext context, InspectorSnapshot s) {
+    final scheme = Theme.of(context).colorScheme;
+    if (s.toolActivity.isEmpty) {
+      return _section(context, 'Tool activity', [
+        Text('No tools called this turn.',
+            style: Theme.of(context).textTheme.bodySmall),
+      ]);
+    }
+    return _section(context, 'Tool activity', [
+      for (final t in s.toolActivity)
+        Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    t.isPending
+                        ? Icons.hourglass_empty
+                        : t.isOk
+                            ? Icons.check_circle
+                            : Icons.error,
+                    size: 14,
+                    color: t.isPending
+                        ? scheme.outline
+                        : t.isOk
+                            ? Colors.green
+                            : scheme.error,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(t.toolId,
+                        style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12)),
+                  ),
+                  Text(t.status,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: t.isOk ? Colors.green : scheme.error)),
+                ],
+              ),
+              if (t.args.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('args: ${t.args}',
+                      style: const TextStyle(
+                          fontFamily: 'monospace', fontSize: 11)),
+                ),
+              if (t.error != null && t.error!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('error: ${t.error}',
+                      style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: scheme.error)),
+                )
+              else if (!t.isPending && t.result != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('→ ${t.result}',
+                      style: const TextStyle(
+                          fontFamily: 'monospace', fontSize: 11)),
+                ),
+            ],
+          ),
+        ),
+    ]);
+  }
+
+  Widget _denialSection(BuildContext context, InspectorSnapshot s) {
+    final d = s.lastDenial;
+    if (d == null) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return _section(context, 'Last denial', [
+      Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: scheme.errorContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (d.toolId != null)
+              Text(d.toolId!,
+                  style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: scheme.onErrorContainer)),
+            if (d.userReason != null)
+              Text('user: ${d.userReason}',
+                  style: TextStyle(
+                      fontSize: 11, color: scheme.onErrorContainer)),
+            if (d.auditReason != null)
+              Text('audit: ${d.auditReason}',
+                  style: TextStyle(
+                      fontSize: 11, color: scheme.onErrorContainer)),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _intentSection(BuildContext context, InspectorSnapshot s) {
+    final i = s.intent;
+    if (i == null || (i.label == null && i.slots.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    return _section(context, 'Active intent', [
+      if (i.label != null)
+        Text(i.label!, style: const TextStyle(fontSize: 12)),
+      if (i.slots.isNotEmpty)
+        Text('${i.slots}',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+      for (final p in i.parkedStack)
+        Text('parked: ${p.label} (${p.reason ?? '—'})',
+            style: const TextStyle(fontSize: 11)),
+    ]);
+  }
+
+  Widget _retrievalSection(BuildContext context, InspectorSnapshot s) {
+    final r = s.lastRetrieval;
+    if (r == null) return const SizedBox.shrink();
+    return _section(context, 'Retrieval (${r.latencyMs}ms)', [
+      if (r.sourcesConsidered.isNotEmpty)
+        Text('considered: ${r.sourcesConsidered.join(', ')}',
+            style: const TextStyle(fontSize: 11)),
+      if (r.sourcesDenied.isNotEmpty)
+        Text('denied: ${r.sourcesDenied.join(', ')}',
+            style: TextStyle(
+                fontSize: 11, color: Theme.of(context).colorScheme.error)),
+      for (final c in r.chunks)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+              '[${c.score.toStringAsFixed(2)}] ${c.source}: ${c.snippet}',
+              style: const TextStyle(fontSize: 11)),
+        ),
+    ]);
+  }
+
+  Widget _workingMemorySection(BuildContext context, InspectorSnapshot s) {
+    if (s.workingMemory.isEmpty) return const SizedBox.shrink();
+    return _section(context, 'Working memory', [
+      for (final e in s.workingMemory.entries)
+        Text('${e.key}: ${e.value}',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+    ]);
+  }
+
+  Widget _promptSection(BuildContext context, InspectorSnapshot s) {
+    final p = s.lastPrompt;
+    if (p == null) return const SizedBox.shrink();
+    return _section(context, 'Last prompt', [
+      ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        title: const Text('Cacheable prefix', style: TextStyle(fontSize: 12)),
+        children: [
+          Text(p.cacheablePrefix,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 10)),
+        ],
+      ),
+      ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        title: const Text('Variable suffix', style: TextStyle(fontSize: 12)),
+        children: [
+          Text(p.variableSuffix,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 10)),
+        ],
+      ),
+    ]);
   }
 }

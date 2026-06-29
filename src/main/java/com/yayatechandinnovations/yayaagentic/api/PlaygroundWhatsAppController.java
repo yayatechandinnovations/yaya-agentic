@@ -4,9 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.InboundDispatchWorker;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
+import com.yayatechandinnovations.yayaagentic.api.dto.InspectorDtos;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.ChannelSessionElevationRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.StepUpAuditRepository;
@@ -61,6 +63,8 @@ public class PlaygroundWhatsAppController {
     private final ObjectMapper json;
     private final ChannelSessionElevationRepository elevations;
     private final StepUpAuditRepository stepUpAudit;
+    private final PlaygroundSessionRegistry sessionRegistry;
+    private final InspectorService inspector;
 
     public PlaygroundWhatsAppController(TenantGuard tenantGuard,
                                         WorkspaceAccessHelper workspaceAccess,
@@ -70,7 +74,9 @@ public class PlaygroundWhatsAppController {
                                         PlaygroundOutboundSink sink,
                                         ObjectMapper json,
                                         ChannelSessionElevationRepository elevations,
-                                        StepUpAuditRepository stepUpAudit) {
+                                        StepUpAuditRepository stepUpAudit,
+                                        PlaygroundSessionRegistry sessionRegistry,
+                                        InspectorService inspector) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.playgroundSenders = playgroundSenders;
@@ -80,6 +86,8 @@ public class PlaygroundWhatsAppController {
         this.json = json;
         this.elevations = elevations;
         this.stepUpAudit = stepUpAudit;
+        this.sessionRegistry = sessionRegistry;
+        this.inspector = inspector;
     }
 
     /** Reserved key for the W-A8 pre-elevation marker. The worker reads it
@@ -180,6 +188,24 @@ public class PlaygroundWhatsAppController {
         List<PlaygroundOutboundSink.Message> messages = sink.drain(
                 new Ids.SessionId(sessionId), after);
         return new OutboundDrain(sessionId, messages);
+    }
+
+    /** Inspector snapshot for a playground session — the WhatsApp analogue of
+     *  {@code /v1/sessions/{id}/inspector}. The UI polls by its client-chosen
+     *  session id; we map it to the engine's internal UUID via the {@link
+     *  PlaygroundSessionRegistry} so the inspector reads the right session
+     *  state (intent, working memory, last prompt, denial, retrieval, tool
+     *  activity). Returns an empty snapshot until the worker has resolved the
+     *  session and registered the mapping. */
+    @GetMapping("/outbound/{sessionId}/inspector")
+    public InspectorDtos.InspectorSnapshot inspect(@PathVariable("tenantId") String tenantId,
+                                                   @PathVariable("sessionId") String sessionId,
+                                                   ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.MEMBER);
+        tenantGuard.requireExists(tenantId);
+        Ids.SessionId engineId = sessionRegistry.engineFor(sessionId)
+                .orElseGet(() -> new Ids.SessionId(sessionId));
+        return inspector.snapshot(engineId);
     }
 
     /** Reset the sink for a session — used when the playground starts a

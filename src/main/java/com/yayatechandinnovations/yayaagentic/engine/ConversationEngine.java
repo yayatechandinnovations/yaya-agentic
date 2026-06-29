@@ -31,4 +31,23 @@ public interface ConversationEngine {
     /** Most recent retrieval (sources considered/denied, chunks + scores)
      *  for this session, for the playground retrieval inspector. */
     Optional<RetrievalResult> lastRetrieval(Ids.SessionId sessionId);
+
+    /** Tool calls + their results from the most recent user turn, for the
+     *  playground inspector's tool-activity panel. Empty when the latest turn
+     *  called no tools. */
+    Optional<java.util.List<ToolActivity>> lastToolActivity(Ids.SessionId sessionId);
+
+    /**
+     * One tool invocation from a turn. {@code status} is {@code "PENDING"}
+     * until the dispatch resolves, then the {@code Turn.ToolResult.Status}
+     * name ({@code OK} / {@code FAILED} / {@code DENIED} / …). {@code result}
+     * is the returned value on success or the structured error payload on
+     * failure; {@code error} carries the raw failure text when present.
+     */
+    record ToolActivity(String callId,
+                        String toolId,
+                        java.util.Map<String, Object> args,
+                        String status,
+                        Object result,
+                        String error) {}
 }
