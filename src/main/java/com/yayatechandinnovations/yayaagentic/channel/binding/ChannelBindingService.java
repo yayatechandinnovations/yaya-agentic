@@ -36,15 +36,18 @@ public class ChannelBindingService {
     private final ChannelBindingRepository repo;
     private final ProfileRepository profiles;
     private final WhatsAppSenderService senders;
+    private final com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderService smsSenders;
     private final ObjectMapper json;
 
     public ChannelBindingService(ChannelBindingRepository repo,
                                  ProfileRepository profiles,
                                  WhatsAppSenderService senders,
+                                 com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderService smsSenders,
                                  ObjectMapper json) {
         this.repo = repo;
         this.profiles = profiles;
         this.senders = senders;
+        this.smsSenders = smsSenders;
         this.json = json;
     }
 
@@ -236,6 +239,9 @@ public class ChannelBindingService {
                 // another tenant's sender.
                 senders.requireForTenant(tenant, senderRef.id());
             }
+            case ChannelEndpointRef.SmsSenderRef smsRef ->
+                    // same cross-tenant guarantee as WhatsApp — tenant-scoped lookup
+                    smsSenders.requireForTenant(tenant, smsRef.id());
         }
     }
 

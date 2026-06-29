@@ -133,6 +133,9 @@ public class ChannelBindingController {
         return switch (ep.kind()) {
             case "WHATSAPP_SENDER" ->
                     new ChannelEndpointRef.WhatsAppSenderRef(new SenderId(ep.id()));
+            case "SMS_SENDER" ->
+                    new ChannelEndpointRef.SmsSenderRef(
+                            new com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderId(ep.id()));
             default -> throw AdminApiException.badRequest("bad_endpoint_kind",
                     "unknown endpoint kind: " + ep.kind());
         };

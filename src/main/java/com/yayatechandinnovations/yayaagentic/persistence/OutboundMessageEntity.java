@@ -54,6 +54,9 @@ public class OutboundMessageEntity {
     @Column(name = "retry_count", nullable = false)
     private int retryCount = 0;
 
+    @Column(name = "segment_count")
+    private Integer segmentCount;
+
     protected OutboundMessageEntity() {}
 
     public OutboundMessageEntity(String messageSid, String tenantId, String senderId,
@@ -88,4 +91,6 @@ public class OutboundMessageEntity {
     public void setFailureMessage(String v) { this.failureMessage = v; }
     public void setRetryCount(int v) { this.retryCount = v; }
     public void setTemplateId(Long v) { this.templateId = v; }
+    public Integer getSegmentCount() { return segmentCount; }
+    public void setSegmentCount(Integer v) { this.segmentCount = v; }
 }

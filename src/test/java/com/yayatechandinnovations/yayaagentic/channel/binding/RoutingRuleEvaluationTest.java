@@ -32,6 +32,7 @@ class RoutingRuleEvaluationTest {
                     new Class<?>[]{ProfileRepository.class},
                     (proxy, method, args) -> null),
             null,                                  // WhatsAppSenderService — never touched
+            null,                                  // SmsSenderService — never touched
             new ObjectMapper());
 
     @Test
