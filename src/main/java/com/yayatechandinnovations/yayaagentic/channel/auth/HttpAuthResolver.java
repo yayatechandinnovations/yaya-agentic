@@ -52,6 +52,7 @@ public final class HttpAuthResolver implements AuthResolver {
     private final HttpEgressPolicy egressPolicy;
     private final ObjectMapper json;
     private final Clock clock;
+    private final ResolverExchangeStore exchangeStore;
 
     HttpAuthResolver(String name,
                      String description,
@@ -62,7 +63,8 @@ public final class HttpAuthResolver implements AuthResolver {
                      WebClient http,
                      HttpEgressPolicy egressPolicy,
                      ObjectMapper json,
-                     Clock clock) {
+                     Clock clock,
+                     ResolverExchangeStore exchangeStore) {
         this.name = name;
         this.description = description;
         this.url = url;
@@ -73,6 +75,7 @@ public final class HttpAuthResolver implements AuthResolver {
         this.egressPolicy = egressPolicy;
         this.json = json;
         this.clock = clock;
+        this.exchangeStore = exchangeStore;
     }
 
     public enum ServiceAuthKind { NONE, BEARER, SIGNED_JWT }
@@ -115,17 +118,37 @@ public final class HttpAuthResolver implements AuthResolver {
             spec = (WebClient.RequestBodySpec) spec.header("Authorization", authHeader);
         }
 
+        // Redacted request snapshot for the playground auth-flow inspector. The
+        // outbound Authorization is yaya's own service credential — never the
+        // debugging target, always redacted (design §13.1).
+        Map<String, String> capturedHeaders = new LinkedHashMap<>();
+        capturedHeaders.put("X-Yaya-Tenant", req.tenant().value());
+        capturedHeaders.put("X-Yaya-Request-Id", requestId);
+        capturedHeaders.put("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+        if (authHeader != null) {
+            capturedHeaders.put("Authorization",
+                    "<" + serviceAuthKind + " service credential, redacted>");
+        }
+        java.util.concurrent.atomic.AtomicInteger statusHolder =
+                new java.util.concurrent.atomic.AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicReference<String> bodyHolder =
+                new java.util.concurrent.atomic.AtomicReference<>("");
+
         String rawBody;
         try {
             rawBody = spec.bodyValue(body)
                     .exchangeToMono(resp -> {
                         int status = resp.statusCode().value();
+                        statusHolder.set(status);
                         if (status == HttpStatus.NOT_FOUND.value()) {
-                            return reactor.core.publisher.Mono.empty();
+                            return resp.bodyToMono(String.class).defaultIfEmpty("")
+                                    .doOnNext(bodyHolder::set)
+                                    .then(reactor.core.publisher.Mono.empty());
                         }
                         if (status == 401 || status == 403) {
                             return resp.bodyToMono(String.class)
                                     .defaultIfEmpty("")
+                                    .doOnNext(bodyHolder::set)
                                     .flatMap(b -> reactor.core.publisher.Mono.error(
                                             new AuthResolverException("self_auth_failed",
                                                     "resolver '" + name + "' rejected our outbound auth ("
@@ -134,29 +157,41 @@ public final class HttpAuthResolver implements AuthResolver {
                         if (status >= 400) {
                             return resp.bodyToMono(String.class)
                                     .defaultIfEmpty("")
+                                    .doOnNext(bodyHolder::set)
                                     .flatMap(b -> reactor.core.publisher.Mono.error(
                                             new AuthResolverException("transport_error",
                                                     "resolver '" + name + "' returned " + status,
                                                     status, null)));
                         }
-                        return resp.bodyToMono(String.class).defaultIfEmpty("");
+                        return resp.bodyToMono(String.class).defaultIfEmpty("")
+                                .doOnNext(bodyHolder::set);
                     })
                     .block(timeout);
         } catch (AuthResolverException are) {
+            recordExchange(req, requestId, capturedHeaders, body,
+                    statusHolder.get(), bodyHolder.get(), are.status() + ": " + are.getMessage());
             throw are;
         } catch (RuntimeException rte) {
+            AuthResolverException toThrow;
             if (rte.getCause() instanceof TimeoutException
                     || rte instanceof IllegalStateException
                             && rte.getMessage() != null
                             && rte.getMessage().contains("Timeout")) {
-                throw new AuthResolverException("timeout",
+                toThrow = new AuthResolverException("timeout",
                         "resolver '" + name + "' timed out after " + timeout.toMillis() + "ms",
                         rte);
+            } else {
+                toThrow = new AuthResolverException("transport_error",
+                        "resolver '" + name + "' transport error: " + rte.getClass().getSimpleName(),
+                        rte);
             }
-            throw new AuthResolverException("transport_error",
-                    "resolver '" + name + "' transport error: " + rte.getClass().getSimpleName(),
-                    rte);
+            recordExchange(req, requestId, capturedHeaders, body,
+                    statusHolder.get(), bodyHolder.get(), toThrow.status() + ": " + toThrow.getMessage());
+            throw toThrow;
         }
+
+        recordExchange(req, requestId, capturedHeaders, body,
+                statusHolder.get(), bodyHolder.get(), null);
 
         if (rawBody == null || rawBody.isBlank()) {
             // 404 short-circuited to empty body OR 200 with empty body — both
@@ -180,6 +215,47 @@ public final class HttpAuthResolver implements AuthResolver {
         // Don't log s itself — non-negotiable §13.1: no JWT cleartext in logs.
         log.debug("auth resolver '{}' returned a token of {} bytes", name, s.length());
         return Optional.of(s);
+    }
+
+    /** Record the (already-redaction-safe) exchange for the playground
+     *  inspector. Never affects the resolve path. */
+    private void recordExchange(ResolveRequest req, String requestId,
+                                Map<String, String> headers, Map<String, Object> body,
+                                int status, String responseBody, String error) {
+        if (exchangeStore == null) return;
+        try {
+            String callerHash = com.yayatechandinnovations.yayaagentic.channel.auth.cache
+                    .AuthResolverTokenCache.sha256LowerHex(req.e164CallerPhone());
+            exchangeStore.record(req.tenant().value(), callerHash,
+                    new ResolverExchangeStore.Exchange(
+                            requestId, "POST", url.toString(),
+                            new LinkedHashMap<>(headers),
+                            new LinkedHashMap<>(body),
+                            status < 0 ? null : status,
+                            redactTokenInBody(responseBody),
+                            error,
+                            Instant.now(clock).toString()));
+        } catch (RuntimeException ignored) {
+            // Debug capture is best-effort; never let it break resolution.
+        }
+    }
+
+    /** Replace the JWT in a {@code {"token": "..."}} response with a length
+     *  placeholder so the in-memory store never holds a usable bearer token. */
+    private String redactTokenInBody(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) return rawBody;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = json.readValue(rawBody, Map.class);
+            Object t = parsed.get("token");
+            if (t instanceof String s && !s.isBlank()) {
+                parsed.put("token", "<JWT, " + s.length() + " bytes, redacted>");
+            }
+            return json.writeValueAsString(parsed);
+        } catch (Exception e) {
+            // Not JSON we can rewrite — error bodies rarely carry a token.
+            return rawBody;
+        }
     }
 
     private String buildAuthHeader(ResolveRequest req, String requestId) {

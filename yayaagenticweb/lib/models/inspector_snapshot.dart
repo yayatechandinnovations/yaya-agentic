@@ -49,12 +49,14 @@ class AuthFlowSnapshot {
   AuthFlowSnapshot({
     this.binding,
     this.resolverCalls = const [],
+    this.resolverExchanges = const [],
     this.verification,
     this.sessionToken,
     this.hints = const [],
   });
   final BindingStageSnapshot? binding;
   final List<ResolverCallSnapshot> resolverCalls;
+  final List<ResolverExchangeSnapshot> resolverExchanges;
   final VerificationSnapshot? verification;
   final String? sessionToken;
   final List<AuthHintSnapshot> hints;
@@ -65,6 +67,9 @@ class AuthFlowSnapshot {
             : BindingStageSnapshot.fromJson(Map<String, dynamic>.from(json['binding'])),
         resolverCalls: (json['resolverCalls'] as List? ?? const [])
             .map((e) => ResolverCallSnapshot.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        resolverExchanges: (json['resolverExchanges'] as List? ?? const [])
+            .map((e) => ResolverExchangeSnapshot.fromJson(Map<String, dynamic>.from(e)))
             .toList(),
         verification: json['verification'] == null
             ? null
@@ -124,6 +129,45 @@ class ResolverCallSnapshot {
         elapsedMs: (json['elapsedMs'] as num?)?.toInt(),
         errorSummary: json['errorSummary'] as String?,
         startedAt: json['startedAt'] as String?,
+      );
+}
+
+class ResolverExchangeSnapshot {
+  ResolverExchangeSnapshot({
+    this.requestId,
+    this.method,
+    this.url,
+    this.requestHeaders = const {},
+    this.requestBody = const {},
+    this.responseStatus,
+    this.responseBody,
+    this.error,
+    this.at,
+  });
+  final String? requestId;
+  final String? method;
+  final String? url;
+  final Map<String, dynamic> requestHeaders;
+  final Map<String, dynamic> requestBody;
+  final int? responseStatus;
+  final String? responseBody;
+  final String? error;
+  final String? at;
+
+  factory ResolverExchangeSnapshot.fromJson(Map<String, dynamic> json) => ResolverExchangeSnapshot(
+        requestId: json['requestId'] as String?,
+        method: json['method'] as String?,
+        url: json['url'] as String?,
+        requestHeaders: json['requestHeaders'] == null
+            ? const {}
+            : Map<String, dynamic>.from(json['requestHeaders']),
+        requestBody: json['requestBody'] == null
+            ? const {}
+            : Map<String, dynamic>.from(json['requestBody']),
+        responseStatus: (json['responseStatus'] as num?)?.toInt(),
+        responseBody: json['responseBody'] as String?,
+        error: json['error'] as String?,
+        at: json['at'] as String?,
       );
 }
 

@@ -36,17 +36,20 @@ public class HttpAuthResolverFactory {
     private final HttpEgressPolicy egressPolicy;
     private final ObjectMapper json;
     private final Clock clock;
+    private final ResolverExchangeStore exchangeStore;
 
     public HttpAuthResolverFactory(TenantRepository tenants,
                                    JwtSecretCipher cipher,
                                    HttpEgressPolicy egressPolicy,
                                    ObjectMapper json,
-                                   Clock clock) {
+                                   Clock clock,
+                                   ResolverExchangeStore exchangeStore) {
         this.tenants = tenants;
         this.cipher = cipher;
         this.egressPolicy = egressPolicy;
         this.json = json;
         this.clock = clock;
+        this.exchangeStore = exchangeStore;
     }
 
     public HttpAuthResolver build(ChannelAuthResolverEntity row) {
@@ -93,7 +96,8 @@ public class HttpAuthResolverFactory {
                 client,
                 egressPolicy,
                 json,
-                clock);
+                clock,
+                exchangeStore);
     }
 
     private WebClient buildWebClient(Duration timeout) {

@@ -208,6 +208,26 @@ flows naturally into `ToolActivity`, and is one nullable field. The
 `httpStatus` also lets us finally distinguish 401 from other `FAILED` results
 in the tool-activity section generally — useful beyond auth.
 
+### 6.4a Resolver exchange capture (the request/response debug view)
+
+Status/latency from `auth_resolver_calls` answers *whether* the resolver
+succeeded, but not *why* it returned no identity. To debug that, `HttpAuthResolver`
+captures the actual HTTP exchange — the request yaya sent and the response it
+got — into an in-memory `ResolverExchangeStore` (bounded, keyed by
+`tenantId|callerSha256`, recovered the same caller-hash way as the audit row).
+
+Redaction happens **at the source**, so the store never holds a usable secret
+or token:
+- the outbound `Authorization` (yaya's BEARER/SIGNED_JWT service credential to
+  the tenant) → `"<KIND service credential, redacted>"`;
+- the JWT in a `{"token": "..."}` response → `"<JWT, N bytes, redacted>"`
+  (operator-chosen: redact value, not decode-claims).
+
+Captured on success and every error branch (401/403, ≥400, timeout, transport).
+Surfaced as an expandable Request/Response tile under the resolver stage. The
+request body (`senderPhone`, `callerPhone`, `channel`, `reason`, …) is shown
+verbatim — operator-owned PII, the whole point of the debug view.
+
 ### 6.4 `AuthFlowDto` + snapshot wiring
 - New `InspectorDtos.AuthFlowDto` with: `binding`, `resolverCalls` (list),
   `verification`, `sessionToken`, plus a derived `List<String> hints` (see

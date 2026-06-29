@@ -211,7 +211,7 @@ class AuthResolverDispatcherTest {
         repo.put(row);
 
         HttpAuthResolverFactory neverFactory = new HttpAuthResolverFactory(
-                null, null, null, null, null) {
+                null, null, null, null, null, null) {
             @Override
             public com.yayatechandinnovations.yayaagentic.channel.auth.HttpAuthResolver build(
                     ChannelAuthResolverEntity r) {

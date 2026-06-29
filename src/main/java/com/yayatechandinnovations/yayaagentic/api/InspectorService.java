@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.dto.InspectorDtos;
 import com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace;
+import com.yayatechandinnovations.yayaagentic.channel.auth.ResolverExchangeStore;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.memory.WorkingMemory;
@@ -32,6 +33,7 @@ public class InspectorService {
     private final AuditAuthzRepository auditAuthz;
     private final AuthResolverCallRepository resolverCalls;
     private final ChannelAuthTrace authTrace;
+    private final ResolverExchangeStore exchangeStore;
     private final ObjectMapper json;
 
     public InspectorService(ConversationEngine engine,
@@ -39,12 +41,14 @@ public class InspectorService {
                             AuditAuthzRepository auditAuthz,
                             AuthResolverCallRepository resolverCalls,
                             ChannelAuthTrace authTrace,
+                            ResolverExchangeStore exchangeStore,
                             ObjectMapper json) {
         this.engine = engine;
         this.workingMemory = workingMemory;
         this.auditAuthz = auditAuthz;
         this.resolverCalls = resolverCalls;
         this.authTrace = authTrace;
+        this.exchangeStore = exchangeStore;
         this.json = json;
     }
 
@@ -122,10 +126,22 @@ public class InspectorService {
 
         String tokenState = trace == null ? null : trace.tokenState();
 
+        List<InspectorDtos.ResolverExchangeDto> exchangeDtos = new ArrayList<>();
+        if (trace != null && trace.tenantId() != null && trace.callerSha256() != null) {
+            for (ResolverExchangeStore.Exchange e :
+                    exchangeStore.forCaller(trace.tenantId(), trace.callerSha256())) {
+                exchangeDtos.add(new InspectorDtos.ResolverExchangeDto(
+                        e.requestId(), e.method(), e.url(),
+                        e.requestHeaders(), e.requestBody(),
+                        e.responseStatus(), e.responseBody(), e.error(), e.at()));
+            }
+        }
+
         List<InspectorDtos.HintDto> hints =
                 computeHints(trace, calls, tokenState, toolActivity);
 
-        return new InspectorDtos.AuthFlowDto(binding, callDtos, verification, tokenState, hints);
+        return new InspectorDtos.AuthFlowDto(
+                binding, callDtos, exchangeDtos, verification, tokenState, hints);
     }
 
     /**

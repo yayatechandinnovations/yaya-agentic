@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AuthResolverRegistryTest {
 
     private final HttpAuthResolverFactory neverFactory = new HttpAuthResolverFactory(
-            null, null, null, null, null) {
+            null, null, null, null, null, null) {
         @Override
         public HttpAuthResolver build(ChannelAuthResolverEntity row) {
             throw new IllegalStateException(
@@ -69,7 +69,7 @@ class AuthResolverRegistryTest {
     void http_kind_delegates_to_factory() {
         AtomicInteger builds = new AtomicInteger();
         HttpAuthResolverFactory tracingFactory = new HttpAuthResolverFactory(
-                null, null, null, null, null) {
+                null, null, null, null, null, null) {
             @Override
             public HttpAuthResolver build(ChannelAuthResolverEntity row) {
                 builds.incrementAndGet();

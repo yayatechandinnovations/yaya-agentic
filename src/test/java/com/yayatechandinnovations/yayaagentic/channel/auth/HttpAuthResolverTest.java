@@ -215,9 +215,47 @@ class HttpAuthResolverTest {
         assertThat(jwt.getJWTClaimsSet().getJWTID()).isEqualTo(requestId);
     }
 
+    @Test
+    void captures_exchange_with_credential_and_jwt_redacted() {
+        // The playground inspector captures the request/response, but the
+        // outbound service credential and the returned JWT must be redacted at
+        // the source — the in-memory store never holds a usable secret or token.
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"token\":\"eyJhbGciOi.realjwt.signature\",\"expiresIn\":3600}")));
+
+        ResolverExchangeStore store = new ResolverExchangeStore();
+        HttpAuthResolver r = resolverWithStore(
+                HttpAuthResolver.ServiceAuthKind.BEARER, "super-secret-bearer-value", store);
+        r.resolve(req(AuthResolver.ResolveReason.INITIAL));
+
+        String callerHash = com.yayatechandinnovations.yayaagentic.channel.auth.cache
+                .AuthResolverTokenCache.sha256LowerHex("+15551234567");
+        var exchanges = store.forCaller("acme", callerHash);
+        assertThat(exchanges).hasSize(1);
+        var ex = exchanges.get(0);
+
+        // Outbound credential redacted — the real bearer value never stored.
+        assertThat(ex.requestHeaders().get("Authorization"))
+                .isEqualTo("<BEARER service credential, redacted>");
+        assertThat(ex.requestHeaders().toString()).doesNotContain("super-secret-bearer-value");
+        // Response captured, status preserved, JWT value redacted.
+        assertThat(ex.responseStatus()).isEqualTo(200);
+        assertThat(ex.responseBody()).contains("redacted").contains("expiresIn");
+        assertThat(ex.responseBody()).doesNotContain("realjwt.signature");
+        // Request body shape is visible for debugging.
+        assertThat(ex.requestBody()).containsEntry("callerPhone", "+15551234567");
+    }
+
     // ---- helpers ------------------------------------------------------
 
     private HttpAuthResolver resolver(HttpAuthResolver.ServiceAuthKind kind, String secret) {
+        return resolverWithStore(kind, secret, new ResolverExchangeStore());
+    }
+
+    private HttpAuthResolver resolverWithStore(HttpAuthResolver.ServiceAuthKind kind,
+                                               String secret, ResolverExchangeStore store) {
         URI url = URI.create(wireMock.baseUrl() + "/yaya/resolve-identity");
         return new HttpAuthResolver(
                 "acme-customer-lookup",
@@ -229,7 +267,8 @@ class HttpAuthResolverTest {
                 WebClient.builder().build(),
                 egressPolicy,
                 json,
-                FIXED);
+                FIXED,
+                store);
     }
 
     private AuthResolver.ResolveRequest req(AuthResolver.ResolveReason reason) {

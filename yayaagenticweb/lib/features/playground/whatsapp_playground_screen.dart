@@ -771,6 +771,71 @@ class _InspectorPanel extends StatelessWidget {
     );
   }
 
+  Widget _kvBlock(BuildContext context, String label, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.bold)),
+          Text(body,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  String _prettyMap(Map<String, dynamic> m) {
+    if (m.isEmpty) return '(empty)';
+    return m.entries.map((e) => '${e.key}: ${e.value}').join('\n');
+  }
+
+  Widget _exchangeTile(BuildContext context, ResolverExchangeSnapshot ex) {
+    final scheme = Theme.of(context).colorScheme;
+    final ok = ex.responseStatus != null &&
+        ex.responseStatus! >= 200 &&
+        ex.responseStatus! < 300;
+    final statusLabel = ex.error != null
+        ? 'error'
+        : (ex.responseStatus?.toString() ?? '—');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          dense: true,
+          leading: Icon(Icons.swap_vert,
+              size: 16, color: ok ? Colors.green : scheme.error),
+          title: Text('Resolver exchange · $statusLabel',
+              style: const TextStyle(fontSize: 12)),
+          subtitle: Text('${ex.method ?? 'POST'} ${ex.url ?? ''}',
+              style: const TextStyle(fontSize: 10),
+              overflow: TextOverflow.ellipsis),
+          children: [
+            _kvBlock(context, 'REQUEST HEADERS',
+                _prettyMap(ex.requestHeaders)),
+            _kvBlock(context, 'REQUEST BODY', _prettyMap(ex.requestBody)),
+            if (ex.responseStatus != null)
+              _kvBlock(context, 'RESPONSE (${ex.responseStatus})',
+                  ex.responseBody == null || ex.responseBody!.isEmpty
+                      ? '(empty body)'
+                      : ex.responseBody!),
+            if (ex.error != null)
+              _kvBlock(context, 'ERROR', ex.error!),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _authFlowSection(BuildContext context, InspectorSnapshot s) {
     final af = s.authFlow;
     if (af == null) return const SizedBox.shrink();
@@ -826,6 +891,12 @@ class _InspectorPanel extends StatelessWidget {
           '${c.resolver ?? 'resolver'} · ${c.status ?? '?'}'
           '${parts.isEmpty ? '' : '  (${parts.join(' · ')})'}',
           detail: c.errorSummary));
+    }
+
+    // Resolver exchange — the actual request yaya sent and the response it
+    // got back (credential + JWT redacted). The point of the debug view.
+    for (final ex in af.resolverExchanges) {
+      children.add(_exchangeTile(context, ex));
     }
 
     // Stage 3 — JWT verification.

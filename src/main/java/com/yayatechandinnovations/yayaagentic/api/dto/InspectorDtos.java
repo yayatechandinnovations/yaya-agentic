@@ -58,6 +58,7 @@ public final class InspectorDtos {
     public record AuthFlowDto(
             BindingStageDto binding,
             List<ResolverCallDto> resolverCalls,
+            List<ResolverExchangeDto> resolverExchanges,
             VerificationDto verification,
             String sessionToken,
             List<HintDto> hints
@@ -65,6 +66,14 @@ public final class InspectorDtos {
 
     public record BindingStageDto(String bindingId, String profileId,
                                   Long resolverId, String onUnresolved) {}
+
+    /** The actual HTTP exchange yaya had with the resolver webhook — request
+     *  (credential redacted) and response (JWT redacted). For playground debug. */
+    public record ResolverExchangeDto(String requestId, String method, String url,
+                                      Map<String, String> requestHeaders,
+                                      Map<String, Object> requestBody,
+                                      Integer responseStatus, String responseBody,
+                                      String error, String at) {}
 
     public record ResolverCallDto(String resolver, String reason, String cacheState,
                                   String status, Integer httpStatus, Integer elapsedMs,
