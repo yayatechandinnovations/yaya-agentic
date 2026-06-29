@@ -4,6 +4,7 @@ import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
@@ -41,13 +42,24 @@ public class ChannelProfileResolver implements ProfileResolver {
                                            Principal principal) {
         Map<String, Object> hints = req.hints();
         if (hints == null || hints.isEmpty()) return Optional.empty();
-        Object kind = hints.get("channel.kind");
-        Object senderId = hints.get("channel.senderId");
-        if (!"whatsapp".equals(stringOf(kind))) return Optional.empty();
-        if (senderId == null) return Optional.empty();
+        String kind = stringOf(hints.get("channel.kind"));
+        if (kind == null) return Optional.empty();
 
-        ChannelEndpointRef endpoint = new ChannelEndpointRef.WhatsAppSenderRef(
-                new SenderId(senderId.toString()));
+        ChannelEndpointRef endpoint = switch (kind) {
+            case "whatsapp" -> {
+                Object senderId = hints.get("channel.senderId");
+                yield senderId == null ? null
+                        : new ChannelEndpointRef.WhatsAppSenderRef(new SenderId(senderId.toString()));
+            }
+            case "chat" -> {
+                Object entryPoint = hints.get("channel.entryPoint");
+                yield entryPoint == null ? null
+                        : new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(entryPoint.toString()));
+            }
+            default -> null;
+        };
+        if (endpoint == null) return Optional.empty();
+
         return bindings.findFor(req.tenant(), endpoint, principal, hints)
                 .map(ChannelBinding::profile);
     }

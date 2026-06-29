@@ -1,0 +1,39 @@
+name: yayaagenticchat
+description: "Yaya — branded end-user chat app. Scan a QR, pick a business tile, chat."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
+  cupertino_icons: ^1.0.8
+
+  # State + routing
+  flutter_riverpod: ^2.6.1
+  go_router: ^15.1.3
+
+  # Networking + SSE
+  dio: ^5.9.2
+
+  # Persistence (on-device directory of added tiles + per-tile sessionId)
+  shared_preferences: ^2.5.5
+
+  # QR add-a-tile on-ramp
+  mobile_scanner: ^5.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/yaya-chat-logo.png

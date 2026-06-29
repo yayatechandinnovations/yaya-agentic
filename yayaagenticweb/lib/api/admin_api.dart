@@ -7,6 +7,7 @@ import '../models/admin/auth_resolver.dart';
 import '../models/admin/capability.dart';
 import '../models/admin/channel_binding.dart';
 import '../models/admin/channel_opt_out.dart';
+import '../models/admin/chat_entry_point.dart';
 import '../models/admin/secondary_comms.dart';
 import '../models/admin/clone.dart';
 import '../models/admin/identity_profile_mapping.dart';
@@ -689,6 +690,52 @@ class AdminApi {
   Future<void> removeOptOut(String tenantId, String senderId, String phone) async {
     await _dio.delete(
         '/v1/admin/tenants/$tenantId/channel-opt-outs/$senderId/${Uri.encodeComponent(phone)}');
+  }
+
+  // ---- Chat entry points ---------------------------------------------
+
+  Future<List<ChatEntryPointResponse>> listChatEntryPoints(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/chat-entry-points');
+    return (res.data as List)
+        .map((e) => ChatEntryPointResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<ChatEntryPointResponse> createChatEntryPoint(
+      String tenantId, ChatEntryPointRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/chat-entry-points',
+        data: body.toJson());
+    return ChatEntryPointResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ChatEntryPointResponse> updateChatEntryPoint(
+      String tenantId, String id, ChatEntryPointRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/chat-entry-points/$id',
+        data: body.toUpdateJson());
+    return ChatEntryPointResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ChatEntryPointResponse> _chatLifecycle(
+      String tenantId, String id, String action) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/chat-entry-points/$id/$action');
+    return ChatEntryPointResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ChatEntryPointResponse> publishChatEntryPoint(String tenantId, String id) =>
+      _chatLifecycle(tenantId, id, 'publish');
+
+  Future<ChatEntryPointResponse> pauseChatEntryPoint(String tenantId, String id) =>
+      _chatLifecycle(tenantId, id, 'pause');
+
+  Future<ChatEntryPointResponse> resumeChatEntryPoint(String tenantId, String id) =>
+      _chatLifecycle(tenantId, id, 'resume');
+
+  Future<ChatEntryPointResponse> rotateChatEntryPointHandle(String tenantId, String id) =>
+      _chatLifecycle(tenantId, id, 'rotate-handle');
+
+  Future<ChatEntryPointResponse> deactivateChatEntryPoint(String tenantId, String id) async {
+    final res = await _dio.delete('/v1/admin/tenants/$tenantId/chat-entry-points/$id');
+    return ChatEntryPointResponse.fromJson(_asMap(res.data));
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);

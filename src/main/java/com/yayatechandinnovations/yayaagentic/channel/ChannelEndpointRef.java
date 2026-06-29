@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.channel;
 
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointId;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 
@@ -13,7 +14,9 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
  * <p>See {@code whatsapp-channel-design.md} §8 (binding shape).
  */
 public sealed interface ChannelEndpointRef
-        permits ChannelEndpointRef.WhatsAppSenderRef, ChannelEndpointRef.SmsSenderRef {
+        permits ChannelEndpointRef.WhatsAppSenderRef,
+                ChannelEndpointRef.SmsSenderRef,
+                ChannelEndpointRef.ChatEntryPointRef {
 
     /** Stable wire name used in {@code channel_bindings.endpoint_kind}. */
     String kindName();
@@ -34,6 +37,14 @@ public sealed interface ChannelEndpointRef
             if (id == null) throw new IllegalArgumentException("id required");
         }
         @Override public String kindName()   { return "SMS_SENDER"; }
+        @Override public String externalId() { return id.value(); }
+    }
+
+    record ChatEntryPointRef(ChatEntryPointId id) implements ChannelEndpointRef {
+        public ChatEntryPointRef {
+            if (id == null) throw new IllegalArgumentException("id required");
+        }
+        @Override public String kindName()   { return "CHAT_ENTRY_POINT"; }
         @Override public String externalId() { return id.value(); }
     }
 }

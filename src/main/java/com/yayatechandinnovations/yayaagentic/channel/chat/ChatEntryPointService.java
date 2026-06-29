@@ -1,0 +1,273 @@
+package com.yayatechandinnovations.yayaagentic.channel.chat;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
+import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
+import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.binding.RoutingRule;
+import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
+import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
+import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.regex.Pattern;
+
+/**
+ * Chat entry point CRUD + lifecycle arbiter ({@code chat-channel-design.md} §6),
+ * sibling to {@code SmsSenderService}. Creating an entry point is transactional:
+ * it inserts the {@code chat_entry_points} row <em>and</em> its {@code MatchAny}
+ * channel binding together, so {@code ChannelProfileResolver} resolves it the
+ * instant it goes {@code ACTIVE}.
+ */
+@Service
+public class ChatEntryPointService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatEntryPointService.class);
+    private static final Pattern HEX_COLOR = Pattern.compile("^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$");
+    private static final Base64.Encoder URL64 = Base64.getUrlEncoder().withoutPadding();
+
+    private final ChatEntryPointRepository repo;
+    private final ChannelBindingService bindings;
+    private final ObjectMapper json;
+    private final SecureRandom random = new SecureRandom();
+
+    public ChatEntryPointService(ChatEntryPointRepository repo,
+                                 ChannelBindingService bindings,
+                                 ObjectMapper json) {
+        this.repo = repo;
+        this.bindings = bindings;
+        this.json = json;
+    }
+
+    /* ------------------------------- read -------------------------------- */
+
+    public List<ChatEntryPoint> listForTenant(TenantId tenant) {
+        return repo.findByTenantIdOrderByCreatedAtDesc(tenant.value()).stream().map(this::toDomain).toList();
+    }
+
+    public ChatEntryPoint requireForTenant(TenantId tenant, ChatEntryPointId id) {
+        return toDomain(loadEntity(tenant, id));
+    }
+
+    /** Public front-door resolution by opaque handle. Empty for unknown handles —
+     *  the caller must not distinguish unknown from deactivated (§6.1). */
+    public Optional<ChatEntryPoint> findByHandle(String handle) {
+        if (handle == null || handle.isBlank()) return Optional.empty();
+        return repo.findByHandle(handle).map(this::toDomain);
+    }
+
+    /* ------------------------------ create ------------------------------- */
+
+    @Transactional
+    public ChatEntryPoint createDraft(TenantId tenant, CreateCommand cmd) {
+        validate(cmd);
+
+        Ids.ProfileId profile = new Ids.ProfileId(cmd.profileId(),
+                cmd.profileVersion() == null ? 1 : cmd.profileVersion());
+
+        String id = "chat_" + compactUuid();
+        ChatEntryPointEntity e = new ChatEntryPointEntity(
+                id, tenant.value(), mintHandle(), profile.value(),
+                cmd.profileVersion(), cmd.displayName().trim(), cmd.logoUrl().trim(),
+                writeJson(SessionPolicy.defaults()), EntryPointStatus.DRAFT.name());
+        e.setAccentColorHex(cmd.accentColorHex());
+        e.setWelcomeText(cmd.welcomeText());
+        e.setDefaultLocale(cmd.defaultLocale());
+        AuthMode authMode = cmd.authMode() == null ? AuthMode.ANONYMOUS_ONLY : cmd.authMode();
+        e.setAuthMode(authMode.name());
+        e.setAuthConfigJson(writeJson(cmd.authConfig() == null ? new AuthConfig.None() : cmd.authConfig()));
+        e.setAbusePolicyJson(writeJson(cmd.abuse() == null ? AbusePolicy.defaults() : cmd.abuse()));
+        e.setRequiresVerifiedPhone(Boolean.TRUE.equals(cmd.requiresVerifiedPhone()));
+        e.setUpdatedAt(now());
+
+        ChatEntryPointEntity saved = repo.save(e);
+
+        // The MatchAny binding pins the entry point to its profile. authResolverId
+        // flows from a ResolverExchange auth config; onUnresolved follows the auth mode.
+        Long authResolverId = (cmd.authConfig() instanceof AuthConfig.ResolverExchange rx) ? rx.authResolverId() : null;
+        bindings.create(tenant,
+                new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(saved.getId())),
+                profile,
+                Optional.ofNullable(cmd.profileVersion()),
+                new RoutingRule.MatchAny(),
+                SessionPolicy.defaults(),
+                100,
+                authResolverId,
+                authMode.requiresTokenToStart() ? OnUnresolvedPolicy.REJECT : OnUnresolvedPolicy.ANONYMOUS);
+
+        return toDomain(saved);
+    }
+
+    /* ------------------------------ update ------------------------------- */
+
+    @Transactional
+    public ChatEntryPoint updateBranding(TenantId tenant, ChatEntryPointId id, UpdateCommand cmd) {
+        ChatEntryPointEntity e = loadEntity(tenant, id);
+        if (cmd.displayName() != null && !cmd.displayName().isBlank()) e.setDisplayName(cmd.displayName().trim());
+        if (cmd.logoUrl() != null && !cmd.logoUrl().isBlank()) e.setLogoUrl(cmd.logoUrl().trim());
+        if (cmd.accentColorHex() != null) {
+            validateColor(cmd.accentColorHex());
+            e.setAccentColorHex(cmd.accentColorHex());
+        }
+        if (cmd.welcomeText() != null) e.setWelcomeText(cmd.welcomeText());
+        if (cmd.defaultLocale() != null && !cmd.defaultLocale().isBlank()) e.setDefaultLocale(cmd.defaultLocale());
+        if (cmd.authMode() != null) e.setAuthMode(cmd.authMode().name());
+        if (cmd.authConfig() != null) e.setAuthConfigJson(writeJson(cmd.authConfig()));
+        if (cmd.abuse() != null) e.setAbusePolicyJson(writeJson(cmd.abuse()));
+        if (cmd.requiresVerifiedPhone() != null) e.setRequiresVerifiedPhone(cmd.requiresVerifiedPhone());
+        e.setUpdatedAt(now());
+        return toDomain(repo.save(e));
+    }
+
+    /* ---------------------------- lifecycle ------------------------------ */
+
+    @Transactional
+    public ChatEntryPoint publish(TenantId tenant, ChatEntryPointId id) {
+        return transition(tenant, id, EntryPointStatus.ACTIVE);
+    }
+
+    @Transactional
+    public ChatEntryPoint pause(TenantId tenant, ChatEntryPointId id) {
+        return transition(tenant, id, EntryPointStatus.PAUSED);
+    }
+
+    @Transactional
+    public ChatEntryPoint resume(TenantId tenant, ChatEntryPointId id) {
+        return transition(tenant, id, EntryPointStatus.ACTIVE);
+    }
+
+    @Transactional
+    public ChatEntryPoint deactivate(TenantId tenant, ChatEntryPointId id) {
+        return transition(tenant, id, EntryPointStatus.DEACTIVATED);
+    }
+
+    @Transactional
+    public ChatEntryPoint rotateHandle(TenantId tenant, ChatEntryPointId id) {
+        ChatEntryPointEntity e = loadEntity(tenant, id);
+        e.setHandle(mintHandle());
+        e.setUpdatedAt(now());
+        return toDomain(repo.save(e));
+    }
+
+    /* ------------------------------ helpers ------------------------------ */
+
+    private ChatEntryPoint transition(TenantId tenant, ChatEntryPointId id, EntryPointStatus to) {
+        ChatEntryPointEntity e = loadEntity(tenant, id);
+        EntryPointStatus from = EntryPointStatus.parse(e.getStatus());
+        if (from == to) return toDomain(e);
+        if (!from.canTransitionTo(to)) {
+            throw AdminApiException.conflict("illegal_transition",
+                    "chat entry point in status " + from + " cannot transition to " + to);
+        }
+        e.setStatus(to.name());
+        e.setUpdatedAt(now());
+        return toDomain(repo.save(e));
+    }
+
+    private void validate(CreateCommand cmd) {
+        if (cmd == null) throw AdminApiException.badRequest("missing_body", "request body required");
+        if (cmd.profileId() == null || cmd.profileId().isBlank()) {
+            throw AdminApiException.badRequest("missing_profile", "profileId required");
+        }
+        if (cmd.displayName() == null || cmd.displayName().isBlank()) {
+            throw AdminApiException.badRequest("missing_name", "displayName required");
+        }
+        if (cmd.logoUrl() == null || cmd.logoUrl().isBlank()) {
+            throw AdminApiException.badRequest("missing_logo", "logoUrl required");
+        }
+        if (cmd.accentColorHex() != null) validateColor(cmd.accentColorHex());
+    }
+
+    private void validateColor(String hex) {
+        if (!hex.isBlank() && !HEX_COLOR.matcher(hex).matches()) {
+            throw AdminApiException.badRequest("bad_color", "accentColorHex must be #RRGGBB or #RRGGBBAA");
+        }
+    }
+
+    private ChatEntryPointEntity loadEntity(TenantId tenant, ChatEntryPointId id) {
+        return repo.findByTenantIdAndId(tenant.value(), id.value())
+                .orElseThrow(() -> AdminApiException.notFound("entry_point_not_found",
+                        "no such chat entry point '" + id.value() + "' in tenant '" + tenant.value() + "'"));
+    }
+
+    /** 18 random bytes → 24 url-safe chars. High entropy so the handle space is
+     *  not enumerable (§6.1). */
+    private String mintHandle() {
+        byte[] raw = new byte[18];
+        random.nextBytes(raw);
+        return "e_" + URL64.encodeToString(raw);
+    }
+
+    ChatEntryPoint toDomain(ChatEntryPointEntity e) {
+        return new ChatEntryPoint(
+                new ChatEntryPointId(e.getId()),
+                new TenantId(e.getTenantId()),
+                e.getHandle(),
+                new Ids.ProfileId(e.getProfileId(), e.getProfileVersion() == null ? 1 : e.getProfileVersion()),
+                new Branding(e.getDisplayName(), e.getLogoUrl(), e.getAccentColorHex(),
+                        e.getWelcomeText(), e.getDefaultLocale()),
+                AuthMode.parse(e.getAuthMode()),
+                readJson(e.getAuthConfigJson(), AuthConfig.class),
+                readJson(e.getSessionPolicyJson(), SessionPolicy.class),
+                readJson(e.getAbusePolicyJson(), AbusePolicy.class),
+                e.isRequiresVerifiedPhone(),
+                EntryPointStatus.parse(e.getStatus()),
+                toInstant(e.getCreatedAt()),
+                toInstant(e.getUpdatedAt()));
+    }
+
+    private static OffsetDateTime now() { return OffsetDateTime.now(ZoneOffset.UTC); }
+    private static Instant toInstant(OffsetDateTime odt) { return odt == null ? null : odt.toInstant(); }
+    private static String compactUuid() { return UUID.randomUUID().toString().replace("-", "").substring(0, 24); }
+
+    private String writeJson(Object v) {
+        try { return json.writeValueAsString(v); }
+        catch (JsonProcessingException e) { throw new IllegalStateException("encode " + v.getClass().getSimpleName(), e); }
+    }
+
+    private <T> T readJson(String src, Class<T> type) {
+        try { return json.readValue(src, type); }
+        catch (JsonProcessingException e) { throw new IllegalStateException("decode " + type.getSimpleName(), e); }
+    }
+
+    /** Create command — keeps the service signature stable as entry points grow. */
+    public record CreateCommand(
+            String profileId,
+            Integer profileVersion,
+            String displayName,
+            String logoUrl,
+            String accentColorHex,
+            String welcomeText,
+            String defaultLocale,
+            AuthMode authMode,
+            AuthConfig authConfig,
+            AbusePolicy abuse,
+            Boolean requiresVerifiedPhone) {}
+
+    /** Partial update — null fields are left unchanged. */
+    public record UpdateCommand(
+            String displayName,
+            String logoUrl,
+            String accentColorHex,
+            String welcomeText,
+            String defaultLocale,
+            AuthMode authMode,
+            AuthConfig authConfig,
+            AbusePolicy abuse,
+            Boolean requiresVerifiedPhone) {}
+}

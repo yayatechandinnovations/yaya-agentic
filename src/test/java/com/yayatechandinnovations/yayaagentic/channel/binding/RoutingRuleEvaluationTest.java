@@ -33,6 +33,7 @@ class RoutingRuleEvaluationTest {
                     (proxy, method, args) -> null),
             null,                                  // WhatsAppSenderService — never touched
             null,                                  // SmsSenderService — never touched
+            null,                                  // ChatEntryPointRepository — never touched
             new ObjectMapper());
 
     @Test

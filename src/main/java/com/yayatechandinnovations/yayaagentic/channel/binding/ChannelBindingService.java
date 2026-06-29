@@ -4,12 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointId;
+import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.persistence.ChannelBindingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChannelBindingRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileRepository;
 import org.springframework.stereotype.Service;
@@ -37,17 +40,22 @@ public class ChannelBindingService {
     private final ProfileRepository profiles;
     private final WhatsAppSenderService senders;
     private final com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderService smsSenders;
+    // Repository, not ChatEntryPointService — that service depends on this one to
+    // auto-create its MatchAny binding, so injecting the service would cycle.
+    private final ChatEntryPointRepository chatEntryPoints;
     private final ObjectMapper json;
 
     public ChannelBindingService(ChannelBindingRepository repo,
                                  ProfileRepository profiles,
                                  WhatsAppSenderService senders,
                                  com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderService smsSenders,
+                                 ChatEntryPointRepository chatEntryPoints,
                                  ObjectMapper json) {
         this.repo = repo;
         this.profiles = profiles;
         this.senders = senders;
         this.smsSenders = smsSenders;
+        this.chatEntryPoints = chatEntryPoints;
         this.json = json;
     }
 
@@ -242,6 +250,14 @@ public class ChannelBindingService {
             case ChannelEndpointRef.SmsSenderRef smsRef ->
                     // same cross-tenant guarantee as WhatsApp — tenant-scoped lookup
                     smsSenders.requireForTenant(tenant, smsRef.id());
+            case ChannelEndpointRef.ChatEntryPointRef chatRef -> {
+                // tenant-scoped lookup via the repository (not the service — cycle).
+                if (chatEntryPoints.findByTenantIdAndId(tenant.value(), chatRef.id().value()).isEmpty()) {
+                    throw AdminApiException.notFound("entry_point_not_found",
+                            "no such chat entry point '" + chatRef.id().value()
+                                    + "' in tenant '" + tenant.value() + "'");
+                }
+            }
         }
     }
 
@@ -288,6 +304,10 @@ public class ChannelBindingService {
         ChannelEndpointRef endpoint = switch (entity.getEndpointKind()) {
             case "WHATSAPP_SENDER" ->
                     new ChannelEndpointRef.WhatsAppSenderRef(new SenderId(entity.getEndpointId()));
+            case "SMS_SENDER" ->
+                    new ChannelEndpointRef.SmsSenderRef(new SmsSenderId(entity.getEndpointId()));
+            case "CHAT_ENTRY_POINT" ->
+                    new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(entity.getEndpointId()));
             default -> throw new IllegalStateException(
                     "unknown endpoint kind: " + entity.getEndpointKind());
         };
