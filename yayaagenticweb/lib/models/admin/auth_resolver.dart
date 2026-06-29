@@ -16,6 +16,8 @@ class AuthResolverResponse {
     this.httpPath,
     this.serviceAuthKind,
     this.serviceSecretMasked,
+    this.serviceJwtKid,
+    this.serviceJwtAudience,
     this.timeoutMs,
     this.cacheEnabled,
     this.maxCacheSeconds,
@@ -36,6 +38,8 @@ class AuthResolverResponse {
   final String? httpPath;
   final String? serviceAuthKind;      // 'NONE' | 'BEARER' | 'SIGNED_JWT'
   final String? serviceSecretMasked;
+  final String? serviceJwtKid;        // JOSE `kid` — cleartext, not a secret
+  final String? serviceJwtAudience;   // overrides `aud`; null = tenant id
   final int? timeoutMs;
   final bool? cacheEnabled;
   final int? maxCacheSeconds;
@@ -57,6 +61,8 @@ class AuthResolverResponse {
         httpPath: json['httpPath'] as String?,
         serviceAuthKind: json['serviceAuthKind'] as String?,
         serviceSecretMasked: json['serviceSecretMasked'] as String?,
+        serviceJwtKid: json['serviceJwtKid'] as String?,
+        serviceJwtAudience: json['serviceJwtAudience'] as String?,
         timeoutMs: (json['timeoutMs'] as num?)?.toInt(),
         cacheEnabled: json['cacheEnabled'] as bool?,
         maxCacheSeconds: (json['maxCacheSeconds'] as num?)?.toInt(),
@@ -102,6 +108,8 @@ class AuthResolverRequest {
     this.httpPath,
     this.serviceAuthKind,
     this.serviceSecret,
+    this.serviceJwtKid,
+    this.serviceJwtAudience,
     this.timeoutMs,
     this.cacheEnabled,
     this.maxCacheSeconds,
@@ -121,6 +129,12 @@ class AuthResolverRequest {
   /// Plaintext. Required on create when serviceAuthKind ∈ {BEARER, SIGNED_JWT}.
   /// Empty/null on update means "leave the existing secret as-is."
   final String? serviceSecret;
+
+  /// JOSE `kid` for the outbound SIGNED_JWT header. Not a secret.
+  final String? serviceJwtKid;
+
+  /// Overrides the SIGNED_JWT `aud` claim; null = default to tenant id.
+  final String? serviceJwtAudience;
   final int? timeoutMs;
   final bool? cacheEnabled;
   final int? maxCacheSeconds;
@@ -139,6 +153,10 @@ class AuthResolverRequest {
         if (serviceAuthKind != null) 'serviceAuthKind': serviceAuthKind,
         if (serviceSecret != null && serviceSecret!.isNotEmpty)
           'serviceSecret': serviceSecret,
+        if (serviceJwtKid != null && serviceJwtKid!.isNotEmpty)
+          'serviceJwtKid': serviceJwtKid,
+        if (serviceJwtAudience != null && serviceJwtAudience!.isNotEmpty)
+          'serviceJwtAudience': serviceJwtAudience,
         if (timeoutMs != null) 'timeoutMs': timeoutMs,
         if (cacheEnabled != null) 'cacheEnabled': cacheEnabled,
         if (maxCacheSeconds != null) 'maxCacheSeconds': maxCacheSeconds,

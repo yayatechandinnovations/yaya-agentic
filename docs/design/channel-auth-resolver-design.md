@@ -391,6 +391,12 @@ Signed with `service_secret_enc` (decrypted at use time via
 which they receive once at resolver-creation time and which yaya stores
 encrypted at rest.
 
+> **Amended by `channel-auth-resolver-signing-kid.md`:** the SIGNED_JWT JOSE
+> header carries an optional per-resolver `kid` (`service_jwt_kid`) so a
+> verifier that selects its key by key-id can find it, and the `aud` claim
+> can be overridden per resolver (`service_jwt_audience`) when the tenant's
+> verifier expects an audience other than the tenant id.
+
 ### 6.4 URL composition rules
 
 `tenant.host_base_url` is the per-tenant origin (e.g.

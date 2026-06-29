@@ -80,6 +80,28 @@ class TenantAuthResolverControllerTest {
     }
 
     @Test
+    void signed_jwt_kid_and_audience_round_trip_in_cleartext() {
+        String name = unique("kid-roundtrip");
+        var req = httpRequest(name, "/yaya/resolve-identity", "SIGNED_JWT",
+                "the-shared-secret-32-bytes-or-longer", 3000, "yaya-in-1", "yaya");
+
+        var resp = client.post()
+                .uri("/v1/admin/tenants/{t}/auth-resolvers", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req).exchange()
+                .expectStatus().isCreated()
+                .expectBody(TenantAuthResolverController.ResolverResponse.class)
+                .returnResult().getResponseBody();
+
+        assertThat(resp).isNotNull();
+        // kid + aud are NOT secrets — they come back in cleartext...
+        assertThat(resp.serviceJwtKid()).isEqualTo("yaya-in-1");
+        assertThat(resp.serviceJwtAudience()).isEqualTo("yaya");
+        // ...while the secret is still masked.
+        assertThat(resp.serviceSecretMasked()).startsWith("••••••••••••");
+    }
+
+    @Test
     void create_http_without_secret_fails_when_signed_jwt_requested() {
         var bad = httpRequest(unique("missing-secret"), "/yaya/resolve-identity",
                 "SIGNED_JWT", null, 3000);
@@ -248,9 +270,15 @@ class TenantAuthResolverControllerTest {
 
     private static TenantAuthResolverController.ResolverRequest httpRequest(
             String name, String path, String authKind, String secret, int timeoutMs) {
+        return httpRequest(name, path, authKind, secret, timeoutMs, null, null);
+    }
+
+    private static TenantAuthResolverController.ResolverRequest httpRequest(
+            String name, String path, String authKind, String secret, int timeoutMs,
+            String serviceJwtKid, String serviceJwtAudience) {
         return new TenantAuthResolverController.ResolverRequest(
                 name, "test resolver", "HTTP", null, path,
-                authKind, secret, timeoutMs,
+                authKind, secret, serviceJwtKid, serviceJwtAudience, timeoutMs,
                 true, null, 60, 3600, "REJECT", "ACTIVE");
     }
 
@@ -258,7 +286,7 @@ class TenantAuthResolverControllerTest {
             String name, String beanName) {
         return new TenantAuthResolverController.ResolverRequest(
                 name, "test bean resolver", "BEAN", beanName, null,
-                null, null, null,
+                null, null, null, null, null,
                 true, null, 60, 3600, "REJECT", "ACTIVE");
     }
 

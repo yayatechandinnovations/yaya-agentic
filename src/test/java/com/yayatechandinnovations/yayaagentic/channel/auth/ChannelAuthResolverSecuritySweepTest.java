@@ -258,6 +258,11 @@ class ChannelAuthResolverSecuritySweepTest {
         assertThat(componentNames).doesNotContain("serviceSecret");
         assertThat(componentNames).doesNotContain("secret");
         assertThat(componentNames).doesNotContain("plaintextSecret");
+        // The JOSE `kid` and `aud` are public key/claim identifiers, not secrets —
+        // they are returned in cleartext on purpose so an operator can confirm
+        // they match their verifier. Their presence must NOT be read as a leak.
+        assertThat(componentNames).contains("serviceJwtKid");
+        assertThat(componentNames).contains("serviceJwtAudience");
     }
 
     // §13.7 (bean lookup is exact-match) is defended by

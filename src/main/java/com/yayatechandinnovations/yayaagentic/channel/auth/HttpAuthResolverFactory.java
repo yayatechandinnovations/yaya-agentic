@@ -92,6 +92,8 @@ public class HttpAuthResolverFactory {
                 url,
                 kind,
                 secret,
+                row.getServiceJwtKid(),
+                row.getServiceJwtAudience(),
                 timeout,
                 client,
                 egressPolicy,

@@ -198,6 +198,39 @@ class HttpAuthResolverTest {
         assertThat(lifeSecs).isEqualTo(30);
         // alg = HS256
         assertThat(jws.getHeader().getAlgorithm().getName()).isEqualTo("HS256");
+        // No kid configured → header carries none (byte-identical to pre-fix).
+        assertThat(jws.getHeader().getKeyID()).isNull();
+    }
+
+    @Test
+    void signed_jwt_emits_configured_kid_in_header() throws Exception {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200).withBody("{\"token\":\"x\"}")));
+
+        resolverWithStore(HttpAuthResolver.ServiceAuthKind.SIGNED_JWT, SIGNING_SECRET,
+                "yaya-in-1", null, new ResolverExchangeStore())
+                .resolve(req(AuthResolver.ResolveReason.INITIAL));
+
+        String auth = wireMock.getAllServeEvents().get(0).getRequest()
+                .getHeader("Authorization");
+        SignedJWT jwt = SignedJWT.parse(auth.substring("Bearer ".length()));
+        assertThat(jwt.getHeader().getKeyID()).isEqualTo("yaya-in-1");
+    }
+
+    @Test
+    void signed_jwt_audience_override_replaces_tenant_id() throws Exception {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200).withBody("{\"token\":\"x\"}")));
+
+        resolverWithStore(HttpAuthResolver.ServiceAuthKind.SIGNED_JWT, SIGNING_SECRET,
+                "yaya-in-1", "yaya", new ResolverExchangeStore())
+                .resolve(req(AuthResolver.ResolveReason.INITIAL));
+
+        String auth = wireMock.getAllServeEvents().get(0).getRequest()
+                .getHeader("Authorization");
+        SignedJWT jwt = SignedJWT.parse(auth.substring("Bearer ".length()));
+        // Tenant is "acme" but the verifier expects aud=yaya — override wins.
+        assertThat(jwt.getJWTClaimsSet().getAudience()).containsExactly("yaya");
     }
 
     @Test
@@ -256,6 +289,13 @@ class HttpAuthResolverTest {
 
     private HttpAuthResolver resolverWithStore(HttpAuthResolver.ServiceAuthKind kind,
                                                String secret, ResolverExchangeStore store) {
+        return resolverWithStore(kind, secret, null, null, store);
+    }
+
+    private HttpAuthResolver resolverWithStore(HttpAuthResolver.ServiceAuthKind kind,
+                                               String secret, String signingKid,
+                                               String audienceOverride,
+                                               ResolverExchangeStore store) {
         URI url = URI.create(wireMock.baseUrl() + "/yaya/resolve-identity");
         return new HttpAuthResolver(
                 "acme-customer-lookup",
@@ -263,6 +303,8 @@ class HttpAuthResolverTest {
                 url,
                 kind,
                 secret,
+                signingKid,
+                audienceOverride,
                 Duration.ofSeconds(3),
                 WebClient.builder().build(),
                 egressPolicy,

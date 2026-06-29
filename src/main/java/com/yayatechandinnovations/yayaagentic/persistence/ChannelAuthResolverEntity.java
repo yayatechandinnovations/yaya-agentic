@@ -50,6 +50,16 @@ public class ChannelAuthResolverEntity {
     @Column(name = "service_secret_iv", length = 64)
     private String serviceSecretIv;
 
+    // Public key identifier emitted in the outbound SIGNED_JWT JOSE header so a
+    // tenant verifier that selects its HMAC key by `kid` can find it. Not a
+    // secret — stored plaintext, safe to return on the GET surface.
+    @Column(name = "service_jwt_kid", length = 128)
+    private String serviceJwtKid;
+
+    // Overrides the SIGNED_JWT `aud` claim; null = default to tenant id.
+    @Column(name = "service_jwt_audience", length = 255)
+    private String serviceJwtAudience;
+
     @Column(name = "timeout_ms", nullable = false)
     private int timeoutMs = 3000;
 
@@ -97,6 +107,8 @@ public class ChannelAuthResolverEntity {
     public String getServiceAuthKind() { return serviceAuthKind; }
     public String getServiceSecretCiphertext() { return serviceSecretCiphertext; }
     public String getServiceSecretIv() { return serviceSecretIv; }
+    public String getServiceJwtKid() { return serviceJwtKid; }
+    public String getServiceJwtAudience() { return serviceJwtAudience; }
     public int getTimeoutMs() { return timeoutMs; }
     public boolean isCacheEnabled() { return cacheEnabled; }
     public Integer getMaxCacheSeconds() { return maxCacheSeconds; }
@@ -113,6 +125,8 @@ public class ChannelAuthResolverEntity {
     public void setServiceAuthKind(String v) { this.serviceAuthKind = v; }
     public void setServiceSecretCiphertext(String v) { this.serviceSecretCiphertext = v; }
     public void setServiceSecretIv(String v) { this.serviceSecretIv = v; }
+    public void setServiceJwtKid(String v) { this.serviceJwtKid = v; }
+    public void setServiceJwtAudience(String v) { this.serviceJwtAudience = v; }
     public void setTimeoutMs(int v) { this.timeoutMs = v; }
     public void setCacheEnabled(boolean v) { this.cacheEnabled = v; }
     public void setMaxCacheSeconds(Integer v) { this.maxCacheSeconds = v; }

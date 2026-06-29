@@ -34,6 +34,8 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
   final _beanNameCtrl = TextEditingController();
   final _httpPathCtrl = TextEditingController();
   final _serviceSecretCtrl = TextEditingController();
+  final _serviceJwtKidCtrl = TextEditingController();
+  final _serviceJwtAudienceCtrl = TextEditingController();
   final _timeoutCtrl = TextEditingController(text: '3000');
   final _refreshWindowCtrl = TextEditingController(text: '60');
   final _maxTokenAgeCtrl = TextEditingController(text: '3600');
@@ -60,6 +62,8 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
       _beanNameCtrl.clear();
       _httpPathCtrl.clear();
       _serviceSecretCtrl.clear();
+      _serviceJwtKidCtrl.clear();
+      _serviceJwtAudienceCtrl.clear();
       _timeoutCtrl.text = '3000';
       _refreshWindowCtrl.text = '60';
       _maxTokenAgeCtrl.text = '3600';
@@ -83,6 +87,8 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
       _beanNameCtrl.text = row.beanName ?? '';
       _httpPathCtrl.text = row.httpPath ?? '';
       _serviceSecretCtrl.clear();   // operator must re-enter to rotate
+      _serviceJwtKidCtrl.text = row.serviceJwtKid ?? '';
+      _serviceJwtAudienceCtrl.text = row.serviceJwtAudience ?? '';
       _timeoutCtrl.text = (row.timeoutMs ?? 3000).toString();
       _refreshWindowCtrl.text = (row.refreshWindowSeconds ?? 60).toString();
       _maxTokenAgeCtrl.text = (row.maxTokenAgeSeconds ?? 3600).toString();
@@ -104,6 +110,8 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
     _beanNameCtrl.dispose();
     _httpPathCtrl.dispose();
     _serviceSecretCtrl.dispose();
+    _serviceJwtKidCtrl.dispose();
+    _serviceJwtAudienceCtrl.dispose();
     _timeoutCtrl.dispose();
     _refreshWindowCtrl.dispose();
     _maxTokenAgeCtrl.dispose();
@@ -143,6 +151,12 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
       serviceSecret: _serviceSecretCtrl.text.isEmpty
           ? null
           : _serviceSecretCtrl.text,
+      serviceJwtKid: _kind == 'HTTP' && _serviceAuthKind == 'SIGNED_JWT'
+          ? _serviceJwtKidCtrl.text.trim()
+          : null,
+      serviceJwtAudience: _kind == 'HTTP' && _serviceAuthKind == 'SIGNED_JWT'
+          ? _serviceJwtAudienceCtrl.text.trim()
+          : null,
       timeoutMs: _kind == 'HTTP'
           ? int.tryParse(_timeoutCtrl.text.trim()) ?? 3000
           : null,
@@ -514,6 +528,28 @@ class _AuthResolversScreenState extends ConsumerState<AuthResolversScreen> {
             ),
           ),
         ],
+        if (_serviceAuthKind == 'SIGNED_JWT') ...[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _serviceJwtKidCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Signing key id (kid) — optional',
+              helperText: 'The JOSE `kid` your verifier uses to select the HMAC '
+                  'key. Must match the key id bound to the shared secret on your '
+                  'side (e.g. yaya-in-1). Leave blank if your verifier does not '
+                  'key on kid.',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _serviceJwtAudienceCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Audience override (aud) — optional',
+              helperText: 'Defaults to your tenant id. Set this only if your '
+                  'verifier expects a different audience (e.g. yaya).',
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         TextField(
           controller: _timeoutCtrl,
@@ -627,6 +663,14 @@ class _ResolverTile extends StatelessWidget {
                 && row.serviceSecretMasked!.isNotEmpty)
               DetailRow(
                   label: 'Secret', value: row.serviceSecretMasked!, mono: true),
+            if (row.serviceJwtKid != null && row.serviceJwtKid!.isNotEmpty)
+              DetailRow(
+                  label: 'Signing kid', value: row.serviceJwtKid!, mono: true),
+            if (row.serviceJwtAudience != null
+                && row.serviceJwtAudience!.isNotEmpty)
+              DetailRow(
+                  label: 'Audience (aud)', value: row.serviceJwtAudience!,
+                  mono: true),
             DetailRow(label: 'Timeout (ms)', value: (row.timeoutMs ?? 3000).toString()),
           ] else
             DetailRow(label: 'Bean name', value: row.beanName ?? '', mono: true),

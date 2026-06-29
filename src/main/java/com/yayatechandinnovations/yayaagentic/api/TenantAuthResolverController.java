@@ -228,11 +228,15 @@ public class TenantAuthResolverController {
             row.setBeanName(req.beanName().trim());
             row.setHttpPath(null);
             row.setServiceAuthKind(null);
+            row.setServiceJwtKid(null);
+            row.setServiceJwtAudience(null);
         } else {
             row.setHttpPath(req.httpPath().trim());
             row.setBeanName(null);
             row.setServiceAuthKind(req.serviceAuthKind() == null
                     ? "NONE" : req.serviceAuthKind().trim());
+            row.setServiceJwtKid(trimOrNull(req.serviceJwtKid()));
+            row.setServiceJwtAudience(trimOrNull(req.serviceJwtAudience()));
             row.setTimeoutMs(req.timeoutMs() == null ? 3000 : req.timeoutMs());
         }
         if (req.cacheEnabled() != null) row.setCacheEnabled(req.cacheEnabled());
@@ -355,6 +359,16 @@ public class TenantAuthResolverController {
             throw AdminApiException.badRequest("invalid_service_auth_kind",
                     "serviceAuthKind must be one of " + ALLOWED_SERVICE_AUTH_KINDS);
         }
+        // kid/audience are optional even for SIGNED_JWT — some verifiers use a
+        // single shared secret with no `kid` selection. Bound-check only.
+        if (req.serviceJwtKid() != null && req.serviceJwtKid().trim().length() > 128) {
+            throw AdminApiException.badRequest("invalid_service_jwt_kid",
+                    "serviceJwtKid must be at most 128 chars");
+        }
+        if (req.serviceJwtAudience() != null && req.serviceJwtAudience().trim().length() > 255) {
+            throw AdminApiException.badRequest("invalid_service_jwt_audience",
+                    "serviceJwtAudience must be at most 255 chars");
+        }
     }
 
     private void requireCipherConfigured() {
@@ -385,6 +399,8 @@ public class TenantAuthResolverController {
             String httpPath,                     // HTTP only
             String serviceAuthKind,              // 'NONE' | 'BEARER' | 'SIGNED_JWT'
             String serviceSecret,                // plaintext; only on write, never returned
+            String serviceJwtKid,                // JOSE `kid` for SIGNED_JWT; not a secret
+            String serviceJwtAudience,           // overrides `aud`; null = tenant id
             Integer timeoutMs,
             Boolean cacheEnabled,
             Integer maxCacheSeconds,
@@ -405,6 +421,8 @@ public class TenantAuthResolverController {
             String httpPath,
             String serviceAuthKind,
             String serviceSecretMasked,
+            String serviceJwtKid,                // cleartext — not a secret (§5)
+            String serviceJwtAudience,
             Integer timeoutMs,
             Boolean cacheEnabled,
             Integer maxCacheSeconds,
@@ -421,6 +439,7 @@ public class TenantAuthResolverController {
                     e.getKind(), e.getBeanName(), e.getHttpPath(),
                     e.getServiceAuthKind(),
                     maskSecret(e.getServiceSecretCiphertext()),
+                    e.getServiceJwtKid(), e.getServiceJwtAudience(),
                     e.getTimeoutMs(), e.isCacheEnabled(), e.getMaxCacheSeconds(),
                     e.getRefreshWindowSeconds(), e.getMaxTokenAgeSeconds(),
                     e.getOnRefreshFailure(), e.getStatus(),

@@ -47,6 +47,8 @@ public final class HttpAuthResolver implements AuthResolver {
     private final URI url;
     private final ServiceAuthKind serviceAuthKind;
     private final String serviceSecret;          // plaintext after JwtSecretCipher.decrypt
+    private final String signingKid;             // JOSE `kid` for SIGNED_JWT; null = omit header field
+    private final String audienceOverride;       // SIGNED_JWT `aud`; null = default to tenant id
     private final Duration timeout;
     private final WebClient http;
     private final HttpEgressPolicy egressPolicy;
@@ -59,6 +61,8 @@ public final class HttpAuthResolver implements AuthResolver {
                      URI url,
                      ServiceAuthKind serviceAuthKind,
                      String serviceSecret,
+                     String signingKid,
+                     String audienceOverride,
                      Duration timeout,
                      WebClient http,
                      HttpEgressPolicy egressPolicy,
@@ -70,6 +74,8 @@ public final class HttpAuthResolver implements AuthResolver {
         this.url = url;
         this.serviceAuthKind = serviceAuthKind;
         this.serviceSecret = serviceSecret;
+        this.signingKid = signingKid;
+        this.audienceOverride = audienceOverride;
         this.timeout = timeout;
         this.http = http;
         this.egressPolicy = egressPolicy;
@@ -272,15 +278,25 @@ public final class HttpAuthResolver implements AuthResolver {
                     "resolver '" + name + "' has SIGNED_JWT auth but no secret configured");
         }
         Instant now = Instant.now(clock);
+        String audience = (audienceOverride == null || audienceOverride.isBlank())
+                ? req.tenant().value()        // unchanged default — backward compatible
+                : audienceOverride;
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .issuer(YAYA_ISSUER)
-                .audience(req.tenant().value())
+                .audience(audience)
                 .subject("auth-resolver:" + name)
                 .issueTime(Date.from(now))
                 .expirationTime(Date.from(now.plus(SIGNED_JWT_LIFETIME)))
                 .jwtID(requestId)
                 .build();
-        SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
+        // A verifier that selects its key by `kid` rejects a header without one
+        // (missing_kid → 401). Emit it when configured; omit it otherwise so an
+        // existing single-key resolver mints the exact header it does today.
+        JWSHeader.Builder header = new JWSHeader.Builder(JWSAlgorithm.HS256);
+        if (signingKid != null && !signingKid.isBlank()) {
+            header.keyID(signingKid);
+        }
+        SignedJWT jwt = new SignedJWT(header.build(), claims);
         try {
             jwt.sign(new MACSigner(serviceSecret.getBytes()));
         } catch (JOSEException e) {
