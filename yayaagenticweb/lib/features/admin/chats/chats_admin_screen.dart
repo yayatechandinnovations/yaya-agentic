@@ -363,12 +363,17 @@ class _LogoPickerState extends ConsumerState<_LogoPicker> {
   bool _busy = false;
 
   static const _allowed = {'image/png', 'image/jpeg', 'image/webp', 'image/gif'};
+  static const _maxBytes = 2 * 1024 * 1024; // keep in sync with ChatLogoService
 
   Future<void> _pick() async {
     final picked = await pickImageFromBrowser();
     if (picked == null) return;
     if (!_allowed.contains(picked.contentType)) {
       if (mounted) showSnack(context, 'Pick a PNG, JPEG, WebP, or GIF image.', error: true);
+      return;
+    }
+    if (picked.bytes.length > _maxBytes) {
+      if (mounted) showSnack(context, 'Logo must be under 2 MB. Try a smaller image.', error: true);
       return;
     }
     setState(() => _busy = true);

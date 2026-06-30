@@ -1,6 +1,10 @@
 spring:
   application:
     name: yaya-agentic
+  codec:
+    # WebFlux buffers request bodies in memory; the 256KB default is too small
+    # for base64 logo uploads (chat entry points, ≤2MB image → ~2.7MB body).
+    max-in-memory-size: 4MB
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 

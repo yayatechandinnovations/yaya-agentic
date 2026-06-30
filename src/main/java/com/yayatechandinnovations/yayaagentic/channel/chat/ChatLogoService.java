@@ -24,7 +24,7 @@ public class ChatLogoService {
     /** SVG is intentionally excluded — it can carry script. */
     private static final Set<String> ALLOWED = Set.of(
             "image/png", "image/jpeg", "image/webp", "image/gif");
-    private static final int MAX_BYTES = 1_048_576; // 1 MiB
+    private static final int MAX_BYTES = 2_097_152; // 2 MiB
 
     private final ChatLogoRepository repo;
     private final String publicBaseUrl;
@@ -48,7 +48,7 @@ public class ChatLogoService {
         }
         if (bytes.length == 0) throw AdminApiException.badRequest("empty_logo", "logo is empty");
         if (bytes.length > MAX_BYTES) {
-            throw AdminApiException.badRequest("logo_too_large", "logo exceeds 1 MB");
+            throw AdminApiException.badRequest("logo_too_large", "logo exceeds 2 MB");
         }
         String id = "logo_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
         repo.save(new ChatLogoEntity(id, tenant.value(), ct, bytes));
