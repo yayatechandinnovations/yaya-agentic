@@ -1,17 +1,25 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../api/api_config.dart';
 import '../../../app/selected_tenant.dart';
+import '../../../models/admin/auth_resolver.dart';
 import '../../../models/admin/chat_entry_point.dart';
+import '../../../models/admin/profile.dart';
+import '../auth_resolvers/auth_resolvers_screen.dart';
+import '../profiles/profiles_screen.dart';
 import '../shared/admin_shared.dart';
 
 /// Chat inbound channel admin: create branded entry points (the `LOGO | NAME`
 /// tiles end users see in the chat app), publish them, and hand out the QR /
 /// deep link. Each entry point pins one profile and an auth mode. See
-/// `chat-channel-design.md` §6, §12.
+/// `chat-channel-design.md` §6, §9.
 
 final chatEntryPointsProvider =
     FutureProvider.family<List<ChatEntryPointResponse>, String>((ref, tenantId) async {
@@ -20,6 +28,20 @@ final chatEntryPointsProvider =
 });
 
 const _authModes = <String>['ANONYMOUS_ONLY', 'AUTH_OPTIONAL', 'AUTH_REQUIRED'];
+
+/// Preset accent palette (tile + chat-header theming).
+const _palette = <String>[
+  '#7A3CFF', '#D000FF', '#00C2FF', '#0B6E4F', '#2563EB', '#16A34A',
+  '#DC2626', '#EA580C', '#CA8A04', '#0891B2', '#DB2777', '#475569',
+];
+
+/// Resolve a (possibly root-relative) logo URL against the configured API base
+/// so previews load whether the backend returned an absolute or relative URL.
+String resolveLogoUrl(WidgetRef ref, String url) {
+  if (url.isEmpty || url.startsWith('http')) return url;
+  final base = ref.watch(apiConfigProvider).valueOrNull?.baseUrl ?? '';
+  return '${base.replaceAll(RegExp(r'/+$'), '')}$url';
+}
 
 class ChatsAdminScreen extends ConsumerWidget {
   const ChatsAdminScreen({super.key});
@@ -72,6 +94,14 @@ Widget _statusChip(BuildContext context, String status) {
   );
 }
 
+Color _colorFromHex(String? hex, Color fallback) {
+  if (hex == null || hex.isEmpty) return fallback;
+  var h = hex.replaceFirst('#', '').trim();
+  if (h.length == 6) h = 'FF$h';
+  final v = int.tryParse(h, radix: 16);
+  return v == null ? fallback : Color(v);
+}
+
 // ---------------------------------------------------------------------------
 // List pane
 // ---------------------------------------------------------------------------
@@ -92,7 +122,7 @@ class _List extends ConsumerWidget {
         }
         return ListView.separated(
           itemCount: items.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
           itemBuilder: (context, i) => _EntryPointCard(tenant: tenant, ep: items[i]),
         );
       },
@@ -108,7 +138,8 @@ class _EntryPointCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return EditableRecordCard(
-      leading: _Logo(url: ep.logoUrl, name: ep.displayName, hex: ep.accentColorHex),
+      leading: _LogoAvatar(
+          url: resolveLogoUrl(ref, ep.logoUrl), name: ep.displayName, hex: ep.accentColorHex),
       header: Row(
         children: [
           Expanded(
@@ -124,7 +155,8 @@ class _EntryPointCard extends ConsumerWidget {
           _statusChip(context, ep.status),
         ],
       ),
-      onCloneEdit: () => _editDialog(context, ref),
+      onCloneEdit: () => showDialog<void>(
+          context: context, builder: (_) => _EditDialog(tenant: tenant, ep: ep)),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -136,8 +168,11 @@ class _EntryPointCard extends ConsumerWidget {
               label: 'Verified phone',
               value: ep.requiresVerifiedPhone ? 'Required' : 'Not required'),
           if (ep.authConfig.kind != 'None')
-            DetailRow(label: 'Auth config', value: ep.authConfig.kind +
-                (ep.authConfig.issuer != null ? ' · ${ep.authConfig.issuer}' : '')),
+            DetailRow(
+                label: 'Identity',
+                value: ep.authConfig.kind == 'Oidc'
+                    ? 'OIDC · ${ep.authConfig.issuer ?? ''}'
+                    : 'Auth resolver #${ep.authConfig.authResolverId ?? ''}'),
           DetailRow(label: 'Locale', value: ep.defaultLocale),
           if ((ep.welcomeText ?? '').isNotEmpty)
             DetailRow(label: 'Welcome', value: ep.welcomeText!),
@@ -221,17 +256,10 @@ class _EntryPointCard extends ConsumerWidget {
       ),
     );
   }
-
-  void _editDialog(BuildContext context, WidgetRef ref) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => _EditDialog(tenant: tenant, ep: ep),
-    );
-  }
 }
 
-class _Logo extends StatelessWidget {
-  const _Logo({required this.url, required this.name, this.hex});
+class _LogoAvatar extends StatelessWidget {
+  const _LogoAvatar({required this.url, required this.name, this.hex});
   final String url;
   final String name;
   final String? hex;
@@ -240,11 +268,246 @@ class _Logo extends StatelessWidget {
   Widget build(BuildContext context) {
     final initials = name.isEmpty ? '?' : name.trim()[0].toUpperCase();
     return CircleAvatar(
-      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+      backgroundColor: _colorFromHex(hex, Theme.of(context).colorScheme.primaryContainer),
       child: ClipOval(
-        child: Image.network(url, width: 40, height: 40, fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => Text(initials)),
+        child: url.isEmpty
+            ? Text(initials)
+            : Image.network(url, width: 40, height: 40, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Text(initials)),
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared form controls
+// ---------------------------------------------------------------------------
+
+/// Tappable preset accent swatches (no extra dependency).
+class _ColorPalette extends StatelessWidget {
+  const _ColorPalette({required this.selectedHex, required this.onPick});
+  final String? selectedHex;
+  final void Function(String hex) onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text('Accent color',
+              style: Theme.of(context).textTheme.labelMedium),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _palette.map((hex) {
+            final selected = selectedHex?.toUpperCase() == hex.toUpperCase();
+            return InkWell(
+              onTap: () => onPick(hex),
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: _colorFromHex(hex, Colors.grey),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? Theme.of(context).colorScheme.onSurface : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    : null,
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+/// Pick an image from disk, upload it, and surface the hosted URL + a preview.
+class _LogoPicker extends ConsumerStatefulWidget {
+  const _LogoPicker({required this.tenant, required this.url, required this.onUploaded});
+  final String tenant;
+  final String? url;
+  final void Function(String url) onUploaded;
+
+  @override
+  ConsumerState<_LogoPicker> createState() => _LogoPickerState();
+}
+
+class _LogoPickerState extends ConsumerState<_LogoPicker> {
+  bool _busy = false;
+
+  static const _contentTypes = {
+    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'webp': 'image/webp', 'gif': 'image/gif',
+  };
+
+  Future<void> _pick() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: _contentTypes.keys.toList(),
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.first;
+    final bytes = f.bytes;
+    final ext = (f.extension ?? '').toLowerCase();
+    if (bytes == null || !_contentTypes.containsKey(ext)) {
+      if (mounted) showSnack(context, 'Pick a PNG, JPEG, WebP, or GIF image.', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      final url = await api.uploadChatLogo(widget.tenant, _contentTypes[ext]!, base64Encode(bytes));
+      widget.onUploaded(url);
+    } catch (e) {
+      if (mounted) showSnack(context, formatError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = (widget.url ?? '').isEmpty ? null : resolveLogoUrl(ref, widget.url!);
+    return Row(
+      children: [
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: preview == null
+              ? const Icon(Icons.image_outlined)
+              : Image.network(preview, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined)),
+        ),
+        const SizedBox(width: 12),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _pick,
+          icon: _busy
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.upload, size: 18),
+          label: Text((widget.url ?? '').isEmpty ? 'Upload logo' : 'Replace logo'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Auth mode + identity method (OIDC issuer or an auth resolver) — mirrors the
+/// channel-binding "Identity" selection.
+class _AuthSection extends ConsumerWidget {
+  const _AuthSection({
+    required this.tenant,
+    required this.authMode,
+    required this.authMethod,
+    required this.issuer,
+    required this.audience,
+    required this.authResolverId,
+    required this.onMode,
+    required this.onMethod,
+    required this.onResolver,
+  });
+
+  final String tenant;
+  final String authMode;
+  final String authMethod;
+  final TextEditingController issuer;
+  final TextEditingController audience;
+  final int? authResolverId;
+  final void Function(String) onMode;
+  final void Function(String) onMethod;
+  final void Function(int?) onResolver;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final needsIdentity = authMode != 'ANONYMOUS_ONLY';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: authMode,
+          decoration: const InputDecoration(labelText: 'Auth mode', border: OutlineInputBorder()),
+          items: _authModes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+          onChanged: (v) => onMode(v ?? 'ANONYMOUS_ONLY'),
+        ),
+        if (needsIdentity) ...[
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            initialValue: authMethod,
+            decoration: const InputDecoration(labelText: 'Identity', border: OutlineInputBorder()),
+            items: const [
+              DropdownMenuItem(value: 'OIDC', child: Text('OIDC (user signs in)')),
+              DropdownMenuItem(value: 'RESOLVER', child: Text('Auth resolver')),
+            ],
+            onChanged: (v) => onMethod(v ?? 'OIDC'),
+          ),
+          const SizedBox(height: 10),
+          if (authMethod == 'OIDC') ...[
+            _plainField(issuer, 'OIDC issuer', 'https://idp.tenant.com'),
+            const SizedBox(height: 10),
+            _plainField(audience, 'OIDC audience (optional)', null),
+          ] else
+            _ResolverDropdown(
+                tenant: tenant, selected: authResolverId, onChanged: onResolver),
+        ],
+      ],
+    );
+  }
+
+  static Widget _plainField(TextEditingController c, String label, String? hint) => TextField(
+        controller: c,
+        decoration: InputDecoration(
+            labelText: label, hintText: hint, border: const OutlineInputBorder(), isDense: true),
+      );
+}
+
+class _ResolverDropdown extends ConsumerWidget {
+  const _ResolverDropdown({required this.tenant, required this.selected, required this.onChanged});
+  final String tenant;
+  final int? selected;
+  final void Function(int?) onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(authResolversProvider(tenant));
+    return async.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (e, _) => Text(formatError(e), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+      data: (resp) {
+        final active = resp.resolvers.where((r) => r.status == 'ACTIVE').toList();
+        if (active.isEmpty) {
+          return InputDecorator(
+            decoration: const InputDecoration(labelText: 'Auth resolver', border: OutlineInputBorder()),
+            child: Text('No auth resolvers — create one in Auth resolvers first.',
+                style: Theme.of(context).textTheme.bodySmall),
+          );
+        }
+        return DropdownButtonFormField<int>(
+          initialValue: active.any((r) => r.id == selected) ? selected : null,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Auth resolver', border: OutlineInputBorder()),
+          items: active
+              .map((AuthResolverResponse r) => DropdownMenuItem(
+                    value: r.id,
+                    child: Text('${r.name} · ${r.kind}', overflow: TextOverflow.ellipsis),
+                  ))
+              .toList(),
+          onChanged: onChanged,
+        );
+      },
     );
   }
 }
@@ -262,37 +525,46 @@ class _CreateForm extends ConsumerStatefulWidget {
 }
 
 class _CreateFormState extends ConsumerState<_CreateForm> {
-  final _profileId = TextEditingController();
   final _displayName = TextEditingController();
-  final _logoUrl = TextEditingController();
-  final _accent = TextEditingController();
   final _welcome = TextEditingController();
   final _locale = TextEditingController(text: 'en-US');
   final _issuer = TextEditingController();
   final _audience = TextEditingController();
+
+  String? _profileSlug;
+  String? _logoUrl;
+  String? _accentHex;
   String _authMode = 'ANONYMOUS_ONLY';
+  String _authMethod = 'OIDC';
+  int? _authResolverId;
   bool _requireVerifiedPhone = false;
   bool _busy = false;
 
   @override
   void dispose() {
-    for (final c in [_profileId, _displayName, _logoUrl, _accent, _welcome, _locale, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _locale, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
   }
 
   Future<void> _submit() async {
-    if (_profileId.text.trim().isEmpty || _displayName.text.trim().isEmpty || _logoUrl.text.trim().isEmpty) {
-      showSnack(context, 'Profile, display name, and logo URL are required.', error: true);
+    if (_profileSlug == null) {
+      showSnack(context, 'Select a profile.', error: true);
       return;
     }
+    if (_displayName.text.trim().isEmpty || (_logoUrl ?? '').isEmpty) {
+      showSnack(context, 'Display name and a logo are required.', error: true);
+      return;
+    }
+    final parts = _profileSlug!.split('@');
     setState(() => _busy = true);
     final body = ChatEntryPointRequest(
-      profileId: _profileId.text.trim(),
+      profileId: parts[0],
+      profileVersion: parts.length > 1 ? int.tryParse(parts[1]) : null,
       displayName: _displayName.text.trim(),
-      logoUrl: _logoUrl.text.trim(),
-      accentColorHex: _accent.text.trim().isEmpty ? null : _accent.text.trim(),
+      logoUrl: _logoUrl!,
+      accentColorHex: _accentHex,
       welcomeText: _welcome.text.trim().isEmpty ? null : _welcome.text.trim(),
       defaultLocale: _locale.text.trim(),
       authMode: _authMode,
@@ -309,33 +581,39 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   }
 
   ChatAuthConfig? _buildAuthConfig() {
-    if (_authMode != 'ANONYMOUS_ONLY' && _issuer.text.trim().isNotEmpty) {
+    if (_authMode == 'ANONYMOUS_ONLY') return null;
+    if (_authMethod == 'OIDC' && _issuer.text.trim().isNotEmpty) {
       return ChatAuthConfig(
         kind: 'Oidc',
         issuer: _issuer.text.trim(),
         audience: _audience.text.trim().isEmpty ? null : _audience.text.trim(),
       );
     }
+    if (_authMethod == 'RESOLVER' && _authResolverId != null) {
+      return ChatAuthConfig(kind: 'ResolverExchange', authResolverId: _authResolverId);
+    }
     return null;
   }
 
   void _clear() {
-    _profileId.clear();
     _displayName.clear();
-    _logoUrl.clear();
-    _accent.clear();
     _welcome.clear();
     _issuer.clear();
     _audience.clear();
     setState(() {
+      _profileSlug = null;
+      _logoUrl = null;
+      _accentHex = null;
       _authMode = 'ANONYMOUS_ONLY';
+      _authMethod = 'OIDC';
+      _authResolverId = null;
       _requireVerifiedPhone = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final showOidc = _authMode != 'ANONYMOUS_ONLY';
+    final profiles = ref.watch(profilesProvider);
     return SingleChildScrollView(
       child: FormCard(
         title: 'New chat entry point',
@@ -349,21 +627,47 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
           ),
         ],
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _field(_profileId, 'Profile id', hint: 'e.g. market_customer_sales'),
+            profiles.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => Text(formatError(e)),
+              data: (list) => DropdownButtonFormField<String>(
+                initialValue: _profileSlug,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Profile', border: OutlineInputBorder()),
+                items: list
+                    .map((ProfileResponse p) => DropdownMenuItem(
+                          value: '${p.id}@${p.version}',
+                          child: Text('${p.displayName} (${p.id}@${p.version})',
+                              overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _profileSlug = v),
+              ),
+            ),
+            const SizedBox(height: 12),
             _field(_displayName, 'Display name', hint: 'e.g. Buy Yaya Market'),
-            _field(_logoUrl, 'Logo URL', hint: 'https://…'),
-            _field(_accent, 'Accent color', hint: '#0B6E4F (optional)'),
+            _LogoPicker(
+                tenant: widget.tenant,
+                url: _logoUrl,
+                onUploaded: (u) => setState(() => _logoUrl = u)),
+            const SizedBox(height: 12),
+            _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
+            const SizedBox(height: 12),
             _field(_welcome, 'Welcome text', hint: 'Optional first bubble', lines: 2),
             _field(_locale, 'Default locale', hint: 'en-US'),
             const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: _authMode,
-              decoration: const InputDecoration(labelText: 'Auth mode', border: OutlineInputBorder()),
-              items: _authModes
-                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                  .toList(),
-              onChanged: (v) => setState(() => _authMode = v ?? 'ANONYMOUS_ONLY'),
+            _AuthSection(
+              tenant: widget.tenant,
+              authMode: _authMode,
+              authMethod: _authMethod,
+              issuer: _issuer,
+              audience: _audience,
+              authResolverId: _authResolverId,
+              onMode: (v) => setState(() => _authMode = v),
+              onMethod: (v) => setState(() => _authMethod = v),
+              onResolver: (v) => setState(() => _authResolverId = v),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -372,11 +676,6 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
               value: _requireVerifiedPhone,
               onChanged: (v) => setState(() => _requireVerifiedPhone = v),
             ),
-            if (showOidc) ...[
-              const SizedBox(height: 8),
-              _field(_issuer, 'OIDC issuer', hint: 'https://idp.tenant.com (optional)'),
-              _field(_audience, 'OIDC audience', hint: 'Optional'),
-            ],
           ],
         ),
       ),
@@ -416,39 +715,70 @@ class _EditDialog extends ConsumerStatefulWidget {
 
 class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _displayName = TextEditingController(text: widget.ep.displayName);
-  late final _logoUrl = TextEditingController(text: widget.ep.logoUrl);
-  late final _accent = TextEditingController(text: widget.ep.accentColorHex ?? '');
   late final _welcome = TextEditingController(text: widget.ep.welcomeText ?? '');
+  late final _issuer = TextEditingController(text: widget.ep.authConfig.issuer ?? '');
+  late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
+  late String _logoUrl = widget.ep.logoUrl;
+  late String? _accentHex = widget.ep.accentColorHex;
   late String _authMode = widget.ep.authMode;
+  late String _authMethod = widget.ep.authConfig.kind == 'ResolverExchange' ? 'RESOLVER' : 'OIDC';
+  late int? _authResolverId = widget.ep.authConfig.authResolverId;
 
   @override
   void dispose() {
-    for (final c in [_displayName, _logoUrl, _accent, _welcome]) {
+    for (final c in [_displayName, _welcome, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
+  }
+
+  ChatAuthConfig? _buildAuthConfig() {
+    if (_authMode == 'ANONYMOUS_ONLY') return ChatAuthConfig(kind: 'None');
+    if (_authMethod == 'OIDC' && _issuer.text.trim().isNotEmpty) {
+      return ChatAuthConfig(
+          kind: 'Oidc',
+          issuer: _issuer.text.trim(),
+          audience: _audience.text.trim().isEmpty ? null : _audience.text.trim());
+    }
+    if (_authMethod == 'RESOLVER' && _authResolverId != null) {
+      return ChatAuthConfig(kind: 'ResolverExchange', authResolverId: _authResolverId);
+    }
+    return ChatAuthConfig(kind: 'None');
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text('Edit ${widget.ep.displayName}'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _row(_displayName, 'Display name'),
-            _row(_logoUrl, 'Logo URL'),
-            _row(_accent, 'Accent color (#RRGGBB)'),
-            _row(_welcome, 'Welcome text'),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: _authMode,
-              decoration: const InputDecoration(labelText: 'Auth mode', border: OutlineInputBorder()),
-              items: _authModes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-              onChanged: (v) => setState(() => _authMode = v ?? widget.ep.authMode),
-            ),
-          ],
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _row(_displayName, 'Display name'),
+              _LogoPicker(
+                  tenant: widget.tenant,
+                  url: _logoUrl,
+                  onUploaded: (u) => setState(() => _logoUrl = u)),
+              const SizedBox(height: 12),
+              _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
+              const SizedBox(height: 12),
+              _row(_welcome, 'Welcome text'),
+              _AuthSection(
+                tenant: widget.tenant,
+                authMode: _authMode,
+                authMethod: _authMethod,
+                issuer: _issuer,
+                audience: _audience,
+                authResolverId: _authResolverId,
+                onMode: (v) => setState(() => _authMode = v),
+                onMethod: (v) => setState(() => _authMethod = v),
+                onResolver: (v) => setState(() => _authResolverId = v),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -458,11 +788,12 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
             final body = ChatEntryPointRequest(
               profileId: widget.ep.profileId,
               displayName: _displayName.text.trim(),
-              logoUrl: _logoUrl.text.trim(),
-              accentColorHex: _accent.text.trim(),
+              logoUrl: _logoUrl,
+              accentColorHex: _accentHex,
               welcomeText: _welcome.text.trim(),
               defaultLocale: widget.ep.defaultLocale,
               authMode: _authMode,
+              authConfig: _buildAuthConfig(),
             );
             final nav = Navigator.of(context);
             await _runWrite(context, ref, widget.tenant,

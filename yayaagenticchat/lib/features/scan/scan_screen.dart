@@ -74,7 +74,8 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                 backgroundColor: accent,
                 foregroundColor: Colors.white,
                 child: ClipOval(
-                  child: Image.network(card.logoUrl, width: 56, height: 56, fit: BoxFit.cover,
+                  child: Image.network(AppConfig.resolveUrl(card.logoUrl), width: 56, height: 56,
+                      fit: BoxFit.cover,
                       errorBuilder: (_, _, _) =>
                           Text(card.displayName.isEmpty ? '?' : card.displayName[0])),
                 ),

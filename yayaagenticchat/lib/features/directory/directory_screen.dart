@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../config.dart';
 import '../../data/providers.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/tile.dart';
@@ -68,7 +69,7 @@ class _TileCard extends ConsumerWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        leading: _Logo(url: tile.logoUrl, name: tile.displayName, accent: accent),
+        leading: _Logo(url: AppConfig.resolveUrl(tile.logoUrl), name: tile.displayName, accent: accent),
         title: Text(tile.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(tile.authMode == 'AUTH_REQUIRED'
             ? AppL10n.of(context).signInRequired

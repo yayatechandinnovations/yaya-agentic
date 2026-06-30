@@ -129,4 +129,9 @@ public final class ChatEntryPointDtos {
     public static AuthMode parseAuthMode(String raw) {
         return raw == null || raw.isBlank() ? AuthMode.ANONYMOUS_ONLY : AuthMode.parse(raw);
     }
+
+    /** Logo upload as base64 JSON (logos are small; avoids reactive multipart). */
+    public record LogoUploadRequest(String contentType, String dataBase64) {}
+
+    public record LogoUploadResponse(String logoId, String url) {}
 }

@@ -8,6 +8,13 @@ class AppConfig {
     defaultValue: 'http://localhost:8080',
   );
 
+  /// Resolve a (possibly root-relative) URL — e.g. a platform-hosted logo at
+  /// `/v1/chat/logos/{id}` — against the API base.
+  static String resolveUrl(String url) {
+    if (url.isEmpty || url.startsWith('http')) return url;
+    return '${apiBase.replaceAll(RegExp(r'/+$'), '')}$url';
+  }
+
   /// Deep links the QR encodes: https://chat.yaya.app/e/{handle} or
   /// yayachat://e/{handle}. We only need the trailing handle segment.
   static String? handleFromDeepLink(String raw) {

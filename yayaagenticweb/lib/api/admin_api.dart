@@ -738,6 +738,16 @@ class AdminApi {
     return ChatEntryPointResponse.fromJson(_asMap(res.data));
   }
 
+  /// Upload a logo (base64) and get back the platform-hosted URL to store on
+  /// the entry point.
+  Future<String> uploadChatLogo(String tenantId, String contentType, String dataBase64) async {
+    final res = await _dio.post(
+      '/v1/admin/tenants/$tenantId/chat-entry-points/logos',
+      data: {'contentType': contentType, 'dataBase64': dataBase64},
+    );
+    return (_asMap(res.data)['url'] ?? '') as String;
+  }
+
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);
 }
 
