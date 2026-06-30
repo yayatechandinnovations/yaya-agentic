@@ -188,12 +188,23 @@ public class ChannelAuthIntegrator {
          *
          * <p>Throws on {@code REJECT} — the caller must check the decision
          * first.
+         *
+         * <p>On {@code JWT_VERIFIED} the verified resolver JWT is also
+         * re-attached as an {@code Authorization: Bearer} header so the
+         * engine can forward it to {@code PRINCIPAL_TOKEN} HTTP tools. The
+         * raw header is dropped after verification, so without this the
+         * tool dispatcher has no token to forward and the tool endpoint
+         * 401s. See {@code docs/design/channel-auth-resolver-design.md} §9.
          */
         public AuthContext authContextForEngine(AuthContext baseCtx) {
             return switch (decision) {
-                case JWT_VERIFIED -> new AuthContext(
-                        baseCtx.tenant(), baseCtx.headers(),
-                        principal.map(Optional::of).orElse(Optional.empty()));
+                case JWT_VERIFIED -> {
+                    Map<String, String> headers = new LinkedHashMap<>(baseCtx.headers());
+                    jwt.ifPresent(j -> headers.put("Authorization", "Bearer " + j));
+                    yield new AuthContext(
+                            baseCtx.tenant(), Map.copyOf(headers),
+                            principal.map(Optional::of).orElse(Optional.empty()));
+                }
                 case ANONYMOUS -> baseCtx;
                 case REJECT -> throw new IllegalStateException(
                         "REJECT decision — do not call authContextForEngine; drop the message instead");
