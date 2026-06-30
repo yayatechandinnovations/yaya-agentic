@@ -3,12 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../../app/theme.dart';
 import '../../config.dart';
 import '../../data/chat_api.dart';
 import '../../data/providers.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/entry_point_card.dart';
+import '../entry/chat_confirm_card.dart';
 
 /// Add a tile by scanning its QR (or pasting the link/handle) — the on-ramp
 /// described in chat-channel-design.md §11.
@@ -59,38 +59,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 
   Future<void> _confirm(EntryPointCard card) async {
-    final accent = colorFromHex(card.accentColorHex);
-    final t = AppL10n.of(context);
     final add = await showModalBottomSheet<bool>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                child: ClipOval(
-                  child: Image.network(AppConfig.resolveUrl(card.logoUrl), width: 56, height: 56,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          Text(card.displayName.isEmpty ? '?' : card.displayName[0])),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(card.displayName, style: Theme.of(ctx).textTheme.titleLarge),
-              const SizedBox(height: 4),
-              Text(card.requiresAuth ? t.signInRequired : t.chatAsGuest),
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(t.addToMyChats),
-              ),
-            ],
-          ),
+          child: ChatConfirmCard(card: card, onAdd: () => Navigator.pop(ctx, true)),
         ),
       ),
     );

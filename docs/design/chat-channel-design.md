@@ -392,7 +392,10 @@ yayaagenticchat/lib/
 - **Chat** — opens (or resumes) a session. Streams tokens into the latest bubble; renders `ui_hint` quick replies as tappable chips; renders `citation` events as source pills under the bubble; honors the entry point's accent color in the header. A "New chat" action sends the session's new-session keyword.
 - **Auth** — for `AUTH_REQUIRED`, gates the chat behind an OIDC login launched from `AuthConfig.Oidc`; for `AUTH_OPTIONAL`, a "Sign in" affordance in the app bar triggers the §8.4 upgrade.
 
-**Deep-link handling** — the app registers `https://chat.yaya.app/e/*` (universal/app links) and `yayachat://e/*`, so scanning the QR with the system camera opens straight into the confirm card if the app is installed, and into the web build otherwise.
+**Deep-link handling** — both the QR and the share link encode `https://chat.yaya.app/e/{handle}` (and the `yayachat://e/{handle}` custom scheme). All three surfaces resolve it through the **same** `/e/:handle` go_router route → confirm card → persist tile → open chat; if the handle is already in the directory the card is skipped and the chat opens directly.
+
+- **Web** (implemented): the web build owns `/e/{handle}`. `usePathUrlStrategy()` keeps the URL clean (no `#`) so the link routes into go_router; the host must serve `index.html` for unmatched paths (SPA fallback) for a cold-loaded deep link to boot the app. Note `chat.yaya.app/e/{handle}` (the SPA route) is distinct from the backend's `/v1/chat/e/{handle}` JSON endpoint the app calls to resolve branding.
+- **Mobile** (config in place, infra pending): Android declares an `autoVerify` App Links intent-filter for `https://chat.yaya.app/e/*` plus the `yayachat://e/*` scheme; iOS declares the `yayachat` URL scheme. `flutter_deeplinking_enabled` / `FlutterDeepLinkingEnabled` forward the URL to go_router. To make the **https** links open the app instead of the browser, the platform must still host the association files — `/.well-known/assetlinks.json` (Android) and `/.well-known/apple-app-site-association` (iOS) — and iOS needs the `applinks:chat.yaya.app` associated-domains entitlement wired in Xcode. Until then the https link falls back to the web build (which handles it), and the `yayachat://` scheme works for an installed app.
 
 ---
 

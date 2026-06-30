@@ -38,5 +38,6 @@
   "pasteToken": "Paste access token",
   "continueLabel": "Continue",
   "tooManyRequests": "Too many requests — please try again shortly.",
-  "deepLinkCopied": "Deep link copied"
+  "deepLinkCopied": "Deep link copied",
+  "backToChats": "Back to my chats"
 }

@@ -20,9 +20,31 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Let Flutter forward incoming deep links to go_router instead of
+                 routing to '/'. -->
+            <meta-data
+              android:name="flutter_deeplinking_enabled"
+              android:value="true"
+              />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- App Links: https://chat.yaya.app/e/{handle}. The path matches the
+                 go_router /e/:handle route directly. autoVerify requires
+                 /.well-known/assetlinks.json hosted on chat.yaya.app. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="chat.yaya.app" android:pathPrefix="/e/"/>
+            </intent-filter>
+            <!-- Custom scheme fallback: yayachat://e/{handle}. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="yayachat" android:host="e"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

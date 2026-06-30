@@ -318,6 +318,12 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Deep link copied'**
   String get deepLinkCopied;
+
+  /// No description provided for @backToChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Back to my chats'**
+  String get backToChats;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

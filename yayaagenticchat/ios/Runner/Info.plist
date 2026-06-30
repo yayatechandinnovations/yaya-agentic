@@ -26,6 +26,25 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Custom scheme deep link: yayachat://e/{handle}. Universal links
+	     (https://chat.yaya.app/e/*) additionally need an associated-domains
+	     entitlement + a hosted apple-app-site-association file. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>app.yaya.chat</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>yayachat</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Forward incoming deep links to go_router. -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

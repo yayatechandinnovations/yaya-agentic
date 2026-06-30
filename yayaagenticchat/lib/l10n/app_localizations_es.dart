@@ -126,4 +126,7 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get deepLinkCopied => 'Enlace copiado';
+
+  @override
+  String get backToChats => 'Volver a mis chats';
 }
