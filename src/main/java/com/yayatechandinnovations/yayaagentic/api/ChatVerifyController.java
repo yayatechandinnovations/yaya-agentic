@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.regex.Pattern;
@@ -67,7 +68,7 @@ public class ChatVerifyController {
                         "could not send a verification code", 0);
             }
             return new PublicChatDtos.VerifyStartResponse("pending");
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/check")
@@ -90,7 +91,7 @@ public class ChatVerifyController {
             String name = body.name() == null ? null : body.name().trim();
             String pass = devicePasses.issue(new VerifiedDevice(phone, name, safe(body.deviceId())));
             return new PublicChatDtos.VerifyCheckResponse(true, pass, phone, name);
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /* ------------------------------ helpers ------------------------------- */
