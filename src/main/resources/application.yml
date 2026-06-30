@@ -76,6 +76,14 @@ yaya:
     # type into their browser (e.g. https://admin.smartlottery.do). Leave
     # the default for local dev where the backend serves the SPA itself.
     public-base-url: ${YAYA_PUBLIC_BASE_URL:http://localhost:8080}
+    chat:
+      # Prefix the chat QR / share link is built from (this + the entry-point
+      # handle). It MUST point at the public origin that serves the chat web
+      # app (yayaagenticchat) — which is independent of this backend's own
+      # address and changes per deployment, so it has to be set per env, not
+      # left at the default. The app's host-agnostic /e/:handle route resolves
+      # whatever origin this points at. Trailing slash required.
+      deep-link-base: ${YAYA_CHAT_DEEP_LINK_BASE:http://localhost:8080/e/}
     session:
       # Idle TTL for ephemeral session state in Redis. Bumped on every
       # interaction; reaching zero auto-evicts working memory.
