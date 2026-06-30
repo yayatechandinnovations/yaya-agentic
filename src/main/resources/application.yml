@@ -84,6 +84,37 @@ yaya:
       # left at the default. The app's host-agnostic /e/:handle route resolves
       # whatever origin this points at. Trailing slash required.
       deep-link-base: ${YAYA_CHAT_DEEP_LINK_BASE:http://localhost:8080/e/}
+      verify:
+        # Twilio Verify API base. Override only when stubbing Twilio in tests.
+        base-url: ${TWILIO_VERIFY_BASE_URL:https://verify.twilio.com}
+        # NOTE: twilio-service-sid (VA…) is deliberately NOT defaulted here. It
+        # toggles the real OTP verifier via @ConditionalOnProperty, and an empty
+        # value counts as "present" — which would switch the real verifier on
+        # with a blank SID and fail every OTP. Set it only where Twilio is
+        # wired, via env YAYA_AGENTIC_CHAT_VERIFY_TWILIO_SERVICE_SID. Unset →
+        # DevNoopPhoneVerifier (any code passes) for offline dev.
+    channels:
+      # Platform-singleton Twilio account — shared by chat phone verification
+      # (§20), SMS, and WhatsApp. Blank credentials → those channels disable
+      # themselves (isConfigured() == false) instead of failing health checks,
+      # so dev/test boot without Twilio at all.
+      twilio:
+        account-sid:           ${TWILIO_ACCOUNT_SID:}
+        api-key-sid:           ${TWILIO_API_KEY_SID:}
+        api-key-secret:        ${TWILIO_API_KEY_SECRET:}
+        # Account Auth Token — verifies inbound webhook signatures
+        # (X-Twilio-Signature) and is the Verify auth fallback when no API key.
+        auth-token:            ${TWILIO_AUTH_TOKEN:}
+        # Host Twilio dials back for inbound + status callbacks. Blank → falls
+        # back to yaya.agentic.public-base-url.
+        webhook-base-url:      ${TWILIO_WEBHOOK_BASE_URL:}
+        # Optional Messaging Service SID (MG…) — outbound SMS/WhatsApp pooling
+        # and sticky-sender routing. Blank → dispatch uses a plain From number.
+        messaging-service-sid: ${TWILIO_MESSAGING_SERVICE_SID:}
+        # A2P 10DLC bundles — only needed to register SMS brands/campaigns.
+        a2p:
+          customer-profile-bundle-sid: ${TWILIO_A2P_CUSTOMER_PROFILE_BUNDLE_SID:}
+          a2p-profile-bundle-sid:      ${TWILIO_A2P_PROFILE_BUNDLE_SID:}
     session:
       # Idle TTL for ephemeral session state in Redis. Bumped on every
       # interaction; reaching zero auto-evicts working memory.
