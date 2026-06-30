@@ -313,6 +313,38 @@ class HttpToolDispatcherTest {
     }
 
     @Test
+    void percent_encodes_non_ascii_and_space_query_args() {
+        // Reproduces the Tomcat "Invalid character found in the request target"
+        // rejection: a value like "Palé" (UTF-8 0xC3 0xA9) and one containing a
+        // space must be percent-encoded before they hit the wire, or the
+        // receiving server rejects the request line per RFC 7230/3986.
+        wireMock.stubFor(get(urlPathEqualTo("/api/ai/sales/payouts/resolve"))
+                .withQueryParam("gameName", equalTo("Palé"))
+                .withQueryParam("betDOP", equalTo("100 pesos"))
+                .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/ai/sales/payouts/resolve?gameName={gameName}&betDOP={betDOP}", "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor,
+                Map.of("gameName", "Palé", "betDOP", "100 pesos"),
+                execCtx(null),
+                "call-encode");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        // WireMock matches against the decoded query value — proving the bytes
+        // on the wire were properly percent-encoded (Palé -> Pal%C3%A9,
+        // "100 pesos" -> "100%20pesos").
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/ai/sales/payouts/resolve"))
+                .withQueryParam("gameName", equalTo("Palé"))
+                .withQueryParam("betDOP", equalTo("100 pesos")));
+    }
+
+    @Test
     void forwards_host_base_url_override_to_resolver() {
         AtomicReference<String> seenOverride = new AtomicReference<>();
         BaseUrlResolver capturing = new BaseUrlResolver(null, new ObjectMapper()) {

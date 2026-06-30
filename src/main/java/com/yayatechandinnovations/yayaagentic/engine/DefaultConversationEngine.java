@@ -54,6 +54,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class DefaultConversationEngine implements ConversationEngine {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(DefaultConversationEngine.class);
+
     private static final Locale DEFAULT_LOCALE = Locale.ENGLISH;
 
     private final PersonalityProvider personalityProvider;
@@ -793,6 +796,13 @@ public class DefaultConversationEngine implements ConversationEngine {
         }
 
         List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
+        // §12 enforced structurally: a tool call that already came back DENIED /
+        // errored this turn must not be re-dispatched with the same arguments —
+        // the action plane will deny it again, and each retry spins another
+        // agentic round whose (re-narrated) prose gets concatenated into the
+        // outbound message. Derive the already-failed signatures from history so
+        // the guard survives the recursion without threading extra state.
+        java.util.Set<String> failedSignatures = failedToolSignatures(history);
         PromptBuilder.PromptPayload payload = promptBuilder.build(
                 personality, profile, session, intent,
                 priorTurns == null ? List.of() : priorTurns,
@@ -818,6 +828,17 @@ public class DefaultConversationEngine implements ConversationEngine {
                     case LlmClient.LlmEvent.ToolUseProposal(String callId,
                                                             String toolName,
                                                             Map<String, Object> args) -> {
+                        // Retry of an identical call that already failed this
+                        // turn: drop it. We don't dispatch and don't record a
+                        // roundCall, so the continuation guard below sees no new
+                        // result and ends the turn — the model's current text
+                        // becomes terminal instead of triggering yet another
+                        // denied round. Not counted as a dispatch.
+                        if (failedSignatures.contains(toolSignature(toolName, args))) {
+                            log.info("Skipping retry of already-failed tool {} (session {})",
+                                    toolName, session.id().value());
+                            yield Flux.<TurnEvent>empty();
+                        }
                         anyDispatch.set(true);
                         roundCalls.add(new LlmClient.ToolCallSpec(callId, toolName, args));
                         recordToolCall(session.id(), callId, toolName, args);
@@ -890,6 +911,42 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     /** Projects the profile's reachable tool descriptors into the wire
      *  shape the LLM consumes. Description = capability llmGuidance. */
+    /**
+     * Signatures of tool calls that already returned a non-OK result earlier in
+     * this turn. Correlates each {@link LlmClient.HistoryEntry.ToolResults}
+     * error result back to its proposing call by {@code callId} so we can match
+     * on (toolName + args) rather than the opaque id. Package-private for test.
+     */
+    static java.util.Set<String> failedToolSignatures(List<LlmClient.HistoryEntry> history) {
+        if (history == null || history.isEmpty()) return java.util.Set.of();
+        Map<String, LlmClient.ToolCallSpec> callsById = new java.util.HashMap<>();
+        java.util.Set<String> failedCallIds = new java.util.HashSet<>();
+        for (LlmClient.HistoryEntry entry : history) {
+            if (entry instanceof LlmClient.HistoryEntry.Assistant a && a.toolCalls() != null) {
+                for (LlmClient.ToolCallSpec call : a.toolCalls()) {
+                    callsById.put(call.callId(), call);
+                }
+            } else if (entry instanceof LlmClient.HistoryEntry.ToolResults tr) {
+                for (LlmClient.ToolResultSpec result : tr.results()) {
+                    if (result.isError()) failedCallIds.add(result.callId());
+                }
+            }
+        }
+        java.util.Set<String> signatures = new java.util.HashSet<>();
+        for (String callId : failedCallIds) {
+            LlmClient.ToolCallSpec call = callsById.get(callId);
+            if (call != null) signatures.add(toolSignature(call.toolName(), call.args()));
+        }
+        return signatures;
+    }
+
+    /** Stable identity of a tool call: name + canonicalized (sorted-key) args. */
+    static String toolSignature(String toolName, Map<String, Object> args) {
+        java.util.TreeMap<String, Object> sorted = new java.util.TreeMap<>(
+                args == null ? Map.of() : args);
+        return toolName + ":" + sorted;
+    }
+
     private List<LlmClient.ToolDefinition> buildAvailableTools(Profile profile) {
         List<LlmClient.ToolDefinition> out = new java.util.ArrayList<>();
         if (profile == null || profile.capabilities() == null) return out;

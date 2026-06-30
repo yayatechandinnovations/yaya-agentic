@@ -53,6 +53,11 @@ public class OutboundDispatcher {
     /** WhatsApp's per-message text cap. */
     public static final int MAX_BODY_CHARS = 1600;
 
+    /** Minimum repeated-unit length for {@link #collapseRepeatedBody} to act —
+     *  long enough that an exact k-fold repetition is a loop artifact, never a
+     *  legitimately repetitive short phrase. */
+    static final int MIN_DEDUP_UNIT = 40;
+
     /** Default buffer guardrail when the engine takes too long. */
     private static final Duration MAX_BUFFER = Duration.ofSeconds(45);
 
@@ -120,7 +125,38 @@ public class OutboundDispatcher {
             return;
         }
         dispatch(tenant, sender, endUserPhone, sessionId,
-                buffer.body.toString(), buffer.lastHint);
+                collapseRepeatedBody(buffer.body.toString()), buffer.lastHint);
+    }
+
+    /**
+     * Collapse a body that is an exact whole-number repetition of one block
+     * back to a single copy. The agentic loop can re-emit the same narration
+     * across rounds (e.g. a denied tool the model re-tries); the engine-side
+     * guard caps the loop, and this collapses any residual exact duplication so
+     * the user never sees a doubled/tripled message. Conservative by design:
+     * acts only on an EXACT k&gt;=2 repetition of a unit &ge; {@link #MIN_DEDUP_UNIT}
+     * chars — never near-duplicates — so it cannot mangle legitimately
+     * repetitive prose. Package-private for test.
+     */
+    static String collapseRepeatedBody(String body) {
+        if (body == null) return null;
+        String s = body.strip();
+        int n = s.length();
+        if (n < 2 * MIN_DEDUP_UNIT) return body;
+        // KMP failure function → smallest period. If the whole string is that
+        // period repeated an integer number of times, it's a pure repetition.
+        int[] f = new int[n];
+        for (int i = 1; i < n; i++) {
+            int j = f[i - 1];
+            while (j > 0 && s.charAt(i) != s.charAt(j)) j = f[j - 1];
+            if (s.charAt(i) == s.charAt(j)) j++;
+            f[i] = j;
+        }
+        int period = n - f[n - 1];
+        if (period < n && n % period == 0 && period >= MIN_DEDUP_UNIT) {
+            return s.substring(0, period).strip();
+        }
+        return body;
     }
 
     /**

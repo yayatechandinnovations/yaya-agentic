@@ -20,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.util.UriUtils;
 import reactor.util.retry.Retry;
 
 import javax.crypto.Mac;
@@ -89,7 +90,7 @@ public class HttpToolDispatcher {
 
         URI url;
         try {
-            String renderedPath = renderTemplate(spec.urlTemplate(), richArgs, toolId);
+            String renderedPath = renderUrlTemplate(spec.urlTemplate(), richArgs, toolId);
             String override = ctx == null || ctx.attributes() == null ? null
                     : (String) ctx.attributes().get("hostBaseUrlOverride");
             url = baseUrlResolver.resolve(
@@ -223,6 +224,23 @@ public class HttpToolDispatcher {
     // ---- Template + projection helpers ----------------------------------
 
     private String renderTemplate(String template, Map<String, Object> args, String toolId) {
+        return render(template, args, toolId, false);
+    }
+
+    /**
+     * Like {@link #renderTemplate} but percent-encodes each substituted value
+     * so LLM-supplied arguments are URL-safe. Without this, a value like
+     * {@code "Palé"} or one containing a space goes onto the wire as raw bytes
+     * and the receiving server rejects the request line per RFC 7230/3986
+     * ("Invalid character found in the request target"). The template's own
+     * structural characters ({@code ? & = /}) are left untouched — only the
+     * interpolated values are encoded.
+     */
+    private String renderUrlTemplate(String template, Map<String, Object> args, String toolId) {
+        return render(template, args, toolId, true);
+    }
+
+    private String render(String template, Map<String, Object> args, String toolId, boolean urlEncodeValues) {
         if (template == null) return null;
         Matcher m = PLACEHOLDER.matcher(template);
         StringBuilder out = new StringBuilder();
@@ -236,7 +254,11 @@ public class HttpToolDispatcher {
                 LOG.warn("template placeholder {{{}}} resolved to null in toolId={} — substituting empty string",
                         path, toolId);
             }
-            m.appendReplacement(out, Matcher.quoteReplacement(value == null ? "" : value.toString()));
+            String rendered = value == null ? "" : value.toString();
+            if (urlEncodeValues && !rendered.isEmpty()) {
+                rendered = UriUtils.encode(rendered, StandardCharsets.UTF_8);
+            }
+            m.appendReplacement(out, Matcher.quoteReplacement(rendered));
         }
         m.appendTail(out);
         return out.toString();
