@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +14,7 @@ import '../../../models/admin/profile.dart';
 import '../auth_resolvers/auth_resolvers_screen.dart';
 import '../profiles/profiles_screen.dart';
 import '../shared/admin_shared.dart';
+import 'web_image_picker.dart';
 
 /// Chat inbound channel admin: create branded entry points (the `LOGO | NAME`
 /// tiles end users see in the chat app), publish them, and hand out the QR /
@@ -28,6 +28,24 @@ final chatEntryPointsProvider =
 });
 
 const _authModes = <String>['ANONYMOUS_ONLY', 'AUTH_OPTIONAL', 'AUTH_REQUIRED'];
+
+/// Supported conversation locales (BCP-47) the chat app ships translations for.
+const _localeOptions = <(String, String)>[('en-US', 'English'), ('es-DO', 'Spanish')];
+
+/// Normalize an arbitrary stored locale onto one of the offered options.
+String _normalizeLocale(String? raw) =>
+    (raw != null && raw.toLowerCase().startsWith('es')) ? 'es-DO' : 'en-US';
+
+Widget _localeDropdown(String value, void Function(String) onChanged) {
+  return DropdownButtonFormField<String>(
+    initialValue: value,
+    decoration: const InputDecoration(labelText: 'Default locale', border: OutlineInputBorder()),
+    items: _localeOptions
+        .map((o) => DropdownMenuItem(value: o.$1, child: Text('${o.$2} (${o.$1})')))
+        .toList(),
+    onChanged: (v) => onChanged(v ?? 'en-US'),
+  );
+}
 
 /// Preset accent palette (tile + chat-header theming).
 const _palette = <String>[
@@ -344,29 +362,20 @@ class _LogoPicker extends ConsumerStatefulWidget {
 class _LogoPickerState extends ConsumerState<_LogoPicker> {
   bool _busy = false;
 
-  static const _contentTypes = {
-    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-    'webp': 'image/webp', 'gif': 'image/gif',
-  };
+  static const _allowed = {'image/png', 'image/jpeg', 'image/webp', 'image/gif'};
 
   Future<void> _pick() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: _contentTypes.keys.toList(),
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final f = result.files.first;
-    final bytes = f.bytes;
-    final ext = (f.extension ?? '').toLowerCase();
-    if (bytes == null || !_contentTypes.containsKey(ext)) {
+    final picked = await pickImageFromBrowser();
+    if (picked == null) return;
+    if (!_allowed.contains(picked.contentType)) {
       if (mounted) showSnack(context, 'Pick a PNG, JPEG, WebP, or GIF image.', error: true);
       return;
     }
     setState(() => _busy = true);
     try {
       final api = await ref.read(adminApiProvider.future);
-      final url = await api.uploadChatLogo(widget.tenant, _contentTypes[ext]!, base64Encode(bytes));
+      final url = await api.uploadChatLogo(
+          widget.tenant, picked.contentType, base64Encode(picked.bytes));
       widget.onUploaded(url);
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
@@ -527,13 +536,13 @@ class _CreateForm extends ConsumerStatefulWidget {
 class _CreateFormState extends ConsumerState<_CreateForm> {
   final _displayName = TextEditingController();
   final _welcome = TextEditingController();
-  final _locale = TextEditingController(text: 'en-US');
   final _issuer = TextEditingController();
   final _audience = TextEditingController();
 
   String? _profileSlug;
   String? _logoUrl;
   String? _accentHex;
+  String _locale = 'en-US';
   String _authMode = 'ANONYMOUS_ONLY';
   String _authMethod = 'OIDC';
   int? _authResolverId;
@@ -542,7 +551,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _locale, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
@@ -566,7 +575,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       logoUrl: _logoUrl!,
       accentColorHex: _accentHex,
       welcomeText: _welcome.text.trim().isEmpty ? null : _welcome.text.trim(),
-      defaultLocale: _locale.text.trim(),
+      defaultLocale: _locale,
       authMode: _authMode,
       authConfig: _buildAuthConfig(),
       requiresVerifiedPhone: _requireVerifiedPhone,
@@ -604,6 +613,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       _profileSlug = null;
       _logoUrl = null;
       _accentHex = null;
+      _locale = 'en-US';
       _authMode = 'ANONYMOUS_ONLY';
       _authMethod = 'OIDC';
       _authResolverId = null;
@@ -656,8 +666,8 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
             _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
             const SizedBox(height: 12),
             _field(_welcome, 'Welcome text', hint: 'Optional first bubble', lines: 2),
-            _field(_locale, 'Default locale', hint: 'en-US'),
-            const SizedBox(height: 8),
+            _localeDropdown(_locale, (v) => setState(() => _locale = v)),
+            const SizedBox(height: 12),
             _AuthSection(
               tenant: widget.tenant,
               authMode: _authMode,
@@ -720,6 +730,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
   late String _logoUrl = widget.ep.logoUrl;
   late String? _accentHex = widget.ep.accentColorHex;
+  late String _localeValue = _normalizeLocale(widget.ep.defaultLocale);
   late String _authMode = widget.ep.authMode;
   late String _authMethod = widget.ep.authConfig.kind == 'ResolverExchange' ? 'RESOLVER' : 'OIDC';
   late int? _authResolverId = widget.ep.authConfig.authResolverId;
@@ -766,6 +777,8 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
               const SizedBox(height: 12),
               _row(_welcome, 'Welcome text'),
+              _localeDropdown(_localeValue, (v) => setState(() => _localeValue = v)),
+              const SizedBox(height: 12),
               _AuthSection(
                 tenant: widget.tenant,
                 authMode: _authMode,
@@ -791,7 +804,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               logoUrl: _logoUrl,
               accentColorHex: _accentHex,
               welcomeText: _welcome.text.trim(),
-              defaultLocale: widget.ep.defaultLocale,
+              defaultLocale: _localeValue,
               authMode: _authMode,
               authConfig: _buildAuthConfig(),
             );

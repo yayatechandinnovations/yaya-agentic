@@ -30,9 +30,6 @@ dependencies:
   # QR rendering for chat entry-point deep links
   qr_flutter: ^4.1.0
 
-  # Logo image upload (chat entry points)
-  file_picker: ^8.3.7
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
