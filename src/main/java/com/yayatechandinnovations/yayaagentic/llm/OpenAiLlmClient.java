@@ -128,14 +128,17 @@ public class OpenAiLlmClient implements LlmClient {
                                             spec.callId(), "function",
                                             spec.toolName(), writeJson(spec.args())))
                                     .toList();
-                    out.add(new AssistantMessage(a.content() == null ? "" : a.content(), Map.of(), calls));
+                    out.add(AssistantMessage.builder()
+                            .content(a.content() == null ? "" : a.content())
+                            .toolCalls(calls)
+                            .build());
                 }
                 case HistoryEntry.ToolResults tr -> {
                     List<ToolResponseMessage.ToolResponse> responses = tr.results().stream()
                             .map(r -> new ToolResponseMessage.ToolResponse(
                                     r.callId(), "", writeJson(r.value())))
                             .toList();
-                    out.add(new ToolResponseMessage(responses));
+                    out.add(ToolResponseMessage.builder().responses(responses).build());
                 }
             }
         }

@@ -68,14 +68,14 @@ class LlmClientAgnosticContractTest {
                 // Spring AI surfaces from a real provider when the model
                 // wants to call a tool.
                 AssistantMessage textOnly = new AssistantMessage("hello ");
-                AssistantMessage withTool = new AssistantMessage(
-                        "",
-                        Map.of(),
-                        List.of(new AssistantMessage.ToolCall(
+                AssistantMessage withTool = AssistantMessage.builder()
+                        .content("")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
                                 "call-xyz",
                                 "function",
                                 "echo",
-                                "{\"text\":\"world\"}")));
+                                "{\"text\":\"world\"}")))
+                        .build();
                 return Flux.just(
                         new ChatResponse(List.of(new Generation(textOnly))),
                         new ChatResponse(List.of(new Generation(withTool))));

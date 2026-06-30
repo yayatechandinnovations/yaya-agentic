@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
+import org.springframework.ai.anthropic.api.AnthropicCacheOptions;
+import org.springframework.ai.anthropic.api.AnthropicCacheStrategy;
+import org.springframework.ai.anthropic.api.AnthropicCacheTtl;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -12,6 +15,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
@@ -22,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Real Anthropic adapter built on Spring AI 1.0's {@code ChatModel} and
@@ -60,6 +65,21 @@ public class AnthropicLlmClient implements LlmClient {
     private final ChatModel chatModel;
     private final ObjectMapper json;
 
+    // Explicit Anthropic prompt caching (cache_control:ephemeral). Default ON.
+    // SYSTEM_AND_TOOLS + multiBlockSystemCaching puts the breakpoint on the
+    // second-to-last system block — our byte-stable cacheablePrefix — while the
+    // variable suffix (the last system block) stays uncached and free to change.
+    // Field injection (not constructor) so plain `new` in unit tests leaves this
+    // false: tests that stub ChatModel never need a live cache config, and the
+    // contract behaviour is identical with or without the hint.
+    @Value("${yaya.agentic.llm.anthropic.prompt-cache.enabled:true}")
+    private boolean promptCacheEnabled;
+
+    // FIVE_MINUTES (default) or ONE_HOUR. 1h doubles the write premium but
+    // survives idle gaps between bursty channel messages (WhatsApp/SMS).
+    @Value("${yaya.agentic.llm.anthropic.prompt-cache.ttl:FIVE_MINUTES}")
+    private String promptCacheTtl;
+
     public AnthropicLlmClient(ChatModel chatModel, ObjectMapper json) {
         this.chatModel = chatModel;
         this.json = json;
@@ -73,9 +93,14 @@ public class AnthropicLlmClient implements LlmClient {
         // Spring AI populates ToolCalls as the assistant message materialises;
         // collect them deduped by id and emit at the end.
         LinkedHashMap<String, AssistantMessage.ToolCall> seenCalls = new LinkedHashMap<>();
+        // Streamed usage accumulates across chunks; the final chunk carries the
+        // settled cache_creation / cache_read counts. Keep the latest non-null
+        // so we can log per-round cache effectiveness for cost monitoring.
+        AtomicReference<Object> lastUsage = new AtomicReference<>();
 
         Flux<LlmEvent> tokens = chatModel.stream(prompt)
                 .concatMap(response -> {
+                    captureUsage(response, lastUsage);
                     AssistantMessage out = response.getResult() == null ? null
                             : response.getResult().getOutput();
                     if (out == null) return Flux.<LlmEvent>empty();
@@ -92,6 +117,10 @@ public class AnthropicLlmClient implements LlmClient {
                 });
 
         Mono<List<LlmEvent>> tail = Mono.fromSupplier(() -> {
+            Object usage = lastUsage.get();
+            if (usage != null) {
+                LOG.info("Anthropic round usage (prompt-cache={}): {}", promptCacheEnabled, usage);
+            }
             List<LlmEvent> out = new ArrayList<>();
             for (var tc : seenCalls.values()) {
                 out.add(new LlmEvent.ToolUseProposal(tc.id(), tc.name(), parseArgs(tc.arguments())));
@@ -110,17 +139,20 @@ public class AnthropicLlmClient implements LlmClient {
     // ---- Prompt translation -------------------------------------------
 
     /*
-     * NOTE on explicit prompt caching (Anthropic cache_control:ephemeral):
-     * Spring AI 1.0 GA does NOT expose per-block cache_control on the
-     * high-level SystemMessage / AnthropicChatOptions surface. Wiring the
-     * explicit hint requires dropping to AnthropicApi.ChatCompletionRequest
-     * and building the content block list ourselves, which is a substantial
-     * refactor for one feature. The prefix is still cacheable in practice:
-     * the cacheable-prefix system block is byte-stable per
-     * (tenant, profile, profile_version), so Anthropic's content cache will
-     * pick it up within the 5-minute TTL even without the explicit hint.
-     * Followup: drop to raw AnthropicApi when this becomes a measurable
-     * cost concern; until then content-cache is the floor.
+     * Explicit Anthropic prompt caching (cache_control:ephemeral), wired via
+     * Spring AI 1.1's AnthropicCacheOptions. Anthropic has NO automatic content
+     * cache — without an explicit breakpoint every request bills the full
+     * prefix at input price, which on a multi-round agentic turn means the
+     * ~16K-token system + tools are re-billed on every tool round.
+     *
+     * The cacheablePrefix and variableSuffix are emitted as two separate
+     * SystemMessages. With SYSTEM_AND_TOOLS + multiBlockSystemCaching, Spring AI
+     * places the cache_control breakpoint on the SECOND-TO-LAST system block
+     * (our stable prefix) and on the last tool, while the LAST system block (the
+     * per-turn variable suffix) stays uncached. Render order is tools → system →
+     * messages, so the breakpoint caches tools + prefix together. The prefix is
+     * byte-stable per (tenant, profile, profile_version), so every subsequent
+     * round and session on the same profile reads it at ~0.1x.
      */
     private Prompt buildPrompt(LlmRequest request) {
         List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
@@ -130,11 +162,28 @@ public class AnthropicLlmClient implements LlmClient {
         if (suffix != null && !suffix.isEmpty()) messages.add(new SystemMessage(suffix));
         messages.addAll(historyToMessages(request.history()));
 
-        AnthropicChatOptions options = AnthropicChatOptions.builder()
+        AnthropicChatOptions.Builder options = AnthropicChatOptions.builder()
                 .toolCallbacks(toCallbacks(request.availableTools()))
-                .internalToolExecutionEnabled(false)
+                .internalToolExecutionEnabled(false);
+        AnthropicCacheOptions cacheOptions = cacheOptions();
+        if (cacheOptions != null) options.cacheOptions(cacheOptions);
+        return new Prompt(messages, options.build());
+    }
+
+    /**
+     * The cache configuration for one request, or {@code null} when caching is
+     * disabled (the kill-switch leaves the request byte-identical to the
+     * pre-caching behaviour). Package-private for unit testing.
+     */
+    AnthropicCacheOptions cacheOptions() {
+        if (!promptCacheEnabled) return null;
+        AnthropicCacheTtl ttl = "ONE_HOUR".equalsIgnoreCase(promptCacheTtl)
+                ? AnthropicCacheTtl.ONE_HOUR : AnthropicCacheTtl.FIVE_MINUTES;
+        return AnthropicCacheOptions.builder()
+                .strategy(AnthropicCacheStrategy.SYSTEM_AND_TOOLS)
+                .multiBlockSystemCaching(true)
+                .messageTypeTtl(org.springframework.ai.chat.messages.MessageType.SYSTEM, ttl)
                 .build();
-        return new Prompt(messages, options);
     }
 
     private List<org.springframework.ai.chat.messages.Message> historyToMessages(List<HistoryEntry> history) {
@@ -150,14 +199,17 @@ public class AnthropicLlmClient implements LlmClient {
                                             spec.callId(), "function",
                                             spec.toolName(), writeJson(spec.args())))
                                     .toList();
-                    out.add(new AssistantMessage(a.content() == null ? "" : a.content(), Map.of(), calls));
+                    out.add(AssistantMessage.builder()
+                            .content(a.content() == null ? "" : a.content())
+                            .toolCalls(calls)
+                            .build());
                 }
                 case HistoryEntry.ToolResults tr -> {
                     List<ToolResponseMessage.ToolResponse> responses = tr.results().stream()
                             .map(r -> new ToolResponseMessage.ToolResponse(
                                     r.callId(), "", writeJson(r.value())))
                             .toList();
-                    out.add(new ToolResponseMessage(responses));
+                    out.add(ToolResponseMessage.builder().responses(responses).build());
                 }
             }
         }
@@ -182,6 +234,25 @@ public class AnthropicLlmClient implements LlmClient {
                         .inputType(new ParameterizedTypeReference<Map<String, Object>>() {})
                         .build())
                 .toList();
+    }
+
+    /**
+     * Best-effort capture of the streamed usage block. The Anthropic native
+     * usage carries {@code cacheCreationInputTokens} / {@code cacheReadInputTokens}
+     * — the ground truth for whether the prefix cache is hitting. Never throws:
+     * usage logging must not be able to break a chat turn.
+     */
+    private static void captureUsage(org.springframework.ai.chat.model.ChatResponse response,
+                                     AtomicReference<Object> sink) {
+        try {
+            if (response == null || response.getMetadata() == null) return;
+            var usage = response.getMetadata().getUsage();
+            if (usage == null) return;
+            Object nativeUsage = usage.getNativeUsage();
+            sink.set(nativeUsage != null ? nativeUsage : usage);
+        } catch (RuntimeException ignored) {
+            // Telemetry only — swallow.
+        }
     }
 
     // ---- JSON helpers --------------------------------------------------

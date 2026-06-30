@@ -896,8 +896,17 @@ public class DefaultConversationEngine implements ConversationEngine {
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (Ids.CapabilityId capId : profile.capabilities()) {
             catalog.capability(capId).ifPresent(cap -> {
-                String description = cap.llmGuidance() == null
-                        ? cap.userFacingDescription() : cap.llmGuidance();
+                // The full multi-step playbook lives ONCE in the cached system
+                // prefix (capability catalog, see DefaultPromptBuilder). The
+                // native tool description only needs a concise purpose line so
+                // the model can map tool -> intent. Previously this carried the
+                // entire llmGuidance, which deduped per tool meant the ~9KB vend
+                // playbook shipped on all 6 of its tools — ~25K tokens/round of
+                // pure duplication on top of the same guidance already in the
+                // prefix. Keep it short; the procedure is not lost.
+                String description = cap.userFacingDescription() != null && !cap.userFacingDescription().isBlank()
+                        ? cap.userFacingDescription()
+                        : (cap.userFacingLabel() != null ? cap.userFacingLabel() : cap.id().value());
                 for (Ids.ToolId toolId : cap.tools()) {
                     if (!seen.add(toolId.value())) continue;
                     catalog.tool(toolId).ifPresent(t -> out.add(new LlmClient.ToolDefinition(

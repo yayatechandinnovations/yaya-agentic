@@ -182,9 +182,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
     }
 
     private String formatTool(ToolDescriptor t) {
+        // Output schema is intentionally omitted: the model observes real tool
+        // outputs at runtime in tool_result, so re-stating the output schema up
+        // front in the (cached) prefix is dead weight (~2.7K tokens/round for
+        // this profile). Input schema stays — the model needs it to form calls.
         return "- " + t.id().value() + "\n"
-                + "    input:  " + t.inputSchemaJson() + "\n"
-                + "    output: " + t.outputSchemaJson() + "\n";
+                + "    input:  " + t.inputSchemaJson() + "\n";
     }
 
     // ---- Suffix (variable) ---------------------------------------------
