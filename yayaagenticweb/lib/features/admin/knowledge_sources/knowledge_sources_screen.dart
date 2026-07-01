@@ -28,12 +28,11 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
   final _idCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   // Upload is the default — operators pick files from their machine and never
-  // deal with a server path. Inline/local-path remain for tests and dev.
+  // deal with a server path. Inline is kept for quick text/markdown snippets.
+  // (There is no local-path option: reading server paths is a file-read risk.)
   String _locationKind = 'UPLOADED';
   final _inlineDocsCtrl =
       TextEditingController(text: '# Sample\n\nReplace this with your content.');
-  final _localPathCtrl = TextEditingController(text: '/var/data/docs');
-  final _includeGlobCtrl = TextEditingController(text: 'glob:**/*.md');
   final List<UploadedFileRef> _uploadedFiles = [];
   bool _saving = false;
   bool _uploading = false;
@@ -80,12 +79,6 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
             }
           }
           break;
-        case 'LOCAL_PATH':
-          _locationKind = 'LOCAL_PATH';
-          _localPathCtrl.text = (s.location['root'] ?? '').toString();
-          _includeGlobCtrl.text =
-              (s.location['includeGlob'] ?? 'glob:**/*.md').toString();
-          break;
         default:
           _locationKind = 'INLINE';
           final docs = (s.location['docs'] as List?) ?? const [];
@@ -106,8 +99,6 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
       _idCtrl.clear();
       _nameCtrl.clear();
       _inlineDocsCtrl.text = '# Sample\n\nReplace this with your content.';
-      _localPathCtrl.text = '/var/data/docs';
-      _includeGlobCtrl.text = 'glob:**/*.md';
       _uploadedFiles.clear();
       _locationKind = 'UPLOADED';
     });
@@ -119,8 +110,6 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
     _idCtrl.dispose();
     _nameCtrl.dispose();
     _inlineDocsCtrl.dispose();
-    _localPathCtrl.dispose();
-    _includeGlobCtrl.dispose();
     super.dispose();
   }
 
@@ -128,11 +117,6 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
     switch (_locationKind) {
       case 'UPLOADED':
         return {'files': _uploadedFiles.map((f) => f.toJson()).toList()};
-      case 'LOCAL_PATH':
-        return {
-          'root': _localPathCtrl.text.trim(),
-          'includeGlob': _includeGlobCtrl.text.trim(),
-        };
       default:
         return {
           'docs': [
@@ -317,7 +301,6 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
               segments: const [
                 ButtonSegment(value: 'UPLOADED', label: Text('Upload')),
                 ButtonSegment(value: 'INLINE', label: Text('Inline')),
-                ButtonSegment(value: 'LOCAL_PATH', label: Text('Local path')),
               ],
               selected: {_locationKind},
               onSelectionChanged: (s) =>
@@ -331,7 +314,7 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
                 onPick: _pickAndUpload,
                 onRemove: _removeUploaded,
               )
-            else if (_locationKind == 'INLINE')
+            else
               TextField(
                 controller: _inlineDocsCtrl,
                 maxLines: 10,
@@ -339,19 +322,7 @@ class _State extends ConsumerState<KnowledgeSourcesScreen> {
                   labelText: 'document text (markdown)',
                   alignLabelWithHint: true,
                 ),
-              )
-            else ...[
-              TextField(
-                  controller: _localPathCtrl,
-                  decoration: const InputDecoration(
-                      labelText: 'root path (server-local)')),
-              const SizedBox(height: 8),
-              TextField(
-                  controller: _includeGlobCtrl,
-                  decoration: const InputDecoration(
-                      labelText: 'include glob',
-                      hintText: 'glob:**/*.md')),
-            ],
+              ),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,

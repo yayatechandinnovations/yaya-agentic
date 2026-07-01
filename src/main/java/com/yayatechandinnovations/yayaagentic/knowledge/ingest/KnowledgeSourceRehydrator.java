@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,10 +71,6 @@ public class KnowledgeSourceRehydrator {
                 }
                 yield new SourceLocation.Inline(docs);
             }
-            case "LOCAL_PATH" -> new SourceLocation.LocalPath(
-                    Path.of(String.valueOf(raw.getOrDefault("root", "."))),
-                    (String) raw.get("includeGlob"),
-                    (String) raw.get("excludeGlob"));
             case "UPLOADED" -> {
                 List<SourceLocation.Uploaded.UploadedFile> files = new ArrayList<>();
                 if (raw.get("files") instanceof List<?> list) {
@@ -92,6 +87,11 @@ public class KnowledgeSourceRehydrator {
                 }
                 yield new SourceLocation.Uploaded(files);
             }
+            // Removed for security — reading operator-supplied server paths is an
+            // arbitrary-file-read risk. Legacy rows get a clear, specific error.
+            case "LOCAL_PATH" -> throw new ResponseStatusException(HttpStatus.GONE,
+                    "local-path knowledge sources were removed for security; "
+                            + "re-create this source as an upload");
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "unsupported location kind: " + kind);
         };

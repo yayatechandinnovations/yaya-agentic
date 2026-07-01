@@ -5,7 +5,7 @@ import java.util.stream.Stream;
 
 /**
  * Ingestion plug-in. Concrete loaders match on {@link SourceLocation} variants
- * (LocalPath, HttpUrl, S3Prefix, GitRepo, Inline).
+ * (Uploaded, Inline, HttpUrl, S3Prefix, GitRepo).
  */
 public interface KnowledgeLoader {
 

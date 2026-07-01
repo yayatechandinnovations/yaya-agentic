@@ -20,7 +20,7 @@ public final class KnowledgeAdminDtos {
             String tenant,
             String id,
             String name,
-            String locationKind,            // INLINE | LOCAL_PATH
+            String locationKind,            // UPLOADED | INLINE
             Map<String, Object> location,    // shape per kind
             Map<String, Object> ingestion,
             Map<String, Object> retrieval,

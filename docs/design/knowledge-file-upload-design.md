@@ -3,7 +3,9 @@
 **Status:** Proposed (production-ready target — not a throwaway MVP)
 **Owner:** (you)
 **Anchors:** design `§5.8` (Knowledge Sources & Retrieval), CLAUDE.md non-negotiables #5 (untrusted data) and #7 (per-source access), `§12` (trust boundaries)
-**Supersedes nothing.** Adds a `SourceLocation` variant, a managed blob store, an async ingestion pipeline, and page-aware extraction. Existing `Inline` / `LocalPath` loaders are untouched.
+**Supersedes nothing.** Adds a `SourceLocation` variant, a managed blob store, an async ingestion pipeline, and page-aware extraction. The `Inline` loader is untouched.
+
+> **Update (security):** the `LocalPath` variant + `LocalPathLoader` have been **removed**. Reading operator-supplied server filesystem paths is an arbitrary-file-read / path-traversal risk (a source could be pointed at host secrets). Documents now enter only via `Uploaded` (managed storage) or `Inline`. Legacy `LOCAL_PATH` rows rehydrate to a `410 Gone` with a "re-create as an upload" message.
 
 ---
 
@@ -50,7 +52,7 @@ Both leak an implementation detail onto the user. `LocalPath` is the worst offen
 - Honors every trust-boundary rule: tenant scoping, per-chunk sanitization, MIME allow-listing, size/quota caps, malware scanning.
 
 **Non-goals**
-- Not replacing `Inline` / `LocalPath` — they remain for tests, seeds, and CI-mounted corpora.
+- Not replacing `Inline` — it remains for tests, seeds, and quick text/markdown snippets. (`LocalPath` has been removed outright, see the security note above.)
 - Not a document-management UI (folders, tags, rich preview) — upload → attach → index only.
 - Not changing the embedding model (tracked separately, see §2).
 
@@ -330,9 +332,9 @@ Blobs are immutable and shared across source versions. Dedup is **within-tenant 
 
 ## 12. Flutter admin console
 
-`knowledge_sources_screen.dart` today offers `INLINE | LOCAL_PATH`, where `LOCAL_PATH` renders `root` + `includeGlob` text fields. Changes:
+`knowledge_sources_screen.dart` offers `UPLOADED | INLINE` (the former `LOCAL_PATH` segment and its `root`/`includeGlob` fields were removed). Changes:
 
-- Add **`UPLOADED`** and make it the **default**; move `LOCAL_PATH` behind an "advanced" toggle (kept for dev/CI).
+- **`UPLOADED`** is the **default**; `INLINE` remains for quick text/markdown.
 - `UPLOADED` renders a **drop-zone + file picker** (`file_picker`): pick one/many files → `POST …/uploads` (multipart) with per-file progress → uploaded files shown as chips (`filename · size · scan✓`), each removable. Chips are the `location.files` array.
 - **Save** posts the source with `locationKind:"UPLOADED"`; ingestion is now async, so the screen shows a live **INDEXING → READY/ERROR** badge (polling `/status`) and, on completion, the existing `+X docs, +Y chunks` summary. Retrieval hits render `filename p.N` citations.
 - `admin_api.dart` gains `uploadKnowledgeFiles(...)`, `deleteKnowledgeBlob(...)`; `knowledge_source.dart` gains an `UploadedFile` model. Existing create/reindex calls unchanged.

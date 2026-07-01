@@ -1,22 +1,24 @@
 package com.yayatechandinnovations.yayaagentic.knowledge;
 
 import java.net.URI;
-import java.nio.file.Path;
 import java.util.List;
 
 /**
  * Where a knowledge source's documents live. Loaders are selected by
  * matching the sealed variant.
+ *
+ * <p>There is deliberately no server-filesystem variant: reading arbitrary
+ * host paths chosen by an operator is an arbitrary-file-read / path-traversal
+ * risk (a malicious or careless operator could point a source at server
+ * secrets). Documents come in through {@link Uploaded} (managed storage) or
+ * {@link Inline}; the platform never reads a caller-supplied local path.
  */
 public sealed interface SourceLocation
-        permits SourceLocation.LocalPath,
-                SourceLocation.HttpUrl,
+        permits SourceLocation.HttpUrl,
                 SourceLocation.S3Prefix,
                 SourceLocation.GitRepo,
                 SourceLocation.Inline,
                 SourceLocation.Uploaded {
-
-    record LocalPath(Path root, String includeGlob, String excludeGlob) implements SourceLocation {}
 
     record HttpUrl(URI base, List<URI> seeds) implements SourceLocation {}
 
