@@ -1,6 +1,10 @@
 package com.yayatechandinnovations.yayaagentic.config;
 
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProperties;
+import com.yayatechandinnovations.yayaagentic.knowledge.blob.BlobGcProperties;
+import com.yayatechandinnovations.yayaagentic.knowledge.blob.ClamAvProperties;
+import com.yayatechandinnovations.yayaagentic.knowledge.blob.KnowledgeUploadProperties;
+import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionProperties;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.ApiKeysProperties;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.AuditProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -19,7 +23,8 @@ import java.time.Clock;
 
 @Configuration
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
-        ApiKeysProperties.class, AuditProperties.class})
+        ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
+        IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 
@@ -39,6 +44,25 @@ public class CoreConfiguration {
         exec.setQueueCapacity(2000);
         exec.setWaitForTasksToCompleteOnShutdown(true);
         exec.setAwaitTerminationSeconds(30);
+        exec.initialize();
+        return exec;
+    }
+
+    /**
+     * Runs claimed knowledge-ingestion jobs off the scheduler thread. Small pool
+     * — ingestion is embedding-API + JDBC bound, not CPU bound, and the queue is
+     * durable so backpressure just leaves jobs QUEUED. Keep the pool ≥ the
+     * ingestion batch size so a claimed batch never starves.
+     */
+    @Bean(name = "knowledgeIngestExecutor", destroyMethod = "shutdown")
+    public ThreadPoolTaskExecutor knowledgeIngestExecutor() {
+        ThreadPoolTaskExecutor exec = new ThreadPoolTaskExecutor();
+        exec.setThreadNamePrefix("knowledge-ingest-");
+        exec.setCorePoolSize(4);
+        exec.setMaxPoolSize(4);
+        exec.setQueueCapacity(64);
+        exec.setWaitForTasksToCompleteOnShutdown(true);
+        exec.setAwaitTerminationSeconds(60);
         exec.initialize();
         return exec;
     }

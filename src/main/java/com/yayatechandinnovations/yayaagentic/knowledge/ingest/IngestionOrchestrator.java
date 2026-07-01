@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.knowledge.ingest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.knowledge.IngestionPolicy;
 import com.yayatechandinnovations.yayaagentic.knowledge.KnowledgeLoader;
+import com.yayatechandinnovations.yayaagentic.knowledge.KnowledgeMetrics;
 import com.yayatechandinnovations.yayaagentic.knowledge.KnowledgeSource;
 import com.yayatechandinnovations.yayaagentic.knowledge.chunker.Chunker;
 import com.yayatechandinnovations.yayaagentic.knowledge.embedding.EmbeddingService;
@@ -48,6 +49,7 @@ public class IngestionOrchestrator {
     private final KnowledgeChunkRepository chunkRepo;
     private final ContentSanitizer sanitizer;
     private final ObjectMapper json;
+    private final KnowledgeMetrics metrics;
 
     public IngestionOrchestrator(List<KnowledgeLoader> loaders,
                                  Chunker chunker,
@@ -56,7 +58,8 @@ public class IngestionOrchestrator {
                                  KnowledgeDocumentRepository documentRepo,
                                  KnowledgeChunkRepository chunkRepo,
                                  ContentSanitizer sanitizer,
-                                 ObjectMapper json) {
+                                 ObjectMapper json,
+                                 KnowledgeMetrics metrics) {
         this.loaders = loaders;
         this.chunker = chunker;
         this.embeddings = embeddings;
@@ -65,6 +68,7 @@ public class IngestionOrchestrator {
         this.chunkRepo = chunkRepo;
         this.sanitizer = sanitizer;
         this.json = json;
+        this.metrics = metrics;
     }
 
     public IngestResult ingest(KnowledgeSource source) {
@@ -84,7 +88,10 @@ public class IngestionOrchestrator {
                 ? IngestionPolicy.defaults() : source.ingestion();
 
         try (var stream = loader.load(source.location(),
-                new KnowledgeLoader.IngestionContext("ingest-" + System.currentTimeMillis(), Map.of()))) {
+                new KnowledgeLoader.IngestionContext("ingest-" + System.currentTimeMillis(),
+                        Map.of("tenantId", source.tenant().value(),
+                                "sourceId", source.id().value(),
+                                "sourceVersion", source.version())))) {
             var iterator = stream.iterator();
             while (iterator.hasNext()) {
                 var raw = iterator.next();
@@ -107,7 +114,10 @@ public class IngestionOrchestrator {
                 failure == null ? null : failure.getMessage(), now);
         updateSourceCounts(source, (int) totalDocs, (int) totalChunks);
 
-        long ms = (System.nanoTime() - start) / 1_000_000;
+        long nanos = System.nanoTime() - start;
+        long ms = nanos / 1_000_000;
+        metrics.ingest(source.tenant().value(), failure == null ? "ready" : "error",
+                java.time.Duration.ofNanos(nanos));
         LOG.info("ingest source={} added {} docs, {} new chunks, total chunks={} ({} ms)",
                 source.id().value(), docsAdded, chunksAdded, totalChunks, ms);
 
@@ -158,6 +168,9 @@ public class IngestionOrchestrator {
             meta.put("documentUri", raw.uri());
             meta.put("documentTitle", raw.title());
             meta.put("embeddingModel", embeddings.modelId());
+            // Propagate document-level provenance the loader attached (e.g. the
+            // page an uploaded PDF chunk came from) so retrieval can cite it.
+            propagate(raw.metadata(), meta, "page", "filename");
             chunkRepo.insertChunk(
                     source.tenant().value(), source.id().value(), source.version(),
                     doc.getId(), chunk.index(), text, embedding, writeJson(meta));
@@ -184,6 +197,14 @@ public class IngestionOrchestrator {
             e.setChunkCount(chunks);
             sourceRepo.save(e);
         });
+    }
+
+    private static void propagate(Map<String, Object> from, Map<String, Object> to, String... keys) {
+        if (from == null) return;
+        for (String key : keys) {
+            Object v = from.get(key);
+            if (v != null) to.putIfAbsent(key, v);
+        }
     }
 
     private String writeJson(Object v) {

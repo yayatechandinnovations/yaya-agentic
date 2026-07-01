@@ -215,6 +215,39 @@ class AdminApi {
     return ReindexResponse.fromJson(_asMap(res.data));
   }
 
+  /// Upload one or more documents. Bytes are scanned, sniffed, and stored; the
+  /// returned refs go into a source's `location.files` (locationKind UPLOADED).
+  Future<List<UploadedFileRef>> uploadKnowledgeFiles({
+    String tenant = 'default',
+    required List<MultipartFile> files,
+  }) async {
+    final form = FormData();
+    for (final f in files) {
+      form.files.add(MapEntry('files', f));
+    }
+    final res = await _dio.post(
+      '/v1/admin/knowledge-sources/uploads',
+      queryParameters: {'tenant': tenant},
+      data: form,
+    );
+    final list = (res.data['files'] as List? ?? const []);
+    return list.map((e) => UploadedFileRef.fromJson(_asMap(e))).toList();
+  }
+
+  Future<void> deleteKnowledgeBlob(
+      {String tenant = 'default', required String blobId}) async {
+    await _dio.delete('/v1/admin/knowledge-sources/uploads/$blobId',
+        queryParameters: {'tenant': tenant});
+  }
+
+  /// Live ingestion status incl. the async job state (QUEUED/RUNNING/DONE/FAILED).
+  Future<Map<String, dynamic>> knowledgeSourceStatus(
+      {String tenant = 'default', required String id}) async {
+    final res = await _dio.get('/v1/admin/knowledge-sources/$id/status',
+        queryParameters: {'tenant': tenant});
+    return _asMap(res.data);
+  }
+
   // ---- Operator-auth strategies -------------------------------------
 
   Future<StrategiesResponse> getStrategies() async {

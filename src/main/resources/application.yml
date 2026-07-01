@@ -5,6 +5,15 @@ spring:
     # WebFlux buffers request bodies in memory; the 256KB default is too small
     # for base64 logo uploads (chat entry points, ≤2MB image → ~2.7MB body).
     max-in-memory-size: 4MB
+  webflux:
+    multipart:
+      # Knowledge-file uploads (design §10). Parts above this stream to a temp
+      # file instead of the heap, so a 25MB PDF never sits fully in memory on
+      # the event loop; the per-file/-request/-tenant caps are enforced in
+      # KnowledgeUploadService against yaya.agentic.knowledge.*.
+      max-in-memory-size: 1MB
+      max-disk-usage-per-part: 30MB
+      max-parts: 64
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 
@@ -71,6 +80,46 @@ yaya:
   agentic:
     default-personality: default
     default-tenant: default
+    knowledge:
+      # Uploaded knowledge files (docs/design/knowledge-file-upload-design.md).
+      # blob-store: db keeps bytes in Postgres (zero extra infra); switch to
+      # "minio" once a MinioBlobStore/bucket is wired. Caps mirror §11.
+      blob-store: ${YAYA_KNOWLEDGE_BLOB_STORE:db}
+      max-file-bytes: 26214400          # 25 MiB per file
+      max-request-bytes: 104857600      # 100 MiB per upload request
+      max-tenant-corpus-bytes: 2147483648  # 2 GiB per tenant
+      # Malware scanning is off until a ClamAV scanner is wired — the NoOp
+      # scanner warns loudly. Turn on with a ClamAvMalwareScanner present.
+      malware-scan-enabled: ${YAYA_KNOWLEDGE_MALWARE_SCAN:false}
+      ingestion:
+        # Async ingestion worker (design §9). Uploaded sources auto-enqueue a
+        # durable job; the worker claims via SKIP LOCKED and retries with
+        # exponential backoff. Disable to turn off background processing.
+        worker-enabled: ${YAYA_KNOWLEDGE_INGEST_WORKER:true}
+        poll-interval-ms: 3000
+        batch-size: 4
+        max-attempts: 5
+        base-backoff: 30s
+        max-backoff: 1h
+      gc:
+        # Orphaned-blob sweep (design §11). Deletes uploaded bytes no live
+        # source version references, after a grace window so just-uploaded
+        # not-yet-attached files survive.
+        enabled: ${YAYA_KNOWLEDGE_GC:true}
+        grace-hours: 24
+        interval-ms: 3600000      # hourly
+        initial-delay-ms: 300000  # 5 min after boot
+      minio:
+        # Only used when blob-store=minio. Self-hosted S3-compatible storage.
+        endpoint: ${YAYA_MINIO_ENDPOINT:http://localhost:9000}
+        access-key: ${YAYA_MINIO_ACCESS_KEY:}
+        secret-key: ${YAYA_MINIO_SECRET_KEY:}
+        bucket: ${YAYA_MINIO_BUCKET:yaya-knowledge}
+      clamav:
+        # Only used when malware-scan-enabled=true. Self-hosted ClamAV daemon.
+        host: ${YAYA_CLAMAV_HOST:localhost}
+        port: ${YAYA_CLAMAV_PORT:3310}
+        timeout-ms: 10000
     # Public origin of the admin SPA — used to build clickable links in
     # verify / reset / invitation emails. In prod set to the URL users
     # type into their browser (e.g. https://admin.smartlottery.do). Leave

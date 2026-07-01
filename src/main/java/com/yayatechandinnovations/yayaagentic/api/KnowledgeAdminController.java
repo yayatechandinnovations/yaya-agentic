@@ -3,28 +3,33 @@ package com.yayatechandinnovations.yayaagentic.api;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.dto.KnowledgeAdminDtos;
-import com.yayatechandinnovations.yayaagentic.core.Ids;
-import com.yayatechandinnovations.yayaagentic.core.PermissionRequirement;
+import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
-import com.yayatechandinnovations.yayaagentic.knowledge.IngestionPolicy;
 import com.yayatechandinnovations.yayaagentic.knowledge.KnowledgeSource;
-import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalPolicy;
-import com.yayatechandinnovations.yayaagentic.knowledge.SourceLocation;
+import com.yayatechandinnovations.yayaagentic.knowledge.blob.BlobStore;
+import com.yayatechandinnovations.yayaagentic.knowledge.blob.KnowledgeUploadService;
+import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionJobService;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionOrchestrator;
+import com.yayatechandinnovations.yayaagentic.knowledge.ingest.KnowledgeSourceRehydrator;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
+import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeIngestionJobRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.KnowledgeSourceRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
-import java.nio.file.Path;
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -34,8 +39,10 @@ import java.util.Map;
  * row and leaves the prior one in place (so anything that bound to the
  * old version keeps working until the operator re-binds).
  * <p>
- * Reindex is synchronous in M2.5 — small corpora, the admin sees the
- * outcome immediately. Background ingestion with a job queue is M3.
+ * Two ingestion paths: {@code /reindex} runs synchronously (the admin sees
+ * counts immediately, good for small inline/local corpora); uploaded sources
+ * auto-enqueue a durable async job on create/update (design §9) that a worker
+ * pool drains in the background, with progress visible via {@code /status}.
  */
 @RestController
 @RequestMapping("/v1/admin/knowledge-sources")
@@ -49,19 +56,34 @@ public class KnowledgeAdminController {
     private final ObjectMapper json;
     private final TenantGuard tenantGuard;
     private final WorkspaceAccessHelper workspaceAccess;
+    private final KnowledgeUploadService uploads;
+    private final BlobStore blobStore;
+    private final KnowledgeSourceRehydrator rehydrator;
+    private final IngestionJobService jobService;
+    private final KnowledgeIngestionJobRepository jobs;
 
     public KnowledgeAdminController(KnowledgeSourceRepository sources,
                                     IngestionOrchestrator ingestion,
                                     M0Catalog runtimeCatalog,
                                     ObjectMapper json,
                                     TenantGuard tenantGuard,
-                                    WorkspaceAccessHelper workspaceAccess) {
+                                    WorkspaceAccessHelper workspaceAccess,
+                                    KnowledgeUploadService uploads,
+                                    BlobStore blobStore,
+                                    KnowledgeSourceRehydrator rehydrator,
+                                    IngestionJobService jobService,
+                                    KnowledgeIngestionJobRepository jobs) {
         this.sources = sources;
         this.ingestion = ingestion;
         this.runtimeCatalog = runtimeCatalog;
         this.json = json;
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
+        this.uploads = uploads;
+        this.blobStore = blobStore;
+        this.rehydrator = rehydrator;
+        this.jobService = jobService;
+        this.jobs = jobs;
     }
 
     @GetMapping
@@ -108,7 +130,7 @@ public class KnowledgeAdminController {
 
         // Mirror into runtime catalog so retrieval picks it up without a
         // restart, matching how AdminController handles tools/profiles.
-        runtimeCatalog.registerKnowledgeSource(rehydrate(entity));
+        registerAndMaybeEnqueue(entity);
         return toView(entity);
     }
 
@@ -137,7 +159,7 @@ public class KnowledgeAdminController {
                 writeJson(req.access() == null ? Map.of() : req.access()));
         sources.save(entity);
 
-        runtimeCatalog.registerKnowledgeSource(rehydrate(entity));
+        registerAndMaybeEnqueue(entity);
         return toView(entity);
     }
 
@@ -148,7 +170,7 @@ public class KnowledgeAdminController {
             ServerWebExchange exchange) {
         String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
         KnowledgeSourceEntity entity = findLatestOrThrow(resolved, id);
-        KnowledgeSource source = rehydrate(entity);
+        KnowledgeSource source = rehydrator.rehydrate(entity);
         var result = ingestion.ingest(source);
         // Re-register in case ingest updated counts/status indirectly.
         runtimeCatalog.registerKnowledgeSource(source);
@@ -171,7 +193,69 @@ public class KnowledgeAdminController {
         out.put("docCount", e.getDocCount());
         out.put("chunkCount", e.getChunkCount());
         out.put("lastError", e.getLastError());
+        // Surface the latest async ingestion job so the console can show
+        // QUEUED/RUNNING/DONE/FAILED + retry state while indexing runs.
+        jobs.findFirstByTenantIdAndSourceIdOrderByCreatedAtDesc(resolved, id).ifPresent(job -> {
+            out.put("jobState", job.getState());
+            out.put("jobAttempts", job.getAttempts());
+            out.put("jobMaxAttempts", job.getMaxAttempts());
+            out.put("jobRunAfter", job.getRunAfter());
+            out.put("jobLastError", job.getLastError());
+        });
         return out;
+    }
+
+    /**
+     * Upload one or more files. Bytes are scanned, sniffed, allow-listed, and
+     * stored; the response gives the operator UI the {@code blobId} references
+     * to drop into a source's {@code location.files}. Multipart (not base64) —
+     * documents are the large-file case (design §10). All blocking work
+     * (blob read, scan, extract-free store, JDBC) runs on {@code boundedElastic}
+     * so the Netty event loop is never blocked.
+     */
+    @PostMapping(value = "/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<KnowledgeAdminDtos.UploadResponse> upload(
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @RequestPart("files") Flux<FilePart> files,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
+        tenantGuard.requireWritable(resolved);
+
+        return files.flatMapSequential(part -> DataBufferUtils.join(part.content())
+                        .map(buffer -> new KnowledgeUploadService.PendingFile(
+                                part.filename(), toBytes(buffer))))
+                .collectList()
+                .publishOn(Schedulers.boundedElastic())
+                .map(pending -> {
+                    var stored = uploads.storeAll(new TenantId(resolved), pending);
+                    return new KnowledgeAdminDtos.UploadResponse(stored.stream()
+                            .map(s -> new KnowledgeAdminDtos.UploadedFileView(
+                                    s.blobId(), s.filename(), s.contentType(),
+                                    s.sizeBytes(), s.sha256()))
+                            .toList());
+                });
+    }
+
+    @DeleteMapping("/uploads/{blobId}")
+    public Mono<Void> deleteUpload(
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @PathVariable("blobId") String blobId,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
+        tenantGuard.requireWritable(resolved);
+        return Mono.fromRunnable(() -> blobStore.delete(new TenantId(resolved), blobId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then();
+    }
+
+    private static byte[] toBytes(DataBuffer buffer) {
+        try {
+            byte[] out = new byte[buffer.readableByteCount()];
+            buffer.read(out);
+            return out;
+        } finally {
+            DataBufferUtils.release(buffer);
+        }
     }
 
     // ---- internals -------------------------------------------------------
@@ -188,80 +272,17 @@ public class KnowledgeAdminController {
         return KnowledgeAdminDtos.KnowledgeSourceView.of(e, this::readMap);
     }
 
-    private KnowledgeSource rehydrate(KnowledgeSourceEntity e) {
-        Map<String, Object> locationMap = readMap(e.getLocationJson());
-        SourceLocation location = decodeLocation(e.getLocationKind(), locationMap);
-        IngestionPolicy ingest = decodeIngestionPolicy(readMap(e.getIngestionPolicyJson()));
-        RetrievalPolicy retrieval = decodeRetrievalPolicy(readMap(e.getRetrievalPolicyJson()));
-        PermissionRequirement access = decodeAccess(readMap(e.getAccessRequirementJson()));
-        return new KnowledgeSource(
-                new Ids.KnowledgeSourceId(e.getId()),
-                new Ids.TenantId(e.getTenantId()),
-                e.getName(),
-                location,
-                ingest,
-                retrieval,
-                access,
-                e.getVersion());
-    }
-
-    private SourceLocation decodeLocation(String kind, Map<String, Object> raw) {
-        if (kind == null) return new SourceLocation.Inline(List.of());
-        return switch (kind.toUpperCase()) {
-            case "INLINE" -> {
-                List<SourceLocation.Inline.DocumentBlob> docs = new ArrayList<>();
-                Object rawDocs = raw.get("docs");
-                if (rawDocs instanceof List<?> list) {
-                    for (Object d : list) {
-                        if (d instanceof Map<?, ?> m) {
-                            Object contentType = m.get("contentType");
-                            Object text = m.get("text");
-                            docs.add(new SourceLocation.Inline.DocumentBlob(
-                                    String.valueOf(m.get("id")),
-                                    contentType == null ? "text/plain" : contentType.toString(),
-                                    text == null ? "" : text.toString()));
-                        }
-                    }
-                }
-                yield new SourceLocation.Inline(docs);
-            }
-            case "LOCAL_PATH" -> new SourceLocation.LocalPath(
-                    Path.of(String.valueOf(raw.getOrDefault("root", "."))),
-                    (String) raw.get("includeGlob"),
-                    (String) raw.get("excludeGlob"));
-            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "unsupported location kind: " + kind);
-        };
-    }
-
-    private IngestionPolicy decodeIngestionPolicy(Map<String, Object> raw) {
-        if (raw.isEmpty()) return IngestionPolicy.defaults();
-        return new IngestionPolicy(
-                String.valueOf(raw.getOrDefault("chunkerName", "recursive-structural")),
-                ((Number) raw.getOrDefault("chunkSize", 900)).intValue(),
-                ((Number) raw.getOrDefault("chunkOverlap", 100)).intValue(),
-                String.valueOf(raw.getOrDefault("embeddingModel", "text-embedding-3-small")),
-                Duration.ofHours(((Number) raw.getOrDefault("refreshIntervalHours", 24L)).longValue()));
-    }
-
-    private RetrievalPolicy decodeRetrievalPolicy(Map<String, Object> raw) {
-        if (raw.isEmpty()) return RetrievalPolicy.defaults();
-        return new RetrievalPolicy(
-                ((Number) raw.getOrDefault("topK", 6)).intValue(),
-                ((Number) raw.getOrDefault("minScore", 0.0)).doubleValue(),
-                ((Number) raw.getOrDefault("vectorWeight", 0.7)).doubleValue(),
-                ((Number) raw.getOrDefault("keywordWeight", 0.3)).doubleValue(),
-                Boolean.TRUE.equals(raw.get("rerank")));
-    }
-
-    private PermissionRequirement decodeAccess(Map<String, Object> raw) {
-        // Full editor for PermissionRequirement (scope sets, attribute
-        // matches, ownership claim paths) is part of the auth-policy admin
-        // surface in M5. Until then the source admin endpoints accept the
-        // requirement as opaque metadata and pin it to none() at runtime —
-        // sources are gated by the binding (only profiles that attach a
-        // source can read it) plus tenant scoping.
-        return PermissionRequirement.none();
+    /**
+     * Register the source in the runtime catalog and, for uploaded sources,
+     * enqueue a durable async ingestion job (design §9). Inline/local-path
+     * sources keep the explicit {@code /reindex} trigger; uploaded documents
+     * index in the background so a large corpus never blocks the admin call.
+     */
+    private void registerAndMaybeEnqueue(KnowledgeSourceEntity entity) {
+        runtimeCatalog.registerKnowledgeSource(rehydrator.rehydrate(entity));
+        if ("UPLOADED".equalsIgnoreCase(entity.getLocationKind())) {
+            jobService.enqueue(entity.getTenantId(), entity.getId(), entity.getVersion());
+        }
     }
 
     private String writeJson(Object value) {

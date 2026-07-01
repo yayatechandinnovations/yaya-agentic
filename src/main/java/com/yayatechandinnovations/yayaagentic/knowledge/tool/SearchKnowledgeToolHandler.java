@@ -42,6 +42,8 @@ public class SearchKnowledgeToolHandler implements ToolHandler<Map<String, Objec
                     + "\"chunkId\":{\"type\":\"string\"},"
                     + "\"source\":{\"type\":\"string\"},"
                     + "\"score\":{\"type\":\"number\"},"
+                    + "\"document\":{\"type\":\"string\"},"
+                    + "\"page\":{\"type\":\"integer\"},"
                     + "\"snippet\":{\"type\":\"string\"}}}}}}";
 
     private final Retriever retriever;
@@ -82,13 +84,22 @@ public class SearchKnowledgeToolHandler implements ToolHandler<Map<String, Objec
 
         List<Map<String, Object>> hits = new ArrayList<>();
         for (var chunk : result.chunks()) {
-            hits.add(Map.of(
-                    "chunkId", chunk.chunkId(),
-                    "source", chunk.source().value(),
-                    "score", chunk.score(),
-                    "snippet", chunk.text().length() > 400
-                            ? chunk.text().substring(0, 400) + "…"
-                            : chunk.text()));
+            Map<String, Object> hit = new java.util.HashMap<>();
+            hit.put("chunkId", chunk.chunkId());
+            hit.put("source", chunk.source().value());
+            hit.put("score", chunk.score());
+            hit.put("snippet", chunk.text().length() > 400
+                    ? chunk.text().substring(0, 400) + "…"
+                    : chunk.text());
+            // Surface document + page so the model can cite "returns.pdf, p.4"
+            // for uploaded sources (design §8). Absent for sources without pages.
+            Map<String, Object> meta = chunk.metadata();
+            if (meta != null) {
+                Object doc = meta.getOrDefault("filename", meta.get("documentTitle"));
+                if (doc != null) hit.put("document", doc);
+                if (meta.get("page") != null) hit.put("page", meta.get("page"));
+            }
+            hits.add(hit);
         }
         return Map.of("hits", hits);
     }

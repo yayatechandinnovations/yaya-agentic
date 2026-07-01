@@ -79,6 +79,13 @@ public final class KnowledgeAdminDtos {
 
     public record ListResponse(List<KnowledgeSourceView> items) {}
 
+    /** One stored upload — the shape the operator UI drops into a source's
+     *  {@code location.files} array for {@code locationKind = "UPLOADED"}. */
+    public record UploadedFileView(String blobId, String filename, String contentType,
+                                   long sizeBytes, String sha256) {}
+
+    public record UploadResponse(List<UploadedFileView> files) {}
+
     /** Small adapter so the static-factory method above doesn't need a
      *  Jackson dep at the DTO layer. The controller hands a tiny lambda in. */
     public interface ObjectReader {

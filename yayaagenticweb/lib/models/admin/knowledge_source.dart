@@ -64,6 +64,48 @@ class KnowledgeSourceResponse {
       );
 }
 
+/// A file stored via the upload endpoint — the reference the UI drops into a
+/// source's `location.files` for `locationKind = "UPLOADED"`. Bytes live in the
+/// backend BlobStore; this is just the opaque handle + display metadata.
+class UploadedFileRef {
+  UploadedFileRef({
+    required this.blobId,
+    required this.filename,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.sha256,
+  });
+
+  final String blobId;
+  final String filename;
+  final String contentType;
+  final int sizeBytes;
+  final String sha256;
+
+  factory UploadedFileRef.fromJson(Map<String, dynamic> json) => UploadedFileRef(
+        blobId: (json['blobId'] ?? '') as String,
+        filename: (json['filename'] ?? '') as String,
+        contentType: (json['contentType'] ?? '') as String,
+        sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
+        sha256: (json['sha256'] ?? '') as String,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'blobId': blobId,
+        'filename': filename,
+        'contentType': contentType,
+        'sizeBytes': sizeBytes,
+        'sha256': sha256,
+      };
+
+  /// Human-friendly size, e.g. "1.4 MB".
+  String get prettySize {
+    if (sizeBytes < 1024) return '$sizeBytes B';
+    if (sizeBytes < 1024 * 1024) return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
+    return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
 class CreateKnowledgeSourceRequest {
   CreateKnowledgeSourceRequest({
     this.tenant = 'default',
