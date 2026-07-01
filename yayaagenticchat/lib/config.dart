@@ -16,20 +16,40 @@ class AppConfig {
   }
 
   /// Deep links the QR encodes: https://chat.yaya.app/e/{handle} or
-  /// yayachat://e/{handle}. We only need the trailing handle segment.
+  /// yayachat://e/{handle}. We only need the trailing {handle} segment, which
+  /// self-identifies by its `e_` prefix (chat-channel-design.md §6). We parse
+  /// defensively so a bare handle, the canonical /e/ link, and a link whose base
+  /// was misconfigured without the /e/ segment (…/e_ABC) all resolve alike.
   static String? handleFromDeepLink(String raw) {
-    final text = raw.trim();
+    var text = raw.trim();
     if (text.isEmpty) return null;
+    // Drop query/fragment, then any trailing slashes, before hunting a handle.
+    final q = text.indexOf(RegExp(r'[?#]'));
+    if (q >= 0) text = text.substring(0, q);
+    text = text.replaceAll(RegExp(r'/+$'), '');
+
     // Bare handle pasted directly.
-    if (!text.contains('/') && !text.contains(':')) return text;
-    final marker = '/e/';
+    if (!text.contains('/') && !text.contains(':')) {
+      return _isHandle(text) ? text : null;
+    }
+    // Canonical marker …/e/{handle}.
+    const marker = '/e/';
     final idx = text.indexOf(marker);
     if (idx >= 0) {
-      var rest = text.substring(idx + marker.length);
-      final cut = rest.indexOf(RegExp(r'[/?#]'));
-      if (cut >= 0) rest = rest.substring(0, cut);
-      return rest.isEmpty ? null : rest;
+      final rest = _firstSegment(text.substring(idx + marker.length));
+      if (_isHandle(rest)) return rest;
     }
-    return null;
+    // Fallback: the last path segment (covers a base set without the /e/ path,
+    // e.g. https://host/e_ABC — the handle still carries its own prefix).
+    final tail = text.substring(text.lastIndexOf('/') + 1);
+    return _isHandle(tail) ? tail : null;
   }
+
+  static String _firstSegment(String s) {
+    final cut = s.indexOf(RegExp(r'[/?#]'));
+    return cut >= 0 ? s.substring(0, cut) : s;
+  }
+
+  /// Entry-point handles are `e_` + base64url (chat-channel-design.md §6).
+  static bool _isHandle(String s) => s.length > 2 && s.startsWith('e_');
 }

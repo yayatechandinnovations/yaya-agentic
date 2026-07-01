@@ -132,4 +132,16 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get backToChats => 'Volver a mis chats';
+
+  @override
+  String get discoverTitle => 'Descubrir chats';
+
+  @override
+  String get discoverSearchHint => 'Busca chats publicados';
+
+  @override
+  String get discoverEmpty => 'Aún no hay chats publicados. Vuelve pronto.';
+
+  @override
+  String get discoverNoResults => 'Ningún chat coincide con tu búsqueda.';
 }

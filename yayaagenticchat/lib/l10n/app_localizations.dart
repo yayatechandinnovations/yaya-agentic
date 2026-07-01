@@ -330,6 +330,30 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Back to my chats'**
   String get backToChats;
+
+  /// No description provided for @discoverTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Discover chats'**
+  String get discoverTitle;
+
+  /// No description provided for @discoverSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search published chats'**
+  String get discoverSearchHint;
+
+  /// No description provided for @discoverEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No published chats yet. Check back soon.'**
+  String get discoverEmpty;
+
+  /// No description provided for @discoverNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No chats match your search.'**
+  String get discoverNoResults;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

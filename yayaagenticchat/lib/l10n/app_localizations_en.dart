@@ -131,4 +131,16 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get backToChats => 'Back to my chats';
+
+  @override
+  String get discoverTitle => 'Discover chats';
+
+  @override
+  String get discoverSearchHint => 'Search published chats';
+
+  @override
+  String get discoverEmpty => 'No published chats yet. Check back soon.';
+
+  @override
+  String get discoverNoResults => 'No chats match your search.';
 }

@@ -13,13 +13,16 @@ package com.yayatechandinnovations.yayaagentic.channel.chat;
  *                      the profile's intro one-liner is used
  * @param defaultLocale BCP-47; seeds {@code channel.locale} when the client
  *                      sends none
+ * @param tagline       one-line catalog blurb shown in the public directory
+ *                      (chat-public-directory-design.md §3); nullable
  */
 public record Branding(
         String displayName,
         String logoUrl,
         String accentColorHex,
         String welcomeText,
-        String defaultLocale
+        String defaultLocale,
+        String tagline
 ) {
     public Branding {
         if (displayName == null || displayName.isBlank()) {

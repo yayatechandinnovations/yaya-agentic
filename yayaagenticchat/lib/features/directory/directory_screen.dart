@@ -17,7 +17,16 @@ class DirectoryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tiles = ref.watch(tilesProvider);
     return Scaffold(
-      appBar: AppBar(title: Brand.gradientText('Yaya Chat', fontSize: 22)),
+      appBar: AppBar(
+        title: Brand.gradientText('Yaya Chat', fontSize: 22),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: AppL10n.of(context).discoverTitle,
+            onPressed: () => context.push('/discover'),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.push('/scan'),
         icon: const Icon(Icons.qr_code_scanner),

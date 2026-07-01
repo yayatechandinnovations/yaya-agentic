@@ -81,6 +81,8 @@ class ChatEntryPointResponse {
     this.accentColorHex,
     this.welcomeText,
     required this.defaultLocale,
+    this.tagline,
+    required this.discoverable,
     required this.authMode,
     required this.authConfig,
     required this.abuse,
@@ -101,6 +103,8 @@ class ChatEntryPointResponse {
   final String? accentColorHex;
   final String? welcomeText;
   final String defaultLocale;
+  final String? tagline;
+  final bool discoverable; // listed in the public directory (chat-public-directory-design.md §2)
   final String authMode;
   final ChatAuthConfig authConfig;
   final ChatAbusePolicy abuse;
@@ -126,6 +130,8 @@ class ChatEntryPointResponse {
         accentColorHex: json['accentColorHex'] as String?,
         welcomeText: json['welcomeText'] as String?,
         defaultLocale: (json['defaultLocale'] ?? 'en-US') as String,
+        tagline: json['tagline'] as String?,
+        discoverable: json['discoverable'] == true,
         authMode: (json['authMode'] ?? 'ANONYMOUS_ONLY') as String,
         authConfig: ChatAuthConfig.fromJson(json['authConfig'] is Map
             ? Map<String, dynamic>.from(json['authConfig'] as Map)
@@ -149,6 +155,8 @@ class ChatEntryPointRequest {
     this.accentColorHex,
     this.welcomeText,
     this.defaultLocale,
+    this.tagline,
+    this.discoverable,
     this.authMode,
     this.authConfig,
     this.abuse,
@@ -162,6 +170,8 @@ class ChatEntryPointRequest {
   final String? accentColorHex;
   final String? welcomeText;
   final String? defaultLocale;
+  final String? tagline;
+  final bool? discoverable;
   final String? authMode;
   final ChatAuthConfig? authConfig;
   final ChatAbusePolicy? abuse;
@@ -175,6 +185,8 @@ class ChatEntryPointRequest {
         if (accentColorHex != null && accentColorHex!.isNotEmpty) 'accentColorHex': accentColorHex,
         if (welcomeText != null && welcomeText!.isNotEmpty) 'welcomeText': welcomeText,
         if (defaultLocale != null && defaultLocale!.isNotEmpty) 'defaultLocale': defaultLocale,
+        if (tagline != null) 'tagline': tagline,
+        if (discoverable != null) 'discoverable': discoverable,
         if (authMode != null) 'authMode': authMode,
         if (authConfig != null) 'authConfig': authConfig!.toJson(),
         if (abuse != null) 'abuse': abuse!.toJson(),
@@ -189,6 +201,8 @@ class ChatEntryPointRequest {
         if (accentColorHex != null) 'accentColorHex': accentColorHex,
         if (welcomeText != null) 'welcomeText': welcomeText,
         if (defaultLocale != null && defaultLocale!.isNotEmpty) 'defaultLocale': defaultLocale,
+        if (tagline != null) 'tagline': tagline,
+        if (discoverable != null) 'discoverable': discoverable,
         if (authMode != null) 'authMode': authMode,
         if (authConfig != null) 'authConfig': authConfig!.toJson(),
         if (abuse != null) 'abuse': abuse!.toJson(),

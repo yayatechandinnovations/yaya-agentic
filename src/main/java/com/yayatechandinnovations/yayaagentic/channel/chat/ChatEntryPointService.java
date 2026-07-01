@@ -88,6 +88,8 @@ public class ChatEntryPointService {
         e.setAccentColorHex(cmd.accentColorHex());
         e.setWelcomeText(cmd.welcomeText());
         e.setDefaultLocale(cmd.defaultLocale());
+        e.setTagline(cmd.tagline());
+        e.setDiscoverable(Boolean.TRUE.equals(cmd.discoverable()));
         AuthMode authMode = cmd.authMode() == null ? AuthMode.ANONYMOUS_ONLY : cmd.authMode();
         e.setAuthMode(authMode.name());
         e.setAuthConfigJson(writeJson(cmd.authConfig() == null ? new AuthConfig.None() : cmd.authConfig()));
@@ -130,6 +132,8 @@ public class ChatEntryPointService {
         }
         if (cmd.welcomeText() != null) e.setWelcomeText(cmd.welcomeText());
         if (cmd.defaultLocale() != null && !cmd.defaultLocale().isBlank()) e.setDefaultLocale(cmd.defaultLocale());
+        if (cmd.tagline() != null) e.setTagline(cmd.tagline());
+        if (cmd.discoverable() != null) e.setDiscoverable(cmd.discoverable());
         if (cmd.authMode() != null) e.setAuthMode(cmd.authMode().name());
         if (cmd.authConfig() != null) e.setAuthConfigJson(writeJson(cmd.authConfig()));
         if (cmd.abuse() != null) e.setAbusePolicyJson(writeJson(cmd.abuse()));
@@ -226,12 +230,13 @@ public class ChatEntryPointService {
                 e.getHandle(),
                 new Ids.ProfileId(e.getProfileId(), e.getProfileVersion() == null ? 1 : e.getProfileVersion()),
                 new Branding(e.getDisplayName(), e.getLogoUrl(), e.getAccentColorHex(),
-                        e.getWelcomeText(), e.getDefaultLocale()),
+                        e.getWelcomeText(), e.getDefaultLocale(), e.getTagline()),
                 AuthMode.parse(e.getAuthMode()),
                 readJson(e.getAuthConfigJson(), AuthConfig.class),
                 readJson(e.getSessionPolicyJson(), SessionPolicy.class),
                 readJson(e.getAbusePolicyJson(), AbusePolicy.class),
                 e.isRequiresVerifiedPhone(),
+                e.isDiscoverable(),
                 EntryPointStatus.parse(e.getStatus()),
                 toInstant(e.getCreatedAt()),
                 toInstant(e.getUpdatedAt()));
@@ -260,6 +265,8 @@ public class ChatEntryPointService {
             String accentColorHex,
             String welcomeText,
             String defaultLocale,
+            String tagline,
+            Boolean discoverable,
             AuthMode authMode,
             AuthConfig authConfig,
             AbusePolicy abuse,
@@ -272,6 +279,8 @@ public class ChatEntryPointService {
             String accentColorHex,
             String welcomeText,
             String defaultLocale,
+            String tagline,
+            Boolean discoverable,
             AuthMode authMode,
             AuthConfig authConfig,
             AbusePolicy abuse,

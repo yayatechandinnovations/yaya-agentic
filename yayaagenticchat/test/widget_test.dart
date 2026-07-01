@@ -23,5 +23,24 @@ void main() {
     test('returns null for unrelated urls', () {
       expect(AppConfig.handleFromDeepLink('https://example.com/foo'), isNull);
     });
+
+    test('recovers a link whose base was set without the /e/ segment', () {
+      expect(
+        AppConfig.handleFromDeepLink(
+            'https://yayaagenticchat.smartlottery.do/e_yRbyNMh8InJiEF2qhBggu3AX'),
+        'e_yRbyNMh8InJiEF2qhBggu3AX',
+      );
+    });
+
+    test('recovers a mis-based link with a trailing slash and query', () {
+      expect(
+        AppConfig.handleFromDeepLink('https://host.example/e_abc/?x=1'),
+        'e_abc',
+      );
+    });
+
+    test('rejects a bare non-handle token', () {
+      expect(AppConfig.handleFromDeepLink('hello'), isNull);
+    });
   });
 }

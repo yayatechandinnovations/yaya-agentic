@@ -24,6 +24,7 @@ public record ChatEntryPoint(
         SessionPolicy sessionPolicy,
         AbusePolicy abuse,
         boolean requiresVerifiedPhone,
+        boolean discoverable,
         EntryPointStatus status,
         Instant createdAt,
         Instant updatedAt

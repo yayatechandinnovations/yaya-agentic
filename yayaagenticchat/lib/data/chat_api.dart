@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../config.dart';
+import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
 
 /// A parsed Server-Sent Event from the message stream.
@@ -71,6 +72,22 @@ class ChatApi {
           data: {'phoneE164': phoneE164, 'code': code, 'deviceId': deviceId, 'name': name});
       final j = Map<String, dynamic>.from(r.data as Map);
       return (j['devicePass'] ?? '') as String;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Search/browse the public directory of published chats
+  /// (chat-public-directory-design.md §4). [cursor] is the opaque `nextCursor`
+  /// from a prior page; null starts at the first page.
+  Future<DirectoryPage> directory({String? q, String? cursor, int limit = 20}) async {
+    try {
+      final r = await _dio.get('/v1/chat/directory', queryParameters: {
+        if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+        'limit': limit,
+      });
+      return DirectoryPage.fromJson(Map<String, dynamic>.from(r.data as Map));
     } on DioException catch (e) {
       throw _map(e);
     }

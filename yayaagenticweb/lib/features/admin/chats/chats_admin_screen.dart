@@ -194,6 +194,12 @@ class _EntryPointCard extends ConsumerWidget {
           DetailRow(label: 'Locale', value: ep.defaultLocale),
           if ((ep.welcomeText ?? '').isNotEmpty)
             DetailRow(label: 'Welcome', value: ep.welcomeText!),
+          DetailRow(
+              label: 'Directory',
+              value: ep.discoverable
+                  ? (ep.isActive ? 'Listed (public)' : 'Listed — live once ACTIVE')
+                  : 'Not listed'),
+          if ((ep.tagline ?? '').isNotEmpty) DetailRow(label: 'Tagline', value: ep.tagline!),
         ],
       ),
       extraActions: _actions(context, ref),
@@ -541,6 +547,7 @@ class _CreateForm extends ConsumerStatefulWidget {
 class _CreateFormState extends ConsumerState<_CreateForm> {
   final _displayName = TextEditingController();
   final _welcome = TextEditingController();
+  final _tagline = TextEditingController();
   final _issuer = TextEditingController();
   final _audience = TextEditingController();
 
@@ -552,11 +559,12 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   String _authMethod = 'OIDC';
   int? _authResolverId;
   bool _requireVerifiedPhone = false;
+  bool _discoverable = false;
   bool _busy = false;
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
@@ -581,6 +589,8 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       accentColorHex: _accentHex,
       welcomeText: _welcome.text.trim().isEmpty ? null : _welcome.text.trim(),
       defaultLocale: _locale,
+      tagline: _tagline.text.trim().isEmpty ? null : _tagline.text.trim(),
+      discoverable: _discoverable,
       authMode: _authMode,
       authConfig: _buildAuthConfig(),
       requiresVerifiedPhone: _requireVerifiedPhone,
@@ -612,6 +622,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   void _clear() {
     _displayName.clear();
     _welcome.clear();
+    _tagline.clear();
     _issuer.clear();
     _audience.clear();
     setState(() {
@@ -623,6 +634,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       _authMethod = 'OIDC';
       _authResolverId = null;
       _requireVerifiedPhone = false;
+      _discoverable = false;
     });
   }
 
@@ -671,6 +683,8 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
             _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
             const SizedBox(height: 12),
             _field(_welcome, 'Welcome text', hint: 'Optional first bubble', lines: 2),
+            _field(_tagline, 'Directory tagline',
+                hint: 'One line shown when this chat is listed publicly'),
             _localeDropdown(_locale, (v) => setState(() => _locale = v)),
             const SizedBox(height: 12),
             _AuthSection(
@@ -690,6 +704,14 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
               subtitle: const Text('Only phone-verified devices can start this chat'),
               value: _requireVerifiedPhone,
               onChanged: (v) => setState(() => _requireVerifiedPhone = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('List in public directory'),
+              subtitle: const Text('Let end users find this chat by searching Discover. '
+                  'Only takes effect once the chat is published (ACTIVE).'),
+              value: _discoverable,
+              onChanged: (v) => setState(() => _discoverable = v),
             ),
           ],
         ),
@@ -731,6 +753,7 @@ class _EditDialog extends ConsumerStatefulWidget {
 class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _displayName = TextEditingController(text: widget.ep.displayName);
   late final _welcome = TextEditingController(text: widget.ep.welcomeText ?? '');
+  late final _tagline = TextEditingController(text: widget.ep.tagline ?? '');
   late final _issuer = TextEditingController(text: widget.ep.authConfig.issuer ?? '');
   late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
   late String _logoUrl = widget.ep.logoUrl;
@@ -739,10 +762,11 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late String _authMode = widget.ep.authMode;
   late String _authMethod = widget.ep.authConfig.kind == 'ResolverExchange' ? 'RESOLVER' : 'OIDC';
   late int? _authResolverId = widget.ep.authConfig.authResolverId;
+  late bool _discoverable = widget.ep.discoverable;
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
@@ -782,8 +806,16 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               _ColorPalette(selectedHex: _accentHex, onPick: (h) => setState(() => _accentHex = h)),
               const SizedBox(height: 12),
               _row(_welcome, 'Welcome text'),
+              _row(_tagline, 'Directory tagline'),
               _localeDropdown(_localeValue, (v) => setState(() => _localeValue = v)),
               const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('List in public directory'),
+                subtitle: const Text('Discoverable in Discover once ACTIVE'),
+                value: _discoverable,
+                onChanged: (v) => setState(() => _discoverable = v),
+              ),
               _AuthSection(
                 tenant: widget.tenant,
                 authMode: _authMode,
@@ -810,6 +842,8 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               accentColorHex: _accentHex,
               welcomeText: _welcome.text.trim(),
               defaultLocale: _localeValue,
+              tagline: _tagline.text.trim(),
+              discoverable: _discoverable,
               authMode: _authMode,
               authConfig: _buildAuthConfig(),
             );

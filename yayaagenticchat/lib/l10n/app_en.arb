@@ -40,5 +40,9 @@
   "continueLabel": "Continue",
   "tooManyRequests": "Too many requests — please try again shortly.",
   "deepLinkCopied": "Deep link copied",
-  "backToChats": "Back to my chats"
+  "backToChats": "Back to my chats",
+  "discoverTitle": "Discover chats",
+  "discoverSearchHint": "Search published chats",
+  "discoverEmpty": "No published chats yet. Check back soon.",
+  "discoverNoResults": "No chats match your search."
 }

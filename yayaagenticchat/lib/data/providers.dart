@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
 import '../models/tile.dart';
 import 'chat_api.dart';
@@ -144,4 +145,99 @@ class TilesNotifier extends StateNotifier<List<Tile>> {
 
 final tilesProvider = StateNotifierProvider<TilesNotifier, List<Tile>>(
   (ref) => TilesNotifier(ref.watch(directoryStoreProvider)),
+);
+
+/* ---- Public directory / Discover (chat-public-directory-design.md §8) ---- */
+
+class DiscoverState {
+  final String query;
+  final List<DirectoryCard> items;
+  final String? cursor; // the nextCursor to fetch; null when no more pages
+  final bool loading; // first page / query change
+  final bool loadingMore; // appending a keyset page
+  final bool hasMore;
+  final String? error;
+
+  const DiscoverState({
+    this.query = '',
+    this.items = const [],
+    this.cursor,
+    this.loading = true,
+    this.loadingMore = false,
+    this.hasMore = false,
+    this.error,
+  });
+
+  DiscoverState copyWith({
+    String? query,
+    List<DirectoryCard>? items,
+    String? cursor,
+    bool? loading,
+    bool? loadingMore,
+    bool? hasMore,
+    String? error,
+    bool clearError = false,
+    bool clearCursor = false,
+  }) =>
+      DiscoverState(
+        query: query ?? this.query,
+        items: items ?? this.items,
+        cursor: clearCursor ? null : (cursor ?? this.cursor),
+        loading: loading ?? this.loading,
+        loadingMore: loadingMore ?? this.loadingMore,
+        hasMore: hasMore ?? this.hasMore,
+        error: clearError ? null : (error ?? this.error),
+      );
+}
+
+class DiscoverNotifier extends StateNotifier<DiscoverState> {
+  DiscoverNotifier(this._api) : super(const DiscoverState()) {
+    _load(reset: true);
+  }
+
+  final ChatApi _api;
+  // Monotonic request id: a slow response for a stale query must never clobber a
+  // newer one (search-as-you-type races).
+  int _reqId = 0;
+
+  Future<void> setQuery(String q) async {
+    if (q == state.query) return;
+    state = state.copyWith(query: q);
+    await _load(reset: true);
+  }
+
+  Future<void> refresh() => _load(reset: true);
+
+  Future<void> loadMore() async {
+    if (state.loading || state.loadingMore || !state.hasMore) return;
+    await _load(reset: false);
+  }
+
+  Future<void> _load({required bool reset}) async {
+    final myReq = ++_reqId;
+    state = reset
+        ? state.copyWith(loading: true, clearError: true)
+        : state.copyWith(loadingMore: true, clearError: true);
+    try {
+      final page = await _api.directory(q: state.query, cursor: reset ? null : state.cursor);
+      if (myReq != _reqId) return; // superseded by a newer query
+      state = state.copyWith(
+        items: reset ? page.items : [...state.items, ...page.items],
+        cursor: page.nextCursor,
+        clearCursor: page.nextCursor == null,
+        hasMore: page.nextCursor != null,
+        loading: false,
+        loadingMore: false,
+      );
+    } on ChatApiException catch (e) {
+      if (myReq != _reqId) return;
+      state = state.copyWith(loading: false, loadingMore: false, error: e.message);
+    }
+  }
+}
+
+/// autoDispose so leaving the Discover screen resets search + paging state.
+final discoverProvider =
+    StateNotifierProvider.autoDispose<DiscoverNotifier, DiscoverState>(
+  (ref) => DiscoverNotifier(ref.watch(chatApiProvider)),
 );

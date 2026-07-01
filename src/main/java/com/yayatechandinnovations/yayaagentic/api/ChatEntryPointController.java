@@ -37,7 +37,23 @@ public class ChatEntryPointController {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.entryPoints = entryPoints;
-        this.deepLinkBase = deepLinkBase;
+        this.deepLinkBase = normalizeDeepLinkBase(deepLinkBase);
+    }
+
+    /**
+     * The public entry route is {@code /e/{handle}} (chat-channel-design.md §11).
+     * Operators frequently set the base to just the host (e.g.
+     * {@code https://chat.example.com}); without the {@code /e/} segment the
+     * emitted link — and the QR the admin renders from it — resolves to
+     * {@code /e_<handle>}, which the app has no route for. Normalize so the base
+     * always carries exactly one trailing {@code /e/} regardless of how it was set.
+     */
+    static String normalizeDeepLinkBase(String configured) {
+        String base = (configured == null || configured.isBlank())
+                ? "https://chat.yaya.app/e/" : configured.trim();
+        base = base.replaceAll("/+$", "");
+        if (!base.endsWith("/e")) base = base + "/e";
+        return base + "/";
     }
 
     @GetMapping
@@ -70,6 +86,7 @@ public class ChatEntryPointController {
         var cmd = new ChatEntryPointService.CreateCommand(
                 req.profileId(), req.profileVersion(), req.displayName(), req.logoUrl(),
                 req.accentColorHex(), req.welcomeText(), req.defaultLocale(),
+                req.tagline(), req.discoverable(),
                 ChatEntryPointDtos.parseAuthMode(req.authMode()),
                 req.authConfig() == null ? null : req.authConfig().toDomain(),
                 req.abuse() == null ? null : req.abuse().toDomain(),
@@ -88,7 +105,7 @@ public class ChatEntryPointController {
         if (req == null) throw AdminApiException.badRequest("missing_body", "request body required");
         var cmd = new ChatEntryPointService.UpdateCommand(
                 req.displayName(), req.logoUrl(), req.accentColorHex(), req.welcomeText(),
-                req.defaultLocale(),
+                req.defaultLocale(), req.tagline(), req.discoverable(),
                 req.authMode() == null ? null : ChatEntryPointDtos.parseAuthMode(req.authMode()),
                 req.authConfig() == null ? null : req.authConfig().toDomain(),
                 req.abuse() == null ? null : req.abuse().toDomain(),
