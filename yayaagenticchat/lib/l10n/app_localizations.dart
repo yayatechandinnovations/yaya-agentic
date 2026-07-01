@@ -205,6 +205,12 @@ abstract class AppL10n {
   /// **'Sign-in required'**
   String get signInRequired;
 
+  /// No description provided for @verifyPhoneToChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify your phone to chat as yourself'**
+  String get verifyPhoneToChat;
+
   /// No description provided for @scanTitle.
   ///
   /// In en, this message translates to:

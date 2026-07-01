@@ -24,6 +24,7 @@ public final class PublicChatDtos {
             String welcomeText,
             String defaultLocale,
             String authMode,        // ANONYMOUS_ONLY | AUTH_REQUIRED | AUTH_OPTIONAL
+            String authMechanism,   // NONE | OIDC | RESOLVER — HOW a token is obtained (§8)
             boolean paused,
             boolean requiresVerifiedPhone,
             OidcLogin oidc          // non-null only when the app must launch an interactive login
@@ -40,9 +41,20 @@ public final class PublicChatDtos {
                     e.branding().welcomeText(),
                     e.branding().defaultLocale(),
                     e.authMode().name(),
+                    authMechanism(e.authConfig()),
                     e.status() == com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus.PAUSED,
                     e.requiresVerifiedPhone(),
                     oidc);
+        }
+
+        /** The client uses this to decide HOW to authenticate: {@code RESOLVER}
+         *  starts silently (server resolves from the verified phone); {@code OIDC}
+         *  launches interactive login; {@code NONE} needs no token. Orthogonal to
+         *  {@code authMode}, which says only WHETHER auth is required. */
+        private static String authMechanism(AuthConfig cfg) {
+            if (cfg instanceof AuthConfig.ResolverExchange) return "RESOLVER";
+            if (cfg instanceof AuthConfig.Oidc) return "OIDC";
+            return "NONE";
         }
     }
 

@@ -180,6 +180,62 @@ class ChannelAuthIntegratorTest {
     }
 
     @Test
+    void resolveFor_chat_channel_verifies_and_stamps_chat_claims() {
+        // The public chat front door reuses this core with channel="chat" and
+        // chat-specific baseline scopes + claims instead of WhatsApp's.
+        Principal tenantSide = new Principal(
+                "u_42",
+                new Ids.TenantId("acme"),
+                Set.of("order:read"),
+                Map.of("role", "vip"),
+                Instant.now());
+        AuthResolverDispatcher dispatcher = stubDispatcher(
+                (rid, reason) -> new AuthResolverDispatcher.Result.TokenIssued(
+                        "eyJ.fake.jwt", AuthResolverDispatcher.CacheState.MISS));
+        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+                dispatcher, chainThatAlwaysReturns(tenantSide));
+
+        Map<String, Object> chatClaims = new java.util.LinkedHashMap<>();
+        chatClaims.put("channel.kind", "chat");
+        chatClaims.put("channel.handle", "e_abc");
+        chatClaims.put("phone", "+15551234567");
+
+        ChannelAuthIntegrator.Resolved r = integrator.resolveFor(
+                new Ids.TenantId("acme"), 99L, OnUnresolvedPolicy.REJECT,
+                new AuthContext(new Ids.TenantId("acme"), Map.of(), Optional.empty()),
+                null, new SenderId("chat_ep1"), null, "+15551234567", "chat",
+                Set.of("channel:chat", "channel:read"), chatClaims);
+
+        assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.JWT_VERIFIED);
+        assertThat(r.jwt()).contains("eyJ.fake.jwt");
+        Principal p = r.principal().orElseThrow();
+        assertThat(p.subject()).isEqualTo("u_42");
+        assertThat(p.claims()).containsEntry("role", "vip");
+        // Chat channel claims stamped (not WhatsApp).
+        assertThat(p.claims()).containsEntry("channel.kind", "chat");
+        assertThat(p.claims()).containsEntry("phone", "+15551234567");
+        assertThat(p.scopes()).contains("channel:chat", "channel:read", "order:read");
+    }
+
+    @Test
+    void resolveFor_chat_reject_policy_on_unresolved_returns_REJECT() {
+        // AUTH_REQUIRED chat entry point → resolver 404 fails closed.
+        AuthResolverDispatcher dispatcher = stubDispatcher(
+                (rid, reason) -> new AuthResolverDispatcher.Result.Unresolved());
+        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+                dispatcher, chainWithJustWhatsApp());
+
+        ChannelAuthIntegrator.Resolved r = integrator.resolveFor(
+                new Ids.TenantId("acme"), 99L, OnUnresolvedPolicy.REJECT,
+                new AuthContext(new Ids.TenantId("acme"), Map.of(), Optional.empty()),
+                null, new SenderId("chat_ep1"), null, "+15551234567", "chat",
+                Set.of("channel:chat", "channel:read"), Map.of("channel.kind", "chat"));
+
+        assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.REJECT);
+        assertThat(r.principal()).isEmpty();
+    }
+
+    @Test
     void resolved_authContextForEngine_for_verified_stamps_principal_into_alreadyVerified() {
         Principal stamped = new Principal("u_42", new Ids.TenantId("acme"),
                 Set.of("channel:whatsapp"), Map.of(), Instant.now());

@@ -4,6 +4,10 @@ import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
 import com.yayatechandinnovations.yayaagentic.auth.anon.AnonymousAuthenticator;
+import com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator;
+import com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.chat.AuthConfig;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatChannelAdapter;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointService;
@@ -13,6 +17,7 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
@@ -28,8 +33,10 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The public, unauthenticated-capable chat front door ({@code chat-channel-design.md} §9).
@@ -55,6 +62,12 @@ public class PublicChatController {
     private final Authenticator authenticator;
     private final DevicePassService devicePasses;
     private final VerifiedDeviceAuthenticator verifiedDeviceAuth;
+    private final ChannelAuthIntegrator channelAuth;
+    private final SessionAuthTokenStore authTokenStore;
+
+    /** Baseline scopes stamped onto a resolver-verified chat Principal so
+     *  identity-gated tools see "this Principal is on the chat channel." */
+    private static final Set<String> CHAT_BASELINE_SCOPES = Set.of("channel:chat", "channel:read");
 
     public PublicChatController(ConversationEngine engine,
                                 ChatEntryPointService entryPoints,
@@ -64,7 +77,9 @@ public class PublicChatController {
                                 ChatChannelAdapter chatAdapter,
                                 Authenticator authenticator,
                                 DevicePassService devicePasses,
-                                VerifiedDeviceAuthenticator verifiedDeviceAuth) {
+                                VerifiedDeviceAuthenticator verifiedDeviceAuth,
+                                ChannelAuthIntegrator channelAuth,
+                                SessionAuthTokenStore authTokenStore) {
         this.engine = engine;
         this.entryPoints = entryPoints;
         this.anon = anon;
@@ -74,6 +89,8 @@ public class PublicChatController {
         this.authenticator = authenticator;
         this.devicePasses = devicePasses;
         this.verifiedDeviceAuth = verifiedDeviceAuth;
+        this.channelAuth = channelAuth;
+        this.authTokenStore = authTokenStore;
     }
 
     /* -------------------------- handle resolution ------------------------- */
@@ -105,7 +122,8 @@ public class PublicChatController {
             requireWithinLimit(rateLimiter.hit("start-ip", handle + ":" + clientIp(exchange),
                     ep.abuse().startsPerIpPerHour(), HOUR));
 
-            AuthContext auth = authForStart(ep, handle, deviceId, exchange);
+            StartAuth startAuth = authForStart(ep, handle, deviceId, exchange);
+            AuthContext auth = startAuth.auth();
 
             Map<String, Object> hints = new HashMap<>();
             hints.put("channel.kind", "chat");
@@ -119,9 +137,15 @@ public class PublicChatController {
                     ep.tenant(), Optional.empty(), "chat", hints);
             StartSessionResult result = engine.start(req, auth);
 
+            // Resolver-exchange: persist the minted JWT on the fresh session row so
+            // the engine can forward it to PRINCIPAL_TOKEN tools and refresh it on a
+            // tool-level 401 — mirrors the WhatsApp InboundDispatchWorker step.
+            startAuth.jwt().ifPresent(jwt -> authTokenStore.persist(result.session().id(), jwt));
+
             registry.register(result.session().id(),
                     new ChatSessionRegistry.Context(ep.tenant().value(), ep.id().value(),
-                            handle, deviceId, ep.authMode().name(), startedAuthenticated(ep, exchange)),
+                            handle, deviceId, ep.authMode().name(),
+                            startAuth.jwt().isPresent() || startedAuthenticated(ep, exchange)),
                     ep.sessionPolicy().idleTimeout());
 
             return new PublicChatDtos.StartResponse(
@@ -229,28 +253,47 @@ public class PublicChatController {
         return ep;
     }
 
-    private AuthContext authForStart(ChatEntryPoint ep, String handle, String deviceId,
-                                     ServerWebExchange exchange) {
+    private StartAuth authForStart(ChatEntryPoint ep, String handle, String deviceId,
+                                   ServerWebExchange exchange) {
         Optional<VerifiedDevice> device = verifiedDevice(exchange);
+
+        // Server-side transparent sign-in: the platform calls the tenant's
+        // resolver with the *verified* device phone and mints the JWT — the
+        // client never handles a token. Consulted before the bearer branch so
+        // a resolver-exchange entry point never falls back to "paste a token."
+        if (ep.authConfig() instanceof AuthConfig.ResolverExchange rx) {
+            if (device.isEmpty()) throw ChatApiException.verificationRequired();
+            return resolverExchange(ep, handle, rx.authResolverId(), device.get());
+        }
+
         if (ep.requiresVerifiedPhone() && device.isEmpty()) throw ChatApiException.verificationRequired();
 
         boolean hasBearer = bearer(exchange) != null;
         // AUTH_REQUIRED → a tenant account (L2) is mandatory.
         if (ep.authMode().requiresTokenToStart()) {
             if (!hasBearer) throw ChatApiException.authRequired();
-            return verifiedContext(ep, exchange);
+            return StartAuth.of(verifiedContext(ep, exchange));
         }
         // AUTH_OPTIONAL with a tenant bearer → L2 wins.
         if (hasBearer && ep.authMode() == com.yayatechandinnovations.yayaagentic.channel.chat.AuthMode.AUTH_OPTIONAL) {
-            return verifiedContext(ep, exchange);
+            return StartAuth.of(verifiedContext(ep, exchange));
         }
         // L1: a phone-verified device beats anonymous.
-        if (device.isPresent()) return verifiedDeviceContext(ep, handle, device.get());
-        return anonymousContext(ep, handle, deviceId);
+        if (device.isPresent()) return StartAuth.of(verifiedDeviceContext(ep, handle, device.get()));
+        return StartAuth.of(anonymousContext(ep, handle, deviceId));
     }
 
     private AuthContext authForExisting(ChatSessionRegistry.Context ctx, ChatEntryPoint ep,
                                         ServerWebExchange exchange) {
+        // Resolver-exchange sessions never carry a client bearer — the caller
+        // keeps sending only its device pass. Re-resolve from the verified phone
+        // (a cache HIT, so no second webhook call in the common case); this also
+        // refreshes the forwardable token for tool calls.
+        if (ep.authConfig() instanceof AuthConfig.ResolverExchange rx) {
+            Optional<VerifiedDevice> device = verifiedDevice(exchange);
+            if (device.isEmpty()) throw ChatApiException.verificationRequired();
+            return resolverExchange(ep, ctx.handle(), rx.authResolverId(), device.get()).auth();
+        }
         if (!isAnonymous(ctx, exchange)) {
             return verifiedContext(ep, exchange); // L2 tenant account (started authed / upgraded / bearer present)
         }
@@ -258,6 +301,43 @@ public class PublicChatController {
         if (ep.requiresVerifiedPhone() && device.isEmpty()) throw ChatApiException.verificationRequired();
         if (device.isPresent()) return verifiedDeviceContext(ep, ctx.handle(), device.get());
         return anonymousContext(ep, ctx.handle(), ctx.deviceId());
+    }
+
+    /** Drive the shared {@link ChannelAuthIntegrator} from the chat channel's
+     *  verified caller identity (the device phone). On {@code JWT_VERIFIED} the
+     *  session runs as the resolved tenant account; on {@code ANONYMOUS}
+     *  (AUTH_OPTIONAL, resolver 404) it falls back to the phone-verified device
+     *  principal; on {@code REJECT} (AUTH_REQUIRED, resolver 404) it fails closed. */
+    private StartAuth resolverExchange(ChatEntryPoint ep, String handle, long resolverId,
+                                       VerifiedDevice device) {
+        OnUnresolvedPolicy onUnresolved = ep.authMode().requiresTokenToStart()
+                ? OnUnresolvedPolicy.REJECT : OnUnresolvedPolicy.ANONYMOUS;
+        AuthContext baseCtx = new AuthContext(ep.tenant(), Map.of(), Optional.empty());
+        SenderId sender = new SenderId(ep.id().value());
+        String callerPhone = device.phoneE164();
+
+        Map<String, Object> claims = new LinkedHashMap<>();
+        claims.put("channel.kind", "chat");
+        claims.put("channel.handle", handle);
+        claims.put("channel.entryPoint", ep.id().value());
+        if (callerPhone != null) claims.put("phone", callerPhone);
+
+        ChannelAuthIntegrator.Resolved resolved = channelAuth.resolveFor(
+                ep.tenant(), resolverId, onUnresolved, baseCtx,
+                null, sender, null, callerPhone, "chat",
+                CHAT_BASELINE_SCOPES, claims);
+
+        return switch (resolved.decision()) {
+            case JWT_VERIFIED -> new StartAuth(resolved.authContextForEngine(baseCtx), resolved.jwt());
+            case ANONYMOUS -> StartAuth.of(verifiedDeviceContext(ep, handle, device));
+            case REJECT -> throw ChatApiException.resolverUnresolved();
+        };
+    }
+
+    /** The AuthContext to run a session under, plus the resolver-minted JWT (if
+     *  any) to persist on the fresh session row. */
+    private record StartAuth(AuthContext auth, Optional<String> jwt) {
+        static StartAuth of(AuthContext auth) { return new StartAuth(auth, Optional.empty()); }
     }
 
     /** The device pass rides a dedicated {@code X-Device-Pass} header so it never

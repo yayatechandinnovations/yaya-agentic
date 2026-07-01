@@ -25,8 +25,15 @@ class ChatState {
   });
 
   bool get authenticated => bearer != null && bearer!.isNotEmpty;
-  bool get needsSignIn => card != null && card!.requiresAuth && !authenticated;
-  bool get canUpgrade => card != null && card!.optionalAuth && !authenticated && sessionId != null;
+
+  /// Only OIDC entry points need a client-supplied token via the sign-in
+  /// prompt: RESOLVER authenticates server-side from the verified phone, NONE
+  /// needs no token, and NONE+AUTH_REQUIRED is a misconfiguration we don't
+  /// surface a phantom paste box for.
+  bool get needsSignIn =>
+      card != null && card!.requiresAuth && card!.usesOidc && !authenticated;
+  bool get canUpgrade => card != null && card!.optionalAuth && !card!.usesResolver
+      && !authenticated && sessionId != null;
 
   ChatState copyWith({
     EntryPointCard? card,
@@ -67,8 +74,11 @@ class ChatController extends StateNotifier<ChatState> {
         state = state.copyWith(loading: false, error: 'This chat is temporarily unavailable.');
         return;
       }
-      if (card.requiresAuth && state.bearer == null) {
-        // Defer session start until sign-in.
+      if (card.requiresAuth && card.usesOidc && state.bearer == null) {
+        // Defer session start until interactive sign-in (OIDC paste shell).
+        // RESOLVER cards resolve server-side from the verified phone; a
+        // misconfigured NONE+AUTH_REQUIRED card falls through to start() and
+        // surfaces the backend's honest auth_required error.
         state = state.copyWith(loading: false);
         return;
       }
@@ -195,6 +205,10 @@ class ChatController extends StateNotifier<ChatState> {
         return 'Too many requests — please try again shortly.';
       case 'auth_required':
         return 'This chat requires sign-in.';
+      case 'verification_required':
+        return 'Verify your phone number to start this chat.';
+      case 'resolver_unresolved':
+        return "We couldn't find an account for this number.";
       case 'session_not_found':
         return 'This chat session expired. Reopen to start a new one.';
       case 'not_found':

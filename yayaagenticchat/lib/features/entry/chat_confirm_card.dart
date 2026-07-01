@@ -39,7 +39,9 @@ class ChatConfirmCard extends StatelessWidget {
         const SizedBox(height: 12),
         Text(card.displayName, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 4),
-        Text(card.requiresAuth ? t.signInRequired : t.chatAsGuest),
+        Text(card.usesResolver
+            ? t.verifyPhoneToChat
+            : (card.requiresAuth ? t.signInRequired : t.chatAsGuest)),
         const SizedBox(height: 20),
         FilledButton(onPressed: onAdd, child: Text(t.addToMyChats)),
       ],

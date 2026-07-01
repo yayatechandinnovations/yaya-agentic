@@ -80,29 +80,60 @@ public class ChannelAuthIntegrator {
             // baseline Principal on engine.start.
             return Resolved.anonymous(baseCtx);
         }
+        return resolveFor(baseCtx.tenant(), binding.authResolverId(), binding.onUnresolved(),
+                baseCtx, session, sender, senderPhone, callerPhone, "whatsapp",
+                WhatsAppPhoneAuthenticator.BASELINE_SCOPES,
+                WhatsAppPhoneAuthenticator.channelClaims(baseCtx));
+    }
 
+    /**
+     * Channel-agnostic core: dispatch the resolver, verify the returned JWT
+     * through the chain, and stamp channel-reserved claims — used by every
+     * channel (WhatsApp/SMS via {@link #resolve}, chat via the public front
+     * door). The claim-stamping is the only per-channel concern, so the
+     * caller supplies {@code baselineScopes} + {@code channelClaims}; the
+     * dispatch → verify pipeline is identical everywhere.
+     *
+     * @param onUnresolved  what to do when the resolver returns 404 / fails —
+     *                      {@code REJECT} (fail closed) or {@code ANONYMOUS}
+     * @param channel       short channel kind id ({@code "whatsapp"} / {@code "chat"})
+     * @param baselineScopes scopes unioned into the verified Principal
+     * @param channelClaims  claims that override the JWT's (§3 #5)
+     */
+    public Resolved resolveFor(Ids.TenantId tenant,
+                               long authResolverId,
+                               OnUnresolvedPolicy onUnresolved,
+                               AuthContext baseCtx,
+                               Ids.SessionId session,
+                               SenderId sender,
+                               String senderPhone,
+                               String callerPhone,
+                               String channel,
+                               Set<String> baselineScopes,
+                               Map<String, Object> channelClaims) {
         AuthResolverDispatcher.Result result = dispatcher.dispatch(
-                binding.authResolverId(),
-                baseCtx.tenant(),
+                authResolverId,
+                tenant,
                 sender,
                 senderPhone,
                 callerPhone,
                 session == null ? new Ids.SessionId(UUID.randomUUID().toString()) : session,
-                "whatsapp",
-                com.yayatechandinnovations.yayaagentic.channel.auth.AuthResolver.ResolveReason.INITIAL);
+                channel,
+                AuthResolver.ResolveReason.INITIAL);
 
         return switch (result) {
             case AuthResolverDispatcher.Result.TokenIssued ti ->
-                    verifyAndStamp(baseCtx, ti.jwt(), binding);
+                    verifyAndStamp(baseCtx, ti.jwt(), onUnresolved, baselineScopes, channelClaims);
             case AuthResolverDispatcher.Result.Unresolved u ->
-                    applyOnUnresolved(binding, baseCtx, null);
+                    applyOnUnresolved(onUnresolved, baseCtx, null);
             case AuthResolverDispatcher.Result.Failed f ->
-                    applyOnUnresolved(binding, baseCtx,
+                    applyOnUnresolved(onUnresolved, baseCtx,
                             "resolver failed (status=" + f.status() + ")");
         };
     }
 
-    private Resolved verifyAndStamp(AuthContext baseCtx, String jwt, ChannelBinding binding) {
+    private Resolved verifyAndStamp(AuthContext baseCtx, String jwt, OnUnresolvedPolicy onUnresolved,
+                                    Set<String> baselineScopes, Map<String, Object> channelClaims) {
         Map<String, String> mergedHeaders = new LinkedHashMap<>(baseCtx.headers());
         mergedHeaders.put("Authorization", "Bearer " + jwt);
         AuthContext jwtCtx = new AuthContext(
@@ -114,23 +145,23 @@ public class ChannelAuthIntegrator {
         } catch (AuthenticationException ae) {
             log.warn("auth-resolver JWT rejected by chain for tenant={}: {}",
                     baseCtx.tenant().value(), ae.getMessage());
-            return applyOnUnresolved(binding, baseCtx,
+            return applyOnUnresolved(onUnresolved, baseCtx,
                     "JWT verification failed: " + ae.getMessage());
         }
         if (verified.isEmpty()) {
             log.warn("auth-resolver JWT not recognised by any authenticator (tenant={}) — "
                             + "check tenant_jwt_secrets/tenant_oidc_issuers", baseCtx.tenant().value());
-            return applyOnUnresolved(binding, baseCtx,
+            return applyOnUnresolved(onUnresolved, baseCtx,
                     "no authenticator recognised the JWT");
         }
-        Principal stamped = stampChannelClaims(verified.get(), baseCtx);
+        Principal stamped = stampChannelClaims(verified.get(), baselineScopes, channelClaims);
         return new Resolved(Resolved.Decision.JWT_VERIFIED,
                 Optional.of(stamped), Optional.of(jwt));
     }
 
-    private Resolved applyOnUnresolved(ChannelBinding binding, AuthContext baseCtx,
+    private Resolved applyOnUnresolved(OnUnresolvedPolicy onUnresolved, AuthContext baseCtx,
                                        String reason) {
-        if (binding.onUnresolved() == OnUnresolvedPolicy.ANONYMOUS) {
+        if (onUnresolved == OnUnresolvedPolicy.ANONYMOUS) {
             return Resolved.anonymous(baseCtx);
         }
         return Resolved.reject(reason);
@@ -138,17 +169,18 @@ public class ChannelAuthIntegrator {
 
     /**
      * Merge: keep the JWT's subject, tenant, issuedAt, and claims; override
-     * channel-reserved claim keys with the values minted from the inbound
-     * headers (§3 #5). Scopes are unioned with the baseline {@code
-     * channel:whatsapp + channel:read} so identity-gated tools still see
-     * "this Principal is on the WhatsApp channel."
+     * channel-reserved claim keys with the caller-supplied channel claims
+     * (§3 #5). Scopes are unioned with the channel's baseline so identity-gated
+     * tools still see "this Principal is on the {whatsapp,chat} channel."
      */
-    private Principal stampChannelClaims(Principal jwtPrincipal, AuthContext baseCtx) {
+    private Principal stampChannelClaims(Principal jwtPrincipal,
+                                         Set<String> baselineScopes,
+                                         Map<String, Object> channelClaims) {
         Set<String> scopes = new HashSet<>(jwtPrincipal.scopes());
-        scopes.addAll(WhatsAppPhoneAuthenticator.BASELINE_SCOPES);
+        scopes.addAll(baselineScopes);
 
         Map<String, Object> claims = new LinkedHashMap<>(jwtPrincipal.claims());
-        claims.putAll(WhatsAppPhoneAuthenticator.channelClaims(baseCtx));
+        claims.putAll(channelClaims);
 
         return new Principal(
                 jwtPrincipal.subject(),

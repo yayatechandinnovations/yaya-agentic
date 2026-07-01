@@ -49,4 +49,11 @@ public class ChatApiException extends ResponseStatusException {
         return new ChatApiException(HttpStatus.FORBIDDEN, "verification_required",
                 "verify your phone number to start this chat", 0);
     }
+
+    /** Resolver-exchange entry point: the resolver has no account for this
+     *  verified number (a clean 404). Fail closed under AUTH_REQUIRED. */
+    public static ChatApiException resolverUnresolved() {
+        return new ChatApiException(HttpStatus.FORBIDDEN, "resolver_unresolved",
+                "we couldn't find an account for this number", 0);
+    }
 }

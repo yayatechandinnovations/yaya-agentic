@@ -18,6 +18,7 @@
   "remove": "Eliminar {name}",
   "guest": "Invitado",
   "signInRequired": "Requiere inicio de sesión",
+  "verifyPhoneToChat": "Verifica tu teléfono para chatear como tú",
   "scanTitle": "Escanea un código de chat",
   "scanHint": "Apunta tu cámara al código QR de Yaya",
   "addByLink": "Agregar con enlace",

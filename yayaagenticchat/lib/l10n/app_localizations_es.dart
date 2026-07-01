@@ -69,6 +69,9 @@ class AppL10nEs extends AppL10n {
   String get signInRequired => 'Requiere inicio de sesión';
 
   @override
+  String get verifyPhoneToChat => 'Verifica tu teléfono para chatear como tú';
+
+  @override
   String get scanTitle => 'Escanea un código de chat';
 
   @override

@@ -20,6 +20,7 @@
   "@remove": { "placeholders": { "name": { "type": "String" } } },
   "guest": "Guest",
   "signInRequired": "Sign-in required",
+  "verifyPhoneToChat": "Verify your phone to chat as yourself",
   "scanTitle": "Scan a chat code",
   "scanHint": "Point your camera at a Yaya QR code",
   "addByLink": "Add by link",

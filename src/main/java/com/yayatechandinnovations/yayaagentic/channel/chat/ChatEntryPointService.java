@@ -92,7 +92,11 @@ public class ChatEntryPointService {
         e.setAuthMode(authMode.name());
         e.setAuthConfigJson(writeJson(cmd.authConfig() == null ? new AuthConfig.None() : cmd.authConfig()));
         e.setAbusePolicyJson(writeJson(cmd.abuse() == null ? AbusePolicy.defaults() : cmd.abuse()));
-        e.setRequiresVerifiedPhone(Boolean.TRUE.equals(cmd.requiresVerifiedPhone()));
+        // A resolver-exchange entry point authenticates from the verified device
+        // phone, so a verified phone is structurally required — force it rather
+        // than discover the gap at session start.
+        boolean resolverExchange = cmd.authConfig() instanceof AuthConfig.ResolverExchange;
+        e.setRequiresVerifiedPhone(resolverExchange || Boolean.TRUE.equals(cmd.requiresVerifiedPhone()));
         e.setUpdatedAt(now());
 
         ChatEntryPointEntity saved = repo.save(e);
@@ -130,6 +134,8 @@ public class ChatEntryPointService {
         if (cmd.authConfig() != null) e.setAuthConfigJson(writeJson(cmd.authConfig()));
         if (cmd.abuse() != null) e.setAbusePolicyJson(writeJson(cmd.abuse()));
         if (cmd.requiresVerifiedPhone() != null) e.setRequiresVerifiedPhone(cmd.requiresVerifiedPhone());
+        // Switching to resolver-exchange forces a verified phone (see createDraft).
+        if (cmd.authConfig() instanceof AuthConfig.ResolverExchange) e.setRequiresVerifiedPhone(true);
         e.setUpdatedAt(now());
         return toDomain(repo.save(e));
     }
