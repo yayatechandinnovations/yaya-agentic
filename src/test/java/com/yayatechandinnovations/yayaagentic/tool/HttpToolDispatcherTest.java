@@ -225,7 +225,7 @@ class HttpToolDispatcherTest {
     }
 
     @Test
-    void missing_claim_substitutes_empty_string() {
+    void blank_principal_claim_fails_fast_without_sending_request() {
         wireMock.stubFor(get(urlPathEqualTo("/api/x"))
                 .willReturn(aResponse().withStatus(200).withBody("\"ok\"")));
 
@@ -233,19 +233,72 @@ class HttpToolDispatcherTest {
                 List.of("localhost"),
                 fixedResolver("http://localhost:" + wireMock.port()));
         ToolDescriptor descriptor = httpGetDescriptor(
-                "/api/x?organizationId={principal.claims.missing}", "$");
+                "/api/x?organizationId={principal.claims.org}", "$");
 
         Turn.ToolResult result = dispatcher.dispatch(
                 (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
                 execCtxWithPrincipal(Map.of("sub", "user-1")),
                 "call-missing-claim");
 
-        // Dispatcher must not fail just because a claim is absent — the
-        // downstream service decides how to respond. We assert the request
-        // went out with the empty substitution.
+        // A blank server-verified scope (organizationId) must NOT reach the
+        // backend as `?organizationId=` — that reads as "empty scope" and
+        // silently returns no data. The dispatch fails loud and sends nothing.
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.FAILED);
+        assertThat(result.error()).contains("principal.claims.org");
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/api/x")));
+    }
+
+    @Test
+    void lottery_list_call_scopes_to_authenticated_players_organization() {
+        // Regression: phone-authenticated players got an empty lottery list
+        // because organizationId went out blank. Assert a non-blank org is
+        // always on the wire for the lottery-list tool.
+        wireMock.stubFor(get(urlPathEqualTo("/api/ai/lottery-management/lotteries"))
+                .withQueryParam("organizationId", equalTo("9f3a-org-uuid"))
+                .willReturn(aResponse().withStatus(200)
+                        .withBody("[{\"id\":\"lot-1\",\"status\":\"OPEN\"}]")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/ai/lottery-management/lotteries?organizationId={principal.claims.org}", "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                execCtxWithPrincipal(Map.of("org", "9f3a-org-uuid", "sub", "user:phone:+15555083162")),
+                "call-lotteries");
+
         assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
-        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/x"))
-                .withQueryParam("organizationId", equalTo("")));
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/ai/lottery-management/lotteries"))
+                .withQueryParam("organizationId", equalTo("9f3a-org-uuid"))
+                // never blank
+                .withQueryParam("organizationId", matching(".+")));
+    }
+
+    @Test
+    void resolver_org_alias_populates_canonical_org_template() {
+        // Auth resolvers commonly mint the org under the backend's own param
+        // name (`organizationId`) rather than the canonical `org` claim. The
+        // dispatcher normalises the alias so {principal.claims.org} still fills.
+        wireMock.stubFor(get(urlPathEqualTo("/api/ai/lottery-management/lotteries"))
+                .withQueryParam("organizationId", equalTo("aliased-org"))
+                .willReturn(aResponse().withStatus(200).withBody("[]")));
+
+        HttpToolDispatcher dispatcher = dispatcher(
+                List.of("localhost"),
+                fixedResolver("http://localhost:" + wireMock.port()));
+        ToolDescriptor descriptor = httpGetDescriptor(
+                "/api/ai/lottery-management/lotteries?organizationId={principal.claims.org}", "$");
+
+        Turn.ToolResult result = dispatcher.dispatch(
+                (ToolHandlerRef.Http) descriptor.handler(), descriptor, Map.of(),
+                execCtxWithPrincipal(Map.of("organizationId", "aliased-org", "sub", "user-1")),
+                "call-alias");
+
+        assertThat(result.status()).isEqualTo(Turn.ToolResult.Status.OK);
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/api/ai/lottery-management/lotteries"))
+                .withQueryParam("organizationId", equalTo("aliased-org")));
     }
 
     @Test

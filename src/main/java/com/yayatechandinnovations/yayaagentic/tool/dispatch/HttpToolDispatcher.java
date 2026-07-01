@@ -97,6 +97,8 @@ public class HttpToolDispatcher {
                     ctx == null || ctx.principal() == null ? null : ctx.principal().tenant(),
                     renderedPath,
                     override);
+        } catch (MissingContextException e) {
+            return failed(callId, e.getMessage());
         } catch (BaseUrlResolutionException e) {
             return failed(callId, "egress: " + e.getMessage());
         } catch (Exception e) {
@@ -109,8 +111,18 @@ public class HttpToolDispatcher {
         }
 
         Map<String, String> headers = new LinkedHashMap<>();
-        if (spec.headerTemplates() != null) {
-            spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, richArgs, toolId)));
+        String body = null;
+        try {
+            if (spec.headerTemplates() != null) {
+                spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, richArgs, toolId)));
+            }
+            if (spec.body() != null && spec.body().template() != null
+                    && spec.method() != HttpToolSpec.HttpMethod.GET
+                    && spec.method() != HttpToolSpec.HttpMethod.DELETE) {
+                body = renderTemplate(spec.body().template(), richArgs, toolId);
+            }
+        } catch (MissingContextException e) {
+            return failed(callId, e.getMessage());
         }
         applyAuthForwarding(spec.authForwarding(), ctx, headers);
         // Diagnostics for the playground auth-flow inspector: which forwarding
@@ -119,13 +131,6 @@ public class HttpToolDispatcher {
         // for a 401 (no token was forwarded). See
         // playground-auth-flow-inspector-design.md §6.3.
         Map<String, Object> diag = authDiagnostics(spec.authForwarding(), headers);
-
-        String body = null;
-        if (spec.body() != null && spec.body().template() != null
-                && spec.method() != HttpToolSpec.HttpMethod.GET
-                && spec.method() != HttpToolSpec.HttpMethod.DELETE) {
-            body = renderTemplate(spec.body().template(), richArgs, toolId);
-        }
 
         WebClient client = webClientBuilder.build();
         ToolPolicy policy = descriptor.policy() == null ? ToolPolicy.defaults() : descriptor.policy();
@@ -247,11 +252,25 @@ public class HttpToolDispatcher {
         while (m.find()) {
             String path = m.group(1);
             Object value = pluck(args, path);
-            if (value == null) {
-                // Silent empty substitution is what hid the principal.claims.*
-                // bug for days — make the miss visible so downstream 403s have
-                // a fingerprint in our logs.
-                LOG.warn("template placeholder {{{}}} resolved to null in toolId={} — substituting empty string",
+            boolean blank = value == null || value.toString().isBlank();
+            if (blank && path.startsWith("principal.")) {
+                // Server-verified context (organizationId lives at
+                // principal.claims.org) is platform-guaranteed, never an
+                // optional LLM filter. A blank one means the player has no
+                // resolved value — refuse to send it rather than emit e.g.
+                // `?organizationId=`, which the backend reads as "empty scope"
+                // and answers with an empty list. Fail loud so the misconfig
+                // has a fingerprint instead of masquerading as "no data".
+                throw new MissingContextException(
+                        "HTTP tool '" + toolId + "' requires template value {" + path
+                                + "} but it is blank for the current principal — the player has no "
+                                + "resolved value for this scope (check the auth-resolver JWT claims). "
+                                + "Refusing to send a blank value.");
+            }
+            if (blank) {
+                // Optional LLM-supplied arg absent — keep the historical
+                // empty substitution, but make the miss visible in logs.
+                LOG.warn("template placeholder {{{}}} resolved to blank in toolId={} — substituting empty string",
                         path, toolId);
             }
             String rendered = value == null ? "" : value.toString();
@@ -279,8 +298,7 @@ public class HttpToolDispatcher {
             if (ctx.principal().tenant() != null) {
                 principalNode.put("tenant", ctx.principal().tenant().value());
             }
-            principalNode.put("claims", ctx.principal().claims() == null
-                    ? Map.of() : ctx.principal().claims());
+            principalNode.put("claims", normalizeOrgClaim(ctx.principal().claims()));
             rich.put("principal", principalNode);
         }
         rich.put("call", Map.of("id", callId == null ? "" : callId));
@@ -293,6 +311,40 @@ public class HttpToolDispatcher {
             }
         }
         return rich;
+    }
+
+    /**
+     * Tool URL templates scope every {@code /api/ai/...} call with
+     * {@code ?organizationId={principal.claims.org}}. Auth resolvers, however,
+     * mint the org under whatever key their identity service uses — commonly
+     * the backend's own {@code organizationId} param name. Canonicalise those
+     * aliases onto {@code org} so a resolver JWT carrying {@code organizationId}
+     * (or {@code organization_id}/{@code org_id}) still populates the template
+     * instead of silently rendering blank. The original claim keys are left
+     * intact; we only add {@code org} when it is missing.
+     */
+    private static final List<String> ORG_CLAIM_ALIASES =
+            List.of("organizationId", "organization_id", "org_id", "orgId");
+
+    private static Map<String, Object> normalizeOrgClaim(Map<String, Object> claims) {
+        if (claims == null) return Map.of();
+        Object canonical = claims.get("org");
+        if (canonical != null && !canonical.toString().isBlank()) return claims;
+        for (String alias : ORG_CLAIM_ALIASES) {
+            Object v = claims.get(alias);
+            if (v != null && !v.toString().isBlank()) {
+                Map<String, Object> copy = new LinkedHashMap<>(claims);
+                copy.put("org", v);
+                return copy;
+            }
+        }
+        return claims;
+    }
+
+    /** Signals a blank {@code principal.*} template value — surfaced as a
+     *  FAILED tool result rather than a silent empty substitution. */
+    private static final class MissingContextException extends RuntimeException {
+        MissingContextException(String message) { super(message); }
     }
 
     @SuppressWarnings("unchecked")
