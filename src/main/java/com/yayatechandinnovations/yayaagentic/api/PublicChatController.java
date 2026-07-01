@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -155,7 +156,7 @@ public class PublicChatController {
                     result.greeting(),
                     result.quickReplies(),
                     PublicChatDtos.EntryPointCard.of(ep));
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /* ----------------------------- send ----------------------------------- */
@@ -184,7 +185,7 @@ public class PublicChatController {
             registry.touch(sessionId, ep.sessionPolicy().idleTimeout());
             return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
                     .map(chatAdapter::toSse);
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /* --------------------------- resume / end ----------------------------- */
@@ -198,7 +199,7 @@ public class PublicChatController {
             ChatEntryPoint ep = entryPoints.findByHandle(ctx.handle())
                     .orElseThrow(ChatApiException::sessionNotFound);
             return new PublicChatDtos.ResumeResponse(id, true, PublicChatDtos.EntryPointCard.of(ep));
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /** AUTH_OPTIONAL mid-session upgrade (§8.4): verify the presented bearer and,
@@ -226,19 +227,19 @@ public class PublicChatController {
             registry.markAuthenticated(sessionId);
             registry.touch(sessionId, ep.sessionPolicy().idleTimeout());
             return new PublicChatDtos.UpgradeResponse(true, verified.subject());
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/sessions/{id}/end")
     public Mono<Void> end(@PathVariable("id") String id, ServerWebExchange exchange) {
         Ids.SessionId sessionId = new Ids.SessionId(id);
-        return Mono.fromRunnable(() -> {
+        return Mono.<Void>fromRunnable(() -> {
             registry.get(sessionId).ifPresent(ctx -> {
                 entryPoints.findByHandle(ctx.handle()).ifPresent(ep ->
                         engine.end(sessionId, authForExisting(ctx, ep, exchange)));
                 registry.remove(sessionId);
             });
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /* ------------------------------ helpers ------------------------------- */
