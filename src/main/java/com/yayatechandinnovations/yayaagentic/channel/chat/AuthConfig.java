@@ -37,6 +37,13 @@ public sealed interface AuthConfig
 
     /** Server-side exchange: the app holds an opaque first-party token; the
      *  platform calls the tenant's resolver webhook to mint a JWT. The id points
-     *  at a {@code channel_auth_resolvers} row. */
-    record ResolverExchange(Long authResolverId) implements AuthConfig {}
+     *  at a {@code channel_auth_resolvers} row.
+     *
+     *  <p>{@code senderKey} is the tenant-issued chat-sender code (e.g.
+     *  {@code "F0DX-12FF"}) that authorizes resolution the way a phone channel's
+     *  {@code senderPhone} does — chat entry points have no sender phone, so the
+     *  tenant registers a per-entry-point code and the operator pins it here. It
+     *  rides the resolver request as {@code senderKey}. Null for tenants whose
+     *  resolver doesn't gate on a sender. */
+    record ResolverExchange(Long authResolverId, String senderKey) implements AuthConfig {}
 }

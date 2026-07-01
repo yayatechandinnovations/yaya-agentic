@@ -71,6 +71,11 @@ public interface AuthResolver {
      *                          for WhatsApp, the sender's
      *                          {@code phone_e164}. Becomes
      *                          {@code senderPhone} in the HTTP wire body.
+     *                          Null for channels without a sender phone (chat).
+     * @param senderKey         tenant-issued sender code for channels that have
+     *                          no sender phone (chat). Becomes {@code senderKey}
+     *                          in the HTTP wire body; omitted when null. Mutually
+     *                          exclusive with {@code e164SenderPhone} in practice.
      * @param e164CallerPhone   E.164-formatted phone (always begins with
      *                          {@code +}) of the inbound message author
      * @param session           the yaya session that prompted this resolve.
@@ -92,6 +97,7 @@ public interface AuthResolver {
             Ids.TenantId tenant,
             SenderId sender,
             String e164SenderPhone,
+            String senderKey,
             String e164CallerPhone,
             Ids.SessionId session,
             String channel,

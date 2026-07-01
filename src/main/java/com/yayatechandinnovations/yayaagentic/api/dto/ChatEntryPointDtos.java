@@ -20,23 +20,28 @@ public final class ChatEntryPointDtos {
 
     /** {@code kind} is None | Oidc | ResolverExchange; sibling fields apply per kind. */
     public record AuthConfigDto(String kind, String issuer, String audience,
-                                List<String> scopes, Long authResolverId) {
+                                List<String> scopes, Long authResolverId, String senderKey) {
         public static AuthConfigDto of(AuthConfig c) {
             if (c instanceof AuthConfig.Oidc o) {
-                return new AuthConfigDto("Oidc", o.issuer(), o.audience(), o.scopes(), null);
+                return new AuthConfigDto("Oidc", o.issuer(), o.audience(), o.scopes(), null, null);
             }
             if (c instanceof AuthConfig.ResolverExchange r) {
-                return new AuthConfigDto("ResolverExchange", null, null, null, r.authResolverId());
+                return new AuthConfigDto("ResolverExchange", null, null, null,
+                        r.authResolverId(), r.senderKey());
             }
-            return new AuthConfigDto("None", null, null, null, null);
+            return new AuthConfigDto("None", null, null, null, null, null);
         }
 
         public AuthConfig toDomain() {
             return switch (kind == null ? "None" : kind) {
                 case "Oidc" -> new AuthConfig.Oidc(issuer, audience, scopes);
-                case "ResolverExchange" -> new AuthConfig.ResolverExchange(authResolverId);
+                case "ResolverExchange" -> new AuthConfig.ResolverExchange(authResolverId, blankToNull(senderKey));
                 default -> new AuthConfig.None();
             };
+        }
+
+        private static String blankToNull(String s) {
+            return s == null || s.isBlank() ? null : s.trim();
         }
     }
 

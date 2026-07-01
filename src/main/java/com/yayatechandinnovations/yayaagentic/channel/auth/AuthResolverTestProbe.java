@@ -70,6 +70,7 @@ public class AuthResolverTestProbe {
                 tenant,
                 new SenderId(senderId),
                 senderPhone,
+                null,               // senderKey — the probe exercises the phone shape
                 callerPhone,
                 new Ids.SessionId("probe_" + UUID.randomUUID()),
                 "whatsapp",

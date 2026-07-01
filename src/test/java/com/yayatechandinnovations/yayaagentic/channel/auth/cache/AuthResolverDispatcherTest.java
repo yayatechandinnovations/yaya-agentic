@@ -232,6 +232,7 @@ class AuthResolverDispatcherTest {
                 new Ids.TenantId("acme"),
                 new SenderId("snd_acme"),
                 "+15551112222",
+                null,
                 "+15551234567",
                 new Ids.SessionId(UUID.randomUUID().toString()),
                 "whatsapp",

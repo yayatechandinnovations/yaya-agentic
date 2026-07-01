@@ -81,7 +81,7 @@ public class ChannelAuthIntegrator {
             return Resolved.anonymous(baseCtx);
         }
         return resolveFor(baseCtx.tenant(), binding.authResolverId(), binding.onUnresolved(),
-                baseCtx, session, sender, senderPhone, callerPhone, "whatsapp",
+                baseCtx, session, sender, senderPhone, null, callerPhone, "whatsapp",
                 WhatsAppPhoneAuthenticator.BASELINE_SCOPES,
                 WhatsAppPhoneAuthenticator.channelClaims(baseCtx));
     }
@@ -96,6 +96,8 @@ public class ChannelAuthIntegrator {
      *
      * @param onUnresolved  what to do when the resolver returns 404 / fails —
      *                      {@code REJECT} (fail closed) or {@code ANONYMOUS}
+     * @param senderKey     tenant-issued sender code for channels with no sender
+     *                      phone (chat); null for phone channels
      * @param channel       short channel kind id ({@code "whatsapp"} / {@code "chat"})
      * @param baselineScopes scopes unioned into the verified Principal
      * @param channelClaims  claims that override the JWT's (§3 #5)
@@ -107,6 +109,7 @@ public class ChannelAuthIntegrator {
                                Ids.SessionId session,
                                SenderId sender,
                                String senderPhone,
+                               String senderKey,
                                String callerPhone,
                                String channel,
                                Set<String> baselineScopes,
@@ -116,6 +119,7 @@ public class ChannelAuthIntegrator {
                 tenant,
                 sender,
                 senderPhone,
+                senderKey,
                 callerPhone,
                 session == null ? new Ids.SessionId(UUID.randomUUID().toString()) : session,
                 channel,

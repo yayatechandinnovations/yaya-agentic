@@ -81,6 +81,7 @@ public class AuthResolverDispatcher {
                            Ids.TenantId tenant,
                            SenderId sender,
                            String senderPhone,
+                           String senderKey,
                            String callerPhone,
                            Ids.SessionId session,
                            String channel,
@@ -120,7 +121,7 @@ public class AuthResolverDispatcher {
         Optional<String> token;
         try {
             token = resolver.resolve(new AuthResolver.ResolveRequest(
-                    tenant, sender, senderPhone, callerPhone, session, channel,
+                    tenant, sender, senderPhone, senderKey, callerPhone, session, channel,
                     reason, Instant.now(clock)));
         } catch (AuthResolverException are) {
             int elapsed = (int) (Instant.now(clock).toEpochMilli() - startedAtMillis);

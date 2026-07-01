@@ -75,6 +75,7 @@ class HttpAuthResolverTest {
                 new Ids.TenantId("acme"),
                 new SenderId("snd_acme_main"),
                 "+15551112222",
+                null,
                 "+15551234567",
                 new Ids.SessionId("sess_01HVXP6PJYV3FK2A0PCNB3JM4F"),
                 "whatsapp",
@@ -111,6 +112,41 @@ class HttpAuthResolverTest {
 
         wireMock.verify(postRequestedFor(urlEqualTo("/yaya/resolve-identity"))
                 .withRequestBody(matchingJsonPath("$.reason", equalTo("refresh"))));
+    }
+
+    @Test
+    void chat_senderKey_rides_the_wire_body() {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200).withBody("{\"token\":\"x\"}")));
+
+        resolver(HttpAuthResolver.ServiceAuthKind.NONE, null).resolve(
+                new AuthResolver.ResolveRequest(
+                        new Ids.TenantId("acme"),
+                        new SenderId("e_chat1"),
+                        null,                 // no sender phone on chat
+                        "F0DX-12FF",          // sender key instead
+                        "+15551234567",
+                        new Ids.SessionId("sess_01HVXP6PJYV3FK2A0PCNB3JM4F"),
+                        "chat",
+                        AuthResolver.ResolveReason.INITIAL,
+                        FIXED_NOW));
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/yaya/resolve-identity"))
+                .withRequestBody(matchingJsonPath("$.senderKey", equalTo("F0DX-12FF")))
+                .withRequestBody(matchingJsonPath("$.channel", equalTo("chat"))));
+    }
+
+    @Test
+    void phone_request_omits_senderKey() {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200).withBody("{\"token\":\"x\"}")));
+
+        resolver(HttpAuthResolver.ServiceAuthKind.NONE, null).resolve(
+                req(AuthResolver.ResolveReason.INITIAL));
+
+        // Phone-channel wire shape stays exactly as before — no senderKey key.
+        wireMock.verify(postRequestedFor(urlEqualTo("/yaya/resolve-identity"))
+                .withRequestBody(notMatching(".*senderKey.*")));
     }
 
     @Test
@@ -318,6 +354,7 @@ class HttpAuthResolverTest {
                 new Ids.TenantId("acme"),
                 new SenderId("snd_acme_main"),
                 "+15551112222",
+                null,
                 "+15551234567",
                 new Ids.SessionId("sess_01HVXP6PJYV3FK2A0PCNB3JM4F"),
                 "whatsapp",

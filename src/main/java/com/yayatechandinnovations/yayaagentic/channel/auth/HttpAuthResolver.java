@@ -104,6 +104,12 @@ public final class HttpAuthResolver implements AuthResolver {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", req.session() == null ? null : req.session().value());
         body.put("senderPhone", req.e164SenderPhone());
+        // Chat has no sender phone; it authorizes with a tenant-issued sender
+        // code instead. Only emit it when present so phone-channel requests keep
+        // the exact wire shape the tenant already validates.
+        if (req.senderKey() != null && !req.senderKey().isBlank()) {
+            body.put("senderKey", req.senderKey());
+        }
         body.put("callerPhone", req.e164CallerPhone());
         body.put("channel", req.channel());
         body.put("tenantId", req.tenant().value());

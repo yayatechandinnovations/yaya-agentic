@@ -264,7 +264,7 @@ public class PublicChatController {
         // a resolver-exchange entry point never falls back to "paste a token."
         if (ep.authConfig() instanceof AuthConfig.ResolverExchange rx) {
             if (device.isEmpty()) throw ChatApiException.verificationRequired();
-            return resolverExchange(ep, handle, rx.authResolverId(), device.get());
+            return resolverExchange(ep, handle, rx.authResolverId(), rx.senderKey(), device.get());
         }
 
         if (ep.requiresVerifiedPhone() && device.isEmpty()) throw ChatApiException.verificationRequired();
@@ -293,7 +293,7 @@ public class PublicChatController {
         if (ep.authConfig() instanceof AuthConfig.ResolverExchange rx) {
             Optional<VerifiedDevice> device = verifiedDevice(exchange);
             if (device.isEmpty()) throw ChatApiException.verificationRequired();
-            return resolverExchange(ep, ctx.handle(), rx.authResolverId(), device.get()).auth();
+            return resolverExchange(ep, ctx.handle(), rx.authResolverId(), rx.senderKey(), device.get()).auth();
         }
         if (!isAnonymous(ctx, exchange)) {
             return verifiedContext(ep, exchange); // L2 tenant account (started authed / upgraded / bearer present)
@@ -310,7 +310,7 @@ public class PublicChatController {
      *  (AUTH_OPTIONAL, resolver 404) it falls back to the phone-verified device
      *  principal; on {@code REJECT} (AUTH_REQUIRED, resolver 404) it fails closed. */
     private StartAuth resolverExchange(ChatEntryPoint ep, String handle, long resolverId,
-                                       VerifiedDevice device) {
+                                       String senderKey, VerifiedDevice device) {
         OnUnresolvedPolicy onUnresolved = ep.authMode().requiresTokenToStart()
                 ? OnUnresolvedPolicy.REJECT : OnUnresolvedPolicy.ANONYMOUS;
         AuthContext baseCtx = new AuthContext(ep.tenant(), Map.of(), Optional.empty());
@@ -323,9 +323,11 @@ public class PublicChatController {
         claims.put("channel.entryPoint", ep.id().value());
         if (callerPhone != null) claims.put("phone", callerPhone);
 
+        // Chat has no sender phone (7th arg null); it authorizes with the
+        // entry point's tenant-issued senderKey instead.
         ChannelAuthIntegrator.Resolved resolved = channelAuth.resolveFor(
                 ep.tenant(), resolverId, onUnresolved, baseCtx,
-                null, sender, null, callerPhone, "chat",
+                null, sender, null, senderKey, callerPhone, "chat",
                 CHAT_BASELINE_SCOPES, claims);
 
         return switch (resolved.decision()) {

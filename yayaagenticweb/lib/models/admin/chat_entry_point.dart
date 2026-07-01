@@ -11,6 +11,7 @@ class ChatAuthConfig {
     this.audience,
     this.scopes = const [],
     this.authResolverId,
+    this.senderKey,
   });
 
   final String kind; // None | Oidc | ResolverExchange
@@ -18,6 +19,9 @@ class ChatAuthConfig {
   final String? audience;
   final List<String> scopes;
   final int? authResolverId;
+  // ResolverExchange only: the tenant-issued chat-sender code the resolver
+  // gates on (chat has no sender phone). e.g. "F0DX-12FF".
+  final String? senderKey;
 
   factory ChatAuthConfig.fromJson(Map<String, dynamic> json) => ChatAuthConfig(
         kind: (json['kind'] ?? 'None') as String,
@@ -25,6 +29,7 @@ class ChatAuthConfig {
         audience: json['audience'] as String?,
         scopes: (json['scopes'] as List? ?? const []).map((e) => e.toString()).toList(),
         authResolverId: (json['authResolverId'] as num?)?.toInt(),
+        senderKey: json['senderKey'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -33,6 +38,7 @@ class ChatAuthConfig {
         if (audience != null) 'audience': audience,
         if (scopes.isNotEmpty) 'scopes': scopes,
         if (authResolverId != null) 'authResolverId': authResolverId,
+        if (senderKey != null && senderKey!.isNotEmpty) 'senderKey': senderKey,
       };
 }
 

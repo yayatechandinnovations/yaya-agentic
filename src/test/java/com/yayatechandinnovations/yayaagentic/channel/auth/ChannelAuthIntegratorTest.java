@@ -203,7 +203,7 @@ class ChannelAuthIntegratorTest {
         ChannelAuthIntegrator.Resolved r = integrator.resolveFor(
                 new Ids.TenantId("acme"), 99L, OnUnresolvedPolicy.REJECT,
                 new AuthContext(new Ids.TenantId("acme"), Map.of(), Optional.empty()),
-                null, new SenderId("chat_ep1"), null, "+15551234567", "chat",
+                null, new SenderId("chat_ep1"), null, "F0DX-12FF", "+15551234567", "chat",
                 Set.of("channel:chat", "channel:read"), chatClaims);
 
         assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.JWT_VERIFIED);
@@ -228,7 +228,7 @@ class ChannelAuthIntegratorTest {
         ChannelAuthIntegrator.Resolved r = integrator.resolveFor(
                 new Ids.TenantId("acme"), 99L, OnUnresolvedPolicy.REJECT,
                 new AuthContext(new Ids.TenantId("acme"), Map.of(), Optional.empty()),
-                null, new SenderId("chat_ep1"), null, "+15551234567", "chat",
+                null, new SenderId("chat_ep1"), null, "F0DX-12FF", "+15551234567", "chat",
                 Set.of("channel:chat", "channel:read"), Map.of("channel.kind", "chat"));
 
         assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.REJECT);
@@ -283,7 +283,7 @@ class ChannelAuthIntegratorTest {
         return new AuthResolverDispatcher(null, null, null, null, null) {
             @Override
             public Result dispatch(long resolverId, Ids.TenantId tenant, SenderId sender,
-                                   String senderPhone, String callerPhone,
+                                   String senderPhone, String senderKey, String callerPhone,
                                    Ids.SessionId session, String channel,
                                    com.yayatechandinnovations.yayaagentic.channel.auth.AuthResolver.ResolveReason reason) {
                 return fn.apply(resolverId, reason);
