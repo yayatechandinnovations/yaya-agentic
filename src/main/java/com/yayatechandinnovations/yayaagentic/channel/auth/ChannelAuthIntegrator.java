@@ -114,6 +114,33 @@ public class ChannelAuthIntegrator {
                                String channel,
                                Set<String> baselineScopes,
                                Map<String, Object> channelClaims) {
+        return resolveFor(tenant, authResolverId, onUnresolved, baseCtx, session, sender,
+                senderPhone, senderKey, callerPhone, channel, baselineScopes, channelClaims,
+                AuthResolver.ResolveReason.INITIAL);
+    }
+
+    /**
+     * As {@link #resolveFor(Ids.TenantId, long, OnUnresolvedPolicy, AuthContext,
+     * Ids.SessionId, SenderId, String, String, String, String, Set, Map)} but with
+     * an explicit resolve {@code reason}. {@link AuthResolver.ResolveReason#REFRESH}
+     * bypasses the token cache and re-mints — used by
+     * {@link com.yayatechandinnovations.yayaagentic.tool.dispatch.SessionTokenRefresher}
+     * when an own-scoped tool call reports the session token is stale (the player
+     * registered mid-session and needs the {@code PLAYER_QUERY_OWN} upgrade).
+     */
+    public Resolved resolveFor(Ids.TenantId tenant,
+                               long authResolverId,
+                               OnUnresolvedPolicy onUnresolved,
+                               AuthContext baseCtx,
+                               Ids.SessionId session,
+                               SenderId sender,
+                               String senderPhone,
+                               String senderKey,
+                               String callerPhone,
+                               String channel,
+                               Set<String> baselineScopes,
+                               Map<String, Object> channelClaims,
+                               AuthResolver.ResolveReason reason) {
         AuthResolverDispatcher.Result result = dispatcher.dispatch(
                 authResolverId,
                 tenant,
@@ -123,7 +150,7 @@ public class ChannelAuthIntegrator {
                 callerPhone,
                 session == null ? new Ids.SessionId(UUID.randomUUID().toString()) : session,
                 channel,
-                AuthResolver.ResolveReason.INITIAL);
+                reason);
 
         return switch (result) {
             case AuthResolverDispatcher.Result.TokenIssued ti ->

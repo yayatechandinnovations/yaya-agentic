@@ -1,0 +1,58 @@
+{
+  "id": "account_register",
+  "version": 2,
+  "description": "Register the current guest player as a Smart Lottery customer account. On success the caller's identity is upgraded to a registered customer (PLAYER_QUERY_OWN + customerRef); the session token must then be re-minted before any own-scoped call.",
+  "handlerKind": "HTTP",
+  "requires": {
+    "scopes": ["PLAYER_VEND"]
+  },
+  "policy": {
+    "timeoutMillis": 8000,
+    "maxRetries": 0,
+    "idempotent": true,
+    "confirmable": false
+  },
+  "http": {
+    "method": "POST",
+    "urlTemplate": "/customers/register",
+    "authForwarding": "PRINCIPAL_TOKEN",
+    "body": {
+      "contentType": "application/json",
+      "template": "{\"phone\":\"{principal.claims.phone}\",\"name\":\"{name}\"}"
+    },
+    "response": {
+      "jsonPath": "$"
+    }
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The customer's display name."
+      }
+    },
+    "required": ["name"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "customerRef": {
+        "type": "string",
+        "description": "Stable reference for the newly registered customer."
+      },
+      "accountState": {
+        "type": "string",
+        "enum": ["guest", "registered"],
+        "description": "Post-call identity state of the caller."
+      },
+      "tokenRefreshRequired": {
+        "type": "boolean",
+        "description": "True when registration upgraded the principal and the session token is now stale. The agent re-mints (reason=refresh) before the next own-scoped call, skipping the self-healing 409 round-trip. Additive/optional — older responses that omit it still validate."
+      }
+    },
+    "required": ["customerRef", "accountState"]
+  }
+}

@@ -45,8 +45,10 @@ import java.util.Set;
 public class ChatAuthService {
 
     /** Baseline scopes stamped onto a resolver-verified chat Principal so
-     *  identity-gated tools see "this Principal is on the chat channel." */
-    private static final Set<String> CHAT_BASELINE_SCOPES = Set.of("channel:chat", "channel:read");
+     *  identity-gated tools see "this Principal is on the chat channel." Public
+     *  so a token refresh ({@code SessionTokenRefresher}) re-mints with the same
+     *  channel scopes it was first minted with. */
+    public static final Set<String> CHAT_BASELINE_SCOPES = Set.of("channel:chat", "channel:read");
 
     private final ChannelAuthIntegrator channelAuth;
     private final VerifiedDeviceAuthenticator verifiedDeviceAuth;

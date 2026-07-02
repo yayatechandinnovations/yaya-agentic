@@ -48,22 +48,44 @@ public class HttpToolDispatcher {
     /** Matches {field} or {a.b.c} placeholders in URL / header / body templates. */
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z0-9_.]+)\\}");
 
+    /** Sentinel a stale own-scoped token surfaces on a self-healing 409:
+     *  the response header {@code X-Yaya-Token-Refresh: required} and/or the
+     *  body {@code {"error":"token_refresh_required"}}. */
+    private static final String TOKEN_REFRESH_HEADER = "X-Yaya-Token-Refresh";
+    private static final String TOKEN_REFRESH_REQUIRED = "token_refresh_required";
+
     private final WebClient.Builder webClientBuilder;
     private final HttpEgressPolicy egress;
     private final BaseUrlResolver baseUrlResolver;
     private final ObjectMapper json;
     private final Duration defaultTimeout;
     private final Map<String, byte[]> serviceTokenSecrets;
+    /** Re-mints an upgraded principal token when a player registers mid-session.
+     *  Null in unit tests / deployments without the channel-auth stack. */
+    private final SessionTokenRefresher tokenRefresher;
 
+    /** Test-friendly constructor — no token refresh (guest→registered upgrade
+     *  is a channel-auth concern the tool layer only collaborates with). */
     public HttpToolDispatcher(WebClient.Builder webClientBuilder,
                               HttpEgressPolicy egress,
                               BaseUrlResolver baseUrlResolver,
                               ObjectMapper json,
                               YayaAgenticProperties props) {
+        this(webClientBuilder, egress, baseUrlResolver, json, props, (SessionTokenRefresher) null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public HttpToolDispatcher(WebClient.Builder webClientBuilder,
+                              HttpEgressPolicy egress,
+                              BaseUrlResolver baseUrlResolver,
+                              ObjectMapper json,
+                              YayaAgenticProperties props,
+                              SessionTokenRefresher tokenRefresher) {
         this.webClientBuilder = webClientBuilder;
         this.egress = egress;
         this.baseUrlResolver = baseUrlResolver;
         this.json = json;
+        this.tokenRefresher = tokenRefresher;
         this.defaultTimeout = props.httpTools() != null && props.httpTools().defaultTimeout() != null
                 ? props.httpTools().defaultTimeout()
                 : Duration.ofSeconds(10);
@@ -136,26 +158,37 @@ public class HttpToolDispatcher {
         ToolPolicy policy = descriptor.policy() == null ? ToolPolicy.defaults() : descriptor.policy();
         Duration timeout = policy.timeout() == null ? defaultTimeout : policy.timeout();
 
+        boolean ownScoped = spec.authForwarding() == HttpToolSpec.AuthForwarding.PRINCIPAL_TOKEN;
         try {
-            WebClient.RequestBodySpec req = client
-                    .method(HttpMethod.valueOf(spec.method().name()))
-                    .uri(url)
-                    .headers(h -> headers.forEach(h::set));
-            if (body != null) {
-                String contentType = spec.body().contentType() != null
-                        ? spec.body().contentType() : MediaType.APPLICATION_JSON_VALUE;
-                req.header(HttpHeaders.CONTENT_TYPE, contentType);
-                req.bodyValue(body);
+            String responseBody;
+            try {
+                responseBody = sendOnce(client, spec, url, headers, body, policy, timeout);
+            } catch (WebClientResponseException e) {
+                // Signal 1 — self-healing 409: the own-scoped token is stale
+                // because the caller registered mid-session and this token was
+                // minted before the PLAYER_QUERY_OWN upgrade. Re-mint once and
+                // retry exactly once. A second 409 surfaces as a normal error —
+                // the single retry is the guard against refresh→409→refresh.
+                if (ownScoped && isTokenRefreshRequired(e) && tokenRefresher != null) {
+                    Optional<String> refreshed = tokenRefresher.refresh(ctx);
+                    if (refreshed.isPresent()) {
+                        headers.put(HttpHeaders.AUTHORIZATION, refreshed.get());
+                        diag.put("tokenRefreshed", true);
+                        try {
+                            responseBody = sendOnce(client, spec, url, headers, body, policy, timeout);
+                        } catch (WebClientResponseException retryErr) {
+                            diag.put("httpStatus", retryErr.getStatusCode().value());
+                            return failed(callId, formatHttpFailure(retryErr)).withDiagnostics(diag);
+                        }
+                        return project(callId, spec.response(), responseBody).withDiagnostics(diag);
+                    }
+                }
+                throw e;
             }
-            var mono = req.retrieve().bodyToMono(String.class).timeout(timeout);
-            if (policy.maxRetries() > 0) {
-                // Only retry transient failures. Retrying a 404 / 401 / 422
-                // just wastes time and floods the logs with "Retries
-                // exhausted" wrappers that hide the real cause.
-                mono = mono.retryWhen(Retry.backoff(policy.maxRetries(), Duration.ofMillis(200))
-                        .filter(HttpToolDispatcher::isTransient));
-            }
-            String responseBody = mono.block();
+            // Signal 2 — registration fast-path: a successful result that flags
+            // tokenRefreshRequired means the principal just upgraded; proactively
+            // re-mint so the NEXT own-scoped call skips the 409 round-trip.
+            maybeProactiveRefresh(ctx, responseBody, diag);
             return project(callId, spec.response(), responseBody).withDiagnostics(diag);
         } catch (WebClientResponseException e) {
             diag.put("httpStatus", e.getStatusCode().value());
@@ -168,6 +201,87 @@ public class HttpToolDispatcher {
             return failed(callId, "HTTP tool '" + descriptor.id().value() + "' failed: "
                     + describeCause(e)).withDiagnostics(diag);
         }
+    }
+
+    /** One request attempt. Transient failures (5xx/429/IO/timeout) still retry
+     *  per {@link ToolPolicy}; everything else — including a token-refresh 409 —
+     *  throws {@link WebClientResponseException} for the caller to classify. */
+    private String sendOnce(WebClient client, HttpToolSpec spec, URI url,
+                            Map<String, String> headers, String body,
+                            ToolPolicy policy, Duration timeout) {
+        WebClient.RequestBodySpec req = client
+                .method(HttpMethod.valueOf(spec.method().name()))
+                .uri(url)
+                .headers(h -> headers.forEach(h::set));
+        if (body != null) {
+            String contentType = spec.body().contentType() != null
+                    ? spec.body().contentType() : MediaType.APPLICATION_JSON_VALUE;
+            req.header(HttpHeaders.CONTENT_TYPE, contentType);
+            req.bodyValue(body);
+        }
+        var mono = req.retrieve().bodyToMono(String.class).timeout(timeout);
+        if (policy.maxRetries() > 0) {
+            // Only retry transient failures. Retrying a 404 / 401 / 409 / 422
+            // just wastes time and floods the logs with "Retries exhausted"
+            // wrappers that hide the real cause.
+            mono = mono.retryWhen(Retry.backoff(policy.maxRetries(), Duration.ofMillis(200))
+                    .filter(HttpToolDispatcher::isTransient));
+        }
+        return mono.block();
+    }
+
+    /**
+     * Signal 1 detector: a stale-token 409 the agent must self-heal, as opposed
+     * to a 403 (genuine authorization denial — caller is not registered; do NOT
+     * refresh) or a 401 (unauthenticated). Recognised by the
+     * {@code X-Yaya-Token-Refresh: required} header OR a
+     * {@code {"error":"token_refresh_required"}} body.
+     */
+    private boolean isTokenRefreshRequired(WebClientResponseException e) {
+        if (e.getStatusCode().value() != 409) return false;
+        String hdr = e.getHeaders().getFirst(TOKEN_REFRESH_HEADER);
+        if (hdr != null && "required".equalsIgnoreCase(hdr.trim())) return true;
+        return errorFieldEquals(e.getResponseBodyAsString(), TOKEN_REFRESH_REQUIRED);
+    }
+
+    /** Signal 2: re-mint proactively when a tool result flags
+     *  {@code tokenRefreshRequired}, unless the current token's
+     *  {@code accountState} claim is already {@code registered} (nothing to
+     *  upgrade — skip the extra round-trip). */
+    private void maybeProactiveRefresh(ExecutionContext ctx, String responseBody,
+                                       Map<String, Object> diag) {
+        if (tokenRefresher == null || responseBody == null || responseBody.isBlank()) return;
+        if (!bodyFlagsTokenRefreshRequired(responseBody)) return;
+        if (accountStateRegistered(ctx)) return;
+        tokenRefresher.refresh(ctx).ifPresent(h -> diag.put("tokenRefreshed", true));
+    }
+
+    private boolean errorFieldEquals(String rawBody, String expected) {
+        if (rawBody == null || rawBody.isBlank()) return false;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = json.readValue(rawBody, Map.class);
+            return expected.equals(parsed.get("error"));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean bodyFlagsTokenRefreshRequired(String rawBody) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = json.readValue(rawBody, Map.class);
+            return Boolean.TRUE.equals(parsed.get("tokenRefreshRequired"))
+                    || "true".equals(String.valueOf(parsed.get("tokenRefreshRequired")));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static boolean accountStateRegistered(ExecutionContext ctx) {
+        if (ctx == null || ctx.principal() == null || ctx.principal().claims() == null) return false;
+        Object state = ctx.principal().claims().get("accountState");
+        return state != null && "registered".equalsIgnoreCase(state.toString());
     }
 
     /** Auth-forwarding diagnostics for the inspector — the mode and whether an
@@ -397,8 +511,15 @@ public class HttpToolDispatcher {
         if (mode == null || mode == HttpToolSpec.AuthForwarding.NONE) return;
         switch (mode) {
             case PRINCIPAL_TOKEN -> {
-                String token = ctx == null || ctx.attributes() == null
-                        ? null : (String) ctx.attributes().get("inboundAuthorization");
+                // A token re-minted earlier this turn (reactive 409 or the
+                // registration fast-path) wins over the inbound one, so the
+                // upgraded PLAYER_QUERY_OWN scope reaches every subsequent call.
+                String token = tokenRefresher == null
+                        ? null : tokenRefresher.current(ctx).orElse(null);
+                if (token == null) {
+                    token = ctx == null || ctx.attributes() == null
+                            ? null : (String) ctx.attributes().get("inboundAuthorization");
+                }
                 if (token != null && !token.isBlank()) {
                     headers.put(HttpHeaders.AUTHORIZATION, token);
                 }
