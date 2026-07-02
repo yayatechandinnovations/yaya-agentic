@@ -29,6 +29,13 @@ class SseClient {
   }) =>
       _post('/v1/sessions/$sessionId/actions', {'tool': tool, 'args': args});
 
+  /// Stream from an arbitrary SSE endpoint (used by the chat playground, which
+  /// streams from an operator-authed `/v1/admin/.../chat-playground/...` path
+  /// rather than the public `/v1/sessions/...` one). Same wire format, same
+  /// [TurnEventDto] parsing.
+  Stream<TurnEventDto> streamPath(String path, Map<String, dynamic> body) =>
+      _post(path, body);
+
   Stream<TurnEventDto> _post(String path, Map<String, dynamic> body) async* {
     final response = await _dio.request<ResponseBody>(
       path,

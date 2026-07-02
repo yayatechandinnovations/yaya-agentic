@@ -35,6 +35,7 @@ import '../features/auth/presentation/reset_password_screen.dart';
 import '../features/auth/presentation/signup_screen.dart';
 import '../features/auth/presentation/verify_email_screen.dart';
 import '../features/playground/playground_screen.dart';
+import '../features/playground/chat_playground_screen.dart';
 import '../features/playground/whatsapp_playground_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/workspaces/application/workspaces_controller.dart';
@@ -74,6 +75,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => _AppShell(child: child),
         routes: [
           GoRoute(path: '/playground', builder: (_, __) => const PlaygroundScreen()),
+          GoRoute(path: '/playground/chat', builder: (_, __) => const ChatPlaygroundScreen()),
           GoRoute(path: '/playground/whatsapp', builder: (_, __) => const WhatsAppPlaygroundScreen()),
           GoRoute(path: '/workspaces', builder: (_, __) => const WorkspaceListScreen()),
           GoRoute(
@@ -242,6 +244,7 @@ const _navItems = <_NavEntry>[
   // Daily-use test surfaces.
   _NavGroup('Playground', Icons.science_outlined, Icons.science, children: [
     _NavItem('Chat', Icons.chat_outlined, Icons.chat, '/playground'),
+    _NavItem('Chat channel', Icons.storefront_outlined, Icons.storefront, '/playground/chat'),
     _NavItem('WhatsApp', Icons.phone_iphone_outlined, Icons.phone_iphone, '/playground/whatsapp'),
   ]),
 

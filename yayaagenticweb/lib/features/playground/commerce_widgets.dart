@@ -2,13 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/turn_event.dart';
-import 'playground_controller.dart';
 
 /// Renders the commerce UiHint kinds the engine streams (`product_catalog`,
 /// `product_card`, `checkout_result`) as cards in the chat, plus the persistent
 /// cart bar + editable sheet. Every mutating control routes through the
-/// client-initiated action channel (`dispatchAction`) — the same executor +
-/// Authorizer path a chat tool call takes. See ecommerce-chat-design §10, §15.
+/// client-initiated action channel (a [CommerceDispatch] callback) — the same
+/// executor + Authorizer path a chat tool call takes. See ecommerce-chat-design
+/// §10, §15.
+///
+/// These widgets are provider-agnostic: the SSE playground and the chat
+/// playground each pass their own controller's `dispatchAction` and their own
+/// `cart` selector, so one set of widgets serves both surfaces.
+
+/// Runs a whitelisted commerce tool (add/remove/checkout/load-more). Matches the
+/// signature of both playground controllers' `dispatchAction`.
+typedef CommerceDispatch = void Function(String tool,
+    [Map<String, dynamic> args]);
 
 String formatMoney(num? amountMinor, String? currency) {
   final minor = (amountMinor ?? 0).toInt();
@@ -32,14 +41,17 @@ String _productId(Map product) {
 
 /// Dispatches a commerce hint attached to a message to its renderer.
 class CommerceHintCard extends StatelessWidget {
-  const CommerceHintCard({super.key, required this.hint});
+  const CommerceHintCard({super.key, required this.hint, required this.dispatch});
   final UiHintEvent hint;
+  final CommerceDispatch dispatch;
 
   @override
   Widget build(BuildContext context) {
     return switch (hint.kind) {
-      'product_catalog' => ProductCatalogCard(payload: hint.payload),
-      'product_card' => ProductCardWidget(product: hint.payload),
+      'product_catalog' =>
+        ProductCatalogCard(payload: hint.payload, dispatch: dispatch),
+      'product_card' =>
+        ProductCardWidget(product: hint.payload, dispatch: dispatch),
       'checkout_result' => CheckoutResultCard(payload: hint.payload),
       _ => const SizedBox.shrink(),
     };
@@ -50,15 +62,17 @@ class CommerceHintCard extends StatelessWidget {
 // product_catalog — compact carousel + instant client-side facet filtering
 // ---------------------------------------------------------------------------
 
-class ProductCatalogCard extends ConsumerStatefulWidget {
-  const ProductCatalogCard({super.key, required this.payload});
+class ProductCatalogCard extends StatefulWidget {
+  const ProductCatalogCard(
+      {super.key, required this.payload, required this.dispatch});
   final Map<String, dynamic> payload;
+  final CommerceDispatch dispatch;
 
   @override
-  ConsumerState<ProductCatalogCard> createState() => _ProductCatalogCardState();
+  State<ProductCatalogCard> createState() => _ProductCatalogCardState();
 }
 
-class _ProductCatalogCardState extends ConsumerState<ProductCatalogCard> {
+class _ProductCatalogCardState extends State<ProductCatalogCard> {
   // facetKey -> selected value (categorical) ; 'price' -> "min:max" bucket key.
   final Map<String, String> _selected = {};
 
@@ -126,7 +140,8 @@ class _ProductCatalogCardState extends ConsumerState<ProductCatalogCard> {
                       scrollDirection: Axis.horizontal,
                       itemCount: filtered.length,
                       separatorBuilder: (_, _) => const SizedBox(width: 8),
-                      itemBuilder: (_, i) => _CompactProduct(product: filtered[i]),
+                      itemBuilder: (_, i) => _CompactProduct(
+                          product: filtered[i], dispatch: widget.dispatch),
                     ),
             ),
           ],
@@ -190,14 +205,14 @@ class _FacetRow extends StatelessWidget {
   }
 }
 
-class _CompactProduct extends ConsumerWidget {
-  const _CompactProduct({required this.product});
+class _CompactProduct extends StatelessWidget {
+  const _CompactProduct({required this.product, required this.dispatch});
   final Map product;
+  final CommerceDispatch dispatch;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final images = (product['imageUrls'] as List?) ?? const [];
-    final notifier = ref.read(playgroundProvider.notifier);
     final id = _productId(product);
     final out = product['availability']?.toString() == 'OUT';
     return SizedBox(
@@ -225,7 +240,7 @@ class _CompactProduct extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: FilledButton(
-                          onPressed: out ? null : () => notifier.dispatchAction(
+                          onPressed: out ? null : () => dispatch(
                               'add_to_cart', {'productId': id, 'qty': 1}),
                           style: FilledButton.styleFrom(
                               padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -236,7 +251,7 @@ class _CompactProduct extends ConsumerWidget {
                       IconButton(
                         tooltip: 'Details',
                         visualDensity: VisualDensity.compact,
-                        onPressed: () => notifier.dispatchAction('get_product', {'productId': id}),
+                        onPressed: () => dispatch('get_product', {'productId': id}),
                         icon: const Icon(Icons.info_outline, size: 18),
                       ),
                     ],
@@ -255,12 +270,14 @@ class _CompactProduct extends ConsumerWidget {
 // product_card — expanded single product
 // ---------------------------------------------------------------------------
 
-class ProductCardWidget extends ConsumerWidget {
-  const ProductCardWidget({super.key, required this.product});
+class ProductCardWidget extends StatelessWidget {
+  const ProductCardWidget(
+      {super.key, required this.product, required this.dispatch});
   final Map<String, dynamic> product;
+  final CommerceDispatch dispatch;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final images = (product['imageUrls'] as List?) ?? const [];
     final id = _productId(product);
     return Card(
@@ -286,8 +303,8 @@ class ProductCardWidget extends ConsumerWidget {
                       (product['price'] as Map?)?['currency']?.toString())),
                   const SizedBox(height: 8),
                   FilledButton.icon(
-                    onPressed: () => ref.read(playgroundProvider.notifier)
-                        .dispatchAction('add_to_cart', {'productId': id, 'qty': 1}),
+                    onPressed: () =>
+                        dispatch('add_to_cart', {'productId': id, 'qty': 1}),
                     icon: const Icon(Icons.add_shopping_cart, size: 18),
                     label: const Text('Add to cart'),
                   ),
@@ -355,11 +372,16 @@ class CheckoutResultCard extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class CartBar extends ConsumerWidget {
-  const CartBar({super.key});
+  const CartBar({super.key, required this.cartSource, required this.dispatch});
+
+  /// Reactive source of the latest `cart` UiHint payload — each screen passes
+  /// its own controller's cart selector (e.g. `provider.select((s) => s.cart)`).
+  final ProviderListenable<Map<String, dynamic>?> cartSource;
+  final CommerceDispatch dispatch;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cart = ref.watch(playgroundProvider.select((s) => s.cart));
+    final cart = ref.watch(cartSource);
     final lines = (cart?['lines'] as List?) ?? const [];
     if (cart == null || lines.isEmpty) return const SizedBox.shrink();
 
@@ -369,7 +391,7 @@ class CartBar extends ConsumerWidget {
     return Material(
       color: scheme.secondaryContainer,
       child: InkWell(
-        onTap: () => _openCartSheet(context, ref),
+        onTap: () => _openCartSheet(context, cartSource, dispatch),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(children: [
@@ -379,7 +401,7 @@ class CartBar extends ConsumerWidget {
                 style: TextStyle(color: scheme.onSecondaryContainer, fontWeight: FontWeight.w600)),
             const Spacer(),
             FilledButton.icon(
-              onPressed: () => ref.read(playgroundProvider.notifier).dispatchAction('checkout'),
+              onPressed: () => dispatch('checkout'),
               icon: const Icon(Icons.lock_outline, size: 16),
               label: const Text('Checkout'),
             ),
@@ -390,14 +412,14 @@ class CartBar extends ConsumerWidget {
   }
 }
 
-void _openCartSheet(BuildContext context, WidgetRef ref) {
+void _openCartSheet(BuildContext context,
+    ProviderListenable<Map<String, dynamic>?> cartSource, CommerceDispatch dispatch) {
   showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     builder: (_) => Consumer(builder: (context, ref, _) {
-      final cart = ref.watch(playgroundProvider.select((s) => s.cart));
+      final cart = ref.watch(cartSource);
       final lines = ((cart?['lines'] as List?) ?? const []).whereType<Map>().toList();
-      final notifier = ref.read(playgroundProvider.notifier);
       if (lines.isEmpty) {
         return const Padding(padding: EdgeInsets.all(24), child: Text('Your cart is empty.'));
       }
@@ -407,7 +429,7 @@ void _openCartSheet(BuildContext context, WidgetRef ref) {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('Your cart', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            ...lines.map((l) => _CartLine(line: l, notifier: notifier)),
+            ...lines.map((l) => _CartLine(line: l, dispatch: dispatch)),
             const Divider(),
             Row(children: [
               Text('Subtotal', style: Theme.of(context).textTheme.titleSmall),
@@ -418,13 +440,13 @@ void _openCartSheet(BuildContext context, WidgetRef ref) {
             const SizedBox(height: 12),
             Row(children: [
               TextButton.icon(
-                onPressed: () { notifier.dispatchAction('clear_cart'); Navigator.of(context).pop(); },
+                onPressed: () { dispatch('clear_cart'); Navigator.of(context).pop(); },
                 icon: const Icon(Icons.delete_outline),
                 label: const Text('Clear'),
               ),
               const Spacer(),
               FilledButton.icon(
-                onPressed: () { notifier.dispatchAction('checkout'); Navigator.of(context).pop(); },
+                onPressed: () { dispatch('checkout'); Navigator.of(context).pop(); },
                 icon: const Icon(Icons.lock_outline),
                 label: const Text('Checkout'),
               ),
@@ -437,9 +459,9 @@ void _openCartSheet(BuildContext context, WidgetRef ref) {
 }
 
 class _CartLine extends StatelessWidget {
-  const _CartLine({required this.line, required this.notifier});
+  const _CartLine({required this.line, required this.dispatch});
   final Map line;
-  final PlaygroundController notifier;
+  final CommerceDispatch dispatch;
 
   @override
   Widget build(BuildContext context) {
@@ -460,19 +482,19 @@ class _CartLine extends StatelessWidget {
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
-          onPressed: () => notifier.dispatchAction('set_cart_quantity', {'lineId': lineId, 'qty': qty - 1}),
+          onPressed: () => dispatch('set_cart_quantity', {'lineId': lineId, 'qty': qty - 1}),
           icon: const Icon(Icons.remove_circle_outline, size: 20),
         ),
         Text('$qty'),
         IconButton(
           visualDensity: VisualDensity.compact,
-          onPressed: () => notifier.dispatchAction('set_cart_quantity', {'lineId': lineId, 'qty': qty + 1}),
+          onPressed: () => dispatch('set_cart_quantity', {'lineId': lineId, 'qty': qty + 1}),
           icon: const Icon(Icons.add_circle_outline, size: 20),
         ),
         IconButton(
           tooltip: 'Remove',
           visualDensity: VisualDensity.compact,
-          onPressed: () => notifier.dispatchAction('remove_from_cart', {'lineId': lineId}),
+          onPressed: () => dispatch('remove_from_cart', {'lineId': lineId}),
           icon: const Icon(Icons.close, size: 18),
         ),
       ]),

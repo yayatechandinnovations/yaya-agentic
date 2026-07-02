@@ -87,7 +87,10 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                 child: ListView.builder(
                   padding: const EdgeInsets.all(12),
                   itemCount: state.messages.length,
-                  itemBuilder: (_, i) => _MessageBubble(message: state.messages[i]),
+                  itemBuilder: (_, i) => _MessageBubble(
+                    message: state.messages[i],
+                    dispatch: ref.read(playgroundProvider.notifier).dispatchAction,
+                  ),
                 ),
               ),
               if (state.pendingConfirm != null)
@@ -106,7 +109,10 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                         .toList(),
                   ),
                 ),
-              const CartBar(),
+              CartBar(
+                cartSource: playgroundProvider.select((s) => s.cart),
+                dispatch: ref.read(playgroundProvider.notifier).dispatchAction,
+              ),
               SafeArea(
                 top: false,
                 child: Padding(
@@ -147,8 +153,9 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({required this.message, required this.dispatch});
   final ChatMessage message;
+  final CommerceDispatch dispatch;
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +196,7 @@ class _MessageBubble extends StatelessWidget {
         // Commerce cards render below the caption, wider than a chat bubble.
         ...hints.map((h) => ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 620),
-              child: CommerceHintCard(hint: h),
+              child: CommerceHintCard(hint: h, dispatch: dispatch),
             )),
       ],
     );
