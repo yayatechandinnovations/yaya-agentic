@@ -19,6 +19,8 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppPhoneAuthenticator;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.profile.Profile;
+import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import org.junit.jupiter.api.Test;
 
@@ -140,7 +142,7 @@ class ChatAuthServiceTest {
     private static ChatAuthService service(Supplier<AuthResolverDispatcher.Result> result,
                                            ChannelAuthTrace trace) {
         ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
-                stubDispatcher(result), chainWithJustWhatsApp());
+                stubDispatcher(result), chainWithJustWhatsApp(), stubRegistry());
         return new ChatAuthService(integrator, new VerifiedDeviceAuthenticator(),
                 new AnonymousAuthenticator(), trace);
     }
@@ -156,6 +158,15 @@ class ChatAuthServiceTest {
                 SessionPolicy.defaults(), AbusePolicy.defaults(),
                 requiresPhone, false, EntryPointStatus.ACTIVE,
                 Instant.now(), Instant.now());
+    }
+
+    private static ProfileRegistry stubRegistry() {
+        return new ProfileRegistry() {
+            @Override public Optional<Profile> find(Ids.TenantId t, Ids.ProfileId p) { return Optional.empty(); }
+            @Override public Optional<Profile> findLatest(Ids.TenantId t, Ids.ProfileId p) { return Optional.empty(); }
+            @Override public java.util.List<Profile> listFor(Ids.TenantId t) { return java.util.List.of(); }
+            @Override public void register(Profile profile) {}
+        };
     }
 
     private static AuthResolverDispatcher stubDispatcher(Supplier<AuthResolverDispatcher.Result> fn) {

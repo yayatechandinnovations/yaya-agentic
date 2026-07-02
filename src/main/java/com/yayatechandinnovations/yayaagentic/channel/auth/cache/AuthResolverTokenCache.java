@@ -1,9 +1,11 @@
 package com.yayatechandinnovations.yayaagentic.channel.auth.cache;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
+import com.yayatechandinnovations.yayaagentic.channel.auth.AuthResolver.ProfileSelection;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import org.slf4j.Logger;
@@ -78,7 +80,19 @@ public class AuthResolverTokenCache {
      *       depth against Redis TTL clock skew per §13.6 greptest.</li>
      * </ul>
      */
+    /** Backward-compatible token-only accessor. */
     public Optional<String> get(CacheKey key) {
+        return getIdentity(key).map(CachedIdentity::jwt);
+    }
+
+    /**
+     * Look up the cached identity (JWT + any resolver-selected profile) for the
+     * triple. Same miss/expiry semantics as {@link #get(CacheKey)}. The profile
+     * selection rides alongside the token so a cache HIT — which skips the
+     * resolver — still applies the same profile override a fresh resolve would
+     * have (a returning VIP caller keeps landing on the VIP profile).
+     */
+    public Optional<CachedIdentity> getIdentity(CacheKey key) {
         if (!enabled) { metrics.miss(key.tenant().value()); return Optional.empty(); }
         String rawJson;
         try {
@@ -93,9 +107,13 @@ public class AuthResolverTokenCache {
             return Optional.empty();
         }
         String jwt;
+        Optional<ProfileSelection> profile;
         try {
             Envelope env = json.readValue(rawJson, Envelope.class);
             jwt = cipher.decrypt(env.ct(), env.iv());
+            profile = env.pid() == null || env.pid().isBlank()
+                    ? Optional.empty()
+                    : Optional.of(new ProfileSelection(env.pid(), env.pver()));
         } catch (Exception e) {
             // Corrupted row — drop it and miss. A regression in the cipher
             // key would surface here; we don't want the cache to keep
@@ -113,7 +131,7 @@ public class AuthResolverTokenCache {
             return Optional.empty();
         }
         metrics.hit(key.tenant().value());
-        return Optional.of(jwt);
+        return Optional.of(new CachedIdentity(jwt, profile));
     }
 
     /**
@@ -138,6 +156,20 @@ public class AuthResolverTokenCache {
     public void put(CacheKey key, String jwt,
                     int refreshWindowSeconds,
                     Integer maxCacheSecondsOverride) {
+        put(key, jwt, Optional.empty(), refreshWindowSeconds, maxCacheSecondsOverride);
+    }
+
+    /**
+     * As {@link #put(CacheKey, String, int, Integer)} but also persists the
+     * resolver's profile selection so a cache HIT reapplies it. The profile
+     * <em>key</em> is not a secret (it is re-validated — published, in-tenant,
+     * allowlisted — at every session start), so it rides the envelope in
+     * cleartext alongside the AES-GCM-encrypted token.
+     */
+    public void put(CacheKey key, String jwt,
+                    Optional<ProfileSelection> profile,
+                    int refreshWindowSeconds,
+                    Integer maxCacheSecondsOverride) {
         if (!enabled) return;
         if (jwt == null || jwt.isBlank()) return;
         Instant exp = parseExp(jwt);
@@ -156,9 +188,12 @@ public class AuthResolverTokenCache {
             return;
         }
         JwtSecretCipher.Encrypted enc = cipher.encrypt(jwt);
+        Optional<ProfileSelection> p = profile == null ? Optional.empty() : profile;
         String rawJson;
         try {
-            rawJson = json.writeValueAsString(new Envelope(enc.ciphertext(), enc.iv()));
+            rawJson = json.writeValueAsString(new Envelope(enc.ciphertext(), enc.iv(),
+                    p.map(ProfileSelection::profileId).orElse(null),
+                    p.map(ProfileSelection::version).orElse(null)));
         } catch (Exception e) {
             throw new IllegalStateException("could not encode cache envelope", e);
         }
@@ -258,7 +293,18 @@ public class AuthResolverTokenCache {
         }
     }
 
+    /** The cached identity a HIT returns: the JWT plus any profile the
+     *  resolver selected for this caller. */
+    public record CachedIdentity(String jwt, Optional<ProfileSelection> profile) {
+        public CachedIdentity {
+            profile = profile == null ? Optional.empty() : profile;
+        }
+    }
+
     /** JSON envelope written to Redis. AES-256-GCM ciphertext + IV, both
-     *  base64. */
-    record Envelope(String ct, String iv) {}
+     *  base64. {@code pid}/{@code pver} carry the (non-secret) resolver-selected
+     *  profile key + optional pinned version; both null for token-only rows,
+     *  which is the pre-override wire shape. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record Envelope(String ct, String iv, String pid, Integer pver) {}
 }

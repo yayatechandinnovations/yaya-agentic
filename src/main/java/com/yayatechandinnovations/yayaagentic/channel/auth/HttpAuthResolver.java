@@ -94,6 +94,11 @@ public final class HttpAuthResolver implements AuthResolver {
 
     @Override
     public Optional<String> resolve(ResolveRequest req) throws AuthResolverException {
+        return resolveIdentity(req).map(ResolvedIdentity::jwt);
+    }
+
+    @Override
+    public Optional<ResolvedIdentity> resolveIdentity(ResolveRequest req) throws AuthResolverException {
         HttpEgressPolicy.Decision decision = egressPolicy.check(url);
         if (decision instanceof HttpEgressPolicy.Decision.Deny d) {
             throw new AuthResolverException("allowlist_denied",
@@ -226,7 +231,41 @@ public final class HttpAuthResolver implements AuthResolver {
         }
         // Don't log s itself — non-negotiable §13.1: no JWT cleartext in logs.
         log.debug("auth resolver '{}' returned a token of {} bytes", name, s.length());
-        return Optional.of(s);
+        return Optional.of(new ResolvedIdentity(s, parseProfileSelection(response)));
+    }
+
+    /**
+     * Optional {@code profileId} / {@code profileVersion} in the response body
+     * (design §6.2). Absent = "don't override the bound profile". A present but
+     * malformed {@code profileId} (non-string / blank) is a protocol error, not
+     * a silent no-override — consistent with the "malformed response" rule.
+     */
+    private Optional<ProfileSelection> parseProfileSelection(Map<String, Object> response) {
+        Object pid = response.get("profileId");
+        if (pid == null) return Optional.empty();
+        if (!(pid instanceof String key) || key.isBlank()) {
+            throw new AuthResolverException("bad_profile",
+                    "resolver '" + name + "' returned a non-string/blank profileId");
+        }
+        Object pver = response.get("profileVersion");
+        Integer version = switch (pver) {
+            case null -> null;
+            case Number n -> n.intValue();
+            case String vs when vs.isBlank() -> null;
+            case String vs -> parseVersion(vs);
+            default -> throw new AuthResolverException("bad_profile",
+                    "resolver '" + name + "' returned a non-numeric profileVersion");
+        };
+        return Optional.of(new ProfileSelection(key, version));
+    }
+
+    private Integer parseVersion(String vs) {
+        try {
+            return Integer.parseInt(vs.trim());
+        } catch (NumberFormatException e) {
+            throw new AuthResolverException("bad_profile",
+                    "resolver '" + name + "' returned a non-numeric profileVersion '" + vs + "'");
+        }
     }
 
     /** Record the (already-redaction-safe) exchange for the playground

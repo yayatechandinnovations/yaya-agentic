@@ -80,6 +80,33 @@ class AuthResolverTokenCacheTest {
     }
 
     @Test
+    void profile_selection_survives_a_cache_round_trip() {
+        AuthResolverTokenCache.CacheKey key = keyFor("acme", "snd_acme_main", "+15551234567");
+        String jwt = mintJwt(fixedNow.plus(Duration.ofMinutes(15)));
+
+        cache.put(key, jwt,
+                Optional.of(new com.yayatechandinnovations.yayaagentic.channel.auth
+                        .AuthResolver.ProfileSelection("retail-vip", 3)),
+                60, null);
+
+        // A cache HIT skips the resolver, so the profile the resolver chose must
+        // still be there — a returning VIP caller keeps landing on the VIP profile.
+        AuthResolverTokenCache.CachedIdentity got = cache.getIdentity(key).orElseThrow();
+        assertThat(got.jwt()).isEqualTo(jwt);
+        assertThat(got.profile()).isPresent();
+        assertThat(got.profile().get().profileId()).isEqualTo("retail-vip");
+        assertThat(got.profile().get().version()).isEqualTo(3);
+    }
+
+    @Test
+    void token_only_row_round_trips_without_a_profile() {
+        AuthResolverTokenCache.CacheKey key = keyFor("acme", "snd_acme_main", "+15551234500");
+        cache.put(key, mintJwt(fixedNow.plus(Duration.ofMinutes(15))), 60, null);
+
+        assertThat(cache.getIdentity(key).orElseThrow().profile()).isEmpty();
+    }
+
+    @Test
     void redis_key_uses_sha256_of_caller_phone() {
         AuthResolverTokenCache.CacheKey key = keyFor("acme", "snd_acme_main", "+15551234567");
         String jwt = mintJwt(fixedNow.plus(Duration.ofMinutes(15)));

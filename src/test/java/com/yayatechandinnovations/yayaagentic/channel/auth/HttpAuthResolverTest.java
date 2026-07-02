@@ -64,6 +64,52 @@ class HttpAuthResolverTest {
     }
 
     @Test
+    void resolveIdentity_parses_optional_profile_override() {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"token\":\"eyJ.a.b\",\"profileId\":\"retail-vip\",\"profileVersion\":3}")));
+
+        Optional<AuthResolver.ResolvedIdentity> id =
+                resolver(HttpAuthResolver.ServiceAuthKind.NONE, null)
+                        .resolveIdentity(req(AuthResolver.ResolveReason.INITIAL));
+
+        assertThat(id).isPresent();
+        assertThat(id.get().jwt()).isEqualTo("eyJ.a.b");
+        assertThat(id.get().profile()).isPresent();
+        assertThat(id.get().profile().get().profileId()).isEqualTo("retail-vip");
+        assertThat(id.get().profile().get().version()).isEqualTo(3);
+    }
+
+    @Test
+    void resolveIdentity_absent_profile_means_no_override() {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"token\":\"eyJ.a.b\"}")));
+
+        Optional<AuthResolver.ResolvedIdentity> id =
+                resolver(HttpAuthResolver.ServiceAuthKind.NONE, null)
+                        .resolveIdentity(req(AuthResolver.ResolveReason.INITIAL));
+
+        assertThat(id).isPresent();
+        assertThat(id.get().profile()).isEmpty();
+    }
+
+    @Test
+    void resolveIdentity_malformed_profileId_is_a_protocol_error() {
+        wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"token\":\"eyJ.a.b\",\"profileId\":42}")));
+
+        assertThatThrownBy(() -> resolver(HttpAuthResolver.ServiceAuthKind.NONE, null)
+                .resolveIdentity(req(AuthResolver.ResolveReason.INITIAL)))
+                .isInstanceOf(AuthResolverException.class)
+                .satisfies(e -> assertThat(((AuthResolverException) e).status()).isEqualTo("bad_profile"));
+    }
+
+    @Test
     void posts_body_shape_per_design_6_1() {
         wireMock.stubFor(post(urlEqualTo("/yaya/resolve-identity"))
                 .willReturn(aResponse().withStatus(200)

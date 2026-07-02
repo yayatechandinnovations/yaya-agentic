@@ -17,12 +17,24 @@ import java.util.Optional;
  * RS/ES-family).
  *
  * <p>The contract is intentionally narrow: produce a token for this
- * {@code (tenant, sender, callerPhone)} triple. Claims, profile pinning,
- * expiration policy, scope set — all live INSIDE the JWT, not in the
- * resolver's return shape. Reserved channel claims ({@code phone},
- * {@code channel.kind}, {@code channel.sender}, ...) are stamped by the
- * channel adapter AFTER verification; a resolver that mints a JWT
- * containing them does not gain anything — the post-verify merge wins.
+ * {@code (tenant, sender, callerPhone)} triple. Claims, expiration policy,
+ * and scope set live INSIDE the JWT, not in the resolver's return shape.
+ * Reserved channel claims ({@code phone}, {@code channel.kind},
+ * {@code channel.sender}, ...) are stamped by the channel adapter AFTER
+ * verification; a resolver that mints a JWT containing them does not gain
+ * anything — the post-verify merge wins.
+ *
+ * <p><b>Profile selection is the one exception.</b> A resolver that knows
+ * <em>who</em> the caller is (VIP tier, staff vs. customer, account state)
+ * may also say <em>which profile</em> that caller should talk to, overriding
+ * the channel binding's default. That selection travels in the structured
+ * {@link ResolvedIdentity} return — NOT as a JWT claim — precisely so the
+ * framework can validate it (published + in-tenant + allowlist) and stamp it
+ * post-verify as the reserved {@code yaya.profile} claim; a resolver cannot
+ * smuggle it through arbitrary JWT body claims. See
+ * {@code docs/design/resolver-profile-override-design.md}. Implementations
+ * that don't care return {@link ResolvedIdentity#of(String)} (token only) and
+ * nothing changes.
  *
  * <p>Two transports ship in-tree:
  * <ul>
@@ -62,6 +74,61 @@ public interface AuthResolver {
      *         surface as auth errors and never as anonymous downgrades.
      */
     Optional<String> resolve(ResolveRequest req) throws AuthResolverException;
+
+    /**
+     * The profile-aware form the framework actually calls. Defaults to
+     * wrapping {@link #resolve(ResolveRequest)} with no profile override, so
+     * existing token-only resolvers keep working unchanged. A resolver that
+     * wants to steer the caller to a specific profile overrides this and
+     * returns a populated {@link ResolvedIdentity#profile()}.
+     *
+     * @return {@code Optional.empty()} for "user not found" (drives
+     *         {@code on_unresolved}); otherwise the token plus an optional
+     *         profile selection.
+     */
+    default Optional<ResolvedIdentity> resolveIdentity(ResolveRequest req)
+            throws AuthResolverException {
+        return resolve(req).map(ResolvedIdentity::of);
+    }
+
+    /**
+     * A resolved identity: the mandatory token plus an optional profile
+     * selection that, when present, overrides the channel binding's default
+     * profile for this session (validated + stamped by the framework, never
+     * trusted from the JWT body).
+     *
+     * @param jwt     compact JWT serialization, no {@code Bearer } prefix
+     * @param profile empty = "don't touch the bound profile"
+     */
+    record ResolvedIdentity(String jwt, Optional<ProfileSelection> profile) {
+        public ResolvedIdentity {
+            if (jwt == null || jwt.isBlank()) {
+                throw new IllegalArgumentException("jwt required on a ResolvedIdentity");
+            }
+            profile = profile == null ? Optional.empty() : profile;
+        }
+
+        /** Token-only convenience — the common case, no profile override. */
+        public static ResolvedIdentity of(String jwt) {
+            return new ResolvedIdentity(jwt, Optional.empty());
+        }
+    }
+
+    /**
+     * A resolver's choice of profile for the caller.
+     *
+     * @param profileId the profile <em>key</em> (e.g. {@code "retail-vip"}),
+     *                  not the version-qualified id
+     * @param version   {@code null} = resolve to the latest published version
+     *                  at session start (§5.2 "latest"); a concrete value pins it
+     */
+    record ProfileSelection(String profileId, Integer version) {
+        public ProfileSelection {
+            if (profileId == null || profileId.isBlank()) {
+                throw new IllegalArgumentException("profileId required on a ProfileSelection");
+            }
+        }
+    }
 
     /**
      * @param tenant            the tenant this resolver belongs to

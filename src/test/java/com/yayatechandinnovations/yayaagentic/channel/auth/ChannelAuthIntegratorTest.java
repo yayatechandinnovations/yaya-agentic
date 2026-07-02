@@ -18,6 +18,8 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppPhoneAuth
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
+import com.yayatechandinnovations.yayaagentic.profile.Profile;
+import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -37,7 +39,7 @@ class ChannelAuthIntegratorTest {
         AuthResolverDispatcher neverDispatch = stubDispatcher(
                 (rid, reason) -> { dispatched[0] = true;
                         return new AuthResolverDispatcher.Result.Failed("nope", "should not run"); });
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+        ChannelAuthIntegrator integrator = newIntegrator(
                 neverDispatch, chainWithJustWhatsApp());
 
         ChannelAuthIntegrator.Resolved r = integrator.resolve(
@@ -66,10 +68,10 @@ class ChannelAuthIntegratorTest {
 
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.TokenIssued(
-                        "eyJ.fake.jwt", AuthResolverDispatcher.CacheState.MISS));
+                        "eyJ.fake.jwt", Optional.empty(), AuthResolverDispatcher.CacheState.MISS));
 
         AuthenticatorChain chain = chainThatAlwaysReturns(tenantSide);
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(dispatcher, chain);
+        ChannelAuthIntegrator integrator = newIntegrator(dispatcher, chain);
 
         ChannelAuthIntegrator.Resolved r = integrator.resolve(
                 binding(99L, OnUnresolvedPolicy.REJECT),
@@ -99,7 +101,7 @@ class ChannelAuthIntegratorTest {
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.Unresolved());
 
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+        ChannelAuthIntegrator integrator = newIntegrator(
                 dispatcher, chainWithJustWhatsApp());
 
         ChannelAuthIntegrator.Resolved r = integrator.resolve(
@@ -119,7 +121,7 @@ class ChannelAuthIntegratorTest {
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.Unresolved());
 
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+        ChannelAuthIntegrator integrator = newIntegrator(
                 dispatcher, chainWithJustWhatsApp());
 
         ChannelAuthIntegrator.Resolved r = integrator.resolve(
@@ -141,7 +143,7 @@ class ChannelAuthIntegratorTest {
                 (rid, reason) -> new AuthResolverDispatcher.Result.Failed(
                         "timeout", "resolver timed out"));
 
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+        ChannelAuthIntegrator integrator = newIntegrator(
                 dispatcher, chainWithJustWhatsApp());
 
         // ANONYMOUS policy → baseline path.
@@ -166,11 +168,11 @@ class ChannelAuthIntegratorTest {
         // and the binding's on_unresolved decides.
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.TokenIssued(
-                        "eyJ.fake.jwt", AuthResolverDispatcher.CacheState.MISS));
+                        "eyJ.fake.jwt", Optional.empty(), AuthResolverDispatcher.CacheState.MISS));
 
         AuthenticatorChain emptyChain = chainThatReturnsEmpty();
 
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(dispatcher, emptyChain);
+        ChannelAuthIntegrator integrator = newIntegrator(dispatcher, emptyChain);
 
         var r = integrator.resolve(
                 binding(99L, OnUnresolvedPolicy.REJECT),
@@ -191,8 +193,8 @@ class ChannelAuthIntegratorTest {
                 Instant.now());
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.TokenIssued(
-                        "eyJ.fake.jwt", AuthResolverDispatcher.CacheState.MISS));
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+                        "eyJ.fake.jwt", Optional.empty(), AuthResolverDispatcher.CacheState.MISS));
+        ChannelAuthIntegrator integrator = newIntegrator(
                 dispatcher, chainThatAlwaysReturns(tenantSide));
 
         Map<String, Object> chatClaims = new java.util.LinkedHashMap<>();
@@ -222,7 +224,7 @@ class ChannelAuthIntegratorTest {
         // AUTH_REQUIRED chat entry point → resolver 404 fails closed.
         AuthResolverDispatcher dispatcher = stubDispatcher(
                 (rid, reason) -> new AuthResolverDispatcher.Result.Unresolved());
-        ChannelAuthIntegrator integrator = new ChannelAuthIntegrator(
+        ChannelAuthIntegrator integrator = newIntegrator(
                 dispatcher, chainWithJustWhatsApp());
 
         ChannelAuthIntegrator.Resolved r = integrator.resolveFor(
@@ -252,6 +254,23 @@ class ChannelAuthIntegratorTest {
     }
 
     // ---- fixtures -----------------------------------------------------
+
+    /** These tests don't populate a profile override (TokenIssued carries
+     *  Optional.empty()), so the registry is never consulted — an empty stub
+     *  suffices. Override-specific behavior is covered in
+     *  {@code ChannelAuthProfileOverrideTest}. */
+    private static ChannelAuthIntegrator newIntegrator(AuthResolverDispatcher d, AuthenticatorChain c) {
+        return new ChannelAuthIntegrator(d, c, stubRegistry());
+    }
+
+    private static ProfileRegistry stubRegistry() {
+        return new ProfileRegistry() {
+            @Override public Optional<Profile> find(Ids.TenantId t, Ids.ProfileId p) { return Optional.empty(); }
+            @Override public Optional<Profile> findLatest(Ids.TenantId t, Ids.ProfileId p) { return Optional.empty(); }
+            @Override public List<Profile> listFor(Ids.TenantId t) { return List.of(); }
+            @Override public void register(Profile profile) {}
+        };
+    }
 
     private static AuthContext baseCtx() {
         return new AuthContext(

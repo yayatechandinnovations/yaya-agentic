@@ -655,6 +655,19 @@ Already supported by `IdentityProfileResolver` (`yaya-agentic-design.md`
 When both are set: the JWT claim wins. This is consistent with the
 existing precedence rule.
 
+> **Superseded for direct selection (2026-07).** The claim-driven mapping
+> above still works, but a resolver that already *knows* the profile no
+> longer needs a JWT claim + an `identity_profile_mappings` round-trip. It
+> returns a structured `ResolvedIdentity.profile` (a `ProfileSelection`),
+> which the framework validates (published + in-tenant + per-surface
+> allowlist) and stamps post-verify as the reserved `yaya.profile` claim; a
+> new `ResolverProfileOverrideResolver` (`@Order(15)`) honors it above the
+> bound profile, uniformly across WhatsApp and chat. The "JWT claim wins"
+> line was only ever true on chat (WhatsApp/SMS injected the bound profile
+> as `explicitProfile @10`, shadowing the claim path @20); the override
+> resolver at @15 fixes that inconsistency. See
+> `docs/design/resolver-profile-override-design.md`.
+
 ### Why mid-session refresh tokens are profile-immutable
 
 The session's prompt, tool list, and conversation history are pinned to

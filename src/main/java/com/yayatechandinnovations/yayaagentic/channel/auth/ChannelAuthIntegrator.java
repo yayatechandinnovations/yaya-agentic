@@ -10,8 +10,10 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppPhoneAuthenticator;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
+import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -46,13 +48,51 @@ public class ChannelAuthIntegrator {
 
     private static final Logger log = LoggerFactory.getLogger(ChannelAuthIntegrator.class);
 
+    /** Reserved claim keys carrying a resolver-selected profile override.
+     *  Stamped ONLY from the structured {@link AuthResolver.ProfileSelection}
+     *  after JWT verification — never copied from the JWT body (design §3 #5,
+     *  {@code resolver-profile-override-design.md} §6.3). */
+    public static final String RESERVED_PROFILE_CLAIM = "yaya.profile";
+    public static final String RESERVED_PROFILE_VERSION_CLAIM = "yaya.profile.version";
+
     private final AuthResolverDispatcher dispatcher;
     private final AuthenticatorChain authChain;
+    private final ProfileRegistry profileRegistry;
 
     public ChannelAuthIntegrator(AuthResolverDispatcher dispatcher,
-                                 AuthenticatorChain authChain) {
+                                 AuthenticatorChain authChain,
+                                 @Lazy ProfileRegistry profileRegistry) {
         this.dispatcher = dispatcher;
         this.authChain = authChain;
+        this.profileRegistry = profileRegistry;
+    }
+
+    /**
+     * Per-surface guardrail for a resolver-selected profile override
+     * ({@code resolver-profile-override-design.md} §7). An empty
+     * {@code allowedProfileKeys} means "any published, in-tenant profile is
+     * allowed" — the resolver is tenant-trusted. A non-empty set restricts the
+     * override to those keys, for public entry points that want a buggy or
+     * compromised resolver kept out of privileged internal profiles.
+     */
+    public record OverridePolicy(Set<String> allowedProfileKeys, OnOverrideDenied onDenied) {
+        public OverridePolicy {
+            allowedProfileKeys = allowedProfileKeys == null ? Set.of() : Set.copyOf(allowedProfileKeys);
+            onDenied = onDenied == null ? OnOverrideDenied.IGNORE : onDenied;
+        }
+
+        /** The default: any published in-tenant profile, silently ignore denials. */
+        public static OverridePolicy allowAny() {
+            return new OverridePolicy(Set.of(), OnOverrideDenied.IGNORE);
+        }
+    }
+
+    /** What to do when a resolver-selected override fails a guardrail. */
+    public enum OnOverrideDenied {
+        /** Drop the override, run under the bound profile, audit it. */
+        IGNORE,
+        /** Fail closed — drop the inbound (a mis-route is worse than no answer). */
+        REJECT
     }
 
     /**
@@ -117,7 +157,31 @@ public class ChannelAuthIntegrator {
                                Map<String, Object> channelClaims) {
         return resolveFor(tenant, authResolverId, onUnresolved, baseCtx, session, sender,
                 senderPhone, senderKey, callerPhone, channel, baselineScopes, channelClaims,
-                AuthResolver.ResolveReason.INITIAL);
+                AuthResolver.ResolveReason.INITIAL, OverridePolicy.allowAny());
+    }
+
+    /**
+     * As the 12-arg {@link #resolveFor}, but with an explicit per-surface
+     * {@link OverridePolicy} governing any resolver-selected profile override.
+     * INITIAL reason. Used by the WhatsApp/chat front doors once they carry a
+     * binding/entry-point allowlist.
+     */
+    public Resolved resolveFor(Ids.TenantId tenant,
+                               long authResolverId,
+                               OnUnresolvedPolicy onUnresolved,
+                               AuthContext baseCtx,
+                               Ids.SessionId session,
+                               SenderId sender,
+                               String senderPhone,
+                               String senderKey,
+                               String callerPhone,
+                               String channel,
+                               Set<String> baselineScopes,
+                               Map<String, Object> channelClaims,
+                               OverridePolicy overridePolicy) {
+        return resolveFor(tenant, authResolverId, onUnresolved, baseCtx, session, sender,
+                senderPhone, senderKey, callerPhone, channel, baselineScopes, channelClaims,
+                AuthResolver.ResolveReason.INITIAL, overridePolicy);
     }
 
     /**
@@ -142,6 +206,25 @@ public class ChannelAuthIntegrator {
                                Set<String> baselineScopes,
                                Map<String, Object> channelClaims,
                                AuthResolver.ResolveReason reason) {
+        return resolveFor(tenant, authResolverId, onUnresolved, baseCtx, session, sender,
+                senderPhone, senderKey, callerPhone, channel, baselineScopes, channelClaims,
+                reason, OverridePolicy.allowAny());
+    }
+
+    public Resolved resolveFor(Ids.TenantId tenant,
+                               long authResolverId,
+                               OnUnresolvedPolicy onUnresolved,
+                               AuthContext baseCtx,
+                               Ids.SessionId session,
+                               SenderId sender,
+                               String senderPhone,
+                               String senderKey,
+                               String callerPhone,
+                               String channel,
+                               Set<String> baselineScopes,
+                               Map<String, Object> channelClaims,
+                               AuthResolver.ResolveReason reason,
+                               OverridePolicy overridePolicy) {
         AuthResolverDispatcher.Result result = dispatcher.dispatch(
                 authResolverId,
                 tenant,
@@ -155,7 +238,8 @@ public class ChannelAuthIntegrator {
 
         return switch (result) {
             case AuthResolverDispatcher.Result.TokenIssued ti ->
-                    verifyAndStamp(baseCtx, ti.jwt(), onUnresolved, baselineScopes, channelClaims);
+                    verifyAndStamp(baseCtx, ti.jwt(), ti.profile(), onUnresolved,
+                            overridePolicy, baselineScopes, channelClaims);
             case AuthResolverDispatcher.Result.Unresolved u ->
                     applyOnUnresolved(onUnresolved, baseCtx, null);
             case AuthResolverDispatcher.Result.Failed f ->
@@ -164,7 +248,10 @@ public class ChannelAuthIntegrator {
         };
     }
 
-    private Resolved verifyAndStamp(AuthContext baseCtx, String jwt, OnUnresolvedPolicy onUnresolved,
+    private Resolved verifyAndStamp(AuthContext baseCtx, String jwt,
+                                    Optional<AuthResolver.ProfileSelection> profileOverride,
+                                    OnUnresolvedPolicy onUnresolved,
+                                    OverridePolicy overridePolicy,
                                     Set<String> baselineScopes, Map<String, Object> channelClaims) {
         Map<String, String> mergedHeaders = new LinkedHashMap<>(baseCtx.headers());
         mergedHeaders.put("Authorization", "Bearer " + jwt);
@@ -186,10 +273,67 @@ public class ChannelAuthIntegrator {
             return applyOnUnresolved(onUnresolved, baseCtx,
                     "no authenticator recognised the JWT");
         }
-        Principal stamped = stampChannelClaims(verified.get(), baselineScopes, channelClaims);
+
+        // Validate the resolver's profile override against the per-surface
+        // guardrails (§7). A denial under REJECT fails the whole inbound closed;
+        // under IGNORE it simply doesn't stamp, so the bound profile wins.
+        OverrideOutcome override = evaluateOverride(baseCtx.tenant(), profileOverride, overridePolicy);
+        if (override instanceof OverrideOutcome.Reject rej) {
+            log.warn("profile override rejected for tenant={} ({}): dropping inbound",
+                    baseCtx.tenant().value(), rej.auditReason());
+            return Resolved.reject("profile override denied: " + rej.auditReason());
+        }
+        AuthResolver.ProfileSelection applied =
+                override instanceof OverrideOutcome.Apply a ? a.selection() : null;
+
+        Principal stamped = stampChannelClaims(verified.get(), baselineScopes, channelClaims, applied);
         return new Resolved(Resolved.Decision.JWT_VERIFIED,
                 Optional.of(stamped), Optional.of(jwt),
                 "resolver JWT verified by the trust chain");
+    }
+
+    /**
+     * Apply the §7 guardrails to a resolver-selected override: allowlist first
+     * (cheap, policy), then published + in-tenant (existence). Returns whether
+     * to stamp it, drop it silently, or reject the inbound.
+     */
+    private OverrideOutcome evaluateOverride(Ids.TenantId tenant,
+                                             Optional<AuthResolver.ProfileSelection> override,
+                                             OverridePolicy policy) {
+        if (override.isEmpty()) return OverrideOutcome.NONE;
+        AuthResolver.ProfileSelection sel = override.get();
+
+        Set<String> allowlist = policy.allowedProfileKeys();
+        if (!allowlist.isEmpty() && !allowlist.contains(sel.profileId())) {
+            return deny(policy, "NOT_ALLOWLISTED", sel.profileId());
+        }
+        Ids.ProfileId probe = sel.version() == null
+                ? Ids.ProfileId.latest(sel.profileId())
+                : new Ids.ProfileId(sel.profileId(), sel.version());
+        boolean published = (sel.version() == null
+                ? profileRegistry.findLatest(tenant, probe)
+                : profileRegistry.find(tenant, probe)).isPresent();
+        if (!published) {
+            return deny(policy, "UNPUBLISHED", sel.profileId()
+                    + (sel.version() == null ? "@latest" : "@" + sel.version()));
+        }
+        return new OverrideOutcome.Apply(sel);
+    }
+
+    private OverrideOutcome deny(OverridePolicy policy, String reasonCode, String requested) {
+        String audit = reasonCode + " (requested=" + requested + ")";
+        return policy.onDenied() == OnOverrideDenied.REJECT
+                ? new OverrideOutcome.Reject(audit)
+                : OverrideOutcome.IGNORE;   // drop the override, keep the bound profile
+    }
+
+    /** Result of validating a resolver-selected profile override. */
+    private sealed interface OverrideOutcome {
+        OverrideOutcome NONE = new Ignore("no override");
+        OverrideOutcome IGNORE = new Ignore("override denied, ignored");
+        record Apply(AuthResolver.ProfileSelection selection) implements OverrideOutcome {}
+        record Ignore(String why) implements OverrideOutcome {}
+        record Reject(String auditReason) implements OverrideOutcome {}
     }
 
     private Resolved applyOnUnresolved(OnUnresolvedPolicy onUnresolved, AuthContext baseCtx,
@@ -211,15 +355,32 @@ public class ChannelAuthIntegrator {
      * channel-reserved claim keys with the caller-supplied channel claims
      * (§3 #5). Scopes are unioned with the channel's baseline so identity-gated
      * tools still see "this Principal is on the {whatsapp,chat} channel."
+     *
+     * <p>The reserved {@code yaya.profile}* keys are handled specially: any
+     * value the resolver smuggled into the JWT body is stripped, and the claim
+     * is (re)stamped ONLY from the validated structured {@code applied}
+     * selection. A resolver therefore cannot pick a profile by minting a JWT
+     * claim — only through the framework-validated return shape (§6.3).
      */
     private Principal stampChannelClaims(Principal jwtPrincipal,
                                          Set<String> baselineScopes,
-                                         Map<String, Object> channelClaims) {
+                                         Map<String, Object> channelClaims,
+                                         AuthResolver.ProfileSelection applied) {
         Set<String> scopes = new HashSet<>(jwtPrincipal.scopes());
         scopes.addAll(baselineScopes);
 
         Map<String, Object> claims = new LinkedHashMap<>(jwtPrincipal.claims());
         claims.putAll(channelClaims);
+        // Strip any resolver-smuggled reserved profile claims BEFORE stamping the
+        // validated one — the JWT body is never a trusted source for these.
+        claims.remove(RESERVED_PROFILE_CLAIM);
+        claims.remove(RESERVED_PROFILE_VERSION_CLAIM);
+        if (applied != null) {
+            claims.put(RESERVED_PROFILE_CLAIM, applied.profileId());
+            if (applied.version() != null) {
+                claims.put(RESERVED_PROFILE_VERSION_CLAIM, applied.version());
+            }
+        }
         // Same null-hostility as the authenticators: Map.copyOf below NPEs on a
         // null value, and a stamped channel claim (or a leftover JWT claim) can
         // be null. A null claim is unusable, so drop it rather than reject.

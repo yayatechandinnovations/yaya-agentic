@@ -100,11 +100,12 @@ public class AuthResolverDispatcher {
 
         // §9.3 — cache check on INITIAL only; REFRESH always re-dispatches.
         if (reason == AuthResolver.ResolveReason.INITIAL && row.isCacheEnabled()) {
-            Optional<String> cached = cache.get(cacheKey);
+            Optional<AuthResolverTokenCache.CachedIdentity> cached = cache.getIdentity(cacheKey);
             if (cached.isPresent()) {
                 audit(tenant, row.getName(), session, sender, callerPhone, channel,
                         reason, 0, "ok", "HIT", null, null);
-                return new Result.TokenIssued(cached.get(), CacheState.HIT);
+                return new Result.TokenIssued(cached.get().jwt(), cached.get().profile(),
+                        CacheState.HIT);
             }
         }
 
@@ -118,9 +119,9 @@ public class AuthResolverDispatcher {
         }
 
         long startedAtMillis = Instant.now(clock).toEpochMilli();
-        Optional<String> token;
+        Optional<AuthResolver.ResolvedIdentity> resolved;
         try {
-            token = resolver.resolve(new AuthResolver.ResolveRequest(
+            resolved = resolver.resolveIdentity(new AuthResolver.ResolveRequest(
                     tenant, sender, senderPhone, senderKey, callerPhone, session, channel,
                     reason, Instant.now(clock)));
         } catch (AuthResolverException are) {
@@ -145,7 +146,7 @@ public class AuthResolverDispatcher {
         }
         int elapsed = (int) (Instant.now(clock).toEpochMilli() - startedAtMillis);
 
-        if (token.isEmpty()) {
+        if (resolved.isEmpty()) {
             audit(tenant, row.getName(), session, sender, callerPhone, channel,
                     reason, elapsed, "not_found",
                     reason == AuthResolver.ResolveReason.REFRESH ? "REFRESH" : "MISS",
@@ -155,15 +156,17 @@ public class AuthResolverDispatcher {
             return new Result.Unresolved();
         }
 
+        String jwt = resolved.get().jwt();
+        Optional<AuthResolver.ProfileSelection> profile = resolved.get().profile();
         // Success path: persist to cache + audit.
-        cache.put(cacheKey, token.get(),
+        cache.put(cacheKey, jwt, profile,
                 row.getRefreshWindowSeconds(),
                 row.getMaxCacheSeconds());
         audit(tenant, row.getName(), session, sender, callerPhone, channel,
                 reason, elapsed, "ok",
                 reason == AuthResolver.ResolveReason.REFRESH ? "REFRESH" : "MISS",
                 null, null);
-        return new Result.TokenIssued(token.get(),
+        return new Result.TokenIssued(jwt, profile,
                 reason == AuthResolver.ResolveReason.REFRESH
                         ? CacheState.REFRESH : CacheState.MISS);
     }
@@ -227,7 +230,14 @@ public class AuthResolverDispatcher {
 
     /** Sealed three-way outcome the caller switches on. */
     public sealed interface Result permits Result.TokenIssued, Result.Unresolved, Result.Failed {
-        record TokenIssued(String jwt, CacheState cacheState) implements Result {}
+        /** @param profile the resolver's optional profile selection, carried to
+         *                 the integrator so it can override the bound profile. */
+        record TokenIssued(String jwt, Optional<AuthResolver.ProfileSelection> profile,
+                           CacheState cacheState) implements Result {
+            public TokenIssued {
+                profile = profile == null ? Optional.empty() : profile;
+            }
+        }
         record Unresolved() implements Result {}
         record Failed(String status, String message) implements Result {}
     }

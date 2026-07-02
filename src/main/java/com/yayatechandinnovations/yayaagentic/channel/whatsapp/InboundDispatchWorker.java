@@ -314,10 +314,14 @@ public class InboundDispatchWorker {
         // never sees it. The next inbound resumes the conversation.
         String userText = consumedKeyword ? "" : body;
 
-        // 5. build inputs for the engine
+        // 5. build inputs for the engine. Leave explicitProfile empty: the bound
+        //    profile comes from ChannelProfileResolver (@30) off the channel
+        //    hints, uniformly with chat, so a resolver-selected override (@15)
+        //    can win over it. explicitProfile now means only "a caller/operator
+        //    named a profile." See resolver-profile-override-design.md §8.1.
         StartConversationRequest startReq = new StartConversationRequest(
                 new Ids.TenantId(row.getTenantId()),
-                Optional.of(binding.profile()),
+                Optional.empty(),
                 ChannelKind.WhatsApp.class.getSimpleName().toLowerCase(),
                 hints);
 
