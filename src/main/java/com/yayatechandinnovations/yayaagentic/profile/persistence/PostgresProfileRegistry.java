@@ -19,8 +19,10 @@ import java.util.Optional;
 
 /**
  * M1 ProfileRegistry. Backed by JPA against the {@code profiles} table.
- * Reads always return the requested version; M5 adds the "latest active"
- * resolver. See design §5.2.
+ * {@link #find} returns the exact requested version (the pinned path);
+ * {@link #findLatest} returns the highest-version row for an id (the
+ * unpinned "latest active" path resolved once at session start). See
+ * design §5.2.
  */
 @Component
 @ConditionalOnMissingBean(value = ProfileRegistry.class, ignored = PostgresProfileRegistry.class)
@@ -42,6 +44,15 @@ public class PostgresProfileRegistry implements ProfileRegistry {
     @Transactional(readOnly = true)
     public Optional<Profile> find(Ids.TenantId tenant, Ids.ProfileId profile) {
         return repo.findById(new ProfileEntity.PK(tenant.value(), profile.value(), profile.version()))
+                .map(this::toRecord);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Profile> findLatest(Ids.TenantId tenant, Ids.ProfileId profile) {
+        return repo.findByTenantIdAndIdOrderByVersionDesc(tenant.value(), profile.value())
+                .stream()
+                .findFirst()
                 .map(this::toRecord);
     }
 

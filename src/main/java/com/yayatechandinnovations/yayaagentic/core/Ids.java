@@ -12,7 +12,21 @@ public final class Ids {
     public record SessionId(String value) {}
     public record TurnId(String value) {}
     public record ProfileId(String value, int version) {
+        /**
+         * Sentinel version meaning "unpinned — resolve to the latest version
+         * at session start" (M5 latest-active resolution). A binding/mapping
+         * with no explicit version pin carries this; the engine swaps it for a
+         * concrete {@code profile.version()} once, at {@code start()}, and pins
+         * the session there for its lifetime. Never persisted on a Session.
+         */
+        public static final int LATEST_VERSION = 0;
+
         public ProfileId(String value) { this(value, 1); }
+
+        /** An unpinned id that resolves to the latest version at session start. */
+        public static ProfileId latest(String value) { return new ProfileId(value, LATEST_VERSION); }
+
+        public boolean isLatest() { return version == LATEST_VERSION; }
     }
     public record CapabilityId(String value) {}
     public record ToolId(String value) {}

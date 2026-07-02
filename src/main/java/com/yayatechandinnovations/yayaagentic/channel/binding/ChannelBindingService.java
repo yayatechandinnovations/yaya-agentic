@@ -315,8 +315,12 @@ public class ChannelBindingService {
                 new BindingId(entity.getId()),
                 new Ids.TenantId(entity.getTenantId()),
                 endpoint,
-                new Ids.ProfileId(entity.getProfileId(),
-                        entity.getProfileVersion() == null ? 1 : entity.getProfileVersion()),
+                // No explicit version pin (null column) => unpinned "latest",
+                // resolved to a concrete version at session start. A pinned
+                // row keeps its exact version. See design §5.2.
+                entity.getProfileVersion() == null
+                        ? Ids.ProfileId.latest(entity.getProfileId())
+                        : new Ids.ProfileId(entity.getProfileId(), entity.getProfileVersion()),
                 Optional.ofNullable(entity.getProfileVersion()),
                 routing,
                 policy,

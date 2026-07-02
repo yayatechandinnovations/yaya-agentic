@@ -145,11 +145,21 @@ public class DefaultConversationEngine implements ConversationEngine {
     public StartSessionResult start(StartConversationRequest req, AuthContext auth) {
         Principal principal = authenticator.authenticate(auth);
 
-        Ids.ProfileId profileId = resolverChain.resolve(req, auth, principal)
+        Ids.ProfileId resolved = resolverChain.resolve(req, auth, principal)
                 .orElse(HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE);
 
-        Profile profile = profileRegistry.find(req.tenant(), profileId)
-                .orElseThrow(() -> new IllegalStateException("profile not registered: " + profileId.value() + "@" + profileId.version()));
+        // "Latest" is resolved to a concrete version exactly once, here at
+        // start(). The Session is pinned to profile.id() (the concrete
+        // version), so a mid-stream send() never jumps versions — only a new
+        // session picks up a newer published version. See design §5.2.
+        Profile profile = (resolved.isLatest()
+                ? profileRegistry.findLatest(req.tenant(), resolved)
+                : profileRegistry.find(req.tenant(), resolved))
+                .orElseThrow(() -> new IllegalStateException("profile not registered: "
+                        + resolved.value() + "@" + (resolved.isLatest() ? "latest" : resolved.version())));
+
+        // Never persist the "latest" sentinel — pin to the concrete version.
+        Ids.ProfileId profileId = profile.id();
 
         Session session = new Session(
                 new Ids.SessionId(UUID.randomUUID().toString()),

@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.persistence;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -34,6 +35,7 @@ public interface KnowledgeBlobRepository
      * erroring the sweep. Returns the number of blobs removed.
      */
     @Modifying
+    @WorkspaceUnscoped("background GC sweep across all tenants; correlates tenant internally (s.tenant_id = b.tenant_id)")
     @Query(value = """
             DELETE FROM knowledge_blobs b
              WHERE b.created_at < now() - make_interval(hours => :graceHours)

@@ -57,10 +57,13 @@ public class SessionController {
                                                         ServerWebExchange exchange) {
         Ids.TenantId tenant = new Ids.TenantId(body.tenant() == null ? "default" : body.tenant());
         return enforceOriginMono(tenant.value(), exchange).then(Mono.fromSupplier(() -> {
+            // Explicit id + version = pinned to that exact version; explicit id
+            // alone = unpinned (latest resolved at session start). See §5.2.
             Optional<Ids.ProfileId> explicit = body.profileId() == null
                     ? Optional.empty()
-                    : Optional.of(new Ids.ProfileId(body.profileId(),
-                            body.profileVersion() == null ? 1 : body.profileVersion()));
+                    : Optional.of(body.profileVersion() == null
+                            ? Ids.ProfileId.latest(body.profileId())
+                            : new Ids.ProfileId(body.profileId(), body.profileVersion()));
 
             StartConversationRequest req = new StartConversationRequest(tenant, explicit,
                     body.channel() == null ? "web" : body.channel(),

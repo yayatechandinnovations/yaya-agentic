@@ -19,7 +19,9 @@ public interface SmsSenderRepository extends JpaRepository<SmsSenderEntity, Stri
     Optional<SmsSenderEntity> findByPhoneE164(String phoneE164);
 
     /** Senders attached to a given campaign — used to re-gate them ACTIVE when
-     *  the campaign flips APPROVED. */
+     *  the campaign flips APPROVED. {@code campaign_id} is a globally-unique
+     *  surrogate PK; the A2P poller/registration path holds the campaign. */
+    @WorkspaceUnscoped("campaign_id is a globally-unique surrogate key; A2P infra re-gates senders by campaign")
     List<SmsSenderEntity> findByCampaignId(String campaignId);
 
     /** Used by the sender poller: sweeps in-flight senders across all tenants.

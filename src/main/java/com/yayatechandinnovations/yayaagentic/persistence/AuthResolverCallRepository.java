@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.persistence;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,5 +19,6 @@ public interface AuthResolverCallRepository
 
     /** Chronological resolver-call timeline for one session — feeds the
      *  playground auth-flow inspector. */
+    @WorkspaceUnscoped("keyed on the globally-unique session UUID; the inspector reads by session, not tenant")
     List<AuthResolverCallEntity> findBySessionIdOrderByStartedAtAsc(UUID sessionId);
 }

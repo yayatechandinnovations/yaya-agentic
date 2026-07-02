@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.persistence;
 
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,6 +19,7 @@ public interface KnowledgeIngestionJobRepository
      * holds are skipped rather than blocked on. The caller must be inside a
      * transaction and flip the returned rows to RUNNING before it commits.
      */
+    @WorkspaceUnscoped("background worker claims QUEUED jobs across all tenants (FOR UPDATE SKIP LOCKED)")
     @Query(value = """
             SELECT * FROM knowledge_ingestion_jobs
              WHERE state = 'QUEUED' AND run_after <= now()

@@ -77,6 +77,29 @@ class IdentityProfileResolverTest {
     }
 
     @Test
+    void explicit_version_resolves_pinned() {
+        givenMappings(mapping("role", "PLAYER", "retail-player", 3, 100));
+        Principal player = principal(Map.of("role", "PLAYER"));
+
+        Optional<Ids.ProfileId> hit = resolver.resolve(req(), authCtx(), player);
+
+        assertThat(hit).contains(new Ids.ProfileId("retail-player", 3));
+        assertThat(hit.orElseThrow().isLatest()).isFalse();
+    }
+
+    @Test
+    void null_version_resolves_to_unpinned_latest_sentinel() {
+        // profile_version IS NULL => "latest at session start", not pinned@1.
+        givenMappings(unpinnedMapping("role", "PLAYER", "retail-player", 100));
+        Principal player = principal(Map.of("role", "PLAYER"));
+
+        Optional<Ids.ProfileId> hit = resolver.resolve(req(), authCtx(), player);
+
+        assertThat(hit).contains(Ids.ProfileId.latest("retail-player"));
+        assertThat(hit.orElseThrow().isLatest()).isTrue();
+    }
+
+    @Test
     void no_principal_yields_empty() {
         givenMappings(mapping("role", "PLAYER", "retail-player", 1, 100));
 
@@ -106,6 +129,13 @@ class IdentityProfileResolverTest {
                                                         String profile, int version, int priority) {
         return new IdentityProfileMappingEntity(
                 TENANT.value(), claim, value, profile, version, priority);
+    }
+
+    /** A mapping with no version pin (profile_version IS NULL). */
+    private static IdentityProfileMappingEntity unpinnedMapping(String claim, String value,
+                                                                String profile, int priority) {
+        return new IdentityProfileMappingEntity(
+                TENANT.value(), claim, value, profile, null, priority);
     }
 
     private static Principal principal(Map<String, Object> claims) {

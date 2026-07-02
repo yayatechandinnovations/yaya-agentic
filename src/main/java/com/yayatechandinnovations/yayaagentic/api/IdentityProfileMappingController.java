@@ -73,7 +73,9 @@ public class IdentityProfileMappingController {
                 req.claimName().trim(),
                 req.claimValue().trim(),
                 req.profileId().trim(),
-                req.profileVersion() == null ? 1 : req.profileVersion(),
+                // Null = unpinned (latest at session start); stored as null,
+                // NOT coerced to 1, so a resync that publishes v2 is served.
+                req.profileVersion(),
                 req.priority() == null ? 100 : req.priority());
         IdentityProfileMappingEntity saved;
         try {
@@ -103,7 +105,8 @@ public class IdentityProfileMappingController {
                         "no such mapping " + id + " in tenant '" + tenantId + "'"));
 
         entity.setProfileId(req.profileId().trim());
-        entity.setProfileVersion(req.profileVersion() == null ? 1 : req.profileVersion());
+        // Null = unpinned (latest); preserved as null rather than coerced to 1.
+        entity.setProfileVersion(req.profileVersion());
         entity.setPriority(req.priority() == null ? 100 : req.priority());
         return MappingResponse.of(mappings.save(entity));
     }
@@ -143,10 +146,20 @@ public class IdentityProfileMappingController {
     }
 
     private void requireProfileExists(String tenantId, String profileId, Integer profileVersion) {
-        int version = profileVersion == null ? 1 : profileVersion;
-        profiles.findById(new ProfileEntity.PK(tenantId, profileId, version))
+        // Unpinned (null) mapping: any published version of the id is enough —
+        // the concrete "latest" is picked at session start, not pinned here.
+        if (profileVersion == null) {
+            boolean anyVersion = !profiles
+                    .findByTenantIdAndIdOrderByVersionDesc(tenantId, profileId).isEmpty();
+            if (!anyVersion) {
+                throw AdminApiException.badRequest("unknown_profile",
+                        "no such profile '" + profileId + "' in tenant '" + tenantId + "'");
+            }
+            return;
+        }
+        profiles.findById(new ProfileEntity.PK(tenantId, profileId, profileVersion))
                 .orElseThrow(() -> AdminApiException.badRequest("unknown_profile",
-                        "no such profile '" + profileId + "@" + version + "' in tenant '" + tenantId + "'"));
+                        "no such profile '" + profileId + "@" + profileVersion + "' in tenant '" + tenantId + "'"));
     }
 
     // ---- DTOs ---------------------------------------------------------------
@@ -165,7 +178,7 @@ public class IdentityProfileMappingController {
             String claimName,
             String claimValue,
             String profileId,
-            int profileVersion,
+            Integer profileVersion,
             int priority,
             OffsetDateTime createdAt
     ) {

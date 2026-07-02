@@ -51,7 +51,12 @@ public class IdentityProfileResolver implements ProfileResolver {
             // string but a `roles`/`groups` claim as a list — we accept both
             // shapes so config doesn't have to know which it is.
             if (claimMatches(claimValue, row.getClaimValue())) {
-                return Optional.of(new Ids.ProfileId(row.getProfileId(), row.getProfileVersion()));
+                // Null version = unpinned: resolve to the latest published
+                // version at session start. A concrete value pins it (§5.2).
+                Integer pinned = row.getProfileVersion();
+                return Optional.of(pinned == null
+                        ? Ids.ProfileId.latest(row.getProfileId())
+                        : new Ids.ProfileId(row.getProfileId(), pinned));
             }
         }
         return Optional.empty();
