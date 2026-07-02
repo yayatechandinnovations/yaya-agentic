@@ -29,7 +29,10 @@ mixin _$ProfileRequest {
   List<String> get capabilities => throw _privateConstructorUsedError;
   String? get authBindingId => throw _privateConstructorUsedError;
   String get language => throw _privateConstructorUsedError;
-  Map<String, dynamic> get metadata => throw _privateConstructorUsedError;
+  Map<String, dynamic> get metadata =>
+      throw _privateConstructorUsedError; // Nullable commerce block: {catalogs:[{value,version}], currency,
+  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  Map<String, dynamic>? get commerce => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -58,6 +61,7 @@ abstract class $ProfileRequestCopyWith<$Res> {
     String? authBindingId,
     String language,
     Map<String, dynamic> metadata,
+    Map<String, dynamic>? commerce,
   });
 }
 
@@ -85,6 +89,7 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
     Object? authBindingId = freezed,
     Object? language = null,
     Object? metadata = null,
+    Object? commerce = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -124,6 +129,10 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
                 ? _value.metadata
                 : metadata // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
+            commerce: freezed == commerce
+                ? _value.commerce
+                : commerce // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>?,
           )
           as $Val,
     );
@@ -149,6 +158,7 @@ abstract class _$$ProfileRequestImplCopyWith<$Res>
     String? authBindingId,
     String language,
     Map<String, dynamic> metadata,
+    Map<String, dynamic>? commerce,
   });
 }
 
@@ -175,6 +185,7 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
     Object? authBindingId = freezed,
     Object? language = null,
     Object? metadata = null,
+    Object? commerce = freezed,
   }) {
     return _then(
       _$ProfileRequestImpl(
@@ -214,6 +225,10 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
             ? _value._metadata
             : metadata // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
+        commerce: freezed == commerce
+            ? _value._commerce
+            : commerce // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>?,
       ),
     );
   }
@@ -232,8 +247,10 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     this.authBindingId,
     this.language = 'en',
     final Map<String, dynamic> metadata = const <String, dynamic>{},
+    final Map<String, dynamic>? commerce,
   }) : _capabilities = capabilities,
-       _metadata = metadata;
+       _metadata = metadata,
+       _commerce = commerce;
 
   factory _$ProfileRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileRequestImplFromJson(json);
@@ -271,9 +288,23 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     return EqualUnmodifiableMapView(_metadata);
   }
 
+  // Nullable commerce block: {catalogs:[{value,version}], currency,
+  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  final Map<String, dynamic>? _commerce;
+  // Nullable commerce block: {catalogs:[{value,version}], currency,
+  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  @override
+  Map<String, dynamic>? get commerce {
+    final value = _commerce;
+    if (value == null) return null;
+    if (_commerce is EqualUnmodifiableMapView) return _commerce;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(value);
+  }
+
   @override
   String toString() {
-    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata)';
+    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, commerce: $commerce)';
   }
 
   @override
@@ -297,7 +328,8 @@ class _$ProfileRequestImpl implements _ProfileRequest {
                 other.authBindingId == authBindingId) &&
             (identical(other.language, language) ||
                 other.language == language) &&
-            const DeepCollectionEquality().equals(other._metadata, _metadata));
+            const DeepCollectionEquality().equals(other._metadata, _metadata) &&
+            const DeepCollectionEquality().equals(other._commerce, _commerce));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -313,6 +345,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     authBindingId,
     language,
     const DeepCollectionEquality().hash(_metadata),
+    const DeepCollectionEquality().hash(_commerce),
   );
 
   /// Create a copy of ProfileRequest
@@ -343,6 +376,7 @@ abstract class _ProfileRequest implements ProfileRequest {
     final String? authBindingId,
     final String language,
     final Map<String, dynamic> metadata,
+    final Map<String, dynamic>? commerce,
   }) = _$ProfileRequestImpl;
 
   factory _ProfileRequest.fromJson(Map<String, dynamic> json) =
@@ -365,7 +399,10 @@ abstract class _ProfileRequest implements ProfileRequest {
   @override
   String get language;
   @override
-  Map<String, dynamic> get metadata;
+  Map<String, dynamic> get metadata; // Nullable commerce block: {catalogs:[{value,version}], currency,
+  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  @override
+  Map<String, dynamic>? get commerce;
 
   /// Create a copy of ProfileRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -393,6 +430,7 @@ mixin _$ProfileResponse {
   Map<String, dynamic> get metadata => throw _privateConstructorUsedError;
   String? get status => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
+  Map<String, dynamic>? get commerce => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileResponse to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -424,6 +462,7 @@ abstract class $ProfileResponseCopyWith<$Res> {
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
+    Map<String, dynamic>? commerce,
   });
 }
 
@@ -454,6 +493,7 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
+    Object? commerce = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -505,6 +545,10 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
                 ? _value.createdAt
                 : createdAt // ignore: cast_nullable_to_non_nullable
                       as String?,
+            commerce: freezed == commerce
+                ? _value.commerce
+                : commerce // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>?,
           )
           as $Val,
     );
@@ -533,6 +577,7 @@ abstract class _$$ProfileResponseImplCopyWith<$Res>
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
+    Map<String, dynamic>? commerce,
   });
 }
 
@@ -562,6 +607,7 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
+    Object? commerce = freezed,
   }) {
     return _then(
       _$ProfileResponseImpl(
@@ -613,6 +659,10 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
             ? _value.createdAt
             : createdAt // ignore: cast_nullable_to_non_nullable
                   as String?,
+        commerce: freezed == commerce
+            ? _value._commerce
+            : commerce // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>?,
       ),
     );
   }
@@ -634,8 +684,10 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     final Map<String, dynamic> metadata = const <String, dynamic>{},
     this.status,
     this.createdAt,
+    final Map<String, dynamic>? commerce,
   }) : _capabilities = capabilities,
-       _metadata = metadata;
+       _metadata = metadata,
+       _commerce = commerce;
 
   factory _$ProfileResponseImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileResponseImplFromJson(json);
@@ -679,10 +731,19 @@ class _$ProfileResponseImpl implements _ProfileResponse {
   final String? status;
   @override
   final String? createdAt;
+  final Map<String, dynamic>? _commerce;
+  @override
+  Map<String, dynamic>? get commerce {
+    final value = _commerce;
+    if (value == null) return null;
+    if (_commerce is EqualUnmodifiableMapView) return _commerce;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(value);
+  }
 
   @override
   String toString() {
-    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt)';
+    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, commerce: $commerce)';
   }
 
   @override
@@ -710,7 +771,8 @@ class _$ProfileResponseImpl implements _ProfileResponse {
             const DeepCollectionEquality().equals(other._metadata, _metadata) &&
             (identical(other.status, status) || other.status == status) &&
             (identical(other.createdAt, createdAt) ||
-                other.createdAt == createdAt));
+                other.createdAt == createdAt) &&
+            const DeepCollectionEquality().equals(other._commerce, _commerce));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -729,6 +791,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     const DeepCollectionEquality().hash(_metadata),
     status,
     createdAt,
+    const DeepCollectionEquality().hash(_commerce),
   );
 
   /// Create a copy of ProfileResponse
@@ -762,6 +825,7 @@ abstract class _ProfileResponse implements ProfileResponse {
     final Map<String, dynamic> metadata,
     final String? status,
     final String? createdAt,
+    final Map<String, dynamic>? commerce,
   }) = _$ProfileResponseImpl;
 
   factory _ProfileResponse.fromJson(Map<String, dynamic> json) =
@@ -791,6 +855,8 @@ abstract class _ProfileResponse implements ProfileResponse {
   String? get status;
   @override
   String? get createdAt;
+  @override
+  Map<String, dynamic>? get commerce;
 
   /// Create a copy of ProfileResponse
   /// with the given fields replaced by the non-null parameter values.

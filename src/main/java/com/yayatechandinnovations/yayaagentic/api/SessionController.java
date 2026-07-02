@@ -7,15 +7,18 @@ import com.yayatechandinnovations.yayaagentic.auth.playground.ActAsMaterializer;
 import com.yayatechandinnovations.yayaagentic.auth.playground.PlaygroundActAsRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.websse.WebSseChannelAdapter;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.engine.ActionNotPermittedException;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
 import com.yayatechandinnovations.yayaagentic.persistence.SessionRepository;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import com.yayatechandinnovations.yayaagentic.tenant.OriginEnforcer;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -85,6 +88,29 @@ public class SessionController {
             return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
                     .map(webSse::toSse);
         }));
+    }
+
+    /**
+     * Client-initiated action (a tap on the cart, "Load more", "Checkout"): runs
+     * one whitelisted tool through the same executor + Authorizer as a chat
+     * message, streaming back the same SSE shape (ToolResult + cart UiHint). A
+     * refused action (tool not in profile / not clientInvocable) maps to 403 with
+     * no body — the tool's existence is never leaked. See ecommerce-chat-design §9.
+     */
+    @PostMapping(value = "/{id}/actions", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<Object>> action(@PathVariable("id") String id,
+                                                @RequestBody SessionDtos.ActionRequest body,
+                                                ServerWebExchange exchange) {
+        Ids.SessionId sessionId = new Ids.SessionId(id);
+        String tenant = lookupTenant(id);
+        return enforceOriginMono(tenant, exchange).thenMany(Flux.defer(() -> {
+            AuthContext auth = authContext(new Ids.TenantId(tenant), exchange);
+            auth = actAsMaterializer.applyIfPresent(auth, actAsRegistry.get(sessionId));
+            return engine.dispatchAction(sessionId, new Ids.ToolId(body.tool()),
+                            body.args() == null ? Map.of() : body.args(), auth)
+                    .map(webSse::toSse);
+        })).onErrorMap(ActionNotPermittedException.class,
+                e -> new ResponseStatusException(HttpStatus.FORBIDDEN));
     }
 
     @PostMapping("/{id}/end")

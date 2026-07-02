@@ -94,7 +94,8 @@ public class CatalogMapper {
         int maxRetries = toInt(raw.get("maxRetries"), 0);
         boolean idempotent = toBool(raw.get("idempotent"), true);
         boolean confirmable = toBool(raw.get("confirmable"), false);
-        return new ToolPolicy(timeout, maxRetries, idempotent, confirmable);
+        boolean clientInvocable = toBool(raw.get("clientInvocable"), false);
+        return new ToolPolicy(timeout, maxRetries, idempotent, confirmable, clientInvocable);
     }
 
     private <T> T readJson(String raw, TypeReference<T> type, T fallback) {

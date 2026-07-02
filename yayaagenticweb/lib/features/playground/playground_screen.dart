@@ -7,6 +7,7 @@ import '../../models/turn_event.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
 import '../admin/shared/admin_shared.dart' show TenantScopedEmptyState;
 import 'act_as_panel.dart';
+import 'commerce_widgets.dart';
 import 'playground_controller.dart';
 
 class PlaygroundScreen extends ConsumerStatefulWidget {
@@ -105,6 +106,7 @@ class _PlaygroundScreenState extends ConsumerState<PlaygroundScreen> {
                         .toList(),
                   ),
                 ),
+              const CartBar(),
               SafeArea(
                 top: false,
                 child: Padding(
@@ -151,27 +153,45 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == Role.user;
+    final hasBubble = message.text.isNotEmpty || message.citations.isNotEmpty;
+    final hints = message.commerceHints;
+
+    // A silent action turn (e.g. a cart tap) carries neither text nor an
+    // inline card — the cart bar reflects it instead. Render nothing.
+    if (!hasBubble && hints.isEmpty) return const SizedBox.shrink();
+
     final color = isUser
         ? Theme.of(context).colorScheme.primaryContainer
         : Theme.of(context).colorScheme.surfaceContainerHigh;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message.text.isEmpty ? '…' : message.text),
-            if (message.citations.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              _CitationFootnotes(citations: message.citations),
-            ],
-          ],
-        ),
-      ),
+    return Column(
+      crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        if (hasBubble)
+          Align(
+            alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              constraints: const BoxConstraints(maxWidth: 520),
+              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(message.text.isEmpty ? '…' : message.text),
+                  if (message.citations.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _CitationFootnotes(citations: message.citations),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        // Commerce cards render below the caption, wider than a chat bubble.
+        ...hints.map((h) => ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: CommerceHintCard(hint: h),
+            )),
+      ],
     );
   }
 }

@@ -23,4 +23,7 @@ public final class SessionDtos {
     }
 
     public record MessageRequest(String text) {}
+
+    /** Client-initiated action: run one whitelisted tool by id (two doors, one lock, §9). */
+    public record ActionRequest(String tool, Map<String, Object> args) {}
 }

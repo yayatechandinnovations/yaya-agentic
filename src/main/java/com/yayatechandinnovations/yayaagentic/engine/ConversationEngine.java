@@ -19,6 +19,18 @@ public interface ConversationEngine {
 
     Flux<TurnEvent> send(Ids.SessionId sessionId, UserMessage message, AuthContext auth);
 
+    /**
+     * Client-initiated action: run one whitelisted tool through the SAME
+     * executor + Authorizer path as a chat message (two doors, one lock). The
+     * tool must be in the session profile's capabilities AND
+     * {@code clientInvocable}; otherwise {@link ActionNotPermittedException}.
+     * Confirmable tools (e.g. checkout) still pause for the confirm UiHint — a
+     * tap starts the flow, it does not skip the guardrail. See
+     * {@code ecommerce-chat-design.md} §9.
+     */
+    Flux<TurnEvent> dispatchAction(Ids.SessionId sessionId, Ids.ToolId tool,
+                                   java.util.Map<String, Object> args, AuthContext auth);
+
     void end(Ids.SessionId sessionId, AuthContext auth);
 
     /** Most recent {@link IntentFrame} for the session, or empty if unknown. */

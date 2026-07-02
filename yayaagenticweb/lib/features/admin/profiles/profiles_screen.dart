@@ -6,6 +6,8 @@ import '../../../app/selected_tenant.dart';
 import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
+import '../capabilities/capabilities_screen.dart' show toolsProvider;
+import '../product_catalogs/product_catalogs_screen.dart' show productCatalogsProvider;
 import '../shared/admin_shared.dart';
 import 'clone_profile_wizard.dart';
 
@@ -50,6 +52,12 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   bool _saving = false;
   int? _cloningFromVersion;
 
+  // Commerce block (nullable on the profile): turns this profile into a store.
+  bool _commerceEnabled = false;
+  final _commerceCatalogs = <String>{};
+  final _commerceCurrencyCtrl = TextEditingController(text: 'USD');
+  String? _commerceCheckoutTool;
+
   /// Languages we surface in the dropdown. The backend accepts any BCP 47
   /// tag — operators with niche needs can extend the dropdown later. Until
   /// then, two covers 99% of demo use.
@@ -70,6 +78,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _authBinding = p.authBindingId;
       _language =
           _languageOptions.containsKey(p.language) ? p.language : 'en';
+      _loadCommerce(p.commerce);
       _cloningFromVersion = p.version;
     });
     showSnack(context,
@@ -86,7 +95,28 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _capsSelected.clear();
       _authBinding = null;
       _language = 'en';
+      _loadCommerce(null);
     });
+  }
+
+  /// Populates the commerce controls from a profile's `commerce` block, whose
+  /// shape mirrors the backend CommerceConfig (catalogs as {value,version},
+  /// checkoutTool as {value}).
+  void _loadCommerce(Map<String, dynamic>? commerce) {
+    _commerceCatalogs.clear();
+    if (commerce == null) {
+      _commerceEnabled = false;
+      _commerceCurrencyCtrl.text = 'USD';
+      _commerceCheckoutTool = null;
+      return;
+    }
+    _commerceEnabled = commerce['cartEnabled'] == true;
+    _commerceCurrencyCtrl.text = commerce['currency']?.toString() ?? 'USD';
+    final tool = commerce['checkoutTool'];
+    _commerceCheckoutTool = tool is Map ? tool['value']?.toString() : tool?.toString();
+    for (final c in (commerce['catalogs'] as List? ?? const [])) {
+      if (c is Map && c['value'] != null) _commerceCatalogs.add(c['value'].toString());
+    }
   }
 
   @override
@@ -95,7 +125,24 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     _nameCtrl.dispose();
     _introCtrl.dispose();
     _promptCtrl.dispose();
+    _commerceCurrencyCtrl.dispose();
     super.dispose();
+  }
+
+  /// Builds the commerce block in CommerceConfig JSON shape, or null when the
+  /// store toggle is off. Catalog versions come from the loaded catalog list.
+  Map<String, dynamic>? _buildCommerce() {
+    if (!_commerceEnabled) return null;
+    final catalogs = ref.read(productCatalogsProvider).valueOrNull ?? const [];
+    final versionById = {for (final c in catalogs) c.id: c.version};
+    return {
+      'catalogs': _commerceCatalogs
+          .map((id) => {'value': id, 'version': versionById[id] ?? 1})
+          .toList(),
+      'currency': _commerceCurrencyCtrl.text.trim().isEmpty ? 'USD' : _commerceCurrencyCtrl.text.trim(),
+      'checkoutTool': _commerceCheckoutTool == null ? null : {'value': _commerceCheckoutTool},
+      'cartEnabled': true,
+    };
   }
 
   Future<void> _save() async {
@@ -120,6 +167,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         capabilities: _capsSelected.toList(),
         authBindingId: _authBinding,
         language: _language,
+        commerce: _buildCommerce(),
       ));
       ref.invalidate(profilesProvider);
       if (!mounted) return;
@@ -132,6 +180,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         _capsSelected.clear();
         _authBinding = null;
         _language = 'en';
+        _loadCommerce(null);
         _cloningFromVersion = null;
       });
       showSnack(context,
@@ -143,6 +192,67 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Widget _commerceSection(BuildContext context) {
+    final catalogs = ref.watch(productCatalogsProvider);
+    final tools = ref.watch(toolsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Text('Catalogs', style: Theme.of(context).textTheme.labelLarge),
+        catalogs.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => Text(formatError(e),
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          data: (list) => list.isEmpty
+              ? const Text('No catalogs yet — create one under Catalogs.',
+                  style: TextStyle(fontSize: 12))
+              : Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: list
+                      .map((c) => FilterChip(
+                            label: Text('${c.id}@${c.version}'),
+                            selected: _commerceCatalogs.contains(c.id),
+                            onSelected: (sel) => setState(() {
+                              if (sel) {
+                                _commerceCatalogs.add(c.id);
+                              } else {
+                                _commerceCatalogs.remove(c.id);
+                              }
+                            }),
+                          ))
+                      .toList(),
+                ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _commerceCurrencyCtrl,
+          decoration: const InputDecoration(labelText: 'currency (ISO-4217)'),
+        ),
+        const SizedBox(height: 12),
+        tools.when(
+          loading: () => const SizedBox.shrink(),
+          error: (e, _) => Text(formatError(e),
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          data: (list) {
+            final ids = list.map((t) => t.id).toSet();
+            final value = ids.contains(_commerceCheckoutTool) ? _commerceCheckoutTool : null;
+            return DropdownButtonFormField<String?>(
+              initialValue: value,
+              decoration: const InputDecoration(labelText: 'checkout tool'),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('— none —')),
+                ...ids.map((id) => DropdownMenuItem(value: id, child: Text(id))),
+              ],
+              onChanged: (v) => setState(() => _commerceCheckoutTool = v),
+            );
+          },
+        ),
+      ],
+    );
   }
 
   @override
@@ -245,6 +355,19 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                     .toList(),
                 onChanged: (v) => setState(() => _language = v ?? 'en'),
               ),
+              const SizedBox(height: 16),
+              const Divider(),
+              SwitchListTile(
+                value: _commerceEnabled,
+                onChanged: (v) => setState(() => _commerceEnabled = v),
+                title: const Text('Commerce (storefront)'),
+                subtitle: const Text(
+                    'Turn this profile into a store: bind catalogs, currency, and '
+                    'a checkout tool. Shows the cart affordance to shoppers.',
+                    style: TextStyle(fontSize: 12)),
+                contentPadding: EdgeInsets.zero,
+              ),
+              if (_commerceEnabled) _commerceSection(context),
             ],
           ),
           actions: [

@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.profile.persistence;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yayatechandinnovations.yayaagentic.commerce.CommerceConfig;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileRepository;
@@ -27,6 +28,7 @@ public class PostgresProfileRegistry implements ProfileRegistry {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
+    private static final TypeReference<CommerceConfig> COMMERCE = new TypeReference<>() {};
 
     private final ProfileRepository repo;
     private final ObjectMapper json;
@@ -68,6 +70,7 @@ public class PostgresProfileRegistry implements ProfileRegistry {
         entity.setCapabilitiesJson(writeJson(
                 profile.capabilities().stream().map(Ids.CapabilityId::value).toList()));
         entity.setMetadataJson(writeJson(profile.metadata()));
+        entity.setCommerceJson(profile.commerce() == null ? null : writeJson(profile.commerce()));
         entity.setAuthBindingId(profile.authBinding() == null ? null : profile.authBinding().value());
         entity.setLanguage(profile.language());
         repo.save(entity);
@@ -76,6 +79,9 @@ public class PostgresProfileRegistry implements ProfileRegistry {
     private Profile toRecord(ProfileEntity e) {
         List<String> capIds = readJson(e.getCapabilitiesJson(), STRING_LIST);
         Map<String, Object> metadata = readJson(e.getMetadataJson(), STRING_MAP);
+        CommerceConfig commerce = e.getCommerceJson() == null
+                ? null
+                : readJson(e.getCommerceJson(), COMMERCE);
         return new Profile(
                 new Ids.ProfileId(e.getId(), e.getVersion()),
                 new Ids.TenantId(e.getTenantId()),
@@ -86,7 +92,8 @@ public class PostgresProfileRegistry implements ProfileRegistry {
                 List.of(),                                              // knowledge bindings join in M2.5
                 e.getAuthBindingId() == null ? null : new Ids.AuthBindingId(e.getAuthBindingId()),
                 e.getLanguage(),
-                metadata);
+                metadata,
+                commerce);
     }
 
     private String writeJson(Object value) {

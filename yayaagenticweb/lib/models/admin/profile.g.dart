@@ -23,6 +23,7 @@ _$ProfileRequestImpl _$$ProfileRequestImplFromJson(Map<String, dynamic> json) =>
       metadata:
           json['metadata'] as Map<String, dynamic>? ??
           const <String, dynamic>{},
+      commerce: json['commerce'] as Map<String, dynamic>?,
     );
 
 Map<String, dynamic> _$$ProfileRequestImplToJson(
@@ -37,6 +38,7 @@ Map<String, dynamic> _$$ProfileRequestImplToJson(
   'authBindingId': instance.authBindingId,
   'language': instance.language,
   'metadata': instance.metadata,
+  'commerce': instance.commerce,
 };
 
 _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
@@ -59,6 +61,7 @@ _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
       json['metadata'] as Map<String, dynamic>? ?? const <String, dynamic>{},
   status: json['status'] as String?,
   createdAt: json['createdAt'] as String?,
+  commerce: json['commerce'] as Map<String, dynamic>?,
 );
 
 Map<String, dynamic> _$$ProfileResponseImplToJson(
@@ -76,4 +79,5 @@ Map<String, dynamic> _$$ProfileResponseImplToJson(
   'metadata': instance.metadata,
   'status': instance.status,
   'createdAt': instance.createdAt,
+  'commerce': instance.commerce,
 };

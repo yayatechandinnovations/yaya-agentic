@@ -10,6 +10,7 @@ import '../features/admin/capabilities/capabilities_screen.dart';
 import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
+import '../features/admin/product_catalogs/product_catalogs_screen.dart';
 import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
@@ -86,6 +87,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/capabilities', builder: (_, __) => const CapabilitiesScreen()),
           GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
           GoRoute(path: '/admin/knowledge-sources', builder: (_, __) => const KnowledgeSourcesScreen()),
+          GoRoute(path: '/admin/product-catalogs', builder: (_, __) => const ProductCatalogsScreen()),
           GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
           GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),
@@ -250,6 +252,7 @@ const _navItems = <_NavEntry>[
     _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
     _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
     _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
+    _NavItem('Catalogs', Icons.shopping_bag_outlined, Icons.shopping_bag, '/admin/product-catalogs'),
     _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   ]),
 

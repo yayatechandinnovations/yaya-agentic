@@ -12,13 +12,27 @@ class SseClient {
   SseClient(this._dio);
   final Dio _dio;
 
+  /// A chat turn: `POST /v1/sessions/{id}/messages`.
   Stream<TurnEventDto> stream({
     required String sessionId,
     required String userText,
-  }) async* {
+  }) =>
+      _post('/v1/sessions/$sessionId/messages', {'text': userText});
+
+  /// A client-initiated action (two doors, one lock): `POST /v1/sessions/{id}/actions`.
+  /// Runs one whitelisted tool (cart edit, checkout, load-more) through the same
+  /// executor + Authorizer as a chat message, streaming back the same events.
+  Stream<TurnEventDto> actions({
+    required String sessionId,
+    required String tool,
+    Map<String, dynamic> args = const {},
+  }) =>
+      _post('/v1/sessions/$sessionId/actions', {'tool': tool, 'args': args});
+
+  Stream<TurnEventDto> _post(String path, Map<String, dynamic> body) async* {
     final response = await _dio.request<ResponseBody>(
-      '/v1/sessions/$sessionId/messages',
-      data: {'text': userText},
+      path,
+      data: body,
       options: Options(
         method: 'POST',
         responseType: ResponseType.stream,

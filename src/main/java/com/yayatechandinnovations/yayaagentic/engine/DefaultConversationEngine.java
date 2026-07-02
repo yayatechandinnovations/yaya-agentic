@@ -70,6 +70,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final M0Catalog catalog;
     private final com.yayatechandinnovations.yayaagentic.engine.IntentTracker intentTracker;
     private final com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory;
+    private final PendingUiHints pendingUiHints;
     private final PromptBuilder promptBuilder;
     private final com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector confirmDetector;
     private final Retriever retriever;
@@ -122,6 +123,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         this.catalog = catalog;
         this.intentTracker = intentTracker;
         this.workingMemory = workingMemory;
+        this.pendingUiHints = new PendingUiHints(workingMemory);
         this.promptBuilder = promptBuilder;
         this.confirmDetector = confirmDetector;
         this.retriever = retriever;
@@ -167,9 +169,16 @@ public class DefaultConversationEngine implements ConversationEngine {
         recorder.onSessionStarted(session, ctx(req.tenant(), principal));
         active.put(session.id(), session);
 
+        // Stash the profile's commerce config so managed cart/catalog tools can
+        // resolve catalogs + currency for this session (ecommerce-chat-design §8).
+        if (profile.isStore()) {
+            workingMemory.merge(session.id(), Map.of("commerceConfig", profile.commerce()));
+        }
+
         @SuppressWarnings("unchecked")
         List<String> quickReplies = (List<String>) profile.metadata().getOrDefault("introQuickReplies", List.of());
-        return new StartSessionResult(session, profileId, profile.introOneLiner(), quickReplies);
+        return new StartSessionResult(session, profileId, profile.introOneLiner(), quickReplies,
+                profile.commerce());
     }
 
     @Override
@@ -380,6 +389,87 @@ public class DefaultConversationEngine implements ConversationEngine {
                 prior.historyEntries, prior.tailTurns, prior.summaryText);
 
         return body.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+    }
+
+    @Override
+    public Flux<TurnEvent> dispatchAction(Ids.SessionId sessionId, Ids.ToolId tool,
+                                          Map<String, Object> args, AuthContext auth) {
+        // Flux.defer so the guards run at subscription — a guard failure becomes
+        // Flux.error before any element is emitted, so the controller can still
+        // set a 403 status.
+        return Flux.defer(() -> {
+            Session session = active.get(sessionId);
+            if (session == null) {
+                return Flux.<TurnEvent>error(new IllegalStateException("unknown session: " + sessionId.value()));
+            }
+
+            Profile profile = profileRegistry.find(session.tenant(), session.profile()).orElseThrow();
+
+            // Two doors, one lock: a tap is an untrusted proposal, not a trusted
+            // shortcut. Guard profile membership AND clientInvocable BEFORE any
+            // dispatch. Both failures share one opaque error so the existence of a
+            // tool outside the profile is never leaked (non-negotiable #2).
+            ToolDescriptor descriptor = catalog.tool(tool).orElse(null);
+            if (descriptor == null || !toolInProfile(profile, tool)
+                    || descriptor.policy() == null || !descriptor.policy().clientInvocable()) {
+                return Flux.<TurnEvent>error(new ActionNotPermittedException(
+                        "action refused for tool '" + tool.value() + "' on profile " + profile.id().value()));
+            }
+
+            Principal principal = session.principal();
+            PersonalityFragment personality = personalityProvider.forTenant(session.tenant(), DEFAULT_LOCALE);
+            ConversationRecorder recorder = recorderRouter.recorderFor(session,
+                    new RecorderRouter.RecordingDecisionContext(Map.of()));
+
+            Ids.TurnId turnId = new Ids.TurnId(UUID.randomUUID().toString());
+            ExecutionContext exec = new ExecutionContext(
+                    principal, sessionId, turnId, UUID.randomUUID().toString(), execAttrs(auth));
+
+            // Same executor + Authorizer as a chat tool call. skipConfirm=false so
+            // a tapped checkout still raises the confirm UiHint (tap starts it, it
+            // doesn't skip the guardrail). llmDriven=true streams ToolCall +
+            // ToolResult + the drained cart UiHint with no spoken narration and no
+            // extra LLM round — the tap just wants the fresh cart back.
+            Flux<TurnEvent> body = runToolDispatch(tool, args == null ? Map.of() : args,
+                    profile, personality, session, exec, recorder, turnId,
+                    new UserMessage("", Map.of()),
+                    /* skipConfirm */ false, /* callIdHint */ null, /* llmDriven */ true);
+
+            return body.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+        });
+    }
+
+    /** Reproduces send()'s per-call attribute bag (auth forwarding + host override). */
+    private Map<String, Object> execAttrs(AuthContext auth) {
+        Map<String, Object> execAttrs = new java.util.HashMap<>();
+        if (auth != null && auth.headers() != null) {
+            String authzHeader = auth.headers().get("Authorization");
+            if (authzHeader == null) authzHeader = auth.headers().get("authorization");
+            if (authzHeader != null) execAttrs.put("inboundAuthorization", authzHeader);
+
+            String overrideHost = auth.headers().get("X-Yaya-Host-Base-Url");
+            if (overrideHost == null) overrideHost = auth.headers().get("x-yaya-host-base-url");
+            if (overrideHost != null && !overrideHost.isBlank()) {
+                String trimmed = overrideHost.trim();
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                    execAttrs.put("hostBaseUrlOverride", trimmed);
+                }
+            }
+        }
+        return Map.copyOf(execAttrs);
+    }
+
+    /** True when the tool is backed by one of the profile's capabilities (#2). */
+    private boolean toolInProfile(Profile profile, Ids.ToolId toolId) {
+        if (profile == null || profile.capabilities() == null) return false;
+        for (Ids.CapabilityId capId : profile.capabilities()) {
+            var maybe = catalog.capability(capId);
+            if (maybe.isPresent() && maybe.get().tools() != null
+                    && maybe.get().tools().contains(toolId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Per-session prior context for prompt + LLM history. */
@@ -1148,6 +1238,12 @@ public class DefaultConversationEngine implements ConversationEngine {
                 recordedResult.value(), recordedResult.error(), recordedResult.diagnostics()));
         if (captureOutcome.conflictUiHint() != null) {
             events.add(captureOutcome.conflictUiHint());
+        }
+
+        // Flush any UiHints a tool enqueued (e.g. managed commerce tools emit
+        // product_catalog / cart here instead of narrating them in text, #8).
+        if (recordedResult.status() == Turn.ToolResult.Status.OK) {
+            events.addAll(pendingUiHints.drain(session.id()));
         }
 
         if (llmDriven) {

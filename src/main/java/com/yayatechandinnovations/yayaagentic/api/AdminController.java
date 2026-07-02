@@ -136,6 +136,8 @@ public class AdminController {
                 req.displayName(), req.introOneLiner(), req.systemPromptFragment());
         entity.setCapabilitiesJson(writeJson(safeList(req.capabilities())));
         entity.setMetadataJson(writeJson(req.metadata() == null ? Map.of() : req.metadata()));
+        entity.setCommerceJson(req.commerce() == null || req.commerce().isEmpty()
+                ? null : writeJson(req.commerce()));
         entity.setAuthBindingId(req.authBindingId());
         entity.setLanguage(req.language());
         profiles.save(entity);
@@ -584,7 +586,8 @@ public class AdminController {
                 e.getAuthBindingId(),
                 e.getLanguage(),
                 readJson(e.getMetadataJson(), MAP_REF),
-                e.getStatus(), e.getCreatedAt());
+                e.getStatus(), e.getCreatedAt(),
+                e.getCommerceJson() == null ? null : readJson(e.getCommerceJson(), MAP_REF));
     }
 
     private AdminDtos.CapabilityResponse toCapabilityResponse(CapabilityEntity e) {

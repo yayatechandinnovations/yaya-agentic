@@ -13,6 +13,7 @@ import '../models/admin/clone.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/operator_auth_strategies.dart';
+import '../models/admin/product_catalog.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
@@ -779,6 +780,48 @@ class AdminApi {
       data: {'contentType': contentType, 'dataBase64': dataBase64},
     );
     return (_asMap(res.data)['url'] ?? '') as String;
+  }
+
+  // ---- Product catalogs ------------------------------------------------
+
+  Future<List<ProductCatalogResponse>> listProductCatalogs({String tenant = 'default'}) async {
+    final res = await _dio.get('/v1/admin/product-catalogs',
+        queryParameters: {'tenant': tenant});
+    final items = (res.data['items'] as List? ?? const []);
+    return items.map((e) => ProductCatalogResponse.fromJson(_asMap(e))).toList();
+  }
+
+  Future<ProductCatalogResponse> createProductCatalog(CreateProductCatalogRequest req) async {
+    final res = await _dio.post('/v1/admin/product-catalogs', data: req.toJson());
+    return ProductCatalogResponse.fromJson(_asMap(res.data));
+  }
+
+  /// Full detail (incl. the raw location) for edit-in-place.
+  Future<ProductCatalogDetail> getProductCatalog({
+    String tenant = 'default',
+    required String id,
+  }) async {
+    final res = await _dio.get('/v1/admin/product-catalogs/$id',
+        queryParameters: {'tenant': tenant});
+    return ProductCatalogDetail.fromJson(_asMap(res.data));
+  }
+
+  /// Uploads a catalog/product image and returns the RELATIVE serving path
+  /// (e.g. {@code /v1/commerce/images/{tenant}/{blobId}}). Callers prefix it
+  /// with the backend base URL to store an absolute, publicly-fetchable URL.
+  Future<String> uploadCommerceImage({
+    required String tenant,
+    required List<int> bytes,
+    required String filename,
+    required String contentType,
+  }) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: filename,
+          contentType: DioMediaType.parse(contentType)),
+    });
+    final res = await _dio.post('/v1/admin/commerce/images',
+        queryParameters: {'tenant': tenant}, data: form);
+    return _asMap(res.data)['url']?.toString() ?? '';
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);

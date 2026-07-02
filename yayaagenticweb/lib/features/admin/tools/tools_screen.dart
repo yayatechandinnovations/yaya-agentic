@@ -23,6 +23,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   String _kind = 'BEAN';
   final _beanNameCtrl = TextEditingController();
   bool _confirmable = false;
+  bool _clientInvocable = false;
 
   String _httpMethod = 'GET';
   final _urlCtrl = TextEditingController();
@@ -59,6 +60,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         _authForwarding = http.authForwarding;
       }
       _confirmable = t.policy['confirmable'] == true;
+      _clientInvocable = t.policy['clientInvocable'] == true;
       _cloningFromVersion = t.version;
     });
     showSnack(context,
@@ -160,7 +162,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         inputSchemaJson: _inputSchemaCtrl.text,
         outputSchemaJson: _outputSchemaCtrl.text,
         handler: handler,
-        policy: {'confirmable': _confirmable},
+        policy: {'confirmable': _confirmable, 'clientInvocable': _clientInvocable},
       ));
       ref.invalidate(toolsProvider);
       if (!mounted) return;
@@ -261,6 +263,16 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
             title: const Text('Confirmable'),
             subtitle: const Text(
                 'Pause for explicit yes/no before dispatch. Use for destructive actions.',
+                style: TextStyle(fontSize: 12)),
+            contentPadding: EdgeInsets.zero,
+          ),
+          SwitchListTile(
+            value: _clientInvocable,
+            onChanged: (v) => setState(() => _clientInvocable = v),
+            title: const Text('Client-invocable'),
+            subtitle: const Text(
+                'Allow a client tap to run this tool via POST /sessions/{id}/actions '
+                '(cart edits, checkout). Off keeps it model-only.',
                 style: TextStyle(fontSize: 12)),
             contentPadding: EdgeInsets.zero,
           ),

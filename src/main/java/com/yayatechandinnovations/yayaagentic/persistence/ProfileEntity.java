@@ -42,6 +42,11 @@ public class ProfileEntity {
     @Column(name = "metadata_json", columnDefinition = "jsonb", nullable = false)
     private String metadataJson = "{}";
 
+    // Nullable: null == not a store. Carries the profile's CommerceConfig.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "commerce_json", columnDefinition = "jsonb")
+    private String commerceJson;
+
     @Column(nullable = false, length = 16)
     private String status = "ACTIVE";
 
@@ -77,6 +82,7 @@ public class ProfileEntity {
     public String getCapabilitiesJson() { return capabilitiesJson; }
     public String getAuthBindingId() { return authBindingId; }
     public String getMetadataJson() { return metadataJson; }
+    public String getCommerceJson() { return commerceJson; }
     public String getStatus() { return status; }
     public String getLanguage() { return language; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
@@ -88,6 +94,7 @@ public class ProfileEntity {
     public void setCapabilitiesJson(String v) { this.capabilitiesJson = v; }
     public void setAuthBindingId(String v) { this.authBindingId = v; }
     public void setMetadataJson(String v) { this.metadataJson = v; }
+    public void setCommerceJson(String v) { this.commerceJson = v; }
     public void setStatus(String v) { this.status = v; }
     public void setLanguage(String v) { this.language = (v == null || v.isBlank()) ? "en" : v; }
 

@@ -18,6 +18,7 @@ class ChatMessage {
     this.toolCalls = const [],
     this.toolResults = const [],
     this.citations = const [],
+    this.commerceHints = const [],
   });
   final Role role;
   final String text;
@@ -28,11 +29,17 @@ class ChatMessage {
   /// SSE stream; the playground renders them as numbered footnote markers.
   final List<CitationEvent> citations;
 
+  /// Commerce UiHints emitted during this turn that render as cards in the
+  /// stream — `product_catalog`, `product_card`, `checkout_result`. The `cart`
+  /// hint is NOT here; it drives the persistent cart bar instead.
+  final List<UiHintEvent> commerceHints;
+
   ChatMessage copyWith({
     String? text,
     List<ToolCallEvent>? toolCalls,
     List<ToolResultEvent>? toolResults,
     List<CitationEvent>? citations,
+    List<UiHintEvent>? commerceHints,
   }) =>
       ChatMessage(
         role: role,
@@ -40,6 +47,7 @@ class ChatMessage {
         toolCalls: toolCalls ?? this.toolCalls,
         toolResults: toolResults ?? this.toolResults,
         citations: citations ?? this.citations,
+        commerceHints: commerceHints ?? this.commerceHints,
       );
 }
 
@@ -54,12 +62,17 @@ class PlaygroundState {
     this.pendingConfirm,
     this.currentQuickReplies = const [],
     this.inspector,
+    this.cart,
   });
 
   final StartSessionResponse? session;
   final List<ChatMessage> messages;
   final bool streaming;
   final String? error;
+
+  /// Latest `cart` UiHint payload — drives the persistent cart bar + sheet.
+  /// Null until the first cart mutation this session.
+  final Map<String, dynamic>? cart;
 
   /// When non-null, the engine has emitted a UiHint("confirm", …); the
   /// playground renders a card with Confirm/Cancel buttons.
@@ -83,6 +96,7 @@ class PlaygroundState {
     bool clearPendingConfirm = false,
     List<String>? currentQuickReplies,
     InspectorSnapshot? inspector,
+    Map<String, dynamic>? cart,
   }) =>
       PlaygroundState(
         session: session ?? this.session,
@@ -93,6 +107,7 @@ class PlaygroundState {
             clearPendingConfirm ? null : (pendingConfirm ?? this.pendingConfirm),
         currentQuickReplies: currentQuickReplies ?? this.currentQuickReplies,
         inspector: inspector ?? this.inspector,
+        cart: cart ?? this.cart,
       );
 }
 
@@ -231,14 +246,24 @@ class PlaygroundController extends Notifier<PlaygroundState> {
     // Side-channel state (confirm card, chips) is updated separately from
     // the per-message body. We mutate messages only for token/tool events.
     if (event is UiHintEvent) {
-      if (event.kind == 'confirm') {
-        state = state.copyWith(pendingConfirm: event);
-      } else if (event.kind == 'quick_replies') {
-        final items = event.payload['items'];
-        if (items is List) {
-          state = state.copyWith(
-              currentQuickReplies: items.map((e) => e.toString()).toList());
-        }
+      switch (event.kind) {
+        case 'confirm':
+          state = state.copyWith(pendingConfirm: event);
+        case 'quick_replies':
+          final items = event.payload['items'];
+          if (items is List) {
+            state = state.copyWith(
+                currentQuickReplies: items.map((e) => e.toString()).toList());
+          }
+        case 'cart':
+          // Drives the persistent cart bar + sheet, not an inline bubble.
+          state = state.copyWith(cart: event.payload);
+        case 'product_catalog':
+        case 'product_card':
+        case 'checkout_result':
+          _attachCommerceHint(event);
+        default:
+          break;
       }
       return;
     }
@@ -255,6 +280,47 @@ class PlaygroundController extends Notifier<PlaygroundState> {
     };
     msgs.add(updated);
     state = state.copyWith(messages: msgs);
+  }
+
+  /// Renders a commerce card (catalog / product / checkout result) under the
+  /// current assistant turn.
+  void _attachCommerceHint(UiHintEvent event) {
+    final msgs = [...state.messages];
+    if (msgs.isEmpty) return;
+    final last = msgs.removeLast();
+    msgs.add(last.copyWith(commerceHints: [...last.commerceHints, event]));
+    state = state.copyWith(messages: msgs);
+  }
+
+  /// Two doors, one lock: a tap (add/remove/checkout/load-more) runs a
+  /// whitelisted tool through `POST /sessions/{id}/actions`, streaming back the
+  /// same events as a chat turn. Cart edits refresh the cart bar; a confirmable
+  /// checkout surfaces the confirm card (completed via the yes/no chips).
+  Future<void> dispatchAction(String tool, [Map<String, dynamic> args = const {}]) async {
+    final session = state.session;
+    if (session == null || state.streaming) return;
+    await _sub?.cancel();
+
+    final api = await ref.read(sessionsApiProvider.future);
+    // A placeholder assistant turn holds any inline hints (e.g. checkout_result)
+    // or tool activity; a pure cart edit leaves it empty (rendered as nothing).
+    state = state.copyWith(
+      messages: [...state.messages, ChatMessage(role: Role.assistant, text: '')],
+      streaming: true,
+      clearError: true,
+      clearPendingConfirm: true,
+    );
+
+    _sub = api.sse().actions(sessionId: session.sessionId, tool: tool, args: args).listen(
+      _onEvent,
+      onError: (e) {
+        state = state.copyWith(streaming: false, error: 'Action failed: ${_describe(e)}');
+      },
+      onDone: () {
+        state = state.copyWith(streaming: false);
+        _refreshInspector();
+      },
+    );
   }
 }
 

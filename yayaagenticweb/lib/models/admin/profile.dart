@@ -15,6 +15,9 @@ class ProfileRequest with _$ProfileRequest {
     String? authBindingId,
     @Default('en') String language,
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
+    // Nullable commerce block: {catalogs:[{value,version}], currency,
+    // checkoutTool:{value}, cartEnabled}. Null = not a store.
+    Map<String, dynamic>? commerce,
   }) = _ProfileRequest;
 
   factory ProfileRequest.fromJson(Map<String, dynamic> json) =>
@@ -36,6 +39,7 @@ class ProfileResponse with _$ProfileResponse {
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
+    Map<String, dynamic>? commerce,
   }) = _ProfileResponse;
 
   factory ProfileResponse.fromJson(Map<String, dynamic> json) =>

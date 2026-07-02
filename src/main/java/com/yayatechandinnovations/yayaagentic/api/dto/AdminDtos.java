@@ -27,15 +27,26 @@ public final class AdminDtos {
             List<String> capabilities,
             String authBindingId,
             String language,
-            Map<String, Object> metadata
-    ) {}
+            Map<String, Object> metadata,
+            /** Nullable commerce block: {catalogs:[], currency, checkoutTool, cartEnabled}. */
+            Map<String, Object> commerce
+    ) {
+        /** Back-compat: a non-commerce profile (commerce == null). */
+        public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
+                              String systemPromptFragment, List<String> capabilities,
+                              String authBindingId, String language, Map<String, Object> metadata) {
+            this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
+                    authBindingId, language, metadata, null);
+        }
+    }
 
     public record ProfileResponse(
             String id, int version, String tenant, String displayName,
             String introOneLiner, String systemPromptFragment,
             List<String> capabilities, String authBindingId,
             String language,
-            Map<String, Object> metadata, String status, OffsetDateTime createdAt
+            Map<String, Object> metadata, String status, OffsetDateTime createdAt,
+            Map<String, Object> commerce
     ) {}
 
     // ---- Capabilities ---------------------------------------------------
