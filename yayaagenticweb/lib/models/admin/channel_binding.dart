@@ -18,6 +18,8 @@ class ChannelBindingResponse {
     this.deactivatedAt,
     this.authResolverId,
     required this.onUnresolved,
+    this.allowedOverrideProfiles = const [],
+    this.onOverrideDenied = 'IGNORE',
   });
 
   final int id;
@@ -33,6 +35,9 @@ class ChannelBindingResponse {
   final String? deactivatedAt;
   final int? authResolverId;
   final String onUnresolved; // 'REJECT' | 'ANONYMOUS'
+  // Profile keys the resolver may override into; empty = any published.
+  final List<String> allowedOverrideProfiles;
+  final String onOverrideDenied; // 'IGNORE' | 'REJECT'
 
   factory ChannelBindingResponse.fromJson(Map<String, dynamic> json) =>
       ChannelBindingResponse(
@@ -52,6 +57,9 @@ class ChannelBindingResponse {
         deactivatedAt: json['deactivatedAt']?.toString(),
         authResolverId: (json['authResolverId'] as num?)?.toInt(),
         onUnresolved: (json['onUnresolved'] ?? 'REJECT') as String,
+        allowedOverrideProfiles:
+            (json['allowedOverrideProfiles'] as List?)?.cast<String>() ?? const [],
+        onOverrideDenied: (json['onOverrideDenied'] ?? 'IGNORE') as String,
       );
 }
 
@@ -194,6 +202,8 @@ class ChannelBindingRequest {
     required this.status,
     this.authResolverId,
     this.onUnresolved = 'REJECT',
+    this.allowedOverrideProfiles = const [],
+    this.onOverrideDenied = 'IGNORE',
   });
 
   final ChannelEndpointWire endpoint;
@@ -205,6 +215,8 @@ class ChannelBindingRequest {
   final String status;
   final int? authResolverId;
   final String onUnresolved;
+  final List<String> allowedOverrideProfiles;
+  final String onOverrideDenied;
 
   Map<String, dynamic> toJson() => {
         'endpoint': endpoint.toJson(),
@@ -216,6 +228,8 @@ class ChannelBindingRequest {
         'status': status,
         if (authResolverId != null) 'authResolverId': authResolverId,
         'onUnresolved': onUnresolved,
+        'allowedOverrideProfiles': allowedOverrideProfiles,
+        'onOverrideDenied': onOverrideDenied,
       };
 }
 
@@ -229,6 +243,8 @@ class ChannelBindingUpdate {
     required this.status,
     this.authResolverId,
     this.onUnresolved = 'REJECT',
+    this.allowedOverrideProfiles = const [],
+    this.onOverrideDenied = 'IGNORE',
   });
 
   final String profileId;
@@ -239,6 +255,8 @@ class ChannelBindingUpdate {
   final String status;
   final int? authResolverId;
   final String onUnresolved;
+  final List<String> allowedOverrideProfiles;
+  final String onOverrideDenied;
 
   Map<String, dynamic> toJson() => {
         'profileId': profileId,
@@ -249,5 +267,7 @@ class ChannelBindingUpdate {
         'status': status,
         if (authResolverId != null) 'authResolverId': authResolverId,
         'onUnresolved': onUnresolved,
+        'allowedOverrideProfiles': allowedOverrideProfiles,
+        'onOverrideDenied': onOverrideDenied,
       };
 }

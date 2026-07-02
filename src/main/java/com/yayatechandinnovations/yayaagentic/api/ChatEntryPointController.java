@@ -90,7 +90,9 @@ public class ChatEntryPointController {
                 ChatEntryPointDtos.parseAuthMode(req.authMode()),
                 req.authConfig() == null ? null : req.authConfig().toDomain(),
                 req.abuse() == null ? null : req.abuse().toDomain(),
-                req.requiresVerifiedPhone());
+                req.requiresVerifiedPhone(),
+                allowlistOf(req.allowedOverrideProfiles()),
+                req.onOverrideDenied());
         var created = entryPoints.createDraft(new Ids.TenantId(tenantId), cmd);
         return ResponseEntity.status(HttpStatus.CREATED).body(resp(created));
     }
@@ -109,7 +111,9 @@ public class ChatEntryPointController {
                 req.authMode() == null ? null : ChatEntryPointDtos.parseAuthMode(req.authMode()),
                 req.authConfig() == null ? null : req.authConfig().toDomain(),
                 req.abuse() == null ? null : req.abuse().toDomain(),
-                req.requiresVerifiedPhone());
+                req.requiresVerifiedPhone(),
+                req.allowedOverrideProfiles() == null ? null : allowlistOf(req.allowedOverrideProfiles()),
+                req.onOverrideDenied());
         return resp(entryPoints.updateBranding(new Ids.TenantId(tenantId), new ChatEntryPointId(id), cmd));
     }
 
@@ -161,5 +165,9 @@ public class ChatEntryPointController {
     private ChatEntryPointDtos.EntryPointResponse resp(
             com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint e) {
         return ChatEntryPointDtos.EntryPointResponse.of(e, deepLinkBase);
+    }
+
+    private static java.util.Set<String> allowlistOf(List<String> keys) {
+        return keys == null ? java.util.Set.of() : java.util.Set.copyOf(keys);
     }
 }

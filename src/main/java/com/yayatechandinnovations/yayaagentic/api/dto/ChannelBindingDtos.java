@@ -4,11 +4,13 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
 import com.yayatechandinnovations.yayaagentic.channel.binding.BindingStatus;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
 import com.yayatechandinnovations.yayaagentic.channel.binding.RoutingRule;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
 
 import java.time.Instant;
+import java.util.List;
 
 /** Wire DTOs for {@code /v1/admin/tenants/{tenantId}/channel-bindings}. */
 public final class ChannelBindingDtos {
@@ -34,7 +36,9 @@ public final class ChannelBindingDtos {
             Integer         priority,
             BindingStatus   status,
             Long            authResolverId,
-            OnUnresolvedPolicy onUnresolved
+            OnUnresolvedPolicy onUnresolved,
+            List<String>    allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied
     ) {}
 
     /** PUT-only update body (endpoint immutable post-create). */
@@ -46,7 +50,9 @@ public final class ChannelBindingDtos {
             Integer         priority,
             BindingStatus   status,
             Long            authResolverId,
-            OnUnresolvedPolicy onUnresolved
+            OnUnresolvedPolicy onUnresolved,
+            List<String>    allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied
     ) {}
 
     /** Wire representation of {@link ChannelEndpointRef}. */
@@ -66,7 +72,9 @@ public final class ChannelBindingDtos {
             Instant         createdAt,
             Instant         deactivatedAt,
             Long            authResolverId,
-            OnUnresolvedPolicy onUnresolved
+            OnUnresolvedPolicy onUnresolved,
+            List<String>    allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied
     ) {
 
         public static BindingResponse of(ChannelBinding b) {
@@ -83,7 +91,9 @@ public final class ChannelBindingDtos {
                     b.createdAt(),
                     b.deactivatedAt(),
                     b.authResolverId(),
-                    b.onUnresolved());
+                    b.onUnresolved(),
+                    b.allowedOverrideProfiles().stream().sorted().toList(),
+                    b.onOverrideDenied());
         }
     }
 }

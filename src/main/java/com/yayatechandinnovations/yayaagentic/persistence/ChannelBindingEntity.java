@@ -61,6 +61,15 @@ public class ChannelBindingEntity {
     @Column(name = "on_unresolved", nullable = false, length = 16)
     private String onUnresolved = "REJECT";
 
+    // Resolver-profile-override guardrails (V61). JSON array of profile keys;
+    // empty/[] = any published in-tenant profile is allowed.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "allowed_override_profiles_json", columnDefinition = "jsonb", nullable = false)
+    private String allowedOverrideProfilesJson = "[]";
+
+    @Column(name = "on_override_denied", nullable = false, length = 8)
+    private String onOverrideDenied = "IGNORE";
+
     protected ChannelBindingEntity() {}
 
     public ChannelBindingEntity(String tenantId, String endpointKind, String endpointId,
@@ -93,6 +102,8 @@ public class ChannelBindingEntity {
 
     public Long getAuthResolverId() { return authResolverId; }
     public String getOnUnresolved() { return onUnresolved; }
+    public String getAllowedOverrideProfilesJson() { return allowedOverrideProfilesJson; }
+    public String getOnOverrideDenied() { return onOverrideDenied; }
 
     public void setProfileId(String v) { this.profileId = v; }
     public void setProfileVersion(Integer v) { this.profileVersion = v; }
@@ -103,4 +114,10 @@ public class ChannelBindingEntity {
     public void setDeactivatedAt(OffsetDateTime v) { this.deactivatedAt = v; }
     public void setAuthResolverId(Long v) { this.authResolverId = v; }
     public void setOnUnresolved(String v) { this.onUnresolved = v; }
+    public void setAllowedOverrideProfilesJson(String v) {
+        this.allowedOverrideProfilesJson = v == null || v.isBlank() ? "[]" : v;
+    }
+    public void setOnOverrideDenied(String v) {
+        this.onOverrideDenied = v == null || v.isBlank() ? "IGNORE" : v;
+    }
 }

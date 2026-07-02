@@ -44,7 +44,10 @@ public class ChannelAuthTrace {
                            String verificationDetail,
                            String tokenState,
                            String tenantId,
-                           String callerSha256) {}
+                           String callerSha256,
+                           String effectiveProfile,
+                           String profileSource,
+                           String overrideDeniedReason) {}
 
     private static final class Mutable {
         String bindingId, profileId, onUnresolved;
@@ -52,11 +55,13 @@ public class ChannelAuthTrace {
         String verificationDecision, verificationDetail;
         String tokenState;
         String tenantId, callerSha256;
+        String effectiveProfile, profileSource, overrideDeniedReason;
 
         Snapshot snapshot() {
             return new Snapshot(bindingId, profileId, resolverId, onUnresolved,
                     verificationDecision, verificationDetail, tokenState,
-                    tenantId, callerSha256);
+                    tenantId, callerSha256,
+                    effectiveProfile, profileSource, overrideDeniedReason);
         }
     }
 
@@ -89,6 +94,25 @@ public class ChannelAuthTrace {
         synchronized (m) {
             m.verificationDecision = decision;
             m.verificationDetail = detail;
+        }
+    }
+
+    /**
+     * Record which profile the session actually landed on and why — so the
+     * inspector can show "bound = retail-standard; effective = retail-vip
+     * (resolver override)". {@code profileSource} ∈ {BOUND, RESOLVER_OVERRIDE};
+     * {@code overrideDeniedReason} is set when a resolver override was dropped
+     * by a guardrail (audit, not user-safe). The bound profile is already on the
+     * snapshot as {@code profileId} (from {@link #recordBinding}).
+     */
+    public void recordProfileResolution(Ids.SessionId session, String effectiveProfile,
+                                        String profileSource, String overrideDeniedReason) {
+        if (session == null) return;
+        Mutable m = entry(session);
+        synchronized (m) {
+            m.effectiveProfile = effectiveProfile;
+            m.profileSource = profileSource;
+            m.overrideDeniedReason = overrideDeniedReason;
         }
     }
 

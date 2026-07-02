@@ -1,10 +1,12 @@
 package com.yayatechandinnovations.yayaagentic.channel.chat;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
 import com.yayatechandinnovations.yayaagentic.channel.binding.RoutingRule;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
@@ -24,6 +26,7 @@ import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -104,6 +107,8 @@ public class ChatEntryPointService {
         // than discover the gap at session start.
         boolean resolverExchange = cmd.authConfig() instanceof AuthConfig.ResolverExchange;
         e.setRequiresVerifiedPhone(resolverExchange || Boolean.TRUE.equals(cmd.requiresVerifiedPhone()));
+        e.setAllowedOverrideProfilesJson(writeJson(sortedList(cmd.allowedOverrideProfiles())));
+        if (cmd.onOverrideDenied() != null) e.setOnOverrideDenied(cmd.onOverrideDenied().name());
         e.setUpdatedAt(now());
 
         ChatEntryPointEntity saved = repo.save(e);
@@ -119,7 +124,10 @@ public class ChatEntryPointService {
                 SessionPolicy.defaults(),
                 100,
                 authResolverId,
-                authMode.requiresTokenToStart() ? OnUnresolvedPolicy.REJECT : OnUnresolvedPolicy.ANONYMOUS);
+                authMode.requiresTokenToStart() ? OnUnresolvedPolicy.REJECT : OnUnresolvedPolicy.ANONYMOUS,
+                // Override guardrails for chat live on the entry point row (read by
+                // ChatAuthService), not this MatchAny binding — leave it at defaults.
+                Set.of(), OnOverrideDenied.IGNORE);
 
         return toDomain(saved);
     }
@@ -149,6 +157,10 @@ public class ChatEntryPointService {
         }
         if (cmd.abuse() != null) e.setAbusePolicyJson(writeJson(cmd.abuse()));
         if (cmd.requiresVerifiedPhone() != null) e.setRequiresVerifiedPhone(cmd.requiresVerifiedPhone());
+        if (cmd.allowedOverrideProfiles() != null) {
+            e.setAllowedOverrideProfilesJson(writeJson(sortedList(cmd.allowedOverrideProfiles())));
+        }
+        if (cmd.onOverrideDenied() != null) e.setOnOverrideDenied(cmd.onOverrideDenied().name());
         // Switching to resolver-exchange forces a verified phone (see createDraft).
         if (cmd.authConfig() instanceof AuthConfig.ResolverExchange) e.setRequiresVerifiedPhone(true);
         e.setUpdatedAt(now());
@@ -275,7 +287,24 @@ public class ChatEntryPointService {
                 e.isDiscoverable(),
                 EntryPointStatus.parse(e.getStatus()),
                 toInstant(e.getCreatedAt()),
-                toInstant(e.getUpdatedAt()));
+                toInstant(e.getUpdatedAt()),
+                readStringSet(e.getAllowedOverrideProfilesJson()),
+                OnOverrideDenied.parse(e.getOnOverrideDenied()));
+    }
+
+    private Set<String> readStringSet(String jsonArray) {
+        if (jsonArray == null || jsonArray.isBlank()) return Set.of();
+        try {
+            List<String> list = json.readValue(jsonArray, new TypeReference<List<String>>() {});
+            return list == null ? Set.of() : Set.copyOf(list);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("decode allowed_override_profiles_json", e);
+        }
+    }
+
+    private static List<String> sortedList(Set<String> keys) {
+        return keys == null ? List.of() : keys.stream().filter(k -> k != null && !k.isBlank())
+                .map(String::trim).distinct().sorted().toList();
     }
 
     private static OffsetDateTime now() { return OffsetDateTime.now(ZoneOffset.UTC); }
@@ -306,7 +335,9 @@ public class ChatEntryPointService {
             AuthMode authMode,
             AuthConfig authConfig,
             AbusePolicy abuse,
-            Boolean requiresVerifiedPhone) {}
+            Boolean requiresVerifiedPhone,
+            Set<String> allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied) {}
 
     /** Partial update — null fields are left unchanged. */
     public record UpdateCommand(
@@ -320,5 +351,7 @@ public class ChatEntryPointService {
             AuthMode authMode,
             AuthConfig authConfig,
             AbusePolicy abuse,
-            Boolean requiresVerifiedPhone) {}
+            Boolean requiresVerifiedPhone,
+            Set<String> allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied) {}
 }

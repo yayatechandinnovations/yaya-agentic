@@ -229,6 +229,18 @@ class InspectorPanel extends StatelessWidget {
               : 'Binding ${b.bindingId} → FAQ mode (no resolver)',
           detail: 'profile ${b.profileId ?? '—'}'
               '${b.onUnresolved != null ? ' · on_unresolved=${b.onUnresolved}' : ''}'));
+
+      // Stage 1b — profile resolution: show when the resolver overrode the
+      // bound profile, or when it tried to and was denied by a guardrail.
+      if (b.overrodeProfile) {
+        children.add(_stageRow(context, 'ok', 'Profile override → ${b.effectiveProfile}',
+            detail: 'resolver selected ${b.effectiveProfile} '
+                '(bound was ${b.profileId ?? '—'})'));
+      } else if (b.overrideDeniedReason != null) {
+        children.add(_stageRow(context, 'warn', 'Profile override denied',
+            detail: '${b.overrideDeniedReason} · ran under bound profile '
+                '${b.profileId ?? '—'}'));
+      }
     }
 
     // Stage 2 — Resolver call(s).

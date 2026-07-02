@@ -610,6 +610,14 @@ public class InboundDispatchWorker {
         };
         authTrace.recordVerification(sessionId, decision, detail);
 
+        // Bound vs effective profile (resolver-profile-override-design.md §9).
+        String boundProfile = binding.profile().value();
+        String override = authResolved.appliedProfileOverride().orElse(null);
+        authTrace.recordProfileResolution(sessionId,
+                override == null ? boundProfile : override,
+                override == null ? "BOUND" : "RESOLVER_OVERRIDE",
+                authResolved.overrideDeniedReason().orElse(null));
+
         com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace.TokenState tokenState;
         if (authResolved.jwt().isEmpty()) {
             tokenState = com.yayatechandinnovations.yayaagentic.channel.auth

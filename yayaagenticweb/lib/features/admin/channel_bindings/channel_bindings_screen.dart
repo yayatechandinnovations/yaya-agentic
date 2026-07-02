@@ -35,6 +35,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   final _localesCtrl = TextEditingController();
   final _claimCtrl = TextEditingController();
   final _claimValueCtrl = TextEditingController();
+  // Comma-separated profile keys the resolver may override into (empty = any).
+  final _allowlistCtrl = TextEditingController();
 
   String? _senderId;
   String? _profileSlug;             // "<id>@<version>"
@@ -44,6 +46,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   bool _saving = false;
   int? _authResolverId;             // null = FAQ mode (no resolver)
   String _onUnresolved = 'REJECT';
+  String _onOverrideDenied = 'IGNORE';
 
   @override
   void dispose() {
@@ -52,8 +55,15 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     _localesCtrl.dispose();
     _claimCtrl.dispose();
     _claimValueCtrl.dispose();
+    _allowlistCtrl.dispose();
     super.dispose();
   }
+
+  List<String> _parseAllowlist() => _allowlistCtrl.text
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 
   void _resetForm() {
     setState(() {
@@ -69,6 +79,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _claimValueCtrl.clear();
       _authResolverId = null;
       _onUnresolved = 'REJECT';
+      _onOverrideDenied = 'IGNORE';
+      _allowlistCtrl.clear();
     });
   }
 
@@ -96,6 +108,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       }
       _authResolverId = row.authResolverId;
       _onUnresolved = row.onUnresolved;
+      _onOverrideDenied = row.onOverrideDenied;
+      _allowlistCtrl.text = row.allowedOverrideProfiles.join(', ');
     });
   }
 
@@ -181,6 +195,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               status: _status,
               authResolverId: _authResolverId,
               onUnresolved: _onUnresolved,
+              allowedOverrideProfiles: _parseAllowlist(),
+              onOverrideDenied: _onOverrideDenied,
             ));
       } else {
         await api.updateChannelBinding(
@@ -195,6 +211,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               status: _status,
               authResolverId: _authResolverId,
               onUnresolved: _onUnresolved,
+              allowedOverrideProfiles: _parseAllowlist(),
+              onOverrideDenied: _onOverrideDenied,
             ));
       }
       ref.invalidate(channelBindingsProvider(tenant));
@@ -418,6 +436,41 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         onUnresolvedChanged: (v) =>
                             setState(() => _onUnresolved = v ?? 'REJECT'),
                       ),
+                      // Only meaningful when a resolver is attached — it's the
+                      // resolver that can return a profile to override with.
+                      if (_authResolverId != null) ...[
+                        const SizedBox(height: 16),
+                        Text('Profile override guardrails',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _allowlistCtrl,
+                          decoration: const InputDecoration(
+                              labelText: 'Allowed override profiles',
+                              helperText:
+                                  'Comma-separated profile keys the resolver may override into. '
+                                  'Leave empty to allow any published profile.'),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _onOverrideDenied,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                              labelText: 'When an override is denied',
+                              helperText:
+                                  'IGNORE runs the bound profile; REJECT drops the inbound.'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'IGNORE',
+                                child: Text('Ignore — use the bound profile')),
+                            DropdownMenuItem(
+                                value: 'REJECT',
+                                child: Text('Reject — drop the inbound')),
+                          ],
+                          onChanged: (v) =>
+                              setState(() => _onOverrideDenied = v ?? 'IGNORE'),
+                        ),
+                      ],
                     ],
                   );
                 },

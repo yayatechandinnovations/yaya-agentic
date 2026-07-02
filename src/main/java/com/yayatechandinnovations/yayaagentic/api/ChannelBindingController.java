@@ -70,7 +70,9 @@ public class ChannelBindingController {
                 req.sessionPolicy() == null ? SessionPolicy.defaults() : req.sessionPolicy(),
                 req.priority() == null ? 100 : req.priority(),
                 req.authResolverId(),
-                req.onUnresolved());
+                req.onUnresolved(),
+                allowlistOf(req.allowedOverrideProfiles()),
+                req.onOverrideDenied());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ChannelBindingDtos.BindingResponse.of(saved));
     }
@@ -99,7 +101,9 @@ public class ChannelBindingController {
                 req.priority() == null ? 100 : req.priority(),
                 req.status() == null ? BindingStatus.ACTIVE : req.status(),
                 req.authResolverId(),
-                req.onUnresolved());
+                req.onUnresolved(),
+                allowlistOf(req.allowedOverrideProfiles()),
+                req.onOverrideDenied());
         return ChannelBindingDtos.BindingResponse.of(saved);
     }
 
@@ -127,6 +131,10 @@ public class ChannelBindingController {
         if (req.profileId() == null || req.profileId().isBlank()) {
             throw AdminApiException.badRequest("bad_profile", "profileId required");
         }
+    }
+
+    private static java.util.Set<String> allowlistOf(List<String> keys) {
+        return keys == null ? java.util.Set.of() : java.util.Set.copyOf(keys);
     }
 
     private static ChannelEndpointRef toEndpoint(ChannelBindingDtos.EndpointRequest ep) {

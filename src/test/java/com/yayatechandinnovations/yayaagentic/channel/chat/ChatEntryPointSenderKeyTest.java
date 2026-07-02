@@ -57,7 +57,7 @@ class ChatEntryPointSenderKeyTest {
         ChatEntryPointService.CreateCommand cmd = new ChatEntryPointService.CreateCommand(
                 "retail-customer", 1, "Acme", "https://logo", null, null, null, null,
                 false, AuthMode.AUTH_OPTIONAL,
-                new AuthConfig.ResolverExchange(7L, "PASTED-VAL"), null, null);
+                new AuthConfig.ResolverExchange(7L, "PASTED-VAL"), null, null, null, null);
 
         ChatEntryPoint ep = svc.createDraft(TENANT, cmd);
 
@@ -72,7 +72,7 @@ class ChatEntryPointSenderKeyTest {
         ChatEntryPoint updated = svc.updateBranding(TENANT, new ChatEntryPointId("chat_1"),
                 new ChatEntryPointService.UpdateCommand(
                         "Renamed", null, null, null, null, null, null, null,
-                        new AuthConfig.ResolverExchange(7L, null), null, null));
+                        new AuthConfig.ResolverExchange(7L, null), null, null, null, null));
 
         assertThat(((AuthConfig.ResolverExchange) updated.authConfig()).senderKey()).isEqualTo("KEEP-THIS");
     }
@@ -81,7 +81,7 @@ class ChatEntryPointSenderKeyTest {
         return new ChatEntryPointService.CreateCommand(
                 "retail-customer", 1, "Acme", "https://logo", null, null, null, null,
                 false, AuthMode.AUTH_OPTIONAL,
-                new AuthConfig.ResolverExchange(resolverId, null), null, null);
+                new AuthConfig.ResolverExchange(resolverId, null), null, null, null, null);
     }
 
     private ChatEntryPointEntity existingResolverEntity(String senderKey) {

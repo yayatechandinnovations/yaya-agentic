@@ -149,7 +149,7 @@ class WhatsAppWebhookE2ETest {
                 SessionPolicy.defaults(),
                 100,
                 BindingStatus.ACTIVE,
-                null, null);
+                null, null, null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)

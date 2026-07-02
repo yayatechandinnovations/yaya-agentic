@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.api.dto;
 
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.chat.AbusePolicy;
 import com.yayatechandinnovations.yayaagentic.channel.chat.AuthConfig;
 import com.yayatechandinnovations.yayaagentic.channel.chat.AuthMode;
@@ -77,7 +78,9 @@ public final class ChatEntryPointDtos {
             String authMode,
             AuthConfigDto authConfig,
             AbusePolicyDto abuse,
-            Boolean requiresVerifiedPhone) {}
+            Boolean requiresVerifiedPhone,
+            List<String> allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied) {}
 
     public record UpdateRequest(
             String displayName,
@@ -90,7 +93,9 @@ public final class ChatEntryPointDtos {
             String authMode,
             AuthConfigDto authConfig,
             AbusePolicyDto abuse,
-            Boolean requiresVerifiedPhone) {}
+            Boolean requiresVerifiedPhone,
+            List<String> allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied) {}
 
     public record EntryPointResponse(
             String id,
@@ -112,7 +117,9 @@ public final class ChatEntryPointDtos {
             boolean requiresVerifiedPhone,
             String status,
             Instant createdAt,
-            Instant updatedAt) {
+            Instant updatedAt,
+            List<String> allowedOverrideProfiles,
+            OnOverrideDenied onOverrideDenied) {
 
         public static EntryPointResponse of(ChatEntryPoint e, String deepLinkBase) {
             return new EntryPointResponse(
@@ -135,7 +142,9 @@ public final class ChatEntryPointDtos {
                     e.requiresVerifiedPhone(),
                     e.status().name(),
                     e.createdAt(),
-                    e.updatedAt());
+                    e.updatedAt(),
+                    e.allowedOverrideProfiles().stream().sorted().toList(),
+                    e.onOverrideDenied());
         }
     }
 

@@ -112,7 +112,17 @@ public class ChatAuthService {
                              String onUnresolved,
                              String verificationDecision,
                              String verificationDetail,
-                             String callerSha256) {
+                             String callerSha256,
+                             String appliedProfileOverride,
+                             String overrideDeniedReason) {
+
+        /** Non-override paths (bearer / device / anonymous / resolver miss). */
+        public Resolution(Decision decision, AuthContext auth, Optional<String> jwt,
+                          boolean startedAuthenticated, Long resolverId, String onUnresolved,
+                          String verificationDecision, String verificationDetail, String callerSha256) {
+            this(decision, auth, jwt, startedAuthenticated, resolverId, onUnresolved,
+                    verificationDecision, verificationDetail, callerSha256, null, null);
+        }
 
         public boolean rejected() { return decision == Decision.REJECT; }
     }
@@ -213,18 +223,23 @@ public class ChatAuthService {
         if (callerPhone != null) claims.put("phone", callerPhone);
 
         // Chat has no sender phone (7th arg null); it authorizes with the entry
-        // point's tenant-issued senderKey instead.
+        // point's tenant-issued senderKey instead. The entry point's own
+        // per-surface override guardrails govern any resolver-selected profile.
         ChannelAuthIntegrator.Resolved resolved = channelAuth.resolveFor(
                 ep.tenant(), resolverId, onUnresolved, baseCtx,
                 null, sender, null, senderKey, callerPhone, "chat",
-                CHAT_BASELINE_SCOPES, claims);
+                CHAT_BASELINE_SCOPES, claims,
+                ChannelAuthIntegrator.OverridePolicy.of(
+                        ep.allowedOverrideProfiles(), ep.onOverrideDenied()));
 
         String on = onUnresolved.name();
         return switch (resolved.decision()) {
             case JWT_VERIFIED -> new Resolution(Decision.RESOLVED_JWT,
                     resolved.authContextForEngine(baseCtx), resolved.jwt(), true,
                     resolverId, on, "JWT_VERIFIED",
-                    "resolver returned a JWT the trust chain accepted", callerSha256);
+                    "resolver returned a JWT the trust chain accepted", callerSha256,
+                    resolved.appliedProfileOverride().orElse(null),
+                    resolved.overrideDeniedReason().orElse(null));
             case ANONYMOUS -> new Resolution(Decision.DEVICE,
                     verifiedDeviceContext(ep, handle, device), Optional.empty(), false,
                     resolverId, on, "ANONYMOUS",
@@ -271,6 +286,13 @@ public class ChatAuthService {
                 res.resolverId(), res.onUnresolved(),
                 ep.tenant().value(), res.callerSha256());
         authTrace.recordVerification(session, res.verificationDecision(), res.verificationDetail());
+        // Bound vs effective profile (resolver-profile-override-design.md §9).
+        String bound = ep.profile().value();
+        String override = res.appliedProfileOverride();
+        authTrace.recordProfileResolution(session,
+                override == null ? bound : override,
+                override == null ? "BOUND" : "RESOLVER_OVERRIDE",
+                res.overrideDeniedReason());
         if (tokenState != null) authTrace.recordSessionToken(session, tokenState);
     }
 

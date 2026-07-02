@@ -72,6 +72,15 @@ public class ChatEntryPointEntity {
     @Column(name = "tagline", length = 140)
     private String tagline;
 
+    // Resolver-profile-override guardrails (V61). JSON array of profile keys;
+    // empty/[] = any published in-tenant profile is allowed.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "allowed_override_profiles_json", columnDefinition = "jsonb", nullable = false)
+    private String allowedOverrideProfilesJson = "[]";
+
+    @Column(name = "on_override_denied", nullable = false, length = 8)
+    private String onOverrideDenied = "IGNORE";
+
     @Column(name = "status", nullable = false, length = 24)
     private String status = "DRAFT";
 
@@ -115,6 +124,8 @@ public class ChatEntryPointEntity {
     public boolean isRequiresVerifiedPhone() { return requiresVerifiedPhone; }
     public boolean isDiscoverable() { return discoverable; }
     public String getTagline() { return tagline; }
+    public String getAllowedOverrideProfilesJson() { return allowedOverrideProfilesJson; }
+    public String getOnOverrideDenied() { return onOverrideDenied; }
     public String getStatus() { return status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
@@ -134,6 +145,12 @@ public class ChatEntryPointEntity {
     public void setRequiresVerifiedPhone(boolean v) { this.requiresVerifiedPhone = v; }
     public void setDiscoverable(boolean v) { this.discoverable = v; }
     public void setTagline(String v) { this.tagline = v == null || v.isBlank() ? null : v.trim(); }
+    public void setAllowedOverrideProfilesJson(String v) {
+        this.allowedOverrideProfilesJson = v == null || v.isBlank() ? "[]" : v;
+    }
+    public void setOnOverrideDenied(String v) {
+        this.onOverrideDenied = v == null || v.isBlank() ? "IGNORE" : v;
+    }
     public void setStatus(String v) { this.status = v; }
     public void setUpdatedAt(OffsetDateTime v) { this.updatedAt = v; }
 }

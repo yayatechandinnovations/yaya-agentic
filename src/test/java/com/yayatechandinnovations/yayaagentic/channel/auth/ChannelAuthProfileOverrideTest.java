@@ -6,6 +6,7 @@ import com.yayatechandinnovations.yayaagentic.auth.PreVerifiedPrincipalAuthentic
 import com.yayatechandinnovations.yayaagentic.auth.chain.AuthenticatorChain;
 import com.yayatechandinnovations.yayaagentic.auth.dev.NoopAuthenticator;
 import com.yayatechandinnovations.yayaagentic.channel.auth.cache.AuthResolverDispatcher;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
@@ -100,7 +101,7 @@ class ChannelAuthProfileOverrideTest {
                 Map.of(),
                 Set.of("retail-vip"),
                 new ChannelAuthIntegrator.OverridePolicy(
-                        Set.of("retail-standard"), ChannelAuthIntegrator.OnOverrideDenied.IGNORE));
+                        Set.of("retail-standard"), OnOverrideDenied.IGNORE));
 
         assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.JWT_VERIFIED);
         assertThat(r.principal().orElseThrow().claims()).doesNotContainKey(RESERVED_PROFILE_CLAIM);
@@ -113,7 +114,7 @@ class ChannelAuthProfileOverrideTest {
                 Map.of(),
                 Set.of("retail-vip"),
                 new ChannelAuthIntegrator.OverridePolicy(
-                        Set.of("retail-standard"), ChannelAuthIntegrator.OnOverrideDenied.REJECT));
+                        Set.of("retail-standard"), OnOverrideDenied.REJECT));
 
         assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.REJECT);
         assertThat(r.principal()).isEmpty();
@@ -126,7 +127,7 @@ class ChannelAuthProfileOverrideTest {
                 Map.of(),
                 Set.of("retail-vip"),
                 new ChannelAuthIntegrator.OverridePolicy(
-                        Set.of(), ChannelAuthIntegrator.OnOverrideDenied.REJECT));
+                        Set.of(), OnOverrideDenied.REJECT));
 
         assertThat(r.decision()).isEqualTo(ChannelAuthIntegrator.Resolved.Decision.REJECT);
     }

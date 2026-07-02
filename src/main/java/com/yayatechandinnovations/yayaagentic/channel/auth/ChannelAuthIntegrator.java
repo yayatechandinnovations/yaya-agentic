@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.auth.chain.AuthenticatorChain;
 import com.yayatechandinnovations.yayaagentic.channel.auth.cache.AuthResolverDispatcher;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppPhoneAuthenticator;
@@ -85,14 +86,11 @@ public class ChannelAuthIntegrator {
         public static OverridePolicy allowAny() {
             return new OverridePolicy(Set.of(), OnOverrideDenied.IGNORE);
         }
-    }
 
-    /** What to do when a resolver-selected override fails a guardrail. */
-    public enum OnOverrideDenied {
-        /** Drop the override, run under the bound profile, audit it. */
-        IGNORE,
-        /** Fail closed — drop the inbound (a mis-route is worse than no answer). */
-        REJECT
+        /** Build from a channel surface's stored config (binding / entry point). */
+        public static OverridePolicy of(Set<String> allowlist, OnOverrideDenied onDenied) {
+            return new OverridePolicy(allowlist, onDenied);
+        }
     }
 
     /**
@@ -124,7 +122,8 @@ public class ChannelAuthIntegrator {
         return resolveFor(baseCtx.tenant(), binding.authResolverId(), binding.onUnresolved(),
                 baseCtx, session, sender, senderPhone, null, callerPhone, "whatsapp",
                 WhatsAppPhoneAuthenticator.BASELINE_SCOPES,
-                WhatsAppPhoneAuthenticator.channelClaims(baseCtx));
+                WhatsAppPhoneAuthenticator.channelClaims(baseCtx),
+                OverridePolicy.of(binding.allowedOverrideProfiles(), binding.onOverrideDenied()));
     }
 
     /**
@@ -285,11 +284,14 @@ public class ChannelAuthIntegrator {
         }
         AuthResolver.ProfileSelection applied =
                 override instanceof OverrideOutcome.Apply a ? a.selection() : null;
+        String deniedReason = override instanceof OverrideOutcome.Ignore ig ? ig.deniedReason() : null;
 
         Principal stamped = stampChannelClaims(verified.get(), baselineScopes, channelClaims, applied);
         return new Resolved(Resolved.Decision.JWT_VERIFIED,
                 Optional.of(stamped), Optional.of(jwt),
-                "resolver JWT verified by the trust chain");
+                "resolver JWT verified by the trust chain",
+                Optional.ofNullable(applied == null ? null : applied.profileId()),
+                Optional.ofNullable(deniedReason));
     }
 
     /**
@@ -324,15 +326,15 @@ public class ChannelAuthIntegrator {
         String audit = reasonCode + " (requested=" + requested + ")";
         return policy.onDenied() == OnOverrideDenied.REJECT
                 ? new OverrideOutcome.Reject(audit)
-                : OverrideOutcome.IGNORE;   // drop the override, keep the bound profile
+                : new OverrideOutcome.Ignore(audit);   // drop the override, keep the bound profile
     }
 
     /** Result of validating a resolver-selected profile override. */
     private sealed interface OverrideOutcome {
-        OverrideOutcome NONE = new Ignore("no override");
-        OverrideOutcome IGNORE = new Ignore("override denied, ignored");
+        OverrideOutcome NONE = new Ignore(null);   // no override at all — null denial reason
         record Apply(AuthResolver.ProfileSelection selection) implements OverrideOutcome {}
-        record Ignore(String why) implements OverrideOutcome {}
+        /** @param deniedReason audit reason when an override was dropped; null when there was none */
+        record Ignore(String deniedReason) implements OverrideOutcome {}
         record Reject(String auditReason) implements OverrideOutcome {}
     }
 
@@ -401,7 +403,20 @@ public class ChannelAuthIntegrator {
     public record Resolved(Decision decision,
                            Optional<Principal> principal,
                            Optional<String> jwt,
-                           String reason) {
+                           String reason,
+                           Optional<String> appliedProfileOverride,
+                           Optional<String> overrideDeniedReason) {
+
+        public Resolved {
+            appliedProfileOverride = appliedProfileOverride == null ? Optional.empty() : appliedProfileOverride;
+            overrideDeniedReason = overrideDeniedReason == null ? Optional.empty() : overrideDeniedReason;
+        }
+
+        /** 4-arg form for the non-override paths (anonymous / reject / tests). */
+        public Resolved(Decision decision, Optional<Principal> principal,
+                        Optional<String> jwt, String reason) {
+            this(decision, principal, jwt, reason, Optional.empty(), Optional.empty());
+        }
 
         public enum Decision { JWT_VERIFIED, ANONYMOUS, REJECT }
 

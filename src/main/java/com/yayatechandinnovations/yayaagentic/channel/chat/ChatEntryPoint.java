@@ -1,9 +1,11 @@
 package com.yayatechandinnovations.yayaagentic.channel.chat;
 
+import com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 
 import java.time.Instant;
+import java.util.Set;
 
 /**
  * A branded, publicly addressable chat surface that pins one tenant profile —
@@ -27,5 +29,13 @@ public record ChatEntryPoint(
         boolean discoverable,
         EntryPointStatus status,
         Instant createdAt,
-        Instant updatedAt
-) {}
+        Instant updatedAt,
+        Set<String> allowedOverrideProfiles,
+        OnOverrideDenied onOverrideDenied
+) {
+    public ChatEntryPoint {
+        allowedOverrideProfiles = allowedOverrideProfiles == null
+                ? Set.of() : Set.copyOf(allowedOverrideProfiles);
+        onOverrideDenied = onOverrideDenied == null ? OnOverrideDenied.IGNORE : onOverrideDenied;
+    }
+}

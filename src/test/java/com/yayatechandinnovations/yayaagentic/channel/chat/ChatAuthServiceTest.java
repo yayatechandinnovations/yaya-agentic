@@ -157,7 +157,9 @@ class ChatAuthServiceTest {
                 mode, cfg,
                 SessionPolicy.defaults(), AbusePolicy.defaults(),
                 requiresPhone, false, EntryPointStatus.ACTIVE,
-                Instant.now(), Instant.now());
+                Instant.now(), Instant.now(),
+                java.util.Set.of(),
+                com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied.IGNORE);
     }
 
     private static ProfileRegistry stubRegistry() {

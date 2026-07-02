@@ -110,7 +110,9 @@ public class InspectorService {
 
         InspectorDtos.BindingStageDto binding = trace == null ? null
                 : new InspectorDtos.BindingStageDto(trace.bindingId(), trace.profileId(),
-                        trace.resolverId(), trace.onUnresolved());
+                        trace.resolverId(), trace.onUnresolved(),
+                        trace.effectiveProfile(), trace.profileSource(),
+                        trace.overrideDeniedReason());
 
         List<InspectorDtos.ResolverCallDto> callDtos = new ArrayList<>();
         for (AuthResolverCallEntity c : calls) {

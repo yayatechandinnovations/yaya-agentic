@@ -119,6 +119,8 @@ class ChannelBindingControllerTest {
                 100,
                 BindingStatus.ACTIVE,
                 null,
+                null,
+                null,
                 null);
         var res = client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
@@ -145,7 +147,7 @@ class ChannelBindingControllerTest {
                         "WHATSAPP_SENDER", OTHER_TENANT_SENDER_ID.get()),
                 "binding-test-profile", 1,
                 new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE,
-                null, null);
+                null, null, null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -162,7 +164,7 @@ class ChannelBindingControllerTest {
                 new ChannelBindingDtos.EndpointRequest("WHATSAPP_SENDER", SENDER_ID.get()),
                 "no-such-profile", 1,
                 new RoutingRule.MatchAny(), SessionPolicy.defaults(), 100, BindingStatus.ACTIVE,
-                null, null);
+                null, null, null, null);
         client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -184,7 +186,7 @@ class ChannelBindingControllerTest {
                         false, null, true),
                 50,
                 BindingStatus.ACTIVE,
-                null, null);
+                null, null, null, null);
         var res = client.post()
                 .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -215,6 +217,30 @@ class ChannelBindingControllerTest {
     }
 
     @Test @Order(6)
+    void persists_and_echoes_profile_override_guardrails() {
+        var req = new ChannelBindingDtos.BindingRequest(
+                new ChannelBindingDtos.EndpointRequest("WHATSAPP_SENDER", SENDER_ID.get()),
+                "binding-test-profile", 1,
+                new RoutingRule.MatchAny(), SessionPolicy.defaults(), 90, BindingStatus.ACTIVE,
+                null, null,
+                List.of("binding-test-sales", "binding-test-profile"),
+                com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied.REJECT);
+        var res = client.post()
+                .uri("/v1/admin/tenants/{t}/channel-bindings", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(ChannelBindingDtos.BindingResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(res).isNotNull();
+        assertThat(res.allowedOverrideProfiles())
+                .containsExactly("binding-test-profile", "binding-test-sales");   // sorted
+        assertThat(res.onOverrideDenied())
+                .isEqualTo(com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied.REJECT);
+    }
+
+    @Test @Order(6)
     void updates_priority_and_status() {
         var update = new ChannelBindingDtos.BindingUpdate(
                 "binding-test-profile", 1,
@@ -222,7 +248,7 @@ class ChannelBindingControllerTest {
                 SessionPolicy.defaults(),
                 10,
                 BindingStatus.PAUSED,
-                null, null);
+                null, null, null, null);
         var res = client.put()
                 .uri("/v1/admin/tenants/{t}/channel-bindings/{id}", TENANT, BINDING_ID.get())
                 .contentType(MediaType.APPLICATION_JSON)

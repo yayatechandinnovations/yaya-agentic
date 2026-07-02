@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * One row of {@code channel_bindings}. Built by
@@ -32,6 +33,13 @@ import java.util.Optional;
  *                       from the tenant's webhook). {@code REJECT} drops
  *                       the message; {@code ANONYMOUS} falls through to
  *                       the baseline Principal.
+ * @param allowedOverrideProfiles  profile keys this binding permits a resolver
+ *                       to override into. Empty = any published in-tenant
+ *                       profile (the resolver is tenant-trusted). See
+ *                       {@code resolver-profile-override-design.md} §7.
+ * @param onOverrideDenied  what to do when a resolver-selected override fails a
+ *                       guardrail — {@code IGNORE} (bound profile) or
+ *                       {@code REJECT} (drop the inbound).
  */
 public record ChannelBinding(
         BindingId             id,
@@ -46,7 +54,9 @@ public record ChannelBinding(
         Instant               createdAt,
         Instant               deactivatedAt,
         Long                  authResolverId,
-        OnUnresolvedPolicy    onUnresolved
+        OnUnresolvedPolicy    onUnresolved,
+        Set<String>           allowedOverrideProfiles,
+        OnOverrideDenied      onOverrideDenied
 ) {
 
     public ChannelBinding {
@@ -58,5 +68,8 @@ public record ChannelBinding(
         if (status == null)        throw new IllegalArgumentException("status required");
         profileVersion = profileVersion == null ? Optional.empty() : profileVersion;
         onUnresolved = onUnresolved == null ? OnUnresolvedPolicy.REJECT : onUnresolved;
+        allowedOverrideProfiles = allowedOverrideProfiles == null
+                ? Set.of() : Set.copyOf(allowedOverrideProfiles);
+        onOverrideDenied = onOverrideDenied == null ? OnOverrideDenied.IGNORE : onOverrideDenied;
     }
 }

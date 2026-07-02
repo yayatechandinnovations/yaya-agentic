@@ -345,13 +345,16 @@ resolved profile is today).
 
 ## 11. Delivery plan (PR slices)
 
-> **Status (2026-07): slices 1–3 + 6-partial landed.** The feature is live
-> end-to-end — an HTTP/BEAN resolver returning a `ProfileSelection` overrides
-> the bound profile on WhatsApp and chat, validated (published + in-tenant),
-> cached across hits, stamped post-verify, and honored at `@15`. The
-> allowlist + `on_override_denied` enforcement code exists and is tested, but
-> every surface currently passes the default `OverridePolicy.allowAny()`
-> (open + IGNORE) pending slice 4's per-surface config. Slices 4–5 remain.
+> **Status (2026-07): slices 1–5 landed (chat admin-form UI the one gap).**
+> The feature is live end-to-end and per-surface-configurable — an HTTP/BEAN
+> resolver returning a `ProfileSelection` overrides the bound profile on
+> WhatsApp and chat, validated (published + in-tenant + per-surface allowlist),
+> cached across hits, stamped post-verify, honored at `@15`, and audited in the
+> inspector (bound vs. effective + denial reason). `channel_bindings` and
+> `chat_entry_points` carry `allowed_override_profiles_json` +
+> `on_override_denied` (V61); admin CRUD reads/writes them. The only remaining
+> item is the Flutter **chat entry-point** admin form control for the allowlist
+> (the WhatsApp binding form + the inspector display shipped).
 
 1. **SPI + wire.** ✅ `ResolvedIdentity` / `ProfileSelection`, `AuthResolver`
    `resolveIdentity` default adapter, `HttpAuthResolver` response parsing.
@@ -366,12 +369,17 @@ resolved profile is today).
    which a chain resolver can't). WhatsApp reclassified off `explicitProfile`
    onto `ChannelProfileResolver @30`. SMS untouched (it runs no resolver —
    FAQ-mode only — so no override can arise there).
-4. **Guardrail config.** ⏳ Flyway migration (§10), binding/entry-point admin
-   CRUD + validation, thread the per-surface `OverridePolicy` from the
-   binding/entry-point into `resolve`/`resolverExchange` (replaces today's
-   `allowAny()` default).
-5. **Audit/inspector.** ⏳ `ChannelAuthTrace` bound-vs-effective fields (§9) +
-   Flutter inspector surfacing.
+4. **Guardrail config.** ✅ Flyway `V61` adds `allowed_override_profiles_json`
+   (jsonb) + `on_override_denied` to `channel_bindings` and `chat_entry_points`;
+   entities/domain/services/DTOs carry them; admin CRUD reads/writes them. The
+   per-surface `OverridePolicy` is threaded from the binding (WhatsApp) and
+   entry point (chat) into `resolve`/`resolverExchange`, replacing `allowAny()`.
+   `OnOverrideDenied` lives in `channel.binding` (sibling of `OnUnresolvedPolicy`).
+5. **Audit/inspector.** ✅ `ChannelAuthTrace` gains effective-profile / source /
+   denial-reason; the WhatsApp worker + `ChatAuthService` record them; the
+   inspector API (`BindingStageDto`) + Flutter panel surface "bound → effective
+   (resolver override)" and denial notes. ◑ The Flutter **chat entry-point**
+   admin form control for the allowlist is the one remaining piece.
 6. **Docs.** ◑ Reconciled `AuthResolver` Javadoc + channel-auth §10. Admin
    runbook ("route VIP callers to a premium profile") still to write.
 

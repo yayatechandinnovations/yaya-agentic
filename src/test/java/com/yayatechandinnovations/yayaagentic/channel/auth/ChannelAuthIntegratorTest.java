@@ -293,7 +293,8 @@ class ChannelAuthIntegratorTest {
                 SessionPolicy.defaults(),
                 100, BindingStatus.ACTIVE,
                 Instant.now(), null,
-                resolverId, onUnresolved);
+                resolverId, onUnresolved,
+                Set.of(), com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied.IGNORE);
     }
 
     private static AuthResolverDispatcher stubDispatcher(

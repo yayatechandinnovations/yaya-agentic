@@ -64,8 +64,17 @@ public final class InspectorDtos {
             List<HintDto> hints
     ) {}
 
+    /**
+     * @param profileId            the bound profile (binding / entry-point default)
+     * @param effectiveProfile     the profile the session actually landed on
+     * @param profileSource        BOUND | RESOLVER_OVERRIDE
+     * @param overrideDeniedReason set when a resolver override was dropped by a
+     *                             guardrail (audit detail; null otherwise)
+     */
     public record BindingStageDto(String bindingId, String profileId,
-                                  Long resolverId, String onUnresolved) {}
+                                  Long resolverId, String onUnresolved,
+                                  String effectiveProfile, String profileSource,
+                                  String overrideDeniedReason) {}
 
     /** The actual HTTP exchange yaya had with the resolver webhook — request
      *  (credential redacted) and response (JWT redacted). For playground debug. */

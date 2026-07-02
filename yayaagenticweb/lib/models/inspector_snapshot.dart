@@ -82,19 +82,37 @@ class AuthFlowSnapshot {
 }
 
 class BindingStageSnapshot {
-  BindingStageSnapshot({this.bindingId, this.profileId, this.resolverId, this.onUnresolved});
+  BindingStageSnapshot({
+    this.bindingId,
+    this.profileId,
+    this.resolverId,
+    this.onUnresolved,
+    this.effectiveProfile,
+    this.profileSource,
+    this.overrideDeniedReason,
+  });
   final String? bindingId;
-  final String? profileId;
+  final String? profileId; // the bound (binding / entry-point default) profile
   final int? resolverId;
   final String? onUnresolved;
+  final String? effectiveProfile; // what the session actually ran under
+  final String? profileSource; // BOUND | RESOLVER_OVERRIDE
+  final String? overrideDeniedReason; // set when an override was dropped by a guardrail
 
   bool get hasResolver => resolverId != null;
+
+  /// True when the auth resolver steered the caller to a different profile
+  /// than the binding's default (VIP tiering, staff routing, ...).
+  bool get overrodeProfile => profileSource == 'RESOLVER_OVERRIDE';
 
   factory BindingStageSnapshot.fromJson(Map<String, dynamic> json) => BindingStageSnapshot(
         bindingId: json['bindingId'] as String?,
         profileId: json['profileId'] as String?,
         resolverId: (json['resolverId'] as num?)?.toInt(),
         onUnresolved: json['onUnresolved'] as String?,
+        effectiveProfile: json['effectiveProfile'] as String?,
+        profileSource: json['profileSource'] as String?,
+        overrideDeniedReason: json['overrideDeniedReason'] as String?,
       );
 }
 

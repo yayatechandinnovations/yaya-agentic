@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.channel.binding;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * CRUD + hot-path resolution for {@link ChannelBinding}. The
@@ -171,7 +173,9 @@ public class ChannelBindingService {
                                  SessionPolicy sessionPolicy,
                                  int priority,
                                  Long authResolverId,
-                                 OnUnresolvedPolicy onUnresolved) {
+                                 OnUnresolvedPolicy onUnresolved,
+                                 Set<String> allowedOverrideProfiles,
+                                 OnOverrideDenied onOverrideDenied) {
         validateEndpointBelongsToTenant(tenant, endpoint);
         validateProfileExists(tenant, profile, profileVersion);
 
@@ -188,7 +192,15 @@ public class ChannelBindingService {
         entity.setAuthResolverId(authResolverId);
         entity.setOnUnresolved((onUnresolved == null
                 ? OnUnresolvedPolicy.REJECT : onUnresolved).name());
+        entity.setAllowedOverrideProfilesJson(writeJson(sortedList(allowedOverrideProfiles)));
+        entity.setOnOverrideDenied((onOverrideDenied == null
+                ? OnOverrideDenied.IGNORE : onOverrideDenied).name());
         return toDomain(repo.save(entity));
+    }
+
+    private static List<String> sortedList(Set<String> keys) {
+        return keys == null ? List.of() : keys.stream().filter(k -> k != null && !k.isBlank())
+                .map(String::trim).distinct().sorted().toList();
     }
 
     @Transactional
@@ -201,7 +213,9 @@ public class ChannelBindingService {
                                  int priority,
                                  BindingStatus status,
                                  Long authResolverId,
-                                 OnUnresolvedPolicy onUnresolved) {
+                                 OnUnresolvedPolicy onUnresolved,
+                                 Set<String> allowedOverrideProfiles,
+                                 OnOverrideDenied onOverrideDenied) {
         ChannelBindingEntity entity = repo.findByTenantIdAndId(tenant.value(), id.value())
                 .orElseThrow(() -> AdminApiException.notFound("binding_not_found",
                         "no such binding " + id.value()));
@@ -214,6 +228,8 @@ public class ChannelBindingService {
         entity.setPriority(priority);
         entity.setAuthResolverId(authResolverId);
         if (onUnresolved != null) entity.setOnUnresolved(onUnresolved.name());
+        entity.setAllowedOverrideProfilesJson(writeJson(sortedList(allowedOverrideProfiles)));
+        if (onOverrideDenied != null) entity.setOnOverrideDenied(onOverrideDenied.name());
         if (status == BindingStatus.DEACTIVATED
                 && !entity.getStatus().equals(BindingStatus.DEACTIVATED.name())) {
             entity.setDeactivatedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -329,8 +345,20 @@ public class ChannelBindingService {
                 toInstant(entity.getCreatedAt()),
                 toInstant(entity.getDeactivatedAt()),
                 entity.getAuthResolverId(),
-                OnUnresolvedPolicy.parse(entity.getOnUnresolved())
+                OnUnresolvedPolicy.parse(entity.getOnUnresolved()),
+                readStringSet(entity.getAllowedOverrideProfilesJson()),
+                OnOverrideDenied.parse(entity.getOnOverrideDenied())
         );
+    }
+
+    private Set<String> readStringSet(String jsonArray) {
+        if (jsonArray == null || jsonArray.isBlank()) return Set.of();
+        try {
+            List<String> list = json.readValue(jsonArray, new TypeReference<List<String>>() {});
+            return list == null ? Set.of() : Set.copyOf(list);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("could not decode allowed_override_profiles_json", e);
+        }
     }
 
     private static Instant toInstant(OffsetDateTime odt) {

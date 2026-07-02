@@ -110,7 +110,9 @@ public class PlaygroundSenderService {
                     SessionPolicy.defaults(),
                     100,
                     null,
-                    com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy.ANONYMOUS);
+                    com.yayatechandinnovations.yayaagentic.channel.binding.OnUnresolvedPolicy.ANONYMOUS,
+                    java.util.Set.of(),
+                    com.yayatechandinnovations.yayaagentic.channel.binding.OnOverrideDenied.IGNORE);
         }
         ChannelBinding current = existing.get(0);
         if (current.profile().equals(profile) && current.status() == BindingStatus.ACTIVE) {
@@ -123,7 +125,9 @@ public class PlaygroundSenderService {
                 100,
                 BindingStatus.ACTIVE,
                 current.authResolverId(),
-                current.onUnresolved());
+                current.onUnresolved(),
+                current.allowedOverrideProfiles(),
+                current.onOverrideDenied());
     }
 
     private static BusinessProfile playgroundBusinessProfile() {
