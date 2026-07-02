@@ -2,8 +2,10 @@ package com.yayatechandinnovations.yayaagentic.api.dto;
 
 import com.yayatechandinnovations.yayaagentic.channel.chat.AuthConfig;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
+import com.yayatechandinnovations.yayaagentic.commerce.CommerceConfig;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Wire DTOs for the public chat front door ({@code /v1/chat/*},
@@ -71,10 +73,29 @@ public final class PublicChatDtos {
             int profileVersion,
             String greeting,
             List<String> quickReplies,
-            EntryPointCard entryPoint
+            EntryPointCard entryPoint,
+            CommerceInfo commerce   // non-null only when the profile is a store (§3)
     ) {}
 
+    /** The commerce trait the client reads at session start to render cart chrome
+     *  the moment a store chat opens (ecommerce-chat-design.md §3). Carries only
+     *  what the renderer needs — currency, whether the cart affordance shows, and
+     *  the checkout tool id a "Checkout" tap invokes. Null = not a store. */
+    public record CommerceInfo(String currency, boolean cartEnabled, String checkoutTool) {
+        public static CommerceInfo of(CommerceConfig c) {
+            if (c == null) return null;
+            String checkoutTool = c.checkoutTool() == null ? null : c.checkoutTool().value();
+            return new CommerceInfo(c.currency(), c.cartEnabled(), checkoutTool);
+        }
+    }
+
     public record MessageRequest(String text) {}
+
+    /** Body for {@code POST /v1/chat/sessions/{id}/actions} — a client tap
+     *  ("Add", "Remove", "Checkout") that runs one whitelisted, clientInvocable
+     *  commerce tool through the same executor + Authorizer as a chat message
+     *  (the "two doors, one lock" channel, ecommerce-chat-design.md §9). */
+    public record ActionRequest(String tool, Map<String, Object> args) {}
 
     /** Returned by {@code GET /v1/chat/sessions/{id}} so a restarted app can
      *  confirm its session is still live and re-render the header. */

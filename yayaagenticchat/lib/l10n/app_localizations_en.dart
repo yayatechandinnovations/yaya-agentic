@@ -143,4 +143,107 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get discoverNoResults => 'No chats match your search.';
+
+  @override
+  String get addToCart => 'Add to cart';
+
+  @override
+  String get viewProduct => 'View';
+
+  @override
+  String get cartTitle => 'Your cart';
+
+  @override
+  String get cartEmpty => 'Your cart is empty';
+
+  @override
+  String get subtotal => 'Subtotal';
+
+  @override
+  String itemsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count items',
+      one: '1 item',
+      zero: 'No items',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get checkout => 'Checkout';
+
+  @override
+  String get removeItem => 'Remove';
+
+  @override
+  String get outOfStock => 'Out of stock';
+
+  @override
+  String get lowStock => 'Low stock';
+
+  @override
+  String get preorder => 'Pre-order';
+
+  @override
+  String get loadMore => 'Load more';
+
+  @override
+  String resultsForQuery(int count, String query) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count results for \"$query\"',
+      one: '1 result for \"$query\"',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get payNow => 'Pay now';
+
+  @override
+  String get orderPlacedTitle => 'Order placed';
+
+  @override
+  String orderRefLabel(String ref) {
+    return 'Order $ref';
+  }
+
+  @override
+  String get confirmAction => 'Confirm';
+
+  @override
+  String get keepShopping => 'Keep shopping';
+
+  @override
+  String get addedToCart => 'Added to cart';
+
+  @override
+  String get chooseOption => 'Choose an option';
+
+  @override
+  String get quantity => 'Quantity';
+
+  @override
+  String get continueToPayment => 'Continue to payment';
+
+  @override
+  String get paymentComplete => 'Payment complete';
+
+  @override
+  String get paymentFailed => 'Payment couldn\'t be completed.';
+
+  @override
+  String get openingCheckout => 'Opening secure checkout…';
+
+  @override
+  String get couldNotOpenCheckout => 'Couldn\'t open the checkout page.';
+
+  @override
+  String get cartUpdated => 'Cart updated';
+
+  @override
+  String get filters => 'Filters';
 }

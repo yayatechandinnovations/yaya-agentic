@@ -65,7 +65,7 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
 
         CheckoutOutcome outcome = payments.createCheckout(new CheckoutRequest(
                 ctx.principal().tenant(), ctx.sessionId(),
-                ctx.principal().subject(), /* connectedAccountId */ null,
+                ctx.principal().subject(), cfg.connectedAccountId(),
                 current, currency, fulfilment));
 
         String status = outcome instanceof CheckoutOutcome.OrderPlaced placed ? placed.status() : "PENDING";

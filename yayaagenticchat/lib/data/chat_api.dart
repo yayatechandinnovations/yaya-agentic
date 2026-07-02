@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../config.dart';
+import '../models/commerce/commerce_config.dart';
 import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
 
@@ -20,11 +21,17 @@ class StartResult {
   final String greeting;
   final List<String> quickReplies;
   final EntryPointCard entryPoint;
+
+  /// Non-null when the resolved profile is a store — the client renders cart
+  /// chrome from session start without a new transport (ecommerce-chat §3).
+  final CommerceConfig? commerce;
+
   const StartResult({
     required this.sessionId,
     required this.greeting,
     required this.quickReplies,
     required this.entryPoint,
+    this.commerce,
   });
 }
 
@@ -115,12 +122,16 @@ class ChatApi {
         options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
       );
       final j = Map<String, dynamic>.from(r.data as Map);
+      final commerce = j['commerce'];
       return StartResult(
         sessionId: j['sessionId'] as String,
         greeting: (j['greeting'] as String?) ?? '',
         quickReplies:
             (j['quickReplies'] as List?)?.map((e) => e.toString()).toList() ?? const [],
         entryPoint: EntryPointCard.fromJson(Map<String, dynamic>.from(j['entryPoint'] as Map)),
+        commerce: commerce is Map
+            ? CommerceConfig.fromJson(Map<String, dynamic>.from(commerce))
+            : null,
       );
     } on DioException catch (e) {
       throw _map(e);
@@ -129,20 +140,41 @@ class ChatApi {
 
   /// Stream the assistant's turn. Each yielded [SseEvent] is one `event:/data:`
   /// frame from the SSE response.
-  Stream<SseEvent> sendMessage(String sessionId, String text, {String? bearer}) async* {
-    final response = await _dio.post<ResponseBody>(
-      '/v1/chat/sessions/$sessionId/messages',
-      data: {'text': text},
-      options: Options(
-        responseType: ResponseType.stream,
-        headers: {'Accept': 'text/event-stream', ..._authHeader(bearer), ..._deviceHeader},
-      ),
-    );
-    final body = response.data;
-    if (body == null) return;
+  Stream<SseEvent> sendMessage(String sessionId, String text, {String? bearer}) =>
+      _streamSse('/v1/chat/sessions/$sessionId/messages', {'text': text}, bearer: bearer);
+
+  /// The client-initiated action channel (ecommerce-chat-design.md §9): invoke
+  /// one whitelisted, `clientInvocable` commerce tool (a tap on Add / Remove /
+  /// Checkout) through the same executor + Authorizer as a message, streaming
+  /// back the same SSE shape. A refused tool returns 403 → [ChatApiException].
+  Stream<SseEvent> sendAction(String sessionId, String tool, Map<String, Object?> args,
+          {String? bearer}) =>
+      _streamSse('/v1/chat/sessions/$sessionId/actions',
+          {'tool': tool, 'args': args}, bearer: bearer);
+
+  /// Shared SSE reader for both the message and action channels. Splits the
+  /// byte stream on blank-line frame boundaries and parses each `event:/data:`
+  /// frame. A non-2xx (e.g. 403 from the action guard) throws before the first
+  /// frame and is surfaced as a [ChatApiException].
+  Stream<SseEvent> _streamSse(String path, Object body, {String? bearer}) async* {
+    final ResponseBody? stream;
+    try {
+      final response = await _dio.post<ResponseBody>(
+        path,
+        data: body,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'Accept': 'text/event-stream', ..._authHeader(bearer), ..._deviceHeader},
+        ),
+      );
+      stream = response.data;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+    if (stream == null) return;
 
     final buffer = StringBuffer();
-    await for (final Uint8List chunk in body.stream) {
+    await for (final Uint8List chunk in stream.stream) {
       buffer.write(utf8.decode(chunk, allowMalformed: true));
       var content = buffer.toString();
       int sep;

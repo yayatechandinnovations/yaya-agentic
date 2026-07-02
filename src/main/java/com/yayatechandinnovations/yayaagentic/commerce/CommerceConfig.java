@@ -16,7 +16,9 @@ public record CommerceConfig(
         List<Ids.ProductCatalogId> catalogs,
         String currency,
         Ids.ToolId checkoutTool,
-        boolean cartEnabled
+        boolean cartEnabled,
+        String connectedAccountId   // merchant's PSP connected account (e.g. Stripe acct_…);
+                                    // null = platform charge. Never sent to the client.
 ) {
     public CommerceConfig {
         catalogs = catalogs == null ? List.of() : List.copyOf(catalogs);

@@ -4,7 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/chat_message.dart';
+import '../../models/commerce/product.dart';
 import 'chat_controller.dart';
+import 'commerce/cart_header_button.dart';
+import 'commerce/cart_sheet.dart';
+import 'commerce/checkout_handler.dart';
+import 'commerce/checkout_result_card.dart';
+import 'commerce/confirm_card.dart';
+import 'commerce/mini_cart_bar.dart';
+import 'commerce/product_card_expanded.dart';
+import 'commerce/product_carousel.dart';
+import 'commerce/product_compact_card.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.handle});
@@ -67,9 +77,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(chatControllerProvider(widget.handle));
+    final controller = ref.read(chatControllerProvider(widget.handle).notifier);
     final accent = colorFromHex(state.card?.accentColorHex);
     final title = state.card?.displayName ?? 'Chat';
     ref.listen(chatControllerProvider(widget.handle), (_, _) => _scrollToBottom());
+
+    // Fire the checkout hand-off exactly once when a fresh result arrives (open
+    // the hosted page / mount the PSP sheet / confirm the order), then clear.
+    ref.listen(
+      chatControllerProvider(widget.handle).select((s) => s.pendingCheckout),
+      (prev, next) {
+        if (next == null) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          controller.checkoutConsumed();
+          handleCheckout(context, ref, widget.handle, next);
+        });
+      },
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -77,6 +102,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         foregroundColor: Colors.white,
         title: Text(title),
         actions: [
+          if (state.isStore) CartHeaderButton(handle: widget.handle, accent: accent),
           if (state.canUpgrade)
             TextButton.icon(
               onPressed: () => _signInDialog(context),
@@ -104,7 +130,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ],
             ),
           Expanded(child: _body(state, accent)),
-          if (!state.needsSignIn) _composer(state, accent),
+          if (!state.needsSignIn) ...[
+            if (state.pendingConfirm != null)
+              ConfirmCard(
+                prompt: state.pendingConfirm!,
+                accent: accent,
+                busy: state.sending,
+                onConfirm: controller.confirmPending,
+                onCancel: controller.cancelPending,
+              ),
+            if (state.isStore) MiniCartBar(handle: widget.handle, accent: accent),
+            _composer(state, accent),
+          ],
         ],
       ),
     );
@@ -120,6 +157,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       itemBuilder: (context, i) => _Bubble(
         message: state.messages[i],
         accent: accent,
+        handle: widget.handle,
         onQuickReply: _send,
       ),
     );
@@ -164,30 +202,106 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 }
 
-class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.accent, required this.onQuickReply});
+class _Bubble extends ConsumerWidget {
+  const _Bubble({
+    required this.message,
+    required this.accent,
+    required this.handle,
+    required this.onQuickReply,
+  });
   final ChatMessage message;
   final Color accent;
+  final String handle;
   final void Function(String) onQuickReply;
 
+  Future<void> _addProduct(BuildContext context, WidgetRef ref, Product p) async {
+    final controller = ref.read(chatControllerProvider(handle).notifier);
+    final t = AppL10n.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    // Products with options must be opened so the shopper picks a variant.
+    if (p.hasVariants) {
+      await showProductSheet(
+        context,
+        product: p,
+        accent: accent,
+        onAdd: (variantId, qty) async {
+          final ok = await controller.addToCart(p.id, variantId: variantId, qty: qty);
+          if (ok) messenger.showSnackBar(SnackBar(content: Text(t.addedToCart)));
+        },
+      );
+      return;
+    }
+    final ok = await controller.addToCart(p.id);
+    if (ok) messenger.showSnackBar(SnackBar(content: Text(t.addedToCart)));
+  }
+
+  void _openProduct(BuildContext context, WidgetRef ref, Product p) {
+    final controller = ref.read(chatControllerProvider(handle).notifier);
+    final messenger = ScaffoldMessenger.of(context);
+    final t = AppL10n.of(context);
+    showProductSheet(
+      context,
+      product: p,
+      accent: accent,
+      onAdd: (variantId, qty) async {
+        final ok = await controller.addToCart(p.id, variantId: variantId, qty: qty);
+        if (ok) messenger.showSnackBar(SnackBar(content: Text(t.addedToCart)));
+      },
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isUser = message.isUser;
     final bg = isUser ? accent : Theme.of(context).colorScheme.surfaceContainerHighest;
     final fg = isUser ? Colors.white : Theme.of(context).colorScheme.onSurface;
+    final hasText = message.text.isNotEmpty || (message.streaming && !message.hasCommerce);
+
     return Column(
       crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
-          child: Text(
-            message.text.isEmpty && message.streaming ? '…' : message.text,
-            style: TextStyle(color: fg),
+        if (hasText)
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
+            child: Text(
+              message.text.isEmpty && message.streaming ? '…' : message.text,
+              style: TextStyle(color: fg),
+            ),
           ),
-        ),
+
+        // ---- commerce attachments (engine-emitted chrome, never prose) ----
+        if (message.catalog != null)
+          ProductCarousel(
+            catalog: message.catalog!,
+            accent: accent,
+            onOpenProduct: (p) => _openProduct(context, ref, p),
+            onAddProduct: (p) => _addProduct(context, ref, p),
+            onLoadMore: (q, page) =>
+                ref.read(chatControllerProvider(handle).notifier).loadMore(q, page),
+          ),
+        if (message.productCard != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ProductCompactCard(
+              product: message.productCard!,
+              accent: accent,
+              width: 200,
+              onOpen: () => _openProduct(context, ref, message.productCard!),
+              onAdd: () => _addProduct(context, ref, message.productCard!),
+            ),
+          ),
+        if (message.checkoutResult != null)
+          CheckoutResultCard(
+            result: message.checkoutResult!,
+            handle: handle,
+            accent: accent,
+          ),
+        if (message.cartSnapshot != null && message.checkoutResult == null)
+          _CartHintChip(handle: handle, accent: accent, itemCount: message.cartSnapshot!.itemCount),
+
         if (message.citations.isNotEmpty)
           Wrap(
             spacing: 6,
@@ -210,6 +324,28 @@ class _Bubble extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The inline "what just changed" cart confirmation after a chat-driven mutation
+/// (§10.3). Ambient totals live on the mini-bar; this is the contextual hint.
+class _CartHintChip extends StatelessWidget {
+  const _CartHintChip({required this.handle, required this.accent, required this.itemCount});
+  final String handle;
+  final Color accent;
+  final int itemCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppL10n.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ActionChip(
+        avatar: Icon(Icons.check_circle, size: 16, color: accent),
+        label: Text('${t.cartUpdated} · ${t.itemsCount(itemCount)}'),
+        onPressed: () => showCartSheet(context, handle, accent),
+      ),
     );
   }
 }

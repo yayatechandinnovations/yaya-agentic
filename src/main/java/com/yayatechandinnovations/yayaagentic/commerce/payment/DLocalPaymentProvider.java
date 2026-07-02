@@ -45,6 +45,12 @@ public class DLocalPaymentProvider implements PaymentProvider {
         this.http = RestClient.create();
     }
 
+    /** Live requires all dLocal credentials — surfaced so the router can tell a
+     *  wired dLocal from the sandbox fallback. */
+    public boolean isConfigured() {
+        return props.isConfigured();
+    }
+
     @Override
     public String name() {
         return "dlocal";

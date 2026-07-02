@@ -20,6 +20,7 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
+import com.yayatechandinnovations.yayaagentic.engine.ActionNotPermittedException;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
@@ -155,8 +156,54 @@ public class PublicChatController {
                     result.profile().version(),
                     result.greeting(),
                     result.quickReplies(),
-                    PublicChatDtos.EntryPointCard.of(ep));
+                    PublicChatDtos.EntryPointCard.of(ep),
+                    PublicChatDtos.CommerceInfo.of(result.commerce()));
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /* ---------------------------- action (tap) ---------------------------- */
+
+    /**
+     * The client-initiated action channel (ecommerce-chat-design.md §9): a tap on
+     * a product/cart/checkout runs ONE whitelisted, {@code clientInvocable} tool
+     * through the exact same {@code ToolExecutor} + Authorizer as a chat message,
+     * streaming back the same SSE shape (ToolResult + {@code cart}/{@code
+     * checkout_result} UiHints). "Two doors, one lock" — a tap is an untrusted
+     * proposal, not a shortcut. A refused action (tool not in profile / not
+     * clientInvocable) collapses to a bare 403; the tool's existence is never
+     * leaked. Mirrors the abuse gate + auth resolution of {@link #sendMessage}.
+     */
+    @PostMapping(value = "/sessions/{id}/actions", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<Object>> action(@PathVariable("id") String id,
+                                                @RequestBody PublicChatDtos.ActionRequest body,
+                                                ServerWebExchange exchange) {
+        Ids.SessionId sessionId = new Ids.SessionId(id);
+        return Flux.defer(() -> {
+            ChatSessionRegistry.Context ctx = registry.get(sessionId)
+                    .orElseThrow(ChatApiException::sessionNotFound);
+            ChatEntryPoint ep = entryPoints.findByHandle(ctx.handle())
+                    .orElseThrow(ChatApiException::sessionNotFound);
+
+            // A tap is an LLM-free turn, but still a turn: same per-session gate as
+            // a message (it can trigger a merchant HTTP call), and the anonymous
+            // daily cap so taps can't bypass the free-session circuit breaker.
+            requireWithinLimit(rateLimiter.hit("msg-sess", id,
+                    ep.abuse().messagesPerSessionPerHour(), HOUR));
+            if (isAnonymous(ctx, exchange)) {
+                requireWithinLimit(rateLimiter.hit("msg-anon-day",
+                        ctx.handle() + ":" + safe(ctx.deviceId()),
+                        ep.abuse().anonymousDailyMessageCap(), DAY));
+            }
+
+            AuthContext auth = authForExisting(ctx, ep, exchange);
+            registry.touch(sessionId, ep.sessionPolicy().idleTimeout());
+            return engine.dispatchAction(sessionId, new Ids.ToolId(body.tool()),
+                            body.args() == null ? Map.of() : body.args(), auth)
+                    .map(chatAdapter::toSse);
+        }).subscribeOn(Schedulers.boundedElastic())
+          .onErrorMap(ActionNotPermittedException.class,
+                  e -> new org.springframework.web.server.ResponseStatusException(
+                          org.springframework.http.HttpStatus.FORBIDDEN));
     }
 
     /* ----------------------------- send ----------------------------------- */

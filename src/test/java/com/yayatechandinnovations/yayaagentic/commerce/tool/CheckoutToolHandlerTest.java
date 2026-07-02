@@ -81,12 +81,12 @@ class CheckoutToolHandlerTest {
         checkout = new CheckoutToolHandler(runtime, cart, payments, orders, payloads);
 
         wm.merge(SESSION, Map.of("commerceConfig",
-                new CommerceConfig(List.of(CATALOG), "USD", new Ids.ToolId("checkout"), true)));
+                new CommerceConfig(List.of(CATALOG), "USD", new Ids.ToolId("checkout"), true, null)));
     }
 
     @Test
     void checkoutOpensPaymentOnTheAuthoritativeTotalAndEmitsCheckoutResult() {
-        CommerceConfig cfg = new CommerceConfig(List.of(CATALOG), "USD", null, true);
+        CommerceConfig cfg = new CommerceConfig(List.of(CATALOG), "USD", null, true, null);
         cart.add(SESSION, "USD", new Ids.ProductId("p1"), null, 2, runtime.lookup(ctx(), cfg));
         pending.drain(SESSION);
 

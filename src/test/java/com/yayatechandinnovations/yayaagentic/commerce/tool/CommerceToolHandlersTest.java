@@ -69,7 +69,7 @@ class CommerceToolHandlersTest {
 
         // Engine stashes this at session start; simulate it here.
         wm.merge(SESSION, Map.of("commerceConfig",
-                new CommerceConfig(List.of(CATALOG), "USD", null, true)));
+                new CommerceConfig(List.of(CATALOG), "USD", null, true, null)));
     }
 
     @Test

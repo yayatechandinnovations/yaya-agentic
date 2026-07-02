@@ -354,6 +354,174 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'No chats match your search.'**
   String get discoverNoResults;
+
+  /// No description provided for @addToCart.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to cart'**
+  String get addToCart;
+
+  /// No description provided for @viewProduct.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get viewProduct;
+
+  /// No description provided for @cartTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your cart'**
+  String get cartTitle;
+
+  /// No description provided for @cartEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Your cart is empty'**
+  String get cartEmpty;
+
+  /// No description provided for @subtotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtotal'**
+  String get subtotal;
+
+  /// No description provided for @itemsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No items} =1{1 item} other{{count} items}}'**
+  String itemsCount(int count);
+
+  /// No description provided for @checkout.
+  ///
+  /// In en, this message translates to:
+  /// **'Checkout'**
+  String get checkout;
+
+  /// No description provided for @removeItem.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get removeItem;
+
+  /// No description provided for @outOfStock.
+  ///
+  /// In en, this message translates to:
+  /// **'Out of stock'**
+  String get outOfStock;
+
+  /// No description provided for @lowStock.
+  ///
+  /// In en, this message translates to:
+  /// **'Low stock'**
+  String get lowStock;
+
+  /// No description provided for @preorder.
+  ///
+  /// In en, this message translates to:
+  /// **'Pre-order'**
+  String get preorder;
+
+  /// No description provided for @loadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Load more'**
+  String get loadMore;
+
+  /// No description provided for @resultsForQuery.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 result for \"{query}\"} other{{count} results for \"{query}\"}}'**
+  String resultsForQuery(int count, String query);
+
+  /// No description provided for @payNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Pay now'**
+  String get payNow;
+
+  /// No description provided for @orderPlacedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Order placed'**
+  String get orderPlacedTitle;
+
+  /// No description provided for @orderRefLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Order {ref}'**
+  String orderRefLabel(String ref);
+
+  /// No description provided for @confirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get confirmAction;
+
+  /// No description provided for @keepShopping.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep shopping'**
+  String get keepShopping;
+
+  /// No description provided for @addedToCart.
+  ///
+  /// In en, this message translates to:
+  /// **'Added to cart'**
+  String get addedToCart;
+
+  /// No description provided for @chooseOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an option'**
+  String get chooseOption;
+
+  /// No description provided for @quantity.
+  ///
+  /// In en, this message translates to:
+  /// **'Quantity'**
+  String get quantity;
+
+  /// No description provided for @continueToPayment.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue to payment'**
+  String get continueToPayment;
+
+  /// No description provided for @paymentComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment complete'**
+  String get paymentComplete;
+
+  /// No description provided for @paymentFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Payment couldn\'t be completed.'**
+  String get paymentFailed;
+
+  /// No description provided for @openingCheckout.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening secure checkout…'**
+  String get openingCheckout;
+
+  /// No description provided for @couldNotOpenCheckout.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the checkout page.'**
+  String get couldNotOpenCheckout;
+
+  /// No description provided for @cartUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Cart updated'**
+  String get cartUpdated;
+
+  /// No description provided for @filters.
+  ///
+  /// In en, this message translates to:
+  /// **'Filters'**
+  String get filters;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

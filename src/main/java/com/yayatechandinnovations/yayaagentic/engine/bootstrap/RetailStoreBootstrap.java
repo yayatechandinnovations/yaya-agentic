@@ -201,7 +201,8 @@ public class RetailStoreBootstrap implements ApplicationRunner {
                 Map.of("introQuickReplies", List.of(
                         "show me soaps", "anything with castor oil", "gifts under $20")),
                 new CommerceConfig(List.of(BODY_CARE_CATALOG), "USD",
-                        new Ids.ToolId(CommerceTools.CHECKOUT), true)));
+                        new Ids.ToolId(CommerceTools.CHECKOUT), true,
+                        /* connectedAccountId */ null)));   // seeded demo: platform/sandbox charge
     }
 
     // ---- inline products --------------------------------------------------
