@@ -448,7 +448,10 @@ class _AuthSection extends ConsumerWidget {
   final TextEditingController issuer;
   final TextEditingController audience;
   final int? authResolverId;
-  final TextEditingController senderKey;
+  // The sender key is minted by yaya-agentic, never typed. Null until the entry
+  // point has been saved once (create form); shown read-only afterwards so the
+  // operator can copy it into the tenant's resolver config.
+  final String? senderKey;
   final void Function(String) onMode;
   final void Function(String) onMethod;
   final void Function(int?) onResolver;
@@ -485,8 +488,7 @@ class _AuthSection extends ConsumerWidget {
             _ResolverDropdown(
                 tenant: tenant, selected: authResolverId, onChanged: onResolver),
             const SizedBox(height: 10),
-            _plainField(senderKey, 'Sender key (optional)',
-                'Tenant-issued chat code, e.g. F0DX-12FF'),
+            _SenderKeyField(value: senderKey),
           ],
         ],
       ],
@@ -498,6 +500,44 @@ class _AuthSection extends ConsumerWidget {
         decoration: InputDecoration(
             labelText: label, hintText: hint, border: const OutlineInputBorder(), isDense: true),
       );
+}
+
+/// Read-only display of the yaya-minted sender key. Before the first save there
+/// is no code yet, so we tell the operator it will be generated; afterwards we
+/// show it with a copy affordance to paste into the tenant's resolver config.
+class _SenderKeyField extends StatelessWidget {
+  const _SenderKeyField({required this.value});
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (value == null || value!.isEmpty) {
+      return InputDecorator(
+        decoration: const InputDecoration(labelText: 'Sender key', border: OutlineInputBorder()),
+        child: Text('Generated automatically when you save. Register it on the tenant resolver.',
+            style: theme.textTheme.bodySmall),
+      );
+    }
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: 'Sender key',
+        border: const OutlineInputBorder(),
+        helperText: 'Register this code on the tenant resolver.',
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.copy, size: 18),
+          tooltip: 'Copy',
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: value!));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Sender key copied')));
+          },
+        ),
+      ),
+      child: SelectableText(value!,
+          style: theme.textTheme.titleMedium?.copyWith(letterSpacing: 1.5)),
+    );
+  }
 }
 
 class _ResolverDropdown extends ConsumerWidget {
@@ -556,7 +596,6 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   final _tagline = TextEditingController();
   final _issuer = TextEditingController();
   final _audience = TextEditingController();
-  final _senderKey = TextEditingController();
 
   String? _profileSlug;
   String? _logoUrl;
@@ -571,7 +610,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience, _senderKey]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
@@ -621,10 +660,8 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       );
     }
     if (_authMethod == 'RESOLVER' && _authResolverId != null) {
-      return ChatAuthConfig(
-          kind: 'ResolverExchange',
-          authResolverId: _authResolverId,
-          senderKey: _senderKey.text.trim().isEmpty ? null : _senderKey.text.trim());
+      // No senderKey on create — yaya-agentic mints it server-side.
+      return ChatAuthConfig(kind: 'ResolverExchange', authResolverId: _authResolverId);
     }
     return null;
   }
@@ -635,7 +672,6 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
     _tagline.clear();
     _issuer.clear();
     _audience.clear();
-    _senderKey.clear();
     setState(() {
       _profileSlug = null;
       _logoUrl = null;
@@ -705,7 +741,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
               issuer: _issuer,
               audience: _audience,
               authResolverId: _authResolverId,
-              senderKey: _senderKey,
+              senderKey: null, // minted on save; nothing to show on a fresh draft
               onMode: (v) => setState(() => _authMode = v),
               onMethod: (v) => setState(() => _authMethod = v),
               onResolver: (v) => setState(() => _authResolverId = v),
@@ -768,7 +804,6 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _tagline = TextEditingController(text: widget.ep.tagline ?? '');
   late final _issuer = TextEditingController(text: widget.ep.authConfig.issuer ?? '');
   late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
-  late final _senderKey = TextEditingController(text: widget.ep.authConfig.senderKey ?? '');
   late String _logoUrl = widget.ep.logoUrl;
   late String? _accentHex = widget.ep.accentColorHex;
   late String _localeValue = _normalizeLocale(widget.ep.defaultLocale);
@@ -779,7 +814,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience, _senderKey]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
       c.dispose();
     }
     super.dispose();
@@ -794,10 +829,12 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
           audience: _audience.text.trim().isEmpty ? null : _audience.text.trim());
     }
     if (_authMethod == 'RESOLVER' && _authResolverId != null) {
+      // Carry the minted key back so the round-trip preserves it; the backend
+      // is the authority and keeps the stored code regardless.
       return ChatAuthConfig(
           kind: 'ResolverExchange',
           authResolverId: _authResolverId,
-          senderKey: _senderKey.text.trim().isEmpty ? null : _senderKey.text.trim());
+          senderKey: widget.ep.authConfig.senderKey);
     }
     return ChatAuthConfig(kind: 'None');
   }
@@ -839,7 +876,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
                 issuer: _issuer,
                 audience: _audience,
                 authResolverId: _authResolverId,
-                senderKey: _senderKey,
+                senderKey: widget.ep.authConfig.senderKey,
                 onMode: (v) => setState(() => _authMode = v),
                 onMethod: (v) => setState(() => _authMethod = v),
                 onResolver: (v) => setState(() => _authResolverId = v),

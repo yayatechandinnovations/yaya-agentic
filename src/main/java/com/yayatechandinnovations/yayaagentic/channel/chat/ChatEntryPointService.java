@@ -92,7 +92,12 @@ public class ChatEntryPointService {
         e.setDiscoverable(Boolean.TRUE.equals(cmd.discoverable()));
         AuthMode authMode = cmd.authMode() == null ? AuthMode.ANONYMOUS_ONLY : cmd.authMode();
         e.setAuthMode(authMode.name());
-        e.setAuthConfigJson(writeJson(cmd.authConfig() == null ? new AuthConfig.None() : cmd.authConfig()));
+        // yaya-agentic is the source of truth for the sender key: a fresh entry
+        // point mints its own code, which the operator registers on the tenant's
+        // resolver side. We never accept an inbound key on create.
+        AuthConfig authConfig = withMintedSenderKey(
+                cmd.authConfig() == null ? new AuthConfig.None() : cmd.authConfig(), null);
+        e.setAuthConfigJson(writeJson(authConfig));
         e.setAbusePolicyJson(writeJson(cmd.abuse() == null ? AbusePolicy.defaults() : cmd.abuse()));
         // A resolver-exchange entry point authenticates from the verified device
         // phone, so a verified phone is structurally required — force it rather
@@ -135,7 +140,13 @@ public class ChatEntryPointService {
         if (cmd.tagline() != null) e.setTagline(cmd.tagline());
         if (cmd.discoverable() != null) e.setDiscoverable(cmd.discoverable());
         if (cmd.authMode() != null) e.setAuthMode(cmd.authMode().name());
-        if (cmd.authConfig() != null) e.setAuthConfigJson(writeJson(cmd.authConfig()));
+        if (cmd.authConfig() != null) {
+            // The sender key is immutable once minted — carry the stored code
+            // forward so an operator's branding edit can't rotate it out from
+            // under the resolver. A fresh switch to resolver-exchange mints one.
+            AuthConfig current = readJson(e.getAuthConfigJson(), AuthConfig.class);
+            e.setAuthConfigJson(writeJson(withMintedSenderKey(cmd.authConfig(), current)));
+        }
         if (cmd.abuse() != null) e.setAbusePolicyJson(writeJson(cmd.abuse()));
         if (cmd.requiresVerifiedPhone() != null) e.setRequiresVerifiedPhone(cmd.requiresVerifiedPhone());
         // Switching to resolver-exchange forces a verified phone (see createDraft).
@@ -221,6 +232,31 @@ public class ChatEntryPointService {
         byte[] raw = new byte[18];
         random.nextBytes(raw);
         return "e_" + URL64.encodeToString(raw);
+    }
+
+    /** Unambiguous uppercase alphanumerics — no I/O/0/1 — so an operator can
+     *  read the code off the console and type it into the tenant's resolver
+     *  config without transcription errors. */
+    private static final char[] SENDER_KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray();
+
+    /** Ensures a {@link AuthConfig.ResolverExchange} carries a stable 8-char
+     *  code (e.g. {@code "F0DX-12FF"}). Reuses the previously stored key when the
+     *  config already had one; otherwise mints a fresh one. Non-resolver configs
+     *  pass through untouched. */
+    private AuthConfig withMintedSenderKey(AuthConfig incoming, AuthConfig previous) {
+        if (!(incoming instanceof AuthConfig.ResolverExchange rx)) return incoming;
+        String existing = previous instanceof AuthConfig.ResolverExchange p ? p.senderKey() : null;
+        String key = (existing != null && !existing.isBlank()) ? existing : mintSenderKey();
+        return new AuthConfig.ResolverExchange(rx.authResolverId(), key);
+    }
+
+    private String mintSenderKey() {
+        char[] out = new char[9];
+        for (int i = 0, p = 0; i < 8; i++, p++) {
+            if (i == 4) out[p++] = '-';
+            out[p] = SENDER_KEY_ALPHABET[random.nextInt(SENDER_KEY_ALPHABET.length)];
+        }
+        return new String(out);
     }
 
     ChatEntryPoint toDomain(ChatEntryPointEntity e) {
