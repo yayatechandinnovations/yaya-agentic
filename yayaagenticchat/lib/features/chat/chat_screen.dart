@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
+import '../../config.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/chat_message.dart';
 import '../../models/commerce/product.dart';
+import '../../widgets/brand_logo.dart';
 import 'chat_controller.dart';
 import 'commerce/cart_header_button.dart';
 import 'commerce/cart_sheet.dart';
@@ -79,7 +81,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final state = ref.watch(chatControllerProvider(widget.handle));
     final controller = ref.read(chatControllerProvider(widget.handle).notifier);
     final accent = colorFromHex(state.card?.accentColorHex);
-    final title = state.card?.displayName ?? 'Chat';
+    final card = state.card;
+    final title = card?.displayName ?? 'Chat';
     ref.listen(chatControllerProvider(widget.handle), (_, _) => _scrollToBottom());
 
     // Fire the checkout hand-off exactly once when a fresh result arrives (open
@@ -100,7 +103,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       appBar: AppBar(
         backgroundColor: accent,
         foregroundColor: Colors.white,
-        title: Text(title),
+        title: card == null
+            ? Text(title)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BrandLogo(
+                    url: AppConfig.resolveUrl(card.logoUrl),
+                    name: card.displayName,
+                    accent: accent,
+                    radius: 16,
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
+                ],
+              ),
         actions: [
           if (state.isStore) CartHeaderButton(handle: widget.handle, accent: accent),
           if (state.canUpgrade)

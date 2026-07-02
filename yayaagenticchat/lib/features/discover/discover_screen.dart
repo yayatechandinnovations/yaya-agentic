@@ -11,6 +11,7 @@ import '../../data/providers.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/directory_card.dart';
 import '../../models/entry_point_card.dart';
+import '../../widgets/brand_logo.dart';
 import '../entry/chat_confirm_card.dart';
 
 /// Discover — search/browse the public directory of published chats
@@ -186,7 +187,7 @@ class _ResultCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        leading: _Logo(url: AppConfig.resolveUrl(card.logoUrl), name: card.displayName, accent: accent),
+        leading: BrandLogo(url: AppConfig.resolveUrl(card.logoUrl), name: card.displayName, accent: accent),
         title: Text(card.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: const Icon(Icons.add_circle_outline),
@@ -196,30 +197,6 @@ class _ResultCard extends StatelessWidget {
   }
 }
 
-class _Logo extends StatelessWidget {
-  const _Logo({required this.url, required this.name, required this.accent});
-  final String url;
-  final String name;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    final initials = name.isEmpty ? '?' : name.trim()[0].toUpperCase();
-    return CircleAvatar(
-      backgroundColor: accent,
-      foregroundColor: Colors.white,
-      child: ClipOval(
-        child: Image.network(
-          url,
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => Text(initials),
-        ),
-      ),
-    );
-  }
-}
 
 class _Message extends StatelessWidget {
   const _Message({required this.icon, required this.text, this.action, this.onAction});

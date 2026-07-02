@@ -7,6 +7,7 @@ import '../../config.dart';
 import '../../data/providers.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/tile.dart';
+import '../../widgets/brand_logo.dart';
 
 /// The home screen — the user's directory of `LOGO | NAME` tiles
 /// (chat-channel-design.md §11).
@@ -78,7 +79,7 @@ class _TileCard extends ConsumerWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        leading: _Logo(url: AppConfig.resolveUrl(tile.logoUrl), name: tile.displayName, accent: accent),
+        leading: BrandLogo(url: AppConfig.resolveUrl(tile.logoUrl), name: tile.displayName, accent: accent),
         title: Text(tile.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(tile.authMode == 'AUTH_REQUIRED'
             ? AppL10n.of(context).signInRequired
@@ -109,27 +110,3 @@ class _TileCard extends ConsumerWidget {
   }
 }
 
-class _Logo extends StatelessWidget {
-  const _Logo({required this.url, required this.name, required this.accent});
-  final String url;
-  final String name;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    final initials = name.isEmpty ? '?' : name.trim()[0].toUpperCase();
-    return CircleAvatar(
-      backgroundColor: accent,
-      foregroundColor: Colors.white,
-      child: ClipOval(
-        child: Image.network(
-          url,
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => Text(initials),
-        ),
-      ),
-    );
-  }
-}
