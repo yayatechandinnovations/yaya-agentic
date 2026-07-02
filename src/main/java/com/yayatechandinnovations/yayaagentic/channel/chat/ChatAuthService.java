@@ -228,11 +228,14 @@ public class ChatAuthService {
             case ANONYMOUS -> new Resolution(Decision.DEVICE,
                     verifiedDeviceContext(ep, handle, device), Optional.empty(), false,
                     resolverId, on, "ANONYMOUS",
-                    "resolver returned no account; fell back to the phone-verified device", callerSha256);
+                    resolved.reason() + "; fell back to the phone-verified device", callerSha256);
+            // Carry the integrator's actual reason — a returned-but-unverifiable
+            // token reads "no authenticator recognised the JWT (check trust
+            // roots)", NOT "no account", which was masking real verify failures.
             case REJECT -> new Resolution(Decision.REJECT,
                     null, Optional.empty(), false,
                     resolverId, on, "REJECT",
-                    "resolver returned no account and on_unresolved=REJECT", callerSha256);
+                    resolved.reason(), callerSha256);
         };
     }
 

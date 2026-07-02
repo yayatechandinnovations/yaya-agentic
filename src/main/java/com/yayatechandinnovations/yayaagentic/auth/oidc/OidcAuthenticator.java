@@ -163,7 +163,9 @@ public class OidcAuthenticator implements Authenticator {
         } catch (AuthenticationException e) {
             throw e;
         } catch (Exception e) {
-            throw new AuthenticationException("oidc: token validation failed", e);
+            // Surface the underlying reason (bad signature, JWKS fetch failure,
+            // unknown kid) — carries no token material and makes prod debuggable.
+            throw new AuthenticationException("oidc: token validation failed: " + e.getMessage(), e);
         }
     }
 
@@ -221,8 +223,19 @@ public class OidcAuthenticator implements Authenticator {
         Set<String> scopes = resolveScopes(claims);
         Map<String, Object> claimMap = claims.getClaims();
         Ids.TenantId tenant = ctx.tenant() != null ? ctx.tenant() : new Ids.TenantId("default");
-        return new Principal(subject, tenant, scopes, Map.copyOf(claimMap),
+        return new Principal(subject, tenant, scopes, nonNullClaims(claimMap),
                 claims.getIssueTime() == null ? java.time.Instant.now() : claims.getIssueTime().toInstant());
+    }
+
+    /** JWT claim sets can carry JSON-null values (an optional field the issuer
+     *  left null). {@code Map.copyOf} rejects nulls with a message-less NPE,
+     *  which would bounce an otherwise-valid token — so drop null-valued (and
+     *  null-keyed) entries. A null claim carries no usable identity anyway. */
+    private static Map<String, Object> nonNullClaims(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) return Map.of();
+        Map<String, Object> out = new LinkedHashMap<>();
+        raw.forEach((k, v) -> { if (k != null && v != null) out.put(k, v); });
+        return Map.copyOf(out);
     }
 
     private Set<String> resolveScopes(JWTClaimsSet claims) {

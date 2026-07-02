@@ -78,7 +78,8 @@ public class ChannelAuthIntegrator {
             // FAQ-mode binding: no resolver configured. The chain's
             // WhatsAppPhoneAuthenticator (@Order 900) will mint the
             // baseline Principal on engine.start.
-            return Resolved.anonymous(baseCtx);
+            return Resolved.anonymous(baseCtx,
+                    "no auth resolver on this binding (FAQ mode) — anonymous principal");
         }
         return resolveFor(baseCtx.tenant(), binding.authResolverId(), binding.onUnresolved(),
                 baseCtx, session, sender, senderPhone, null, callerPhone, "whatsapp",
@@ -187,15 +188,22 @@ public class ChannelAuthIntegrator {
         }
         Principal stamped = stampChannelClaims(verified.get(), baselineScopes, channelClaims);
         return new Resolved(Resolved.Decision.JWT_VERIFIED,
-                Optional.of(stamped), Optional.of(jwt));
+                Optional.of(stamped), Optional.of(jwt),
+                "resolver JWT verified by the trust chain");
     }
 
     private Resolved applyOnUnresolved(OnUnresolvedPolicy onUnresolved, AuthContext baseCtx,
                                        String reason) {
+        // A null reason means the resolver genuinely returned 404 (no account).
+        // A non-null reason is the specific failure verifyAndStamp already
+        // diagnosed — token returned but not verifiable, JWT rejected by the
+        // chain, resolver transport error. Preserve whichever it is so the
+        // inspector stops reporting a verification failure as "no account".
+        String detail = reason == null ? "resolver returned no account (404)" : reason;
         if (onUnresolved == OnUnresolvedPolicy.ANONYMOUS) {
-            return Resolved.anonymous(baseCtx);
+            return Resolved.anonymous(baseCtx, detail);
         }
-        return Resolved.reject(reason);
+        return Resolved.reject(detail);
     }
 
     /**
@@ -212,6 +220,10 @@ public class ChannelAuthIntegrator {
 
         Map<String, Object> claims = new LinkedHashMap<>(jwtPrincipal.claims());
         claims.putAll(channelClaims);
+        // Same null-hostility as the authenticators: Map.copyOf below NPEs on a
+        // null value, and a stamped channel claim (or a leftover JWT claim) can
+        // be null. A null claim is unusable, so drop it rather than reject.
+        claims.values().removeIf(v -> v == null);
 
         return new Principal(
                 jwtPrincipal.subject(),
@@ -227,16 +239,17 @@ public class ChannelAuthIntegrator {
      */
     public record Resolved(Decision decision,
                            Optional<Principal> principal,
-                           Optional<String> jwt) {
+                           Optional<String> jwt,
+                           String reason) {
 
         public enum Decision { JWT_VERIFIED, ANONYMOUS, REJECT }
 
-        private static Resolved anonymous(AuthContext baseCtx) {
-            return new Resolved(Decision.ANONYMOUS, Optional.empty(), Optional.empty());
+        private static Resolved anonymous(AuthContext baseCtx, String reason) {
+            return new Resolved(Decision.ANONYMOUS, Optional.empty(), Optional.empty(), reason);
         }
 
         private static Resolved reject(String reason) {
-            return new Resolved(Decision.REJECT, Optional.empty(), Optional.empty());
+            return new Resolved(Decision.REJECT, Optional.empty(), Optional.empty(), reason);
         }
 
         /**

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.JWSObject;
+import com.nimbusds.jose.Payload;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
@@ -65,6 +67,31 @@ class SharedSecretJwtAuthenticatorTest {
         assertThat(hit.get().subject()).isEqualTo("user-42");
         assertThat(hit.get().scopes()).containsExactlyInAnyOrder("PLAYER_QUERY_PUBLIC", "PLAYER_BETTING");
         assertThat(hit.get().claims()).containsEntry("role", "PLAYER");
+    }
+
+    @Test
+    void null_valued_claim_does_not_bounce_an_otherwise_valid_token() throws Exception {
+        givenStoredSecret(ISS, HMAC_SECRET, List.of());
+
+        // A token minted by a non-Nimbus issuer (SL) that stamps an optional
+        // field as JSON null — e.g. a not-yet-populated customerRef for a guest
+        // who hasn't registered. The wire payload is built raw because Nimbus's
+        // own serializer strips nulls and so cannot reproduce this. yaya parses
+        // it, getClaims() carries customerRef=null, and Map.copyOf used to NPE
+        // ("token validation failed: null"), rejecting an otherwise-valid token.
+        String payload = "{\"iss\":\"" + ISS + "\",\"sub\":\"user-42\","
+                + "\"scope\":\"PLAYER_QUERY_OWN\",\"customerRef\":null,\"exp\":9999999999}";
+        JWSObject jws = new JWSObject(new JWSHeader(JWSAlgorithm.HS256), new Payload(payload));
+        jws.sign(new MACSigner(HMAC_SECRET.getBytes(StandardCharsets.UTF_8)));
+        String token = jws.serialize();
+
+        Optional<Principal> hit = auth.tryAuthenticate(bearerCtx(token));
+
+        assertThat(hit).isPresent();
+        assertThat(hit.get().subject()).isEqualTo("user-42");
+        assertThat(hit.get().scopes()).contains("PLAYER_QUERY_OWN");
+        // Null claim dropped, not carried as a null value.
+        assertThat(hit.get().claims()).doesNotContainKey("customerRef");
     }
 
     @Test

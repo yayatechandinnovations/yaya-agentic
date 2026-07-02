@@ -601,8 +601,8 @@ public class InboundDispatchWorker {
             case JWT_VERIFIED -> "Resolver JWT verified by the trust chain.";
             case ANONYMOUS -> binding.authResolverId() == null
                     ? "No auth resolver on this binding (FAQ mode) — anonymous principal."
-                    : "Resolver did not yield a verified identity; on_unresolved=ANONYMOUS.";
-            case REJECT -> "Identity could not be resolved/verified; on_unresolved=REJECT.";
+                    : authResolved.reason() + "; on_unresolved=ANONYMOUS.";
+            case REJECT -> authResolved.reason() + "; on_unresolved=REJECT.";
         };
         authTrace.recordVerification(sessionId, decision, detail);
 

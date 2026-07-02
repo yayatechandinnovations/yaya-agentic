@@ -241,7 +241,7 @@ class ChannelAuthIntegratorTest {
                 Set.of("channel:whatsapp"), Map.of(), Instant.now());
         ChannelAuthIntegrator.Resolved r = new ChannelAuthIntegrator.Resolved(
                 ChannelAuthIntegrator.Resolved.Decision.JWT_VERIFIED,
-                Optional.of(stamped), Optional.of("jwt"));
+                Optional.of(stamped), Optional.of("jwt"), "verified");
 
         AuthContext engineCtx = r.authContextForEngine(baseCtx());
 

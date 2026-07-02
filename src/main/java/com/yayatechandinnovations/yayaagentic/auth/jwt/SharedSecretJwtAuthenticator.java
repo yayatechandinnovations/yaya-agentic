@@ -143,7 +143,12 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
         } catch (AuthenticationException e) {
             throw e;
         } catch (Exception e) {
-            throw new AuthenticationException("shared-secret-jwt: token validation failed", e);
+            // Surface the underlying JOSE reason — e.g. "The secret length must
+            // be at least 512 bits" (HS512 key too short) or "Unsupported HMAC
+            // algorithm". These messages carry no key/token material, and a bare
+            // "token validation failed" is undebuggable in prod.
+            throw new AuthenticationException(
+                    "shared-secret-jwt: token validation failed: " + e.getMessage(), e);
         }
     }
 
@@ -207,8 +212,19 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
         Set<String> scopes = resolveScopes(claims);
         Map<String, Object> claimMap = claims.getClaims();
         Ids.TenantId tenant = ctx.tenant() != null ? ctx.tenant() : new Ids.TenantId("default");
-        return new Principal(subject, tenant, scopes, Map.copyOf(claimMap),
+        return new Principal(subject, tenant, scopes, nonNullClaims(claimMap),
                 claims.getIssueTime() == null ? java.time.Instant.now() : claims.getIssueTime().toInstant());
+    }
+
+    /** JWT claim sets can carry JSON-null values (an optional field the issuer
+     *  left null). {@code Map.copyOf} rejects nulls with a message-less NPE,
+     *  which would bounce an otherwise-valid token — so drop null-valued (and
+     *  null-keyed) entries. A null claim carries no usable identity anyway. */
+    private static Map<String, Object> nonNullClaims(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) return Map.of();
+        Map<String, Object> out = new LinkedHashMap<>();
+        raw.forEach((k, v) -> { if (k != null && v != null) out.put(k, v); });
+        return Map.copyOf(out);
     }
 
     private Set<String> resolveScopes(JWTClaimsSet claims) {
