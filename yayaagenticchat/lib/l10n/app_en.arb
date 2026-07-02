@@ -6,6 +6,8 @@
   "onboardingVerifyBlurb": "We use your phone number to keep Yaya Chat human and spam-free.",
   "onboardingCodeBlurb": "We sent a 6-digit code to {phone}.",
   "@onboardingCodeBlurb": { "placeholders": { "phone": { "type": "String" } } },
+  "onboardingNameTitle": "Nice to meet you",
+  "onboardingNameBlurb": "What should people call you? We'll set up your account.",
   "fieldFullName": "Full name",
   "fieldPhone": "Phone (e.g. +18095551234)",
   "fieldCode": "6-digit code",

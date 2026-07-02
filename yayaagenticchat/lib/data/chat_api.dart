@@ -63,6 +63,18 @@ class ChatApi {
   Map<String, String> get _deviceHeader =>
       (devicePass == null || devicePass!.isEmpty) ? const {} : {'X-Device-Pass': devicePass!};
 
+  /// Phone-first probe: is there already an account for this number? Drives
+  /// whether we ask for a name before sending the OTP. Sends no SMS.
+  Future<bool> verifyLookup(String phoneE164) async {
+    try {
+      final r = await _dio.post('/v1/chat/verify/lookup', data: {'phoneE164': phoneE164});
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['registered'] ?? false) as bool;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
   /// Start phone verification — sends an OTP via the backend (Twilio Verify).
   Future<void> verifyStart(String phoneE164, String? name) async {
     try {
@@ -72,13 +84,15 @@ class ChatApi {
     }
   }
 
-  /// Check the OTP; on success returns the device pass to store.
-  Future<String> verifyCheck(String phoneE164, String code, String deviceId, String? name) async {
+  /// Check the OTP; on success returns the device pass to store plus the account's
+  /// name (for a returning phone this is the stored name, even if none was typed).
+  Future<({String devicePass, String? name})> verifyCheck(
+      String phoneE164, String code, String deviceId, String? name) async {
     try {
       final r = await _dio.post('/v1/chat/verify/check',
           data: {'phoneE164': phoneE164, 'code': code, 'deviceId': deviceId, 'name': name});
       final j = Map<String, dynamic>.from(r.data as Map);
-      return (j['devicePass'] ?? '') as String;
+      return (devicePass: (j['devicePass'] ?? '') as String, name: j['name'] as String?);
     } on DioException catch (e) {
       throw _map(e);
     }

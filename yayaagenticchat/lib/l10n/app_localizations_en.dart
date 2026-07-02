@@ -27,6 +27,13 @@ class AppL10nEn extends AppL10n {
   }
 
   @override
+  String get onboardingNameTitle => 'Nice to meet you';
+
+  @override
+  String get onboardingNameBlurb =>
+      'What should people call you? We\'ll set up your account.';
+
+  @override
   String get fieldFullName => 'Full name';
 
   @override

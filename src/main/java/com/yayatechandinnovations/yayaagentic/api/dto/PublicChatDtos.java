@@ -106,6 +106,12 @@ public final class PublicChatDtos {
 
     /* ---- First-run phone verification (§20) ---- */
 
+    /** Phone-first probe: does a completed registration already exist for this
+     *  number? The app asks for a name only when {@code registered} is false. */
+    public record VerifyLookupRequest(String phoneE164) {}
+
+    public record VerifyLookupResponse(boolean registered) {}
+
     public record VerifyStartRequest(String phoneE164, String name) {}
 
     public record VerifyStartResponse(String status) {}

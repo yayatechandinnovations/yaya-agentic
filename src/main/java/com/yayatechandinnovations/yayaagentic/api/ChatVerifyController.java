@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatRateLimiter;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.PhoneVerifier;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
@@ -37,17 +38,36 @@ public class ChatVerifyController {
     private static final int START_PER_PHONE_PER_DAY = 5;
     private static final int START_GLOBAL_PER_DAY = 5000;
     private static final int CHECK_PER_PHONE_PER_HOUR = 10;
+    // Lookup sends no SMS, so it can be looser than start — but it *does* reveal
+    // account existence, so it's still capped per IP to blunt phone enumeration.
+    private static final int LOOKUP_PER_IP_PER_HOUR = 30;
 
     private final PhoneVerifier verifier;
     private final DevicePassService devicePasses;
     private final ChatRateLimiter rateLimiter;
+    private final ChatAccountService accounts;
 
     public ChatVerifyController(PhoneVerifier verifier,
                                 DevicePassService devicePasses,
-                                ChatRateLimiter rateLimiter) {
+                                ChatRateLimiter rateLimiter,
+                                ChatAccountService accounts) {
         this.verifier = verifier;
         this.devicePasses = devicePasses;
         this.rateLimiter = rateLimiter;
+        this.accounts = accounts;
+    }
+
+    /** Phone-first probe. Reveals only whether a completed registration exists so
+     *  the app knows whether to collect a name — no SMS, no device pass. */
+    @PostMapping("/lookup")
+    public Mono<PublicChatDtos.VerifyLookupResponse> lookup(
+            @RequestBody PublicChatDtos.VerifyLookupRequest body,
+            ServerWebExchange exchange) {
+        return Mono.fromSupplier(() -> {
+            String phone = requireE164(body == null ? null : body.phoneE164());
+            requireWithinLimit(rateLimiter.hit("verify-lookup-ip", clientIp(exchange), LOOKUP_PER_IP_PER_HOUR, HOUR));
+            return new PublicChatDtos.VerifyLookupResponse(accounts.isRegistered(phone));
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/start")
@@ -88,7 +108,10 @@ public class ChatVerifyController {
                 throw new ChatApiException(HttpStatus.UNAUTHORIZED, "verify_denied",
                         "that code is invalid or expired", 0);
             }
-            String name = body.name() == null ? null : body.name().trim();
+            // Persist the registration (first time) or re-authenticate a returning
+            // phone; the returned name is the account's — a returning device that
+            // sent no name still gets its stored one back on the pass.
+            String name = accounts.completeVerification(phone, body.name());
             String pass = devicePasses.issue(new VerifiedDevice(phone, name, safe(body.deviceId())));
             return new PublicChatDtos.VerifyCheckResponse(true, pass, phone, name);
         }).subscribeOn(Schedulers.boundedElastic());

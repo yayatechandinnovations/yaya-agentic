@@ -27,6 +27,13 @@ class AppL10nEs extends AppL10n {
   }
 
   @override
+  String get onboardingNameTitle => 'Mucho gusto';
+
+  @override
+  String get onboardingNameBlurb =>
+      '¿Cómo quieres que te llamen? Crearemos tu cuenta.';
+
+  @override
   String get fieldFullName => 'Nombre completo';
 
   @override

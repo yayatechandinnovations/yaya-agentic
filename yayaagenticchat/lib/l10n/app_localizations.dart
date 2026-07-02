@@ -127,6 +127,18 @@ abstract class AppL10n {
   /// **'We sent a 6-digit code to {phone}.'**
   String onboardingCodeBlurb(String phone);
 
+  /// No description provided for @onboardingNameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Nice to meet you'**
+  String get onboardingNameTitle;
+
+  /// No description provided for @onboardingNameBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'What should people call you? We\'ll set up your account.'**
+  String get onboardingNameBlurb;
+
   /// No description provided for @fieldFullName.
   ///
   /// In en, this message translates to:

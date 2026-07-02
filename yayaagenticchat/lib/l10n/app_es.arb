@@ -5,6 +5,8 @@
   "onboardingCodeTitle": "Ingresa el código que te enviamos",
   "onboardingVerifyBlurb": "Usamos tu número de teléfono para mantener Yaya Chat humano y sin spam.",
   "onboardingCodeBlurb": "Enviamos un código de 6 dígitos a {phone}.",
+  "onboardingNameTitle": "Mucho gusto",
+  "onboardingNameBlurb": "¿Cómo quieres que te llamen? Crearemos tu cuenta.",
   "fieldFullName": "Nombre completo",
   "fieldPhone": "Teléfono (ej. +18095551234)",
   "fieldCode": "Código de 6 dígitos",

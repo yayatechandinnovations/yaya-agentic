@@ -28,11 +28,16 @@ final deviceIdProvider = Provider<String>(
 
 /* ---- Phone verification (§20) ---- */
 
+/// Phone-first flow: enter [phone] → the backend says whether the number is
+/// registered. A returning phone skips straight to [code]; a new one stops at
+/// [name] first so it can register (chat-channel-design.md §20).
+enum VerifyStep { phone, name, code }
+
 class VerificationState {
   final String? devicePass;
   final String? phone;
   final String? name;
-  final bool codeSent;
+  final VerifyStep step;
   final bool busy;
   final String? error;
 
@@ -40,7 +45,7 @@ class VerificationState {
     this.devicePass,
     this.phone,
     this.name,
-    this.codeSent = false,
+    this.step = VerifyStep.phone,
     this.busy = false,
     this.error,
   });
@@ -51,7 +56,7 @@ class VerificationState {
     String? devicePass,
     String? phone,
     String? name,
-    bool? codeSent,
+    VerifyStep? step,
     bool? busy,
     String? error,
     bool clearError = false,
@@ -60,7 +65,7 @@ class VerificationState {
         devicePass: devicePass ?? this.devicePass,
         phone: phone ?? this.phone,
         name: name ?? this.name,
-        codeSent: codeSent ?? this.codeSent,
+        step: step ?? this.step,
         busy: busy ?? this.busy,
         error: clearError ? null : (error ?? this.error),
       );
@@ -78,31 +83,54 @@ class VerificationNotifier extends StateNotifier<VerificationState> {
   // Verify endpoints don't need (and predate) a device pass.
   final ChatApi _api = ChatApi();
 
-  Future<void> start(String phone, String name) async {
-    state = state.copyWith(busy: true, clearError: true);
+  /// Step 1 — the entered phone. A known number sends the OTP immediately and
+  /// jumps to the code step; an unknown one stops to collect a name first.
+  Future<void> submitPhone(String phone) async {
+    state = state.copyWith(busy: true, clearError: true, phone: phone);
     try {
-      await _api.verifyStart(phone, name);
-      state = state.copyWith(busy: false, codeSent: true, phone: phone, name: name);
+      final registered = await _api.verifyLookup(phone);
+      if (registered) {
+        await _api.verifyStart(phone, null);
+        state = state.copyWith(busy: false, step: VerifyStep.code);
+      } else {
+        state = state.copyWith(busy: false, step: VerifyStep.name);
+      }
     } on ChatApiException catch (e) {
       state = state.copyWith(busy: false, error: e.message);
     }
   }
 
+  /// Step 2 (new users only) — capture the name, then send the OTP.
+  Future<void> submitName(String name) async {
+    if (state.phone == null) return;
+    state = state.copyWith(busy: true, clearError: true, name: name);
+    try {
+      await _api.verifyStart(state.phone!, name);
+      state = state.copyWith(busy: false, step: VerifyStep.code);
+    } on ChatApiException catch (e) {
+      state = state.copyWith(busy: false, error: e.message);
+    }
+  }
+
+  /// Step 3 — verify the OTP and store the device pass. The backend echoes the
+  /// account's name (the stored one for a returning phone), so keep that.
   Future<void> check(String code) async {
     if (state.phone == null) return;
     state = state.copyWith(busy: true, clearError: true);
     try {
       final deviceId = _ref.read(deviceIdProvider);
-      final pass = await _api.verifyCheck(state.phone!, code, deviceId, state.name);
-      await _ref.read(directoryStoreProvider).saveVerification(pass, state.phone!, state.name);
+      final result = await _api.verifyCheck(state.phone!, code, deviceId, state.name);
+      final name = result.name ?? state.name;
+      await _ref.read(directoryStoreProvider).saveVerification(result.devicePass, state.phone!, name);
       _ref.invalidate(chatApiProvider); // pick up the new device pass
-      state = state.copyWith(busy: false, devicePass: pass);
+      state = state.copyWith(busy: false, devicePass: result.devicePass, name: name);
     } on ChatApiException catch (e) {
       state = state.copyWith(busy: false, error: e.message);
     }
   }
 
-  void resetCode() => state = state.copyWith(codeSent: false, clearError: true);
+  /// Back to the phone step (from either the name or code step).
+  void resetToPhone() => state = state.copyWith(step: VerifyStep.phone, clearError: true);
 }
 
 final verificationProvider =
