@@ -345,8 +345,9 @@ resolved profile is today).
 
 ## 11. Delivery plan (PR slices)
 
-> **Status (2026-07): slices 1–5 landed; only the admin runbook (§11.6) is
-> left.** The feature is live end-to-end and per-surface-configurable — an
+> **Status (2026-07): all slices (1–6) landed.** Runbook:
+> `docs/guides/profile-override-runbook.md`. The feature is live end-to-end
+> and per-surface-configurable — an
 > HTTP/BEAN resolver returning a `ProfileSelection` overrides the bound profile
 > on WhatsApp and chat, validated (published + in-tenant + per-surface
 > allowlist), cached across hits, stamped post-verify, honored at `@15`, and
@@ -380,8 +381,9 @@ resolved profile is today).
    inspector API (`BindingStageDto`) + Flutter panel surface "bound → effective
    (resolver override)" and denial notes. Both admin forms (WhatsApp binding +
    chat entry point) expose the allowlist + on-denied policy behind a resolver.
-6. **Docs.** ◑ Reconciled `AuthResolver` Javadoc + channel-auth §10. Admin
-   runbook ("route VIP callers to a premium profile") still to write.
+6. **Docs.** ✅ Reconciled `AuthResolver` Javadoc + channel-auth §10; admin
+   runbook shipped at `docs/guides/profile-override-runbook.md` (the three
+   scenarios, tenant integration, guardrail config, inspector debugging).
 
 > **Enforcement-location note.** The design (§8.1) sketched the guardrails
 > living in the `@15` resolver. Implementation moved them into
