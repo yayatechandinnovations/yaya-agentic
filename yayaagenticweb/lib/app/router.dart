@@ -18,7 +18,6 @@ import '../features/admin/recording_strategies/recording_strategies_screen.dart'
 import '../features/admin/tenants/tenants_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
 import '../features/admin/tenants/tenants_screen.dart' show tenantsProvider;
-import '../features/admin/channel_bindings/channel_bindings_screen.dart';
 import '../features/admin/chats/chats_admin_screen.dart';
 import '../features/admin/sms/sms_admin_screen.dart';
 import '../features/admin/whatsapp_opt_outs/whatsapp_opt_outs_screen.dart';
@@ -98,7 +97,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/whatsapp-senders', builder: (_, __) => const WhatsAppSendersScreen()),
           GoRoute(path: '/admin/sms', builder: (_, __) => const SmsAdminScreen()),
           GoRoute(path: '/admin/chats', builder: (_, __) => const ChatsAdminScreen()),
-          GoRoute(path: '/admin/channel-bindings', builder: (_, __) => const ChannelBindingsScreen()),
           GoRoute(path: '/admin/whatsapp-templates', builder: (_, __) => const WhatsAppTemplatesScreen()),
           GoRoute(path: '/admin/whatsapp-opt-outs', builder: (_, __) => const WhatsAppOptOutsScreen()),
           GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
@@ -276,7 +274,6 @@ const _navItems = <_NavEntry>[
     _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
     _NavItem('SMS (A2P 10DLC)', Icons.sms_outlined, Icons.sms, '/admin/sms'),
     _NavItem('Chats', Icons.chat_bubble_outline, Icons.chat_bubble, '/admin/chats'),
-    _NavItem('Bindings', Icons.swap_horiz_outlined, Icons.swap_horiz, '/admin/channel-bindings'),
     _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
     _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),
   ]),

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/whatsapp_sender.dart';
+import '../channel_bindings/sender_routes_section.dart';
 import '../shared/admin_shared.dart';
 import 'whatsapp_sender_wizard.dart';
 
@@ -325,6 +326,13 @@ class _SenderTile extends StatelessWidget {
                 value: sender.onboarding.failureMessage!),
           if (sender.createdAt != null)
             DetailRow(label: 'Created', value: sender.createdAt!),
+          if (sender.status != 'REVOKED') ...[
+            const Divider(height: 24),
+            SenderRoutesSection(
+              endpointKind: 'WHATSAPP_SENDER',
+              endpointId: sender.id,
+            ),
+          ],
         ],
       ),
       extraActions: [
