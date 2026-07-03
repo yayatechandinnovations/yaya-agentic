@@ -71,10 +71,48 @@ class ChatEntryPointSenderKeyTest {
 
         ChatEntryPoint updated = svc.updateBranding(TENANT, new ChatEntryPointId("chat_1"),
                 new ChatEntryPointService.UpdateCommand(
+                        null, null,
                         "Renamed", null, null, null, null, null, null, null,
                         new AuthConfig.ResolverExchange(7L, null), null, null, null, null));
 
         assertThat(((AuthConfig.ResolverExchange) updated.authConfig()).senderKey()).isEqualTo("KEEP-THIS");
+    }
+
+    @Test
+    void update_rebinds_the_profile_on_both_the_entry_point_and_its_binding() {
+        ChatEntryPointEntity existing = existingResolverEntity("KEEP-THIS");
+        when(repo.findByTenantIdAndId(TENANT.value(), "chat_1")).thenReturn(Optional.of(existing));
+
+        ChatEntryPoint updated = svc.updateBranding(TENANT, new ChatEntryPointId("chat_1"),
+                new ChatEntryPointService.UpdateCommand(
+                        "retail-vip", 3,          // NEW profile + version
+                        null, null, null, null, null, null, null, null,
+                        null, null, null, null, null));
+
+        // Entry-point mirror moved…
+        assertThat(updated.profile().value()).isEqualTo("retail-vip");
+        assertThat(updated.profile().version()).isEqualTo(3);
+        // …and the MatchAny binding ChannelProfileResolver resolves against.
+        org.mockito.Mockito.verify(bindings).repointEndpointProfile(
+                org.mockito.ArgumentMatchers.eq(TENANT),
+                org.mockito.ArgumentMatchers.any(
+                        com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef.ChatEntryPointRef.class),
+                org.mockito.ArgumentMatchers.argThat(p -> p.value().equals("retail-vip") && p.version() == 3),
+                org.mockito.ArgumentMatchers.eq(Optional.of(3)));
+    }
+
+    @Test
+    void update_without_a_profile_leaves_the_binding_untouched() {
+        ChatEntryPointEntity existing = existingResolverEntity("KEEP-THIS");
+        when(repo.findByTenantIdAndId(TENANT.value(), "chat_1")).thenReturn(Optional.of(existing));
+
+        svc.updateBranding(TENANT, new ChatEntryPointId("chat_1"),
+                new ChatEntryPointService.UpdateCommand(
+                        null, null,               // no profile change
+                        "Renamed", null, null, null, null, null, null, null,
+                        null, null, null, null, null));
+
+        org.mockito.Mockito.verifyNoInteractions(bindings);
     }
 
     private ChatEntryPointService.CreateCommand resolverCreate(long resolverId) {

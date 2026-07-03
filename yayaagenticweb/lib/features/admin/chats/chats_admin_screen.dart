@@ -862,6 +862,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _issuer = TextEditingController(text: widget.ep.authConfig.issuer ?? '');
   late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
   late List<String> _allowedOverrideProfiles = List.of(widget.ep.allowedOverrideProfiles);
+  late String _profileSlug = '${widget.ep.profileId}@${widget.ep.profileVersion}';
   late String _logoUrl = widget.ep.logoUrl;
   late String? _accentHex = widget.ep.accentColorHex;
   late String _localeValue = _normalizeLocale(widget.ep.defaultLocale);
@@ -909,6 +910,30 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Rebinding the profile takes effect for NEW sessions; live
+              // sessions stay pinned to the profile they started on.
+              ref.watch(profilesProvider).when(
+                    loading: () => const LinearProgressIndicator(),
+                    error: (e, _) => Text(formatError(e)),
+                    data: (list) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _profileSlug,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                            labelText: 'Profile', border: OutlineInputBorder(), isDense: true),
+                        items: list
+                            .where((p) => p.tenant == widget.tenant)
+                            .map((p) => DropdownMenuItem(
+                                  value: '${p.id}@${p.version}',
+                                  child: Text('${p.displayName} (${p.id}@${p.version})',
+                                      overflow: TextOverflow.ellipsis),
+                                ))
+                            .toList(),
+                        onChanged: (v) => setState(() => _profileSlug = v ?? _profileSlug),
+                      ),
+                    ),
+                  ),
               _row(_displayName, 'Display name'),
               _LogoPicker(
                   tenant: widget.tenant,
@@ -952,8 +977,10 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
           onPressed: () async {
+            final slug = _profileSlug.split('@');
             final body = ChatEntryPointRequest(
-              profileId: widget.ep.profileId,
+              profileId: slug.first,
+              profileVersion: slug.length > 1 ? int.tryParse(slug[1]) : null,
               displayName: _displayName.text.trim(),
               logoUrl: _logoUrl,
               accentColorHex: _accentHex,

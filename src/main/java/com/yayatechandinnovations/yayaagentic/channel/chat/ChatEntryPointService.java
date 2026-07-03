@@ -137,6 +137,18 @@ public class ChatEntryPointService {
     @Transactional
     public ChatEntryPoint updateBranding(TenantId tenant, ChatEntryPointId id, UpdateCommand cmd) {
         ChatEntryPointEntity e = loadEntity(tenant, id);
+        // Rebinding the profile moves both the entry-point mirror AND the
+        // MatchAny binding ChannelProfileResolver resolves against, so new
+        // sessions pick up the new profile. Existing sessions stay pinned.
+        if (cmd.profileId() != null && !cmd.profileId().isBlank()) {
+            Ids.ProfileId newProfile = new Ids.ProfileId(cmd.profileId(),
+                    cmd.profileVersion() == null ? 1 : cmd.profileVersion());
+            bindings.repointEndpointProfile(tenant,
+                    new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(e.getId())),
+                    newProfile, Optional.ofNullable(cmd.profileVersion()));
+            e.setProfileId(newProfile.value());
+            e.setProfileVersion(cmd.profileVersion());
+        }
         if (cmd.displayName() != null && !cmd.displayName().isBlank()) e.setDisplayName(cmd.displayName().trim());
         if (cmd.logoUrl() != null && !cmd.logoUrl().isBlank()) e.setLogoUrl(cmd.logoUrl().trim());
         if (cmd.accentColorHex() != null) {
@@ -339,8 +351,11 @@ public class ChatEntryPointService {
             Set<String> allowedOverrideProfiles,
             OnOverrideDenied onOverrideDenied) {}
 
-    /** Partial update — null fields are left unchanged. */
+    /** Partial update — null fields are left unchanged. {@code profileId} null
+     *  leaves the bound profile as-is; non-null rebinds it (see updateBranding). */
     public record UpdateCommand(
+            String profileId,
+            Integer profileVersion,
             String displayName,
             String logoUrl,
             String accentColorHex,

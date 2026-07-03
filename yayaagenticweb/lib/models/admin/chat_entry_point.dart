@@ -213,9 +213,11 @@ class ChatEntryPointRequest {
         if (onOverrideDenied != null) 'onOverrideDenied': onOverrideDenied,
       };
 
-  /// Update body — same shape minus the profile (an entry point's profile is
-  /// fixed at creation; rebranding/auth edits go through here).
+  /// Update body. Rebinding the profile is allowed — the backend moves both the
+  /// entry-point row and its MatchAny binding; new sessions pick up the change.
   Map<String, dynamic> toUpdateJson() => {
+        'profileId': profileId,
+        if (profileVersion != null) 'profileVersion': profileVersion,
         'displayName': displayName,
         'logoUrl': logoUrl,
         if (accentColorHex != null) 'accentColorHex': accentColorHex,

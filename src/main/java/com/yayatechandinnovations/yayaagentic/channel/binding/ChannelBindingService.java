@@ -238,6 +238,32 @@ public class ChannelBindingService {
         return toDomain(repo.save(entity));
     }
 
+    /**
+     * Repoint an endpoint's active binding to a different profile, leaving every
+     * other binding field untouched. Used when a chat entry point's bound
+     * profile is edited — the entry point row mirrors the profile, but this
+     * MatchAny binding is what {@code ChannelProfileResolver} actually resolves
+     * against at session start, so both must move together.
+     */
+    @Transactional
+    public void repointEndpointProfile(Ids.TenantId tenant,
+                                       ChannelEndpointRef endpoint,
+                                       Ids.ProfileId profile,
+                                       Optional<Integer> profileVersion) {
+        validateProfileExists(tenant, profile, profileVersion);
+        ChannelBindingEntity row = repo
+                .findByTenantIdAndEndpointKindAndEndpointIdAndStatusOrderByPriorityAscIdAsc(
+                        tenant.value(), endpoint.kindName(), endpoint.externalId(),
+                        BindingStatus.ACTIVE.name())
+                .stream().findFirst()
+                .orElseThrow(() -> AdminApiException.notFound("binding_not_found",
+                        "no active binding for endpoint '" + endpoint.externalId()
+                                + "' in tenant '" + tenant.value() + "'"));
+        row.setProfileId(profile.value());
+        row.setProfileVersion(profileVersion.orElse(null));
+        repo.save(row);
+    }
+
     @Transactional
     public void deactivate(Ids.TenantId tenant, BindingId id) {
         ChannelBindingEntity entity = repo.findByTenantIdAndId(tenant.value(), id.value())

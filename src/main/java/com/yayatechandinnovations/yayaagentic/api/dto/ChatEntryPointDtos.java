@@ -83,6 +83,8 @@ public final class ChatEntryPointDtos {
             OnOverrideDenied onOverrideDenied) {}
 
     public record UpdateRequest(
+            String profileId,
+            Integer profileVersion,
             String displayName,
             String logoUrl,
             String accentColorHex,

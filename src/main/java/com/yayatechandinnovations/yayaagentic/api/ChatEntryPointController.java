@@ -106,6 +106,7 @@ public class ChatEntryPointController {
         tenantGuard.requireWritable(tenantId);
         if (req == null) throw AdminApiException.badRequest("missing_body", "request body required");
         var cmd = new ChatEntryPointService.UpdateCommand(
+                req.profileId(), req.profileVersion(),
                 req.displayName(), req.logoUrl(), req.accentColorHex(), req.welcomeText(),
                 req.defaultLocale(), req.tagline(), req.discoverable(),
                 req.authMode() == null ? null : ChatEntryPointDtos.parseAuthMode(req.authMode()),
