@@ -96,6 +96,8 @@ class ChatEntryPointResponse {
     required this.status,
     this.createdAt,
     this.updatedAt,
+    this.allowedOverrideProfiles = const [],
+    this.onOverrideDenied = 'IGNORE',
   });
 
   final String id;
@@ -118,6 +120,9 @@ class ChatEntryPointResponse {
   final String status; // DRAFT | ACTIVE | PAUSED | DEACTIVATED
   final String? createdAt;
   final String? updatedAt;
+  // Profile keys the resolver may override into; empty = any published.
+  final List<String> allowedOverrideProfiles;
+  final String onOverrideDenied; // 'IGNORE' | 'REJECT'
 
   bool get isActive => status == 'ACTIVE';
   bool get isPaused => status == 'PAUSED';
@@ -149,6 +154,9 @@ class ChatEntryPointResponse {
         status: (json['status'] ?? 'DRAFT') as String,
         createdAt: json['createdAt']?.toString(),
         updatedAt: json['updatedAt']?.toString(),
+        allowedOverrideProfiles:
+            (json['allowedOverrideProfiles'] as List?)?.cast<String>() ?? const [],
+        onOverrideDenied: (json['onOverrideDenied'] ?? 'IGNORE') as String,
       );
 }
 
@@ -167,6 +175,8 @@ class ChatEntryPointRequest {
     this.authConfig,
     this.abuse,
     this.requiresVerifiedPhone,
+    this.allowedOverrideProfiles,
+    this.onOverrideDenied,
   });
 
   final String profileId;
@@ -182,6 +192,8 @@ class ChatEntryPointRequest {
   final ChatAuthConfig? authConfig;
   final ChatAbusePolicy? abuse;
   final bool? requiresVerifiedPhone;
+  final List<String>? allowedOverrideProfiles;
+  final String? onOverrideDenied;
 
   Map<String, dynamic> toJson() => {
         'profileId': profileId,
@@ -197,6 +209,8 @@ class ChatEntryPointRequest {
         if (authConfig != null) 'authConfig': authConfig!.toJson(),
         if (abuse != null) 'abuse': abuse!.toJson(),
         if (requiresVerifiedPhone != null) 'requiresVerifiedPhone': requiresVerifiedPhone,
+        if (allowedOverrideProfiles != null) 'allowedOverrideProfiles': allowedOverrideProfiles,
+        if (onOverrideDenied != null) 'onOverrideDenied': onOverrideDenied,
       };
 
   /// Update body — same shape minus the profile (an entry point's profile is
@@ -213,5 +227,7 @@ class ChatEntryPointRequest {
         if (authConfig != null) 'authConfig': authConfig!.toJson(),
         if (abuse != null) 'abuse': abuse!.toJson(),
         if (requiresVerifiedPhone != null) 'requiresVerifiedPhone': requiresVerifiedPhone,
+        if (allowedOverrideProfiles != null) 'allowedOverrideProfiles': allowedOverrideProfiles,
+        if (onOverrideDenied != null) 'onOverrideDenied': onOverrideDenied,
       };
 }

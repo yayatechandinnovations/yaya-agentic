@@ -191,6 +191,12 @@ class _EntryPointCard extends ConsumerWidget {
                 value: ep.authConfig.kind == 'Oidc'
                     ? 'OIDC · ${ep.authConfig.issuer ?? ''}'
                     : 'Auth resolver #${ep.authConfig.authResolverId ?? ''}'),
+          if (ep.authConfig.kind == 'ResolverExchange')
+            DetailRow(
+                label: 'Profile override',
+                value: ep.allowedOverrideProfiles.isEmpty
+                    ? 'Any published · on denied: ${ep.onOverrideDenied}'
+                    : '${ep.allowedOverrideProfiles.join(', ')} · on denied: ${ep.onOverrideDenied}'),
           DetailRow(label: 'Locale', value: ep.defaultLocale),
           if ((ep.welcomeText ?? '').isNotEmpty)
             DetailRow(label: 'Welcome', value: ep.welcomeText!),
@@ -440,6 +446,9 @@ class _AuthSection extends ConsumerWidget {
     required this.onMode,
     required this.onMethod,
     required this.onResolver,
+    required this.overrideAllowlist,
+    required this.onOverrideDenied,
+    required this.onOverrideDeniedChanged,
   });
 
   final String tenant;
@@ -455,6 +464,11 @@ class _AuthSection extends ConsumerWidget {
   final void Function(String) onMode;
   final void Function(String) onMethod;
   final void Function(int?) onResolver;
+  // Profile-override guardrails — only meaningful on a resolver entry point, as
+  // the resolver is what can return a profile to override with.
+  final TextEditingController overrideAllowlist; // comma-separated profile keys
+  final String onOverrideDenied; // 'IGNORE' | 'REJECT'
+  final void Function(String) onOverrideDeniedChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -489,6 +503,36 @@ class _AuthSection extends ConsumerWidget {
                 tenant: tenant, selected: authResolverId, onChanged: onResolver),
             const SizedBox(height: 10),
             _SenderKeyField(value: senderKey),
+            const SizedBox(height: 14),
+            Text('Profile override guardrails',
+                style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            TextField(
+              controller: overrideAllowlist,
+              decoration: const InputDecoration(
+                  labelText: 'Allowed override profiles',
+                  hintText: 'retail-vip, collections',
+                  helperText:
+                      'Comma-separated profile keys the resolver may override into. '
+                      'Empty = any published profile.',
+                  border: OutlineInputBorder(),
+                  isDense: true),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: onOverrideDenied,
+              decoration: const InputDecoration(
+                  labelText: 'When an override is denied',
+                  border: OutlineInputBorder(),
+                  isDense: true),
+              items: const [
+                DropdownMenuItem(
+                    value: 'IGNORE', child: Text('Ignore — use the bound profile')),
+                DropdownMenuItem(
+                    value: 'REJECT', child: Text('Reject — drop the inbound')),
+              ],
+              onChanged: (v) => onOverrideDeniedChanged(v ?? 'IGNORE'),
+            ),
           ],
         ],
       ],
@@ -596,6 +640,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   final _tagline = TextEditingController();
   final _issuer = TextEditingController();
   final _audience = TextEditingController();
+  final _overrideAllowlist = TextEditingController();
 
   String? _profileSlug;
   String? _logoUrl;
@@ -604,17 +649,24 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   String _authMode = 'ANONYMOUS_ONLY';
   String _authMethod = 'OIDC';
   int? _authResolverId;
+  String _onOverrideDenied = 'IGNORE';
   bool _requireVerifiedPhone = false;
   bool _discoverable = false;
   bool _busy = false;
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience, _overrideAllowlist]) {
       c.dispose();
     }
     super.dispose();
   }
+
+  List<String> _parseAllowlist() => _overrideAllowlist.text
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 
   Future<void> _submit() async {
     if (_profileSlug == null) {
@@ -640,6 +692,9 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       authMode: _authMode,
       authConfig: _buildAuthConfig(),
       requiresVerifiedPhone: _requireVerifiedPhone,
+      // Guardrails only apply to a resolver entry point (only it can override).
+      allowedOverrideProfiles: _authMethod == 'RESOLVER' ? _parseAllowlist() : null,
+      onOverrideDenied: _authMethod == 'RESOLVER' ? _onOverrideDenied : null,
     );
     await _runWrite(context, ref, widget.tenant,
         (api) => api.createChatEntryPoint(widget.tenant, body).then((_) {}),
@@ -672,6 +727,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
     _tagline.clear();
     _issuer.clear();
     _audience.clear();
+    _overrideAllowlist.clear();
     setState(() {
       _profileSlug = null;
       _logoUrl = null;
@@ -680,6 +736,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       _authMode = 'ANONYMOUS_ONLY';
       _authMethod = 'OIDC';
       _authResolverId = null;
+      _onOverrideDenied = 'IGNORE';
       _requireVerifiedPhone = false;
       _discoverable = false;
     });
@@ -745,6 +802,9 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
               onMode: (v) => setState(() => _authMode = v),
               onMethod: (v) => setState(() => _authMethod = v),
               onResolver: (v) => setState(() => _authResolverId = v),
+              overrideAllowlist: _overrideAllowlist,
+              onOverrideDenied: _onOverrideDenied,
+              onOverrideDeniedChanged: (v) => setState(() => _onOverrideDenied = v),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -804,21 +864,30 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late final _tagline = TextEditingController(text: widget.ep.tagline ?? '');
   late final _issuer = TextEditingController(text: widget.ep.authConfig.issuer ?? '');
   late final _audience = TextEditingController(text: widget.ep.authConfig.audience ?? '');
+  late final _overrideAllowlist =
+      TextEditingController(text: widget.ep.allowedOverrideProfiles.join(', '));
   late String _logoUrl = widget.ep.logoUrl;
   late String? _accentHex = widget.ep.accentColorHex;
   late String _localeValue = _normalizeLocale(widget.ep.defaultLocale);
   late String _authMode = widget.ep.authMode;
   late String _authMethod = widget.ep.authConfig.kind == 'ResolverExchange' ? 'RESOLVER' : 'OIDC';
   late int? _authResolverId = widget.ep.authConfig.authResolverId;
+  late String _onOverrideDenied = widget.ep.onOverrideDenied;
   late bool _discoverable = widget.ep.discoverable;
 
   @override
   void dispose() {
-    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience]) {
+    for (final c in [_displayName, _welcome, _tagline, _issuer, _audience, _overrideAllowlist]) {
       c.dispose();
     }
     super.dispose();
   }
+
+  List<String> _parseAllowlist() => _overrideAllowlist.text
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 
   ChatAuthConfig? _buildAuthConfig() {
     if (_authMode == 'ANONYMOUS_ONLY') return ChatAuthConfig(kind: 'None');
@@ -880,6 +949,9 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
                 onMode: (v) => setState(() => _authMode = v),
                 onMethod: (v) => setState(() => _authMethod = v),
                 onResolver: (v) => setState(() => _authResolverId = v),
+                overrideAllowlist: _overrideAllowlist,
+                onOverrideDenied: _onOverrideDenied,
+                onOverrideDeniedChanged: (v) => setState(() => _onOverrideDenied = v),
               ),
             ],
           ),
@@ -900,6 +972,8 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               discoverable: _discoverable,
               authMode: _authMode,
               authConfig: _buildAuthConfig(),
+              allowedOverrideProfiles: _authMethod == 'RESOLVER' ? _parseAllowlist() : const [],
+              onOverrideDenied: _authMethod == 'RESOLVER' ? _onOverrideDenied : 'IGNORE',
             );
             final nav = Navigator.of(context);
             await _runWrite(context, ref, widget.tenant,
