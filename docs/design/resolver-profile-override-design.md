@@ -345,16 +345,16 @@ resolved profile is today).
 
 ## 11. Delivery plan (PR slices)
 
-> **Status (2026-07): slices 1–5 landed (chat admin-form UI the one gap).**
-> The feature is live end-to-end and per-surface-configurable — an HTTP/BEAN
-> resolver returning a `ProfileSelection` overrides the bound profile on
-> WhatsApp and chat, validated (published + in-tenant + per-surface allowlist),
-> cached across hits, stamped post-verify, honored at `@15`, and audited in the
-> inspector (bound vs. effective + denial reason). `channel_bindings` and
-> `chat_entry_points` carry `allowed_override_profiles_json` +
-> `on_override_denied` (V61); admin CRUD reads/writes them. The only remaining
-> item is the Flutter **chat entry-point** admin form control for the allowlist
-> (the WhatsApp binding form + the inspector display shipped).
+> **Status (2026-07): slices 1–5 landed; only the admin runbook (§11.6) is
+> left.** The feature is live end-to-end and per-surface-configurable — an
+> HTTP/BEAN resolver returning a `ProfileSelection` overrides the bound profile
+> on WhatsApp and chat, validated (published + in-tenant + per-surface
+> allowlist), cached across hits, stamped post-verify, honored at `@15`, and
+> audited in the inspector (bound vs. effective + denial reason).
+> `channel_bindings` and `chat_entry_points` carry
+> `allowed_override_profiles_json` + `on_override_denied` (V61); admin CRUD +
+> the Flutter admin forms (WhatsApp binding **and** chat entry point) read and
+> write them.
 
 1. **SPI + wire.** ✅ `ResolvedIdentity` / `ProfileSelection`, `AuthResolver`
    `resolveIdentity` default adapter, `HttpAuthResolver` response parsing.
@@ -378,8 +378,8 @@ resolved profile is today).
 5. **Audit/inspector.** ✅ `ChannelAuthTrace` gains effective-profile / source /
    denial-reason; the WhatsApp worker + `ChatAuthService` record them; the
    inspector API (`BindingStageDto`) + Flutter panel surface "bound → effective
-   (resolver override)" and denial notes. ◑ The Flutter **chat entry-point**
-   admin form control for the allowlist is the one remaining piece.
+   (resolver override)" and denial notes. Both admin forms (WhatsApp binding +
+   chat entry point) expose the allowlist + on-denied policy behind a resolver.
 6. **Docs.** ◑ Reconciled `AuthResolver` Javadoc + channel-auth §10. Admin
    runbook ("route VIP callers to a premium profile") still to write.
 
