@@ -71,6 +71,10 @@ public class WhatsAppSenderEntity {
     @Column(name = "last_sync_at")
     private OffsetDateTime lastSyncAt;
 
+    // Nullable: the sender's Session Start Flow id (unpinned = latest).
+    @Column(name = "start_flow_id", length = 128)
+    private String startFlowId;
+
     protected WhatsAppSenderEntity() {}
 
     public WhatsAppSenderEntity(String id, String tenantId, String phoneE164,
@@ -101,6 +105,8 @@ public class WhatsAppSenderEntity {
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public OffsetDateTime getLastSyncAt() { return lastSyncAt; }
+    public String getStartFlowId() { return startFlowId; }
+    public void setStartFlowId(String v) { this.startFlowId = v; }
 
     public void setPhoneE164(String v) { this.phoneE164 = v; }
     public void setDisplayName(String v) { this.displayName = v; }

@@ -19,6 +19,7 @@ import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
 import '../models/admin/sms_channel.dart';
+import '../models/admin/start_flow.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
 import '../models/admin/whatsapp_sender.dart';
@@ -822,6 +823,33 @@ class AdminApi {
     final res = await _dio.post('/v1/admin/commerce/images',
         queryParameters: {'tenant': tenant}, data: form);
     return _asMap(res.data)['url']?.toString() ?? '';
+  }
+
+  // ---- Session Start Flows ---------------------------------------------
+
+  Future<List<StartFlowResponse>> listStartFlows(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/start-flows');
+    return (res.data as List).map((e) => StartFlowResponse.fromJson(_asMap(e))).toList();
+  }
+
+  Future<StartFlowResponse> getStartFlow(String tenantId, String id) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/start-flows/$id');
+    return StartFlowResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<StartFlowResponse> createStartFlow(String tenantId, StartFlowRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/start-flows', data: body.toJson());
+    return StartFlowResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<StartFlowResponse> updateStartFlow(String tenantId, String id, StartFlowRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/start-flows/$id', data: body.toUpdateJson());
+    return StartFlowResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<StartFlowResponse> publishStartFlow(String tenantId, String id) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/start-flows/$id/publish');
+    return StartFlowResponse.fromJson(_asMap(res.data));
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);

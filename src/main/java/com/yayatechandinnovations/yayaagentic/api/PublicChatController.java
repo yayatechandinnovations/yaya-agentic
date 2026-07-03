@@ -123,6 +123,11 @@ public class PublicChatController {
             hints.put("channel.deviceId", safe(deviceId));
             hints.put("channel.locale", locale);
             hints.put("channel.authMode", ep.authMode().name());
+            // Session Start Flow binding (docs/design/session-start-flows.md §6):
+            // channel binding wins over the profile default in the resolver.
+            if (ep.startFlowId() != null && !ep.startFlowId().isBlank()) {
+                hints.put("channel.startFlowId", ep.startFlowId());
+            }
 
             StartConversationRequest req = new StartConversationRequest(
                     ep.tenant(), Optional.empty(), "chat", hints);

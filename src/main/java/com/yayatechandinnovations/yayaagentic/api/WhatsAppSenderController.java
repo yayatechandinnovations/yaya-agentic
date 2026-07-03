@@ -76,7 +76,8 @@ public class WhatsAppSenderController {
                 req.phoneE164(),
                 req.displayName(),
                 req.businessProfile().toDomain(),
-                Optional.ofNullable(req.defaultLocale()));
+                Optional.ofNullable(req.defaultLocale()),
+                Optional.ofNullable(req.startFlowId()));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(WhatsAppSenderDtos.SenderResponse.of(s));
     }
@@ -97,7 +98,8 @@ public class WhatsAppSenderController {
                 req.phoneE164(),
                 req.displayName(),
                 req.businessProfile().toDomain(),
-                Optional.ofNullable(req.defaultLocale()));
+                Optional.ofNullable(req.defaultLocale()),
+                Optional.ofNullable(req.startFlowId()));
         return WhatsAppSenderDtos.SenderResponse.of(s);
     }
 

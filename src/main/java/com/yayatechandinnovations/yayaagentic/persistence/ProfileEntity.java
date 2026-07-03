@@ -38,6 +38,10 @@ public class ProfileEntity {
     @Column(name = "auth_binding_id", length = 128)
     private String authBindingId;
 
+    // Nullable: the profile's default Session Start Flow id (unpinned = latest).
+    @Column(name = "default_start_flow_id", length = 128)
+    private String defaultStartFlowId;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "metadata_json", columnDefinition = "jsonb", nullable = false)
     private String metadataJson = "{}";
@@ -81,6 +85,7 @@ public class ProfileEntity {
     public String getSystemPrompt() { return systemPrompt; }
     public String getCapabilitiesJson() { return capabilitiesJson; }
     public String getAuthBindingId() { return authBindingId; }
+    public String getDefaultStartFlowId() { return defaultStartFlowId; }
     public String getMetadataJson() { return metadataJson; }
     public String getCommerceJson() { return commerceJson; }
     public String getStatus() { return status; }
@@ -93,6 +98,7 @@ public class ProfileEntity {
     public void setSystemPrompt(String v) { this.systemPrompt = v; }
     public void setCapabilitiesJson(String v) { this.capabilitiesJson = v; }
     public void setAuthBindingId(String v) { this.authBindingId = v; }
+    public void setDefaultStartFlowId(String v) { this.defaultStartFlowId = v; }
     public void setMetadataJson(String v) { this.metadataJson = v; }
     public void setCommerceJson(String v) { this.commerceJson = v; }
     public void setStatus(String v) { this.status = v; }

@@ -29,14 +29,25 @@ public final class AdminDtos {
             String language,
             Map<String, Object> metadata,
             /** Nullable commerce block: {catalogs:[], currency, checkoutTool, cartEnabled}. */
-            Map<String, Object> commerce
+            Map<String, Object> commerce,
+            /** Nullable id of the Session Start Flow to run by default for this profile. */
+            String defaultStartFlowId
     ) {
         /** Back-compat: a non-commerce profile (commerce == null). */
         public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
                               String systemPromptFragment, List<String> capabilities,
                               String authBindingId, String language, Map<String, Object> metadata) {
             this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
-                    authBindingId, language, metadata, null);
+                    authBindingId, language, metadata, null, null);
+        }
+
+        /** Back-compat: commerce but no default start flow. */
+        public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
+                              String systemPromptFragment, List<String> capabilities,
+                              String authBindingId, String language, Map<String, Object> metadata,
+                              Map<String, Object> commerce) {
+            this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
+                    authBindingId, language, metadata, commerce, null);
         }
     }
 
@@ -46,7 +57,7 @@ public final class AdminDtos {
             List<String> capabilities, String authBindingId,
             String language,
             Map<String, Object> metadata, String status, OffsetDateTime createdAt,
-            Map<String, Object> commerce
+            Map<String, Object> commerce, String defaultStartFlowId
     ) {}
 
     // ---- Capabilities ---------------------------------------------------

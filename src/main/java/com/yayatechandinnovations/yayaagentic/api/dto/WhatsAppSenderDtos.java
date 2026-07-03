@@ -22,8 +22,15 @@ public final class WhatsAppSenderDtos {
             String                 phoneE164,
             String                 displayName,
             BusinessProfileRequest businessProfile,
-            String                 defaultLocale
-    ) {}
+            String                 defaultLocale,
+            String                 startFlowId
+    ) {
+        /** Back-compat: no Session Start Flow binding. */
+        public SenderRequest(String phoneE164, String displayName,
+                             BusinessProfileRequest businessProfile, String defaultLocale) {
+            this(phoneE164, displayName, businessProfile, defaultLocale, null);
+        }
+    }
 
     /** Mirrors {@link BusinessProfile} but as a wire DTO (Jackson-friendly). */
     public record BusinessProfileRequest(
@@ -55,7 +62,8 @@ public final class WhatsAppSenderDtos {
             Map<String, Object>    metadata,
             Instant                createdAt,
             Instant                updatedAt,
-            Instant                lastSyncAt
+            Instant                lastSyncAt,
+            String                 startFlowId
     ) {
 
         public static SenderResponse of(WhatsAppSender s) {
@@ -77,7 +85,8 @@ public final class WhatsAppSenderDtos {
                     s.metadata(),
                     s.createdAt(),
                     s.updatedAt(),
-                    s.lastSyncAt()
+                    s.lastSyncAt(),
+                    s.startFlowId()
             );
         }
     }

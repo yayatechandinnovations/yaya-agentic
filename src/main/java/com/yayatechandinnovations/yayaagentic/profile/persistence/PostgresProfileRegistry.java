@@ -83,6 +83,8 @@ public class PostgresProfileRegistry implements ProfileRegistry {
         entity.setMetadataJson(writeJson(profile.metadata()));
         entity.setCommerceJson(profile.commerce() == null ? null : writeJson(profile.commerce()));
         entity.setAuthBindingId(profile.authBinding() == null ? null : profile.authBinding().value());
+        entity.setDefaultStartFlowId(
+                profile.defaultStartFlowId() == null ? null : profile.defaultStartFlowId().value());
         entity.setLanguage(profile.language());
         repo.save(entity);
     }
@@ -104,7 +106,8 @@ public class PostgresProfileRegistry implements ProfileRegistry {
                 e.getAuthBindingId() == null ? null : new Ids.AuthBindingId(e.getAuthBindingId()),
                 e.getLanguage(),
                 metadata,
-                commerce);
+                commerce,
+                e.getDefaultStartFlowId() == null ? null : Ids.StartFlowId.latest(e.getDefaultStartFlowId()));
     }
 
     private String writeJson(Object value) {

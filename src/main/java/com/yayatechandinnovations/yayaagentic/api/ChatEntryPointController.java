@@ -92,7 +92,8 @@ public class ChatEntryPointController {
                 req.abuse() == null ? null : req.abuse().toDomain(),
                 req.requiresVerifiedPhone(),
                 allowlistOf(req.allowedOverrideProfiles()),
-                req.onOverrideDenied());
+                req.onOverrideDenied(),
+                req.startFlowId());
         var created = entryPoints.createDraft(new Ids.TenantId(tenantId), cmd);
         return ResponseEntity.status(HttpStatus.CREATED).body(resp(created));
     }
@@ -114,7 +115,8 @@ public class ChatEntryPointController {
                 req.abuse() == null ? null : req.abuse().toDomain(),
                 req.requiresVerifiedPhone(),
                 req.allowedOverrideProfiles() == null ? null : allowlistOf(req.allowedOverrideProfiles()),
-                req.onOverrideDenied());
+                req.onOverrideDenied(),
+                req.startFlowId());
         return resp(entryPoints.updateBranding(new Ids.TenantId(tenantId), new ChatEntryPointId(id), cmd));
     }
 

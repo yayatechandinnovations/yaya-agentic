@@ -524,6 +524,11 @@ public class InboundDispatchWorker {
         hints.put("channel.bsp", "twilio");
         hints.put("channel.inbound.messageSid", row.getMessageSid());
         hints.put("channel.inbound.body", body);
+        // Session Start Flow binding (docs/design/session-start-flows.md §6):
+        // channel binding wins over the profile default in the resolver.
+        if (sender.startFlowId() != null && !sender.startFlowId().isBlank()) {
+            hints.put("channel.startFlowId", sender.startFlowId());
+        }
 
         Map<String, Object> raw = readRaw(row.getRawPayloadJson());
         InteractiveSelection sel = extractInteractiveSelection(raw);

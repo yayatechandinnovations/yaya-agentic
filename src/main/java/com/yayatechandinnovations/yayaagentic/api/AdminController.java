@@ -140,6 +140,9 @@ public class AdminController {
                 ? null : writeJson(req.commerce()));
         entity.setAuthBindingId(req.authBindingId());
         entity.setLanguage(req.language());
+        entity.setDefaultStartFlowId(
+                req.defaultStartFlowId() == null || req.defaultStartFlowId().isBlank()
+                        ? null : req.defaultStartFlowId().trim());
         profiles.save(entity);
         return ResponseEntity.status(HttpStatus.CREATED).body(toProfileResponse(entity));
     }
@@ -587,7 +590,8 @@ public class AdminController {
                 e.getLanguage(),
                 readJson(e.getMetadataJson(), MAP_REF),
                 e.getStatus(), e.getCreatedAt(),
-                e.getCommerceJson() == null ? null : readJson(e.getCommerceJson(), MAP_REF));
+                e.getCommerceJson() == null ? null : readJson(e.getCommerceJson(), MAP_REF),
+                e.getDefaultStartFlowId());
     }
 
     private AdminDtos.CapabilityResponse toCapabilityResponse(CapabilityEntity e) {

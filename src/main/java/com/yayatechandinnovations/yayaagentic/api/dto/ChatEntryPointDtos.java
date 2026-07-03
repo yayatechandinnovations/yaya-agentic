@@ -80,7 +80,8 @@ public final class ChatEntryPointDtos {
             AbusePolicyDto abuse,
             Boolean requiresVerifiedPhone,
             List<String> allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied) {}
+            OnOverrideDenied onOverrideDenied,
+            String startFlowId) {}
 
     public record UpdateRequest(
             String profileId,
@@ -97,7 +98,8 @@ public final class ChatEntryPointDtos {
             AbusePolicyDto abuse,
             Boolean requiresVerifiedPhone,
             List<String> allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied) {}
+            OnOverrideDenied onOverrideDenied,
+            String startFlowId) {}
 
     public record EntryPointResponse(
             String id,
@@ -121,7 +123,8 @@ public final class ChatEntryPointDtos {
             Instant createdAt,
             Instant updatedAt,
             List<String> allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied) {
+            OnOverrideDenied onOverrideDenied,
+            String startFlowId) {
 
         public static EntryPointResponse of(ChatEntryPoint e, String deepLinkBase) {
             return new EntryPointResponse(
@@ -146,7 +149,8 @@ public final class ChatEntryPointDtos {
                     e.createdAt(),
                     e.updatedAt(),
                     e.allowedOverrideProfiles().stream().sorted().toList(),
-                    e.onOverrideDenied());
+                    e.onOverrideDenied(),
+                    e.startFlowId());
         }
     }
 

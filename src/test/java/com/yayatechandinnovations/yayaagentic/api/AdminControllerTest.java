@@ -173,6 +173,23 @@ class AdminControllerTest {
         assertThat(res.language()).isEqualTo("en");
     }
 
+    @Test @Order(15)
+    void profile_carries_default_start_flow_id() {
+        var profile = new AdminDtos.ProfileRequest(
+                TENANT, "flow-bound-profile", "Flow bound",
+                "Hi.", "You are a bot.",
+                List.of(), null, "en", Map.of(), null, "welcome-back-demo");
+        var res = client.post().uri("/v1/admin/profiles")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(profile)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(AdminDtos.ProfileResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(res).isNotNull();
+        assertThat(res.defaultStartFlowId()).isEqualTo("welcome-back-demo");
+    }
+
     @Test @Order(6)
     void second_post_to_same_profile_bumps_version() {
         var profile = new AdminDtos.ProfileRequest(

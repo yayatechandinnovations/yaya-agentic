@@ -81,6 +81,10 @@ public class ChatEntryPointEntity {
     @Column(name = "on_override_denied", nullable = false, length = 8)
     private String onOverrideDenied = "IGNORE";
 
+    // Nullable: the entry point's Session Start Flow id (unpinned = latest).
+    @Column(name = "start_flow_id", length = 128)
+    private String startFlowId;
+
     @Column(name = "status", nullable = false, length = 24)
     private String status = "DRAFT";
 
@@ -126,9 +130,12 @@ public class ChatEntryPointEntity {
     public String getTagline() { return tagline; }
     public String getAllowedOverrideProfilesJson() { return allowedOverrideProfilesJson; }
     public String getOnOverrideDenied() { return onOverrideDenied; }
+    public String getStartFlowId() { return startFlowId; }
     public String getStatus() { return status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+
+    public void setStartFlowId(String v) { this.startFlowId = v; }
 
     public void setHandle(String v) { this.handle = v; }
     public void setProfileId(String v) { this.profileId = v; }

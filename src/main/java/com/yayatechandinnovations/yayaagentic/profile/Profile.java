@@ -31,19 +31,29 @@ public record Profile(
         Ids.AuthBindingId authBinding,
         String language,
         Map<String, Object> metadata,
-        CommerceConfig commerce
+        CommerceConfig commerce,
+        Ids.StartFlowId defaultStartFlowId
 ) {
     public Profile {
         if (language == null || language.isBlank()) language = "en";
     }
 
-    /** Back-compat: a non-commerce profile ({@code commerce == null}). */
+    /** Back-compat: a non-commerce profile with no default start flow. */
     public Profile(Ids.ProfileId id, Ids.TenantId tenant, String displayName, String introOneLiner,
                    String systemPromptFragment, List<Ids.CapabilityId> capabilities,
                    List<Ids.KnowledgeSourceId> knowledgeSources, Ids.AuthBindingId authBinding,
                    String language, Map<String, Object> metadata) {
         this(id, tenant, displayName, introOneLiner, systemPromptFragment, capabilities,
-                knowledgeSources, authBinding, language, metadata, null);
+                knowledgeSources, authBinding, language, metadata, null, null);
+    }
+
+    /** Back-compat: a profile with commerce but no default start flow. */
+    public Profile(Ids.ProfileId id, Ids.TenantId tenant, String displayName, String introOneLiner,
+                   String systemPromptFragment, List<Ids.CapabilityId> capabilities,
+                   List<Ids.KnowledgeSourceId> knowledgeSources, Ids.AuthBindingId authBinding,
+                   String language, Map<String, Object> metadata, CommerceConfig commerce) {
+        this(id, tenant, displayName, introOneLiner, systemPromptFragment, capabilities,
+                knowledgeSources, authBinding, language, metadata, commerce, null);
     }
 
     /** True when this profile is composed into a conversational storefront. */

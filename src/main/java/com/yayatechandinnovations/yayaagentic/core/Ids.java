@@ -40,4 +40,20 @@ public final class Ids {
     public record ProductId(String value) {}
     public record AuthBindingId(String value) {}
     public record RecorderId(String value) {}
+
+    /**
+     * Versioned like a {@link ProfileId} — a Session Start Flow is tenant-scoped
+     * config pinned at {@code start()}, not a session row. See
+     * {@code docs/design/session-start-flows.md} §6.
+     */
+    public record StartFlowId(String value, int version) {
+        /** Sentinel meaning "resolve to the latest version at session start". */
+        public static final int LATEST_VERSION = 0;
+
+        public StartFlowId(String value) { this(value, 1); }
+
+        public static StartFlowId latest(String value) { return new StartFlowId(value, LATEST_VERSION); }
+
+        public boolean isLatest() { return version == LATEST_VERSION; }
+    }
 }

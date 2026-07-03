@@ -31,11 +31,23 @@ public record ChatEntryPoint(
         Instant createdAt,
         Instant updatedAt,
         Set<String> allowedOverrideProfiles,
-        OnOverrideDenied onOverrideDenied
+        OnOverrideDenied onOverrideDenied,
+        String startFlowId
 ) {
     public ChatEntryPoint {
         allowedOverrideProfiles = allowedOverrideProfiles == null
                 ? Set.of() : Set.copyOf(allowedOverrideProfiles);
         onOverrideDenied = onOverrideDenied == null ? OnOverrideDenied.IGNORE : onOverrideDenied;
+    }
+
+    /** Back-compat: an entry point with no Session Start Flow binding. */
+    public ChatEntryPoint(ChatEntryPointId id, Ids.TenantId tenant, String handle, Ids.ProfileId profile,
+                          Branding branding, AuthMode authMode, AuthConfig authConfig,
+                          SessionPolicy sessionPolicy, AbusePolicy abuse, boolean requiresVerifiedPhone,
+                          boolean discoverable, EntryPointStatus status, Instant createdAt, Instant updatedAt,
+                          Set<String> allowedOverrideProfiles, OnOverrideDenied onOverrideDenied) {
+        this(id, tenant, handle, profile, branding, authMode, authConfig, sessionPolicy, abuse,
+                requiresVerifiedPhone, discoverable, status, createdAt, updatedAt,
+                allowedOverrideProfiles, onOverrideDenied, null);
     }
 }

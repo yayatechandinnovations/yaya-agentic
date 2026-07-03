@@ -109,6 +109,7 @@ public class ChatEntryPointService {
         e.setRequiresVerifiedPhone(resolverExchange || Boolean.TRUE.equals(cmd.requiresVerifiedPhone()));
         e.setAllowedOverrideProfilesJson(writeJson(sortedList(cmd.allowedOverrideProfiles())));
         if (cmd.onOverrideDenied() != null) e.setOnOverrideDenied(cmd.onOverrideDenied().name());
+        if (cmd.startFlowId() != null && !cmd.startFlowId().isBlank()) e.setStartFlowId(cmd.startFlowId().trim());
         e.setUpdatedAt(now());
 
         ChatEntryPointEntity saved = repo.save(e);
@@ -173,6 +174,8 @@ public class ChatEntryPointService {
             e.setAllowedOverrideProfilesJson(writeJson(sortedList(cmd.allowedOverrideProfiles())));
         }
         if (cmd.onOverrideDenied() != null) e.setOnOverrideDenied(cmd.onOverrideDenied().name());
+        // Non-null start flow id sets the binding; an explicit blank clears it.
+        if (cmd.startFlowId() != null) e.setStartFlowId(cmd.startFlowId().isBlank() ? null : cmd.startFlowId().trim());
         // Switching to resolver-exchange forces a verified phone (see createDraft).
         if (cmd.authConfig() instanceof AuthConfig.ResolverExchange) e.setRequiresVerifiedPhone(true);
         e.setUpdatedAt(now());
@@ -301,7 +304,8 @@ public class ChatEntryPointService {
                 toInstant(e.getCreatedAt()),
                 toInstant(e.getUpdatedAt()),
                 readStringSet(e.getAllowedOverrideProfilesJson()),
-                OnOverrideDenied.parse(e.getOnOverrideDenied()));
+                OnOverrideDenied.parse(e.getOnOverrideDenied()),
+                e.getStartFlowId());
     }
 
     private Set<String> readStringSet(String jsonArray) {
@@ -349,7 +353,20 @@ public class ChatEntryPointService {
             AbusePolicy abuse,
             Boolean requiresVerifiedPhone,
             Set<String> allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied) {}
+            OnOverrideDenied onOverrideDenied,
+            String startFlowId) {
+
+        /** Back-compat: no Session Start Flow binding. */
+        public CreateCommand(String profileId, Integer profileVersion, String displayName, String logoUrl,
+                             String accentColorHex, String welcomeText, String defaultLocale, String tagline,
+                             Boolean discoverable, AuthMode authMode, AuthConfig authConfig, AbusePolicy abuse,
+                             Boolean requiresVerifiedPhone, Set<String> allowedOverrideProfiles,
+                             OnOverrideDenied onOverrideDenied) {
+            this(profileId, profileVersion, displayName, logoUrl, accentColorHex, welcomeText, defaultLocale,
+                    tagline, discoverable, authMode, authConfig, abuse, requiresVerifiedPhone,
+                    allowedOverrideProfiles, onOverrideDenied, null);
+        }
+    }
 
     /** Partial update — null fields are left unchanged. {@code profileId} null
      *  leaves the bound profile as-is; non-null rebinds it (see updateBranding). */
@@ -368,5 +385,18 @@ public class ChatEntryPointService {
             AbusePolicy abuse,
             Boolean requiresVerifiedPhone,
             Set<String> allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied) {}
+            OnOverrideDenied onOverrideDenied,
+            String startFlowId) {
+
+        /** Back-compat: leaves any Session Start Flow binding unchanged. */
+        public UpdateCommand(String profileId, Integer profileVersion, String displayName, String logoUrl,
+                             String accentColorHex, String welcomeText, String defaultLocale, String tagline,
+                             Boolean discoverable, AuthMode authMode, AuthConfig authConfig, AbusePolicy abuse,
+                             Boolean requiresVerifiedPhone, Set<String> allowedOverrideProfiles,
+                             OnOverrideDenied onOverrideDenied) {
+            this(profileId, profileVersion, displayName, logoUrl, accentColorHex, welcomeText, defaultLocale,
+                    tagline, discoverable, authMode, authConfig, abuse, requiresVerifiedPhone,
+                    allowedOverrideProfiles, onOverrideDenied, null);
+        }
+    }
 }

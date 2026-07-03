@@ -7,6 +7,7 @@ import '../features/admin/audit/audit_screen.dart';
 import '../features/admin/auth_bindings/auth_bindings_screen.dart';
 import '../features/admin/auth_resolvers/auth_resolvers_screen.dart';
 import '../features/admin/capabilities/capabilities_screen.dart';
+import '../features/admin/flows/flows_admin_screen.dart';
 import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
@@ -85,6 +86,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/admin/tenants', builder: (_, __) => const TenantsScreen()),
           GoRoute(path: '/admin/profiles', builder: (_, __) => const ProfilesScreen()),
+          GoRoute(path: '/admin/start-flows', builder: (_, __) => const StartFlowsAdminScreen()),
           GoRoute(path: '/admin/capabilities', builder: (_, __) => const CapabilitiesScreen()),
           GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
           GoRoute(path: '/admin/knowledge-sources', builder: (_, __) => const KnowledgeSourcesScreen()),
@@ -250,6 +252,7 @@ const _navItems = <_NavEntry>[
   // plus how conversations are recorded (design §5.2–§5.3, §5.8–§5.9).
   _NavGroup('Agent design', Icons.smart_toy_outlined, Icons.smart_toy, children: [
     _NavItem('Profiles', Icons.person_outline, Icons.person, '/admin/profiles'),
+    _NavItem('Start flows', Icons.play_circle_outline, Icons.play_circle, '/admin/start-flows'),
     _NavItem('Capabilities', Icons.checklist_outlined, Icons.checklist, '/admin/capabilities'),
     _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
     _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),

@@ -45,7 +45,8 @@ public record WhatsAppSender(
         Map<String, Object> metadata,
         Instant            createdAt,
         Instant            updatedAt,
-        Instant            lastSyncAt
+        Instant            lastSyncAt,
+        String             startFlowId
 ) {
 
     public WhatsAppSender {
@@ -70,6 +71,15 @@ public record WhatsAppSender(
         onboarding    = onboarding    == null ? OnboardingState.empty() : onboarding;
         defaultLocale = defaultLocale == null || defaultLocale.isBlank() ? "en-US" : defaultLocale;
         metadata      = metadata      == null ? Map.of() : Map.copyOf(metadata);
+    }
+
+    /** Back-compat: a sender with no Session Start Flow binding. */
+    public WhatsAppSender(SenderId id, Ids.TenantId tenant, String phoneE164, String displayName,
+                          String approvedDisplayName, BusinessProfile business, SenderStatus status,
+                          OnboardingState onboarding, String webhookSecret, String defaultLocale,
+                          Map<String, Object> metadata, Instant createdAt, Instant updatedAt, Instant lastSyncAt) {
+        this(id, tenant, phoneE164, displayName, approvedDisplayName, business, status, onboarding,
+                webhookSecret, defaultLocale, metadata, createdAt, updatedAt, lastSyncAt, null);
     }
 
     /** Convenience: whether an operator can edit this sender's mutable fields. */

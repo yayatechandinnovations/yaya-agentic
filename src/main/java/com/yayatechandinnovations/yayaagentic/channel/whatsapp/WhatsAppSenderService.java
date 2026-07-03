@@ -118,7 +118,8 @@ public class WhatsAppSenderService {
                                       String phoneE164,
                                       String displayName,
                                       BusinessProfile business,
-                                      Optional<String> defaultLocale) {
+                                      Optional<String> defaultLocale,
+                                      Optional<String> startFlowId) {
         validatePhone(phoneE164);
         validateDisplayName(displayName);
 
@@ -148,6 +149,7 @@ public class WhatsAppSenderService {
                 SenderStatus.DRAFT.name(),
                 webhookSecretEnc);
         entity.setDefaultLocale(defaultLocale.filter(s -> !s.isBlank()).orElse("en-US"));
+        entity.setStartFlowId(startFlowId.filter(s -> !s.isBlank()).map(String::trim).orElse(null));
         entity.setOnboardingStateJson(writeJson(OnboardingState.empty()));
         entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
@@ -167,7 +169,8 @@ public class WhatsAppSenderService {
                                     String phoneE164,
                                     String displayName,
                                     BusinessProfile business,
-                                    Optional<String> defaultLocale) {
+                                    Optional<String> defaultLocale,
+                                    Optional<String> startFlowId) {
         WhatsAppSenderEntity entity = loadEntity(tenant, id);
         SenderStatus status = SenderStatus.valueOf(entity.getStatus());
         if (!status.isEditable()) {
@@ -190,6 +193,8 @@ public class WhatsAppSenderService {
         entity.setDisplayName(displayName);
         entity.setBusinessProfileJson(writeJson(business));
         defaultLocale.filter(s -> !s.isBlank()).ifPresent(entity::setDefaultLocale);
+        // Non-null start flow id sets the binding; an explicit blank clears it.
+        startFlowId.ifPresent(v -> entity.setStartFlowId(v.isBlank() ? null : v.trim()));
 
         // FAILED → DRAFT on edit, per §6.1 last paragraph.
         if (status == SenderStatus.FAILED) {
@@ -555,7 +560,8 @@ public class WhatsAppSenderService {
                 meta,
                 toInstant(entity.getCreatedAt()),
                 toInstant(entity.getUpdatedAt()),
-                toInstant(entity.getLastSyncAt())
+                toInstant(entity.getLastSyncAt()),
+                entity.getStartFlowId()
         );
     }
 
