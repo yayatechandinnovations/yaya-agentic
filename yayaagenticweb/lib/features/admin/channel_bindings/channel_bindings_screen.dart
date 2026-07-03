@@ -8,6 +8,7 @@ import '../../../models/admin/channel_binding.dart';
 import '../auth_resolvers/auth_resolvers_screen.dart' show authResolversProvider;
 import '../profiles/profiles_screen.dart' show profilesProvider;
 import '../shared/admin_shared.dart';
+import '../shared/profile_allowlist_field.dart';
 import '../whatsapp_senders/whatsapp_senders_screen.dart' show whatsAppSendersProvider;
 
 final channelBindingsProvider =
@@ -35,8 +36,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
   final _localesCtrl = TextEditingController();
   final _claimCtrl = TextEditingController();
   final _claimValueCtrl = TextEditingController();
-  // Comma-separated profile keys the resolver may override into (empty = any).
-  final _allowlistCtrl = TextEditingController();
+  // Profile keys the resolver may override into (empty = any published).
+  List<String> _allowedOverrideProfiles = [];
 
   String? _senderId;
   String? _profileSlug;             // "<id>@<version>"
@@ -55,15 +56,8 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
     _localesCtrl.dispose();
     _claimCtrl.dispose();
     _claimValueCtrl.dispose();
-    _allowlistCtrl.dispose();
     super.dispose();
   }
-
-  List<String> _parseAllowlist() => _allowlistCtrl.text
-      .split(',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
 
   void _resetForm() {
     setState(() {
@@ -80,7 +74,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _authResolverId = null;
       _onUnresolved = 'REJECT';
       _onOverrideDenied = 'IGNORE';
-      _allowlistCtrl.clear();
+      _allowedOverrideProfiles = [];
     });
   }
 
@@ -109,7 +103,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
       _authResolverId = row.authResolverId;
       _onUnresolved = row.onUnresolved;
       _onOverrideDenied = row.onOverrideDenied;
-      _allowlistCtrl.text = row.allowedOverrideProfiles.join(', ');
+      _allowedOverrideProfiles = List.of(row.allowedOverrideProfiles);
     });
   }
 
@@ -195,7 +189,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               status: _status,
               authResolverId: _authResolverId,
               onUnresolved: _onUnresolved,
-              allowedOverrideProfiles: _parseAllowlist(),
+              allowedOverrideProfiles: _allowedOverrideProfiles,
               onOverrideDenied: _onOverrideDenied,
             ));
       } else {
@@ -211,7 +205,7 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
               status: _status,
               authResolverId: _authResolverId,
               onUnresolved: _onUnresolved,
-              allowedOverrideProfiles: _parseAllowlist(),
+              allowedOverrideProfiles: _allowedOverrideProfiles,
               onOverrideDenied: _onOverrideDenied,
             ));
       }
@@ -443,13 +437,11 @@ class _ChannelBindingsScreenState extends ConsumerState<ChannelBindingsScreen> {
                         Text('Profile override guardrails',
                             style: Theme.of(context).textTheme.titleSmall),
                         const SizedBox(height: 8),
-                        TextField(
-                          controller: _allowlistCtrl,
-                          decoration: const InputDecoration(
-                              labelText: 'Allowed override profiles',
-                              helperText:
-                                  'Comma-separated profile keys the resolver may override into. '
-                                  'Leave empty to allow any published profile.'),
+                        ProfileAllowlistField(
+                          profiles: tenantProfiles,
+                          selected: _allowedOverrideProfiles,
+                          onChanged: (v) =>
+                              setState(() => _allowedOverrideProfiles = v),
                         ),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<String>(
