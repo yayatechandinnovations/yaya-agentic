@@ -98,8 +98,25 @@ public final class PublicChatDtos {
     public record ActionRequest(String tool, Map<String, Object> args) {}
 
     /** Returned by {@code GET /v1/chat/sessions/{id}} so a restarted app can
-     *  confirm its session is still live and re-render the header. */
-    public record ResumeResponse(String sessionId, boolean alive, EntryPointCard entryPoint) {}
+     *  confirm its session is still live and re-render the header. When
+     *  {@code ?history=true}, {@code turns} carries the recorded transcript so the
+     *  app can hydrate a resumed conversation (§7.2); null otherwise. */
+    public record ResumeResponse(String sessionId, boolean alive, EntryPointCard entryPoint,
+                                 List<HistoryTurn> turns) {}
+
+    /** One display turn of a hydrated transcript — user/assistant text only. */
+    public record HistoryTurn(String role, String text) {}
+
+    /** Returned by {@code GET /v1/chat/e/{handle}/sessions/latest} (§7.2): the
+     *  resume candidate for this account at this chat, and how to treat it.
+     *  {@code status} is {@code LIVE} (continue it), {@code ENDED} (show the
+     *  transcript, start fresh on next send), or {@code NONE} (no prior session). */
+    public record LatestSessionResponse(String status, String sessionId,
+                                        String lastActivityAt, int turnCount, String preview) {
+        public static LatestSessionResponse none() {
+            return new LatestSessionResponse("NONE", null, null, 0, null);
+        }
+    }
 
     /** Result of {@code POST /v1/chat/sessions/{id}/authenticate} (§8.4). */
     public record UpgradeResponse(boolean authenticated, String subject) {}

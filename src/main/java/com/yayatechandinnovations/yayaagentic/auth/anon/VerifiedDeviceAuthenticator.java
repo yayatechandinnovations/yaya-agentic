@@ -33,6 +33,9 @@ public class VerifiedDeviceAuthenticator {
             claims.put("nameSelfAsserted", true);
         }
         if (device.deviceId() != null) claims.put("deviceId", device.deviceId());
+        // The stable account id (chat-account-self-service-design.md §5.3) — lets a
+        // session be linked to the account for cross-device, phone-change-safe resume.
+        if (device.accountId() != null) claims.put("accountId", device.accountId());
         if (handle != null) claims.put("entryPoint", handle);
         return new Principal(
                 "chat:" + device.phoneE164(),

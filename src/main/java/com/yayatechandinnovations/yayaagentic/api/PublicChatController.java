@@ -10,8 +10,10 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.ChatChannelAdapter;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatRateLimiter;
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionLinkService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
 import com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore;
@@ -21,7 +23,11 @@ import com.yayatechandinnovations.yayaagentic.engine.ActionNotPermittedException
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
+import com.yayatechandinnovations.yayaagentic.core.Turn;
+import com.yayatechandinnovations.yayaagentic.persistence.SessionEntity;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
+import com.yayatechandinnovations.yayaagentic.recorder.ConversationRecorder;
+import com.yayatechandinnovations.yayaagentic.recorder.TurnRange;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +38,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -60,8 +67,11 @@ public class PublicChatController {
     private final ChatChannelAdapter chatAdapter;
     private final Authenticator authenticator;
     private final DevicePassService devicePasses;
+    private final ChatAccountService accounts;
     private final ChatAuthService chatAuth;
     private final SessionAuthTokenStore authTokenStore;
+    private final ChatSessionLinkService sessionLinks;
+    private final ConversationRecorder recorder;
 
     public PublicChatController(ConversationEngine engine,
                                 ChatEntryPointService entryPoints,
@@ -70,8 +80,11 @@ public class PublicChatController {
                                 ChatChannelAdapter chatAdapter,
                                 Authenticator authenticator,
                                 DevicePassService devicePasses,
+                                ChatAccountService accounts,
                                 ChatAuthService chatAuth,
-                                SessionAuthTokenStore authTokenStore) {
+                                SessionAuthTokenStore authTokenStore,
+                                ChatSessionLinkService sessionLinks,
+                                ConversationRecorder recorder) {
         this.engine = engine;
         this.entryPoints = entryPoints;
         this.registry = registry;
@@ -79,8 +92,11 @@ public class PublicChatController {
         this.chatAdapter = chatAdapter;
         this.authenticator = authenticator;
         this.devicePasses = devicePasses;
+        this.accounts = accounts;
         this.chatAuth = chatAuth;
         this.authTokenStore = authTokenStore;
+        this.sessionLinks = sessionLinks;
+        this.recorder = recorder;
     }
 
     /* -------------------------- handle resolution ------------------------- */
@@ -112,7 +128,8 @@ public class PublicChatController {
             requireWithinLimit(rateLimiter.hit("start-ip", handle + ":" + clientIp(exchange),
                     ep.abuse().startsPerIpPerHour(), HOUR));
 
-            ChatAuthService.Resolution res = chatAuth.resolveForStart(ep, handle, deviceId, caller(exchange));
+            ChatAuthService.Caller theCaller = caller(exchange);
+            ChatAuthService.Resolution res = chatAuth.resolveForStart(ep, handle, deviceId, theCaller);
             if (res.rejected()) throw ChatApiException.resolverUnresolved();
             AuthContext auth = res.auth();
 
@@ -145,6 +162,13 @@ public class PublicChatController {
                     new ChatSessionRegistry.Context(ep.tenant().value(), ep.id().value(),
                             handle, deviceId, ep.authMode().name(), res.startedAuthenticated()),
                     ep.sessionPolicy().idleTimeout());
+
+            // Link the session to its L1 account so it can be found for resume
+            // across restart / reinstall / phone change (§5.3, §7.2).
+            theCaller.device()
+                    .filter(d -> d.accountId() != null)
+                    .ifPresent(d -> sessionLinks.link(java.util.UUID.fromString(sid.value()),
+                            java.util.UUID.fromString(d.accountId()), ep.id().value()));
 
             return new PublicChatDtos.StartResponse(
                     sid.value(),
@@ -234,15 +258,67 @@ public class PublicChatController {
     /* --------------------------- resume / end ----------------------------- */
 
     @GetMapping("/sessions/{id}")
-    public Mono<PublicChatDtos.ResumeResponse> resume(@PathVariable("id") String id) {
+    public Mono<PublicChatDtos.ResumeResponse> resume(@PathVariable("id") String id,
+                                                      @RequestParam(value = "history", defaultValue = "false") boolean history,
+                                                      ServerWebExchange exchange) {
         Ids.SessionId sessionId = new Ids.SessionId(id);
         return Mono.fromSupplier(() -> {
             ChatSessionRegistry.Context ctx = registry.get(sessionId)
                     .orElseThrow(ChatApiException::sessionNotFound);
             ChatEntryPoint ep = entryPoints.findByHandle(ctx.handle())
                     .orElseThrow(ChatApiException::sessionNotFound);
-            return new PublicChatDtos.ResumeResponse(id, true, PublicChatDtos.EntryPointCard.of(ep));
+            List<PublicChatDtos.HistoryTurn> turns = history ? hydrate(sessionId, exchange) : null;
+            return new PublicChatDtos.ResumeResponse(id, true, PublicChatDtos.EntryPointCard.of(ep), turns);
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** The resume candidate for a returning verified user (§7.2): the most recent
+     *  session this account held at this chat, classified LIVE / ENDED / NONE. */
+    @GetMapping("/e/{handle}/sessions/latest")
+    public Mono<PublicChatDtos.LatestSessionResponse> latestSession(@PathVariable("handle") String handle,
+                                                                    ServerWebExchange exchange) {
+        return Mono.fromSupplier(() -> {
+            ChatEntryPoint ep = requirePublic(handle);
+            Optional<VerifiedDevice> device = caller(exchange).device();
+            String accountId = device.map(VerifiedDevice::accountId).orElse(null);
+            if (accountId == null) return PublicChatDtos.LatestSessionResponse.none();
+
+            Optional<SessionEntity> latest = sessionLinks.latest(
+                    java.util.UUID.fromString(accountId), ep.id().value());
+            if (latest.isEmpty()) return PublicChatDtos.LatestSessionResponse.none();
+
+            SessionEntity s = latest.get();
+            List<Turn> turns = recorder.loadTurns(new Ids.SessionId(s.getId().toString()), TurnRange.all());
+            java.time.Instant lastActivity = turns.isEmpty()
+                    ? s.getCreatedAt().toInstant()
+                    : turns.get(turns.size() - 1).createdAt();
+            boolean live = s.getEndedAt() == null
+                    && java.time.Duration.between(lastActivity, java.time.Instant.now())
+                            .compareTo(ep.sessionPolicy().idleTimeout()) < 0;
+            String preview = turns.isEmpty() ? null : turns.get(turns.size() - 1).content();
+            return new PublicChatDtos.LatestSessionResponse(
+                    live ? "LIVE" : "ENDED", s.getId().toString(),
+                    lastActivity.toString(), turns.size(), preview);
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** Load the display transcript for a resumed session, enforcing account
+     *  ownership: an account-linked session may be read only by its owner (§7.2) —
+     *  a mismatch is 404, never leaking existence. Anonymous (unlinked) sessions
+     *  stay capability-scoped by their unguessable id, as before. */
+    private List<PublicChatDtos.HistoryTurn> hydrate(Ids.SessionId sessionId, ServerWebExchange exchange) {
+        java.util.UUID sid = java.util.UUID.fromString(sessionId.value());
+        java.util.UUID owner = sessionLinks.accountOf(sid).orElse(null);
+        if (owner != null) {
+            String callerAccount = caller(exchange).device().map(VerifiedDevice::accountId).orElse(null);
+            if (callerAccount == null || !owner.equals(java.util.UUID.fromString(callerAccount))) {
+                throw ChatApiException.sessionNotFound();
+            }
+        }
+        return recorder.loadTurns(sessionId, TurnRange.all()).stream()
+                .filter(t -> t.role() == Turn.Role.USER || t.role() == Turn.Role.ASSISTANT)
+                .map(t -> new PublicChatDtos.HistoryTurn(t.role().name().toLowerCase(), t.content()))
+                .toList();
     }
 
     /** AUTH_OPTIONAL mid-session upgrade (§8.4): verify the presented bearer and,
@@ -317,8 +393,12 @@ public class PublicChatController {
      *  device pass rides a dedicated {@code X-Device-Pass} header so it never
      *  collides with an {@code Authorization} tenant bearer (§20.1). */
     private ChatAuthService.Caller caller(ServerWebExchange exchange) {
+        // A signature-valid pass is honoured only while its generation still
+        // matches the account — drops revoked passes (delete / phone change /
+        // sign-out-everywhere; §5.2).
         Optional<VerifiedDevice> device = devicePasses.verify(
-                exchange.getRequest().getHeaders().getFirst("X-Device-Pass"));
+                        exchange.getRequest().getHeaders().getFirst("X-Device-Pass"))
+                .filter(accounts::isLive);
         return new ChatAuthService.Caller(device, Optional.ofNullable(bearer(exchange)),
                 exchange.getRequest().getHeaders().toSingleValueMap());
     }

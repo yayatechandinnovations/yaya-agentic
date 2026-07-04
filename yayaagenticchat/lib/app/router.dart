@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../features/account/account_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/directory/directory_screen.dart';
 import '../features/discover/discover_screen.dart';
@@ -20,6 +21,7 @@ final appRouter = GoRouter(
   },
   routes: [
     GoRoute(path: '/', builder: (context, state) => const DirectoryScreen()),
+    GoRoute(path: '/account', builder: (context, state) => const AccountScreen()),
     GoRoute(path: '/scan', builder: (context, state) => const ScanScreen()),
     GoRoute(path: '/discover', builder: (context, state) => const DiscoverScreen()),
     // The handle the QR/share link encodes — https://chat.yaya.app/e/{handle}

@@ -147,6 +147,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ],
             ),
+          // A LIVE prior session (§7.2): let the user resume it or start fresh —
+          // the app never auto-picks, and the model never invents this.
+          if (state.resumeAvailable)
+            MaterialBanner(
+              content: Text(AppL10n.of(context).resumePrompt),
+              actions: [
+                TextButton(
+                  onPressed: controller.startNewSession,
+                  child: Text(AppL10n.of(context).startNewChat),
+                ),
+                FilledButton(
+                  onPressed: controller.continueSession,
+                  child: Text(AppL10n.of(context).continueChat),
+                ),
+              ],
+            ),
           Expanded(child: _body(state, accent)),
           if (!state.needsSignIn) ...[
             if (state.pendingConfirm != null)

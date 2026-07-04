@@ -534,6 +534,186 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Filters'**
   String get filters;
+
+  /// No description provided for @account.
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get account;
+
+  /// No description provided for @accountPhoneLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone number'**
+  String get accountPhoneLabel;
+
+  /// No description provided for @accountNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get accountNameLabel;
+
+  /// No description provided for @nameUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Name updated'**
+  String get nameUpdated;
+
+  /// No description provided for @changePhoneNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Change phone number'**
+  String get changePhoneNumber;
+
+  /// No description provided for @deleteAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account'**
+  String get deleteAccount;
+
+  /// No description provided for @signOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get signOut;
+
+  /// No description provided for @signOutConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out everywhere?'**
+  String get signOutConfirmTitle;
+
+  /// No description provided for @signOutConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This signs you out on all your devices. You\'ll need to verify your phone again to chat.'**
+  String get signOutConfirmBody;
+
+  /// No description provided for @changePhoneNewNumberTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your new number'**
+  String get changePhoneNewNumberTitle;
+
+  /// No description provided for @changePhoneNewNumberBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'First we\'ll text a code to your current number to confirm it\'s you, then a code to the new one.'**
+  String get changePhoneNewNumberBlurb;
+
+  /// No description provided for @changePhoneOldCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your current number'**
+  String get changePhoneOldCodeTitle;
+
+  /// No description provided for @changePhoneOldCodeBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 6-digit code we sent to your current number.'**
+  String get changePhoneOldCodeBlurb;
+
+  /// No description provided for @changePhoneNewCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your new number'**
+  String get changePhoneNewCodeTitle;
+
+  /// No description provided for @changePhoneNewCodeBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 6-digit code we sent to {phone}.'**
+  String changePhoneNewCodeBlurb(String phone);
+
+  /// No description provided for @fieldNewPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'New phone (e.g. +18095551234)'**
+  String get fieldNewPhone;
+
+  /// No description provided for @lostOldNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Lost access to your old number? Contact support.'**
+  String get lostOldNumber;
+
+  /// No description provided for @resend.
+  ///
+  /// In en, this message translates to:
+  /// **'Resend code'**
+  String get resend;
+
+  /// No description provided for @codeResent.
+  ///
+  /// In en, this message translates to:
+  /// **'Code sent'**
+  String get codeResent;
+
+  /// No description provided for @phoneChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone number updated'**
+  String get phoneChanged;
+
+  /// No description provided for @next.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get next;
+
+  /// No description provided for @deleteAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete your account?'**
+  String get deleteAccountTitle;
+
+  /// No description provided for @deleteAccountWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'This permanently deletes your account, your chats, and the businesses you\'ve added. This can\'t be undone. We\'ll text a code to confirm.'**
+  String get deleteAccountWarning;
+
+  /// No description provided for @deleteConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm deletion'**
+  String get deleteConfirmTitle;
+
+  /// No description provided for @deleteConfirmBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 6-digit code we sent to your number to permanently delete your account.'**
+  String get deleteConfirmBlurb;
+
+  /// No description provided for @deleteConfirmButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account'**
+  String get deleteConfirmButton;
+
+  /// No description provided for @accountDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account was deleted'**
+  String get accountDeleted;
+
+  /// No description provided for @resumePrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue where you left off?'**
+  String get resumePrompt;
+
+  /// No description provided for @continueChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get continueChat;
+
+  /// No description provided for @startNewChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Start new'**
+  String get startNewChat;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

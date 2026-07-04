@@ -48,6 +48,15 @@ public class SessionEntity {
     @Column(name = "auth_token_iv", length = 64)
     private String authTokenIv;
 
+    // Chat resume linkage (chat-account-self-service-design.md §5.3). NULL for
+    // anonymous chat and non-chat channels; stamped after start for a
+    // phone-verified (L1) chat session so history can be found by account.
+    @Column(name = "chat_account_id")
+    private UUID chatAccountId;
+
+    @Column(name = "entry_point_id", length = 64)
+    private String entryPointId;
+
     protected SessionEntity() {}
 
     public SessionEntity(UUID id, String tenantId, String principalSubject,
@@ -79,6 +88,9 @@ public class SessionEntity {
 
     public String getAuthTokenCiphertext() { return authTokenCiphertext; }
     public String getAuthTokenIv() { return authTokenIv; }
+
+    public UUID getChatAccountId() { return chatAccountId; }
+    public String getEntryPointId() { return entryPointId; }
 
     public void setSummaryText(String v) { this.summaryText = v; }
     public void setSummaryThroughTurnIdx(Integer v) { this.summaryThroughTurnIdx = v; }

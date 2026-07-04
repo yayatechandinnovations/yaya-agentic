@@ -53,10 +53,24 @@ class DirectoryStore {
     if (name != null && name.isNotEmpty) await _prefs.setString(_nameKey, name);
   }
 
+  /// Persist just the account name (rename keeps the same phone; the pass is
+  /// rotated separately via [saveVerification]).
+  Future<void> saveName(String name) async {
+    if (name.isEmpty) return;
+    await _prefs.setString(_nameKey, name);
+  }
+
   Future<void> clearVerification() async {
     await _prefs.remove(_passKey);
     await _prefs.remove(_phoneKey);
     await _prefs.remove(_nameKey);
+  }
+
+  /// Wipe everything the app knows about this identity — tiles + verification.
+  /// Used after delete or sign-out-everywhere, returning the app to onboarding.
+  Future<void> clearAll() async {
+    await _prefs.remove(_tilesKey);
+    await clearVerification();
   }
 
   static String _randomHex(int bytes) {

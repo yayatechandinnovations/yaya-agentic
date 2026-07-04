@@ -36,6 +36,50 @@ class StartResult {
   });
 }
 
+/// The signed-in end-user account (chat-account-self-service-design.md §6).
+class Account {
+  final String phoneE164;
+  final String name;
+  final String? createdAt;
+  const Account({required this.phoneE164, required this.name, this.createdAt});
+
+  factory Account.fromJson(Map<String, dynamic> j) => Account(
+        phoneE164: (j['phoneE164'] ?? '') as String,
+        name: (j['name'] ?? '') as String,
+        createdAt: j['createdAt'] as String?,
+      );
+}
+
+/// The resume candidate for a chat (§7.2). `status` classifies the most-recent
+/// session for this account+entry point: LIVE (offer Continue), ENDED (show a
+/// read-only transcript, then start fresh), or NONE (first-time greeting).
+class LatestSession {
+  final String status; // LIVE | ENDED | NONE
+  final String? sessionId;
+  final String? lastActivityAt;
+  final int turnCount;
+  final String? preview;
+
+  const LatestSession({
+    required this.status,
+    this.sessionId,
+    this.lastActivityAt,
+    this.turnCount = 0,
+    this.preview,
+  });
+
+  bool get isLive => status == 'LIVE';
+  bool get isEnded => status == 'ENDED';
+
+  factory LatestSession.fromJson(Map<String, dynamic> j) => LatestSession(
+        status: (j['status'] ?? 'NONE') as String,
+        sessionId: j['sessionId'] as String?,
+        lastActivityAt: j['lastActivityAt'] as String?,
+        turnCount: (j['turnCount'] as num?)?.toInt() ?? 0,
+        preview: j['preview'] as String?,
+      );
+}
+
 class ChatApiException implements Exception {
   final int? status;
   final String code;
@@ -225,6 +269,190 @@ class ChatApi {
       await _dio.post('/v1/chat/sessions/$sessionId/end');
     } on DioException catch (_) {
       // best-effort
+    }
+  }
+
+  /* --------------------- account self-service (§6, §7) --------------------- */
+
+  /// View the signed-in account. Device-pass scoped (§6).
+  Future<Account> getAccount() async {
+    try {
+      final r = await _dio.get('/v1/chat/account', options: Options(headers: _deviceHeader));
+      return Account.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Rename (§6.1). The server re-mints the device pass so the new name reaches
+  /// the profile on the next session; the caller MUST store the returned pass.
+  Future<({String devicePass, String? name})> renameAccount(String name) async {
+    try {
+      final r = await _dio.patch('/v1/chat/account',
+          data: {'name': name}, options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (devicePass: (j['devicePass'] ?? '') as String, name: j['name'] as String?);
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Phone-change step 1 (§6.2): OTP → the CURRENT number. 409 phone_unavailable
+  /// if the new number is already an active account.
+  Future<({String changeId, String state})> phoneChangeStart(String newPhoneE164) async {
+    try {
+      final r = await _dio.post('/v1/chat/account/phone-change/start',
+          data: {'newPhoneE164': newPhoneE164}, options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (changeId: (j['changeId'] ?? '') as String, state: (j['state'] ?? '') as String);
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Phone-change step 2 (§6.2): verify the OLD-number code; on success the
+  /// server sends an OTP to the NEW number. Returns the new state (NEW_PENDING).
+  Future<String> phoneChangeVerifyOld(String changeId, String code) async {
+    try {
+      final r = await _dio.post('/v1/chat/account/phone-change/verify-old',
+          data: {'changeId': changeId, 'code': code}, options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['state'] ?? '') as String;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Phone-change step 3 (§6.2): verify the NEW-number code and migrate. Returns
+  /// the fresh device pass + new phone the caller MUST store.
+  Future<({String devicePass, String phoneE164})> phoneChangeVerifyNew(
+      String changeId, String code) async {
+    try {
+      final r = await _dio.post('/v1/chat/account/phone-change/verify-new',
+          data: {'changeId': changeId, 'code': code}, options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (
+        devicePass: (j['devicePass'] ?? '') as String,
+        phoneE164: (j['phoneE164'] ?? '') as String,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> phoneChangeResend(String changeId) async {
+    try {
+      await _dio.post('/v1/chat/account/phone-change/resend',
+          data: {'changeId': changeId}, options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Cancel an in-flight ceremony. Best-effort — a stale change expires anyway.
+  Future<void> phoneChangeAbort(String changeId) async {
+    try {
+      await _dio.post('/v1/chat/account/phone-change/abort',
+          data: {'changeId': changeId}, options: Options(headers: _deviceHeader));
+    } on DioException catch (_) {
+      // best-effort
+    }
+  }
+
+  /// Delete step 1 (§6.3): OTP → the account number to confirm intent.
+  Future<String> deleteStart() async {
+    try {
+      final r = await _dio.post('/v1/chat/account/delete/start',
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['state'] ?? '') as String;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Delete step 2 (§6.3): verify the code; the account is scrubbed and every
+  /// device pass revoked. This pass no longer authenticates after the 204.
+  Future<void> deleteConfirm(String code) async {
+    try {
+      await _dio.post('/v1/chat/account/delete/confirm',
+          data: {'code': code}, options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Revoke ALL device passes (including this one) without deleting the account.
+  Future<void> signOutEverywhere() async {
+    try {
+      await _dio.post('/v1/chat/account/sign-out-everywhere',
+          options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// The account's server-side directory of added chats (§7.1), re-resolved to
+  /// current branding — the cross-device recovery source.
+  Future<List<EntryPointCard>> accountTiles() async {
+    try {
+      final r = await _dio.get('/v1/chat/account/tiles', options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['tiles'] as List? ?? const [])
+          .map((e) => EntryPointCard.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Mirror an added chat server-side (§7.1), keyed by the public handle.
+  /// Best-effort — the on-device store is the fast path; a sync failure never
+  /// blocks or fails the UI.
+  Future<void> putAccountTile(String handle) async {
+    try {
+      await _dio.put('/v1/chat/account/tiles/$handle', options: Options(headers: _deviceHeader));
+    } on DioException catch (_) {
+      // fire-and-forget
+    }
+  }
+
+  Future<void> deleteAccountTile(String handle) async {
+    try {
+      await _dio.delete('/v1/chat/account/tiles/$handle', options: Options(headers: _deviceHeader));
+    } on DioException catch (_) {
+      // fire-and-forget
+    }
+  }
+
+  /// The resume candidate for this chat (§7.2).
+  Future<LatestSession> latestSession(String handle) async {
+    try {
+      final r = await _dio.get('/v1/chat/e/$handle/sessions/latest',
+          options: Options(headers: _deviceHeader));
+      return LatestSession.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Hydrate a prior session's turns for resume (§7.2). Ownership is enforced
+  /// server-side against the account; a mismatch is a 404 (no existence leak).
+  Future<List<ChatMessage>> sessionHistory(String sessionId) async {
+    try {
+      final r = await _dio.get('/v1/chat/sessions/$sessionId',
+          queryParameters: {'history': true}, options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      final turns = j['turns'] as List? ?? const [];
+      return turns.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return ChatMessage(
+          role: (m['role'] ?? 'assistant') as String,
+          text: (m['text'] ?? '') as String,
+        );
+      }).toList();
+    } on DioException catch (e) {
+      throw _map(e);
     }
   }
 

@@ -52,7 +52,7 @@ public class DevicePassService {
     public String issue(VerifiedDevice device) {
         try {
             Instant now = Instant.now();
-            JWTClaimsSet claims = new JWTClaimsSet.Builder()
+            JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
                     .subject("chat:" + device.phoneE164())
                     .issuer(ISSUER)
                     .issueTime(Date.from(now))
@@ -60,8 +60,12 @@ public class DevicePassService {
                     .claim("typ", TYPE)
                     .claim("phone", device.phoneE164())
                     .claim("name", device.name())
-                    .claim("deviceId", device.deviceId())
-                    .build();
+                    .claim("deviceId", device.deviceId());
+            // Account id + revocation generation (chat-account-self-service-design.md
+            // §5.2). Absent on a legacy pass; the verifier grandfathers those.
+            if (device.accountId() != null) builder.claim("acct", device.accountId());
+            if (device.passGen() != null) builder.claim("gen", device.passGen());
+            JWTClaimsSet claims = builder.build();
             SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
             jwt.sign(new MACSigner(key));
             return jwt.serialize();
@@ -84,7 +88,9 @@ public class DevicePassService {
             if (exp == null || exp.toInstant().isBefore(Instant.now())) return Optional.empty();
             String phone = c.getStringClaim("phone");
             if (phone == null || !phone.startsWith("+")) return Optional.empty();
-            return Optional.of(new VerifiedDevice(phone, c.getStringClaim("name"), c.getStringClaim("deviceId")));
+            Long gen = c.getClaim("gen") == null ? null : c.getLongClaim("gen");
+            return Optional.of(new VerifiedDevice(phone, c.getStringClaim("name"),
+                    c.getStringClaim("deviceId"), c.getStringClaim("acct"), gen));
         } catch (Exception e) {
             return Optional.empty();
         }

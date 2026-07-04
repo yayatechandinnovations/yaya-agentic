@@ -17,6 +17,7 @@ class DirectoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tiles = ref.watch(tilesProvider);
+    final verified = ref.watch(verificationProvider).verified;
     return Scaffold(
       appBar: AppBar(
         title: Brand.gradientText('Yaya Chat', fontSize: 22),
@@ -26,6 +27,12 @@ class DirectoryScreen extends ConsumerWidget {
             tooltip: AppL10n.of(context).discoverTitle,
             onPressed: () => context.push('/discover'),
           ),
+          if (verified)
+            IconButton(
+              icon: const Icon(Icons.person_outline),
+              tooltip: AppL10n.of(context).account,
+              onPressed: () => context.push('/account'),
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(

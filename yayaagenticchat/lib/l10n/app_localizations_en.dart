@@ -253,4 +253,102 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get filters => 'Filters';
+
+  @override
+  String get account => 'Account';
+
+  @override
+  String get accountPhoneLabel => 'Phone number';
+
+  @override
+  String get accountNameLabel => 'Name';
+
+  @override
+  String get nameUpdated => 'Name updated';
+
+  @override
+  String get changePhoneNumber => 'Change phone number';
+
+  @override
+  String get deleteAccount => 'Delete account';
+
+  @override
+  String get signOut => 'Sign out';
+
+  @override
+  String get signOutConfirmTitle => 'Sign out everywhere?';
+
+  @override
+  String get signOutConfirmBody =>
+      'This signs you out on all your devices. You\'ll need to verify your phone again to chat.';
+
+  @override
+  String get changePhoneNewNumberTitle => 'Enter your new number';
+
+  @override
+  String get changePhoneNewNumberBlurb =>
+      'First we\'ll text a code to your current number to confirm it\'s you, then a code to the new one.';
+
+  @override
+  String get changePhoneOldCodeTitle => 'Confirm your current number';
+
+  @override
+  String get changePhoneOldCodeBlurb =>
+      'Enter the 6-digit code we sent to your current number.';
+
+  @override
+  String get changePhoneNewCodeTitle => 'Confirm your new number';
+
+  @override
+  String changePhoneNewCodeBlurb(String phone) {
+    return 'Enter the 6-digit code we sent to $phone.';
+  }
+
+  @override
+  String get fieldNewPhone => 'New phone (e.g. +18095551234)';
+
+  @override
+  String get lostOldNumber =>
+      'Lost access to your old number? Contact support.';
+
+  @override
+  String get resend => 'Resend code';
+
+  @override
+  String get codeResent => 'Code sent';
+
+  @override
+  String get phoneChanged => 'Phone number updated';
+
+  @override
+  String get next => 'Next';
+
+  @override
+  String get deleteAccountTitle => 'Delete your account?';
+
+  @override
+  String get deleteAccountWarning =>
+      'This permanently deletes your account, your chats, and the businesses you\'ve added. This can\'t be undone. We\'ll text a code to confirm.';
+
+  @override
+  String get deleteConfirmTitle => 'Confirm deletion';
+
+  @override
+  String get deleteConfirmBlurb =>
+      'Enter the 6-digit code we sent to your number to permanently delete your account.';
+
+  @override
+  String get deleteConfirmButton => 'Delete account';
+
+  @override
+  String get accountDeleted => 'Your account was deleted';
+
+  @override
+  String get resumePrompt => 'Continue where you left off?';
+
+  @override
+  String get continueChat => 'Continue';
+
+  @override
+  String get startNewChat => 'Start new';
 }

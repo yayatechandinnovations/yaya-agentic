@@ -110,10 +110,12 @@ public class ChatVerifyController {
             }
             // Persist the registration (first time) or re-authenticate a returning
             // phone; the returned name is the account's — a returning device that
-            // sent no name still gets its stored one back on the pass.
-            String name = accounts.completeVerification(phone, body.name());
-            String pass = devicePasses.issue(new VerifiedDevice(phone, name, safe(body.deviceId())));
-            return new PublicChatDtos.VerifyCheckResponse(true, pass, phone, name);
+            // sent no name still gets its stored one back on the pass. The pass
+            // carries the account id + generation so it can be revoked (§5.2).
+            ChatAccountService.VerifiedAccount acct = accounts.completeVerification(phone, body.name());
+            String pass = devicePasses.issue(new VerifiedDevice(
+                    phone, acct.name(), safe(body.deviceId()), acct.id(), acct.passGen()));
+            return new PublicChatDtos.VerifyCheckResponse(true, pass, phone, acct.name());
         }).subscribeOn(Schedulers.boundedElastic());
     }
 

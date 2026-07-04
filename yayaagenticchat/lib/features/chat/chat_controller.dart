@@ -32,6 +32,11 @@ class ChatState {
   /// then clear. Kept off the message list so the effect fires exactly once.
   final CheckoutResult? pendingCheckout;
 
+  /// A LIVE prior session was found (§7.2): the app offers Continue vs Start new
+  /// instead of auto-starting. [resumeSessionId] is the session to hydrate.
+  final bool resumeAvailable;
+  final String? resumeSessionId;
+
   const ChatState({
     this.card,
     this.messages = const [],
@@ -44,6 +49,8 @@ class ChatState {
     this.cart,
     this.pendingConfirm,
     this.pendingCheckout,
+    this.resumeAvailable = false,
+    this.resumeSessionId,
   });
 
   bool get authenticated => bearer != null && bearer!.isNotEmpty;
@@ -76,6 +83,9 @@ class ChatState {
     bool clearConfirm = false,
     CheckoutResult? pendingCheckout,
     bool clearCheckout = false,
+    bool? resumeAvailable,
+    String? resumeSessionId,
+    bool clearResume = false,
   }) =>
       ChatState(
         card: card ?? this.card,
@@ -89,6 +99,8 @@ class ChatState {
         cart: cart ?? this.cart,
         pendingConfirm: clearConfirm ? null : (pendingConfirm ?? this.pendingConfirm),
         pendingCheckout: clearCheckout ? null : (pendingCheckout ?? this.pendingCheckout),
+        resumeAvailable: clearResume ? false : (resumeAvailable ?? this.resumeAvailable),
+        resumeSessionId: clearResume ? null : (resumeSessionId ?? this.resumeSessionId),
       );
 }
 
@@ -118,13 +130,58 @@ class ChatController extends StateNotifier<ChatState> {
         state = state.copyWith(loading: false);
         return;
       }
-      await _startSession();
+      await _resolveResume();
     } on ChatApiException catch (e) {
       state = state.copyWith(loading: false, error: _friendly(e));
     }
   }
 
-  Future<void> _startSession() async {
+  /// Decide how to open the chat (§7.2). A verified user asks the server for the
+  /// latest session: LIVE offers Continue-vs-New; ENDED shows the prior
+  /// transcript above a fresh session; NONE/unverified is the normal greeting.
+  Future<void> _resolveResume() async {
+    if (!_ref.read(verificationProvider).verified) {
+      await _startSession();
+      return;
+    }
+    final LatestSession latest;
+    try {
+      latest = await _api.latestSession(_handle);
+    } on ChatApiException {
+      // Resume is a nicety — a failed probe just falls back to a fresh session.
+      await _startSession();
+      return;
+    }
+    switch (latest.status) {
+      case 'LIVE':
+        _ref.read(tilesProvider.notifier).setSession(_handle, latest.sessionId);
+        state = state.copyWith(
+          loading: false,
+          resumeAvailable: true,
+          resumeSessionId: latest.sessionId,
+        );
+        break;
+      case 'ENDED':
+        // Design decision §14.3: render the prior transcript read-only, then the
+        // first message silently starts a new session.
+        final prior = await _safeHistory(latest.sessionId);
+        await _startSession(prior: prior);
+        break;
+      default:
+        await _startSession();
+    }
+  }
+
+  Future<List<ChatMessage>> _safeHistory(String? sessionId) async {
+    if (sessionId == null) return const [];
+    try {
+      return await _api.sessionHistory(sessionId);
+    } on ChatApiException {
+      return const [];
+    }
+  }
+
+  Future<void> _startSession({List<ChatMessage> prior = const []}) async {
     final deviceId = _ref.read(deviceIdProvider);
     final result = await _api.start(
       _handle,
@@ -134,6 +191,7 @@ class ChatController extends StateNotifier<ChatState> {
     );
     _ref.read(tilesProvider.notifier).setSession(_handle, result.sessionId);
     final greeting = <ChatMessage>[
+      ...prior,
       if ((state.card?.welcomeText ?? '').isNotEmpty)
         ChatMessage(role: 'assistant', text: state.card!.welcomeText!),
       if (result.greeting.isNotEmpty)
@@ -143,6 +201,7 @@ class ChatController extends StateNotifier<ChatState> {
       sessionId: result.sessionId,
       messages: greeting,
       loading: false,
+      clearResume: true,
       clearError: true,
       commerce: result.commerce,
     );
@@ -207,6 +266,37 @@ class ChatController extends StateNotifier<ChatState> {
       );
     } on ChatApiException catch (e) {
       state = state.copyWith(error: _friendly(e));
+    }
+  }
+
+  /* ------------------------------- resume ------------------------------- */
+
+  /// LIVE resume (§7.2): hydrate the prior turns and keep streaming into the
+  /// same session — the stored `sessionId` finally gets used.
+  Future<void> continueSession() async {
+    final sid = state.resumeSessionId;
+    if (sid == null) {
+      await startNewSession();
+      return;
+    }
+    state = state.copyWith(loading: true, clearResume: true, clearError: true);
+    try {
+      final history = await _api.sessionHistory(sid);
+      _ref.read(tilesProvider.notifier).setSession(_handle, sid);
+      state = state.copyWith(sessionId: sid, messages: history, loading: false, clearError: true);
+      unawaited(_drainInbox());
+    } on ChatApiException catch (e) {
+      state = state.copyWith(loading: false, error: _friendly(e));
+    }
+  }
+
+  /// Decline the LIVE candidate and open a fresh session (§7.2).
+  Future<void> startNewSession() async {
+    state = state.copyWith(loading: true, clearResume: true, clearError: true, messages: const []);
+    try {
+      await _startSession();
+    } on ChatApiException catch (e) {
+      state = state.copyWith(loading: false, error: _friendly(e));
     }
   }
 

@@ -254,4 +254,102 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get filters => 'Filtros';
+
+  @override
+  String get account => 'Cuenta';
+
+  @override
+  String get accountPhoneLabel => 'Número de teléfono';
+
+  @override
+  String get accountNameLabel => 'Nombre';
+
+  @override
+  String get nameUpdated => 'Nombre actualizado';
+
+  @override
+  String get changePhoneNumber => 'Cambiar número de teléfono';
+
+  @override
+  String get deleteAccount => 'Eliminar cuenta';
+
+  @override
+  String get signOut => 'Cerrar sesión';
+
+  @override
+  String get signOutConfirmTitle => '¿Cerrar sesión en todos lados?';
+
+  @override
+  String get signOutConfirmBody =>
+      'Esto cierra tu sesión en todos tus dispositivos. Tendrás que verificar tu teléfono de nuevo para chatear.';
+
+  @override
+  String get changePhoneNewNumberTitle => 'Ingresa tu nuevo número';
+
+  @override
+  String get changePhoneNewNumberBlurb =>
+      'Primero enviaremos un código a tu número actual para confirmar que eres tú, y luego un código al nuevo.';
+
+  @override
+  String get changePhoneOldCodeTitle => 'Confirma tu número actual';
+
+  @override
+  String get changePhoneOldCodeBlurb =>
+      'Ingresa el código de 6 dígitos que enviamos a tu número actual.';
+
+  @override
+  String get changePhoneNewCodeTitle => 'Confirma tu nuevo número';
+
+  @override
+  String changePhoneNewCodeBlurb(String phone) {
+    return 'Ingresa el código de 6 dígitos que enviamos a $phone.';
+  }
+
+  @override
+  String get fieldNewPhone => 'Nuevo teléfono (ej. +18095551234)';
+
+  @override
+  String get lostOldNumber =>
+      '¿Perdiste el acceso a tu número anterior? Contacta a soporte.';
+
+  @override
+  String get resend => 'Reenviar código';
+
+  @override
+  String get codeResent => 'Código enviado';
+
+  @override
+  String get phoneChanged => 'Número de teléfono actualizado';
+
+  @override
+  String get next => 'Siguiente';
+
+  @override
+  String get deleteAccountTitle => '¿Eliminar tu cuenta?';
+
+  @override
+  String get deleteAccountWarning =>
+      'Esto elimina permanentemente tu cuenta, tus chats y los negocios que agregaste. No se puede deshacer. Enviaremos un código para confirmar.';
+
+  @override
+  String get deleteConfirmTitle => 'Confirmar eliminación';
+
+  @override
+  String get deleteConfirmBlurb =>
+      'Ingresa el código de 6 dígitos que enviamos a tu número para eliminar tu cuenta permanentemente.';
+
+  @override
+  String get deleteConfirmButton => 'Eliminar cuenta';
+
+  @override
+  String get accountDeleted => 'Tu cuenta fue eliminada';
+
+  @override
+  String get resumePrompt => '¿Continuar donde lo dejaste?';
+
+  @override
+  String get continueChat => 'Continuar';
+
+  @override
+  String get startNewChat => 'Empezar de nuevo';
 }

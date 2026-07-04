@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -129,6 +131,24 @@ class VerificationNotifier extends StateNotifier<VerificationState> {
     }
   }
 
+  /// Adopt a freshly re-minted device pass after a rename (phone unchanged) or a
+  /// phone change (§6.1, §6.2). Persist it, refresh state, and rebuild the api
+  /// provider so subsequent calls carry the new pass — mirrors [check].
+  Future<void> applyRotatedPass(String devicePass, String phone, String name) async {
+    await _ref.read(directoryStoreProvider).saveVerification(devicePass, phone, name);
+    _ref.invalidate(chatApiProvider);
+    state = state.copyWith(devicePass: devicePass, phone: phone, name: name);
+  }
+
+  /// Sign out locally after a delete or sign-out-everywhere (§6.3). The device
+  /// pass is already revoked server-side; drop all local state so the app shell
+  /// (which gates on [VerificationState.verified]) returns to onboarding.
+  Future<void> signOut() async {
+    await _ref.read(directoryStoreProvider).clearAll();
+    _ref.invalidate(chatApiProvider);
+    state = const VerificationState();
+  }
+
   /// Back to the phone step (from either the name or code step).
   void resetToPhone() => state = state.copyWith(step: VerifyStep.phone, clearError: true);
 }
@@ -138,21 +158,57 @@ final verificationProvider =
   (ref) => VerificationNotifier(ref),
 );
 
-/// The user's directory of added tiles. Persisted on every mutation.
-class TilesNotifier extends StateNotifier<List<Tile>> {
-  TilesNotifier(this._store) : super(_store.loadTiles());
+/// Loads the signed-in account for the Account screen (§6). autoDispose so it
+/// re-fetches on each open; it watches [chatApiProvider], so a rename/phone
+/// change (which invalidates that provider) refreshes the shown name/phone.
+final accountProvider = FutureProvider.autoDispose<Account>(
+  (ref) => ref.watch(chatApiProvider).getAccount(),
+);
 
-  final DirectoryStore _store;
+/// The user's directory of added tiles. On-device is the fast path + offline
+/// cache; for a verified user the server copy (§7.1) is unioned in on cold start
+/// and mirrored on every add/remove (best-effort, never blocks the UI).
+class TilesNotifier extends StateNotifier<List<Tile>> {
+  TilesNotifier(this._ref) : super(_ref.read(directoryStoreProvider).loadTiles()) {
+    unawaited(_reconcileWithServer());
+  }
+
+  final Ref _ref;
+  DirectoryStore get _store => _ref.read(directoryStoreProvider);
+  ChatApi get _api => _ref.read(chatApiProvider);
+  bool get _verified => _ref.read(verificationProvider).verified;
+
+  /// Union the account's server-side tiles into the local set (§7.1, decision
+  /// §14.4): server is the recovery source, local stays authoritative for
+  /// offline adds — so we only ADD handles the device doesn't already have.
+  Future<void> _reconcileWithServer() async {
+    if (!_verified) return;
+    try {
+      final serverCards = await _api.accountTiles();
+      final known = state.map((t) => t.handle).toSet();
+      final additions = [
+        for (final c in serverCards)
+          if (!known.contains(c.handle)) Tile.fromCard(c),
+      ];
+      if (additions.isEmpty) return;
+      state = [...state, ...additions];
+      await _store.saveTiles(state);
+    } catch (_) {
+      // Recovery is best-effort; the local directory is never lost on failure.
+    }
+  }
 
   Future<void> addFromCard(EntryPointCard card) async {
     if (state.any((t) => t.handle == card.handle)) return;
     state = [...state, Tile.fromCard(card)];
     await _store.saveTiles(state);
+    if (_verified) unawaited(_api.putAccountTile(card.handle));
   }
 
   Future<void> remove(String handle) async {
     state = state.where((t) => t.handle != handle).toList();
     await _store.saveTiles(state);
+    if (_verified) unawaited(_api.deleteAccountTile(handle));
   }
 
   Future<void> setSession(String handle, String? sessionId) async {
@@ -172,7 +228,7 @@ class TilesNotifier extends StateNotifier<List<Tile>> {
 }
 
 final tilesProvider = StateNotifierProvider<TilesNotifier, List<Tile>>(
-  (ref) => TilesNotifier(ref.watch(directoryStoreProvider)),
+  (ref) => TilesNotifier(ref),
 );
 
 /* ---- Public directory / Discover (chat-public-directory-design.md §8) ---- */
