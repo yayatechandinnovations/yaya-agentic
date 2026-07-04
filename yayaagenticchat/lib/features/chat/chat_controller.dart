@@ -151,6 +151,29 @@ class ChatController extends StateNotifier<ChatState> {
     if (result.commerce?.cartEnabled ?? false) {
       unawaited(_silentAction(CommerceTools.viewCart, const {}));
     }
+    // Drain any system messages delivered while offline (system-messaging §11).
+    // Best-effort: an anonymous chat (no verified identity) simply has no inbox.
+    unawaited(_drainInbox());
+  }
+
+  /// Fetch + append pending system-participant messages, rendered as attributed
+  /// bubbles with their attachments (system-messaging-design.md §11, §14).
+  Future<void> _drainInbox() async {
+    try {
+      final items = await _api.inbox(_handle, bearer: state.bearer);
+      if (items.isEmpty || !mounted) return;
+      final drained = items
+          .map((m) => ChatMessage(
+                role: 'assistant',
+                text: m.body,
+                senderDisplayName: m.senderDisplay ?? 'System',
+                attachments: m.attachments,
+              ))
+          .toList();
+      state = state.copyWith(messages: [...state.messages, ...drained]);
+    } catch (_) {
+      // Never let a drain failure disrupt the live chat.
+    }
   }
 
   /// Provide a verified bearer (interactive OIDC result, or dev paste) and start.

@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required so the release build can reach the backend. Flutter only adds
+         this to the debug/profile manifests, so a release AAB would otherwise
+         ship with no network access. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="yayaagenticchat"
+        android:label="Yaya Chat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

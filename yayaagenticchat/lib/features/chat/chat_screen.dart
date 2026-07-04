@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme.dart';
 import '../../config.dart';
@@ -277,6 +278,18 @@ class _Bubble extends ConsumerWidget {
     return Column(
       crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
+        // Attributed header for a system-participant message (§14).
+        if (message.isSystem)
+          Padding(
+            padding: const EdgeInsets.only(left: 6, top: 4),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.hub_outlined, size: 14, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 6),
+              Text(message.senderDisplayName!,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
+            ]),
+          ),
         if (hasText)
           Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
@@ -286,6 +299,17 @@ class _Bubble extends ConsumerWidget {
             child: Text(
               message.text.isEmpty && message.streaming ? '…' : message.text,
               style: TextStyle(color: fg),
+            ),
+          ),
+
+        // ---- media attachments on a system message (§10) ----
+        if (message.hasAttachments)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: message.attachments.map((a) => _AttachmentView(attachment: a)).toList(),
             ),
           ),
 
@@ -418,5 +442,68 @@ class _SignInPrompt extends ConsumerWidget {
     if (token != null && token.trim().isNotEmpty) {
       ref.read(chatControllerProvider(handle).notifier).signInWithToken(token.trim());
     }
+  }
+}
+
+/// Renders a system-message attachment (§10): images inline, everything else as
+/// a tappable document chip that opens the short-lived signed URL.
+class _AttachmentView extends StatelessWidget {
+  const _AttachmentView({required this.attachment});
+
+  final ChatAttachment attachment;
+
+  Future<void> _open() async {
+    final uri = Uri.parse(AppConfig.resolveUrl(attachment.url));
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (attachment.isImage) {
+      return GestureDetector(
+        onTap: _open,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            AppConfig.resolveUrl(attachment.url),
+            width: 180,
+            height: 180,
+            fit: BoxFit.cover,
+            errorBuilder: (ctx, err, stack) => _chip(context),
+          ),
+        ),
+      );
+    }
+    return _chip(context);
+  }
+
+  Widget _chip(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: _open,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.description_outlined, size: 20, color: scheme.primary),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              attachment.filename ?? 'Document',
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ]),
+      ),
+    );
   }
 }

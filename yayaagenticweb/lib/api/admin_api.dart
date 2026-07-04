@@ -20,6 +20,7 @@ import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
 import '../models/admin/sms_channel.dart';
 import '../models/admin/start_flow.dart';
+import '../models/admin/system_sender.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
 import '../models/admin/whatsapp_sender.dart';
@@ -771,6 +772,44 @@ class AdminApi {
   Future<ChatEntryPointResponse> deactivateChatEntryPoint(String tenantId, String id) async {
     final res = await _dio.delete('/v1/admin/tenants/$tenantId/chat-entry-points/$id');
     return ChatEntryPointResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- System senders (system-messaging-design.md §14) ----------------
+
+  Future<List<SystemSenderResponse>> listSystemSenders(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/system-senders');
+    return (res.data as List).map((e) => SystemSenderResponse.fromJson(_asMap(e))).toList();
+  }
+
+  Future<SystemSenderResponse> createSystemSender(
+      String tenantId, SystemSenderRequest body) async {
+    final res = await _dio.post('/v1/admin/tenants/$tenantId/system-senders', data: body.toJson());
+    return SystemSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<SystemSenderResponse> updateSystemSender(
+      String tenantId, String senderId, SystemSenderRequest body) async {
+    final res = await _dio.put('/v1/admin/tenants/$tenantId/system-senders/$senderId',
+        data: body.toJson());
+    return SystemSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteSystemSender(String tenantId, String senderId) async {
+    await _dio.delete('/v1/admin/tenants/$tenantId/system-senders/$senderId');
+  }
+
+  Future<List<SystemInboundLogEntry>> systemSenderLog(String tenantId, String senderId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/system-senders/$senderId/messages');
+    return (res.data as List).map((e) => SystemInboundLogEntry.fromJson(_asMap(e))).toList();
+  }
+
+  /// Playground: post as if the linked system did (exercises ingest → delivery).
+  Future<Map<String, dynamic>> simulateSystemMessage(
+      String tenantId, String senderId, Map<String, dynamic> body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/system-senders/$senderId/simulate',
+        data: body);
+    return _asMap(res.data);
   }
 
   /// Upload a logo (base64) and get back the platform-hosted URL to store on

@@ -43,6 +43,15 @@ public interface MessagingChannelProvider {
 
     OutboundResult sendTemplate(SenderRef ref, OutboundTemplate msg, ProviderCreds creds);
 
+    /**
+     * Send a media message (§10, §13). Backward-compatible default so BSPs that
+     * can't (yet) carry attachments simply don't advertise the capability. A
+     * media-capable BSP overrides this to POST the media to its API.
+     */
+    default OutboundResult sendMedia(SenderRef ref, OutboundMedia msg, ProviderCreds creds) {
+        throw new UnsupportedOperationException("sendMedia not supported by " + id());
+    }
+
     /* ------------------------------ Templates (§11) ----------------------- */
 
     TemplateSyncResult syncTemplates(SenderRef ref, ProviderCreds creds);

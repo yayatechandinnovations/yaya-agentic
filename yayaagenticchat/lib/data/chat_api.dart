@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../config.dart';
+import '../models/chat_message.dart';
 import '../models/commerce/commerce_config.dart';
 import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
@@ -222,6 +223,45 @@ class ChatApi {
   Future<void> end(String sessionId) async {
     try {
       await _dio.post('/v1/chat/sessions/$sessionId/end');
+    } on DioException catch (_) {
+      // best-effort
+    }
+  }
+
+  /// Drain pending system messages delivered while offline (system-messaging §11).
+  /// Identity-scoped: the server derives the recipient from the verified bearer,
+  /// never from the client. `peek` leaves them undelivered.
+  Future<List<InboxMessage>> inbox(String handle, {String? bearer, bool peek = false}) async {
+    try {
+      final r = await _dio.get(
+        '/v1/chat/e/$handle/inbox',
+        queryParameters: {'peek': peek},
+        options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
+      );
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['items'] as List? ?? const [])
+          .map((e) => InboxMessage.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } on DioException catch (_) {
+      // No inbox / not authenticated → nothing to drain, never fatal to the chat.
+      return const [];
+    }
+  }
+
+  /// Reply into a system-participant thread (system-messaging §8). Same SSE shape
+  /// as a normal message, but targets the durable outreach session by id.
+  Stream<SseEvent> replyToSystem(String handle, String sessionId, String text, {String? bearer}) =>
+      _streamSse('/v1/chat/e/$handle/outreach/$sessionId/messages', {'text': text}, bearer: bearer);
+
+  /// Register a device for content-free wake nudges (system-messaging §11 #3).
+  Future<void> registerPushToken(String handle, String token,
+      {String platform = 'WEBPUSH', String? bearer}) async {
+    try {
+      await _dio.post(
+        '/v1/chat/e/$handle/push-tokens',
+        data: {'platform': platform, 'token': token},
+        options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
+      );
     } on DioException catch (_) {
       // best-effort
     }

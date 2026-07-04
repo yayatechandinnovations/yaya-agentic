@@ -900,6 +900,41 @@ public class DefaultConversationEngine implements ConversationEngine {
     }
 
     @Override
+    public Session resume(Ids.SessionId sessionId, AuthContext auth) {
+        Session live = active.get(sessionId);
+        if (live != null) return live;
+
+        // Load the persisted session through the recorder (never storage directly,
+        // non-negotiable #4). The router ignores the probe session today; a real
+        // strategy router would key on tenant, which the loaded row then supplies.
+        ConversationRecorder recorder = recorderRouter.recorderFor(
+                new Session(sessionId, null, null, null, null, List.of(),
+                        IntentFrame.empty(), Map.of(), Instant.now(), null),
+                new RecorderRouter.RecordingDecisionContext(Map.of()));
+        RecordedSession rs = recorder.loadSession(sessionId, LoadOptions.verbatim())
+                .orElseThrow(() -> new IllegalStateException("unknown session: " + sessionId.value()));
+        Session stored = rs.session();
+
+        Principal operator = authenticator.authenticate(auth);
+        // Only the rightful owner may resume — a system-participant thread is
+        // owned by the recipient; nobody else can drain or reply to it.
+        String ownerSubject = stored.principal() == null ? null : stored.principal().subject();
+        if (ownerSubject != null && !ownerSubject.equals(operator.subject())) {
+            throw new ActionNotPermittedException("not the owner of this session");
+        }
+
+        Session rehydrated = new Session(sessionId, stored.tenant(), operator,
+                stored.profile(), stored.channel(), List.of(), IntentFrame.empty(),
+                Map.of(), stored.createdAt(), null);
+        active.put(sessionId, rehydrated);
+        // Seed the turn-index counter past the recorded tail so appended turns
+        // don't collide with history.
+        nextTurnIdx.put(sessionId, new java.util.concurrent.atomic.AtomicInteger(
+                rs.turns() == null ? 0 : rs.turns().size()));
+        return rehydrated;
+    }
+
+    @Override
     public java.util.Optional<IntentFrame> currentIntent(Ids.SessionId sessionId) {
         return java.util.Optional.ofNullable(activeIntents.get(sessionId));
     }
@@ -1073,7 +1108,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                             warning, List.of(), List.of()));
         }
 
-        List<LlmClient.ToolDefinition> available = buildAvailableTools(profile);
+        List<LlmClient.ToolDefinition> available = maskAvailableTools(
+                buildAvailableTools(profile), session.id());
         // §12 enforced structurally: a tool call that already came back DENIED /
         // errored this turn must not be re-dispatched with the same arguments —
         // the action plane will deny it again, and each retry spins another
@@ -1252,6 +1288,45 @@ public class DefaultConversationEngine implements ConversationEngine {
             });
         }
         return out;
+    }
+
+    /**
+     * Apply the system-messaging capability mask (§9.1, Rule 2) when
+     * attacker-reachable content is pending in this session. The mask lives in
+     * working memory (set by the outreach reply flow at resume) so it survives
+     * the offline gap. Deny-by-default: only the explicitly-allowed tools (the
+     * bound response tool) and, when {@code allowReads} is set, read-only
+     * (idempotent, non-confirmable) tools survive — everything mutating is
+     * dropped from the model's view entirely, so an injected "call transfer_funds"
+     * has nothing to reach. Holds even if the model is fully turned.
+     */
+    @SuppressWarnings("unchecked")
+    private List<LlmClient.ToolDefinition> maskAvailableTools(
+            List<LlmClient.ToolDefinition> base, Ids.SessionId sessionId) {
+        Map<String, Object> wm = workingMemory.get(sessionId);
+        Object raw = wm == null ? null
+                : wm.get(com.yayatechandinnovations.yayaagentic.channel.system.CapabilityMask.WORKING_MEMORY_KEY);
+        if (!(raw instanceof Map<?, ?> maskMap)) return base;
+        java.util.Set<String> allow = new java.util.HashSet<>();
+        Object rawAllow = ((Map<String, Object>) maskMap).get("allow");
+        if (rawAllow instanceof java.util.Collection<?> c) {
+            for (Object o : c) allow.add(String.valueOf(o));
+        }
+        boolean allowReads = Boolean.TRUE.equals(((Map<String, Object>) maskMap).get("allowReads"));
+        List<LlmClient.ToolDefinition> out = new java.util.ArrayList<>();
+        for (LlmClient.ToolDefinition def : base) {
+            if (allow.contains(def.name())) { out.add(def); continue; }
+            if (allowReads && isReadOnlyTool(def.name())) out.add(def);
+            // else: dropped by deny-by-default.
+        }
+        return out;
+    }
+
+    /** A tool the mask treats as a "read": idempotent and not a confirmable mutation. */
+    private boolean isReadOnlyTool(String toolId) {
+        return catalog.tool(new Ids.ToolId(toolId))
+                .map(t -> t.policy() != null && t.policy().idempotent() && !t.policy().confirmable())
+                .orElse(false);
     }
 
     /** Resumes a tool dispatch when a prior elicitation has been satisfied. */

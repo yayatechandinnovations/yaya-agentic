@@ -22,6 +22,11 @@ class ChatMessage {
   final CheckoutResult? checkoutResult;
   final Cart? cartSnapshot;
 
+  // System-participant messages (system-messaging-design.md §14): an attributed
+  // header ("Cash Register #3") + document/image attachments.
+  final String? senderDisplayName;
+  final List<ChatAttachment> attachments;
+
   const ChatMessage({
     required this.role,
     required this.text,
@@ -32,9 +37,15 @@ class ChatMessage {
     this.productCard,
     this.checkoutResult,
     this.cartSnapshot,
+    this.senderDisplayName,
+    this.attachments = const [],
   });
 
   bool get isUser => role == 'user';
+
+  bool get isSystem => senderDisplayName != null;
+
+  bool get hasAttachments => attachments.isNotEmpty;
 
   bool get hasCommerce =>
       catalog != null ||
@@ -51,6 +62,8 @@ class ChatMessage {
     Product? productCard,
     CheckoutResult? checkoutResult,
     Cart? cartSnapshot,
+    String? senderDisplayName,
+    List<ChatAttachment>? attachments,
   }) =>
       ChatMessage(
         role: role,
@@ -62,6 +75,8 @@ class ChatMessage {
         productCard: productCard ?? this.productCard,
         checkoutResult: checkoutResult ?? this.checkoutResult,
         cartSnapshot: cartSnapshot ?? this.cartSnapshot,
+        senderDisplayName: senderDisplayName ?? this.senderDisplayName,
+        attachments: attachments ?? this.attachments,
       );
 }
 
@@ -69,4 +84,59 @@ class Citation {
   final String title;
   final String? url;
   const Citation({required this.title, this.url});
+}
+
+/// A media attachment on a system message — an image, document, or a/v clip
+/// served from a short-lived signed URL (system-messaging-design.md §10).
+class ChatAttachment {
+  final String assetId;
+  final String contentType;
+  final String? filename;
+  final int sizeBytes;
+  final String url; // signed, short-lived /v1/media/{token}
+
+  const ChatAttachment({
+    required this.assetId,
+    required this.contentType,
+    this.filename,
+    this.sizeBytes = 0,
+    required this.url,
+  });
+
+  bool get isImage => contentType.startsWith('image/');
+
+  factory ChatAttachment.fromJson(Map<String, dynamic> json) => ChatAttachment(
+        assetId: (json['assetId'] ?? '') as String,
+        contentType: (json['contentType'] ?? 'application/octet-stream') as String,
+        filename: json['filename'] as String?,
+        sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
+        url: (json['url'] ?? '') as String,
+      );
+}
+
+/// One drained inbox message (system-messaging-design.md §11).
+class InboxMessage {
+  final String sessionId;
+  final String? senderDisplay;
+  final String? subject;
+  final String body;
+  final List<ChatAttachment> attachments;
+
+  const InboxMessage({
+    required this.sessionId,
+    this.senderDisplay,
+    this.subject,
+    required this.body,
+    this.attachments = const [],
+  });
+
+  factory InboxMessage.fromJson(Map<String, dynamic> json) => InboxMessage(
+        sessionId: (json['sessionId'] ?? '') as String,
+        senderDisplay: json['senderDisplay'] as String?,
+        subject: json['subject'] as String?,
+        body: (json['body'] ?? '') as String,
+        attachments: (json['attachments'] as List? ?? const [])
+            .map((e) => ChatAttachment.fromJson((e as Map).cast<String, dynamic>()))
+            .toList(),
+      );
 }

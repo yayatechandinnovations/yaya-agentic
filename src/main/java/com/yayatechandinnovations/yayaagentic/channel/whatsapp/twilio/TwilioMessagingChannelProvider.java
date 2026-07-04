@@ -268,6 +268,40 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
     }
 
     @Override
+    public OutboundResult sendMedia(SenderRef ref,
+                                    com.yayatechandinnovations.yayaagentic.channel.OutboundMedia msg,
+                                    ProviderCreds creds) {
+        ensureCreds(creds);
+        TwilioCreds tc = (TwilioCreds) creds;
+        org.springframework.util.LinkedMultiValueMap<String, String> form =
+                new org.springframework.util.LinkedMultiValueMap<>();
+        form.add("To", "whatsapp:" + msg.recipientE164());
+        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
+            form.add("MessagingServiceSid", tc.messagingServiceSid());
+        } else {
+            Object fromPhone = msg.providerHints().get("fromPhoneE164");
+            if (fromPhone instanceof String s && !s.isBlank()) {
+                form.add("From", "whatsapp:" + s);
+            } else {
+                return new OutboundResult.ProviderFailure(
+                        "no_from_addressing",
+                        "Either Messaging Service SID or providerHints.fromPhoneE164 is required",
+                        false);
+            }
+        }
+        // Twilio fetches the media from this (signed, short-lived) URL.
+        form.add("MediaUrl", msg.mediaUrl());
+        if (msg.caption() != null && !msg.caption().isBlank()) {
+            form.add("Body", msg.caption());
+        }
+        Object statusCallback = msg.providerHints().get("statusCallbackUrl");
+        if (statusCallback instanceof String s && !s.isBlank()) {
+            form.add("StatusCallback", s);
+        }
+        return postMessage(tc, form);
+    }
+
+    @Override
     public OutboundResult sendTemplate(SenderRef ref, OutboundTemplate msg, ProviderCreds creds) {
         ensureCreds(creds);
         TwilioCreds tc = (TwilioCreds) creds;

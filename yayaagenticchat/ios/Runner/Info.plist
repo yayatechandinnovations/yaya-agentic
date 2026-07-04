@@ -2,12 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Required by mobile_scanner: shown when the QR "add a tile" scanner asks
+	     for camera access. Missing this string crashes the app on iOS and fails
+	     App Review. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Yaya Chat uses the camera to scan a business QR code so you can start a chat.</string>
+	<!-- The app only uses standard HTTPS/TLS, which is exempt from U.S. export
+	     rules. Declaring this skips the export-compliance prompt on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Yayaagenticchat</string>
+	<string>Yaya Chat</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

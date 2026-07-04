@@ -41,6 +41,15 @@ public final class Ids {
     public record AuthBindingId(String value) {}
     public record RecorderId(String value) {}
 
+    /** A registered integration/system sender that may inject messages into a
+     *  conversation. Tenant-scoped config, not a session row. See
+     *  {@code docs/design/system-messaging-design.md} §3. */
+    public record SystemSenderId(String value) {}
+
+    /** One ingested system→user message (idempotent on the sender's dedup key).
+     *  See {@code docs/design/system-messaging-design.md} §5. */
+    public record OutreachId(String value) {}
+
     /**
      * Versioned like a {@link ProfileId} — a Session Start Flow is tenant-scoped
      * config pinned at {@code start()}, not a session row. See

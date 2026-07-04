@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Universal Links for the QR/deep-link on-ramp. Also requires an
+	     apple-app-site-association file hosted at
+	     https://chat.yaya.app/.well-known/apple-app-site-association, and this
+	     file must be wired into the target via Xcode > Signing & Capabilities >
+	     Associated Domains (which also updates the provisioning profile). -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:chat.yaya.app</string>
+	</array>
+</dict>
+</plist>

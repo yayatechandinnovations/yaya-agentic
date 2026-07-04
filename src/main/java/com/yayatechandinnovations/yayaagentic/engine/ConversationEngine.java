@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.engine;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.IntentFrame;
+import com.yayatechandinnovations.yayaagentic.core.Session;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalResult;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
 import reactor.core.publisher.Flux;
@@ -32,6 +33,19 @@ public interface ConversationEngine {
                                    java.util.Map<String, Object> args, AuthContext auth);
 
     void end(Ids.SessionId sessionId, AuthContext auth);
+
+    /**
+     * Rehydrate a persisted session into the active set so its rightful owner
+     * can continue it after it fell out of memory — e.g. an operator replying to
+     * a system-participant message that was delivered while they were offline
+     * (system-messaging-design.md §12). The caller is re-authenticated and must
+     * own the session; the session's principal is refreshed to the current
+     * verified identity so the reply turn authorizes against the operator's real
+     * scopes. Default: unsupported.
+     */
+    default Session resume(Ids.SessionId sessionId, AuthContext auth) {
+        throw new UnsupportedOperationException("resume not supported by this engine");
+    }
 
     /** Most recent {@link IntentFrame} for the session, or empty if unknown. */
     Optional<IntentFrame> currentIntent(Ids.SessionId sessionId);

@@ -169,7 +169,10 @@ com.yayatechandinnovations.yayaagentic
 8. `ConversationRecorder` — §5.9
 9. `RecorderRouter` — §5.9
 10. `ConversationSummarizer` — §5.9 (called by recorders, NOT by the engine)
-11. `ConversationEngine` — §6 (the top-level façade)
+11. `ConversationEngine` — §6 (the top-level façade). Also exposes `resume(sessionId, auth)` — rehydrates a persisted session into the active set so its owner can continue it (e.g. reply to a system message delivered while offline); `system-messaging-design.md` §12.
+12. `OutreachService` — `system-messaging-design.md` §13 (ingest → deliver/mediate → respond; peer to `ConversationEngine`, package `outreach/`)
+13. `RecipientResolver` — `system-messaging-design.md` §6 (logical `OutreachRecipient` → the user's established chat; `ByPrincipal`/`ByRole`)
+14. `PushNotifier` — `system-messaging-design.md` §11 (best-effort, content-free app wake for chat store-and-forward)
 
 ## Build & run
 
