@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
+import '../../../models/admin/chat_entry_point.dart';
 import '../../../models/admin/system_sender.dart';
 import '../shared/admin_shared.dart';
 
@@ -11,6 +12,42 @@ final systemSendersProvider =
     FutureProvider.family<List<SystemSenderResponse>, String>((ref, tenantId) async {
   final api = await ref.watch(adminApiProvider.future);
   return api.listSystemSenders(tenantId);
+});
+
+// ---- Option sources for the config dropdowns -------------------------------
+// The form binds configured resources, not free text: an operator picks a JWT
+// secret / OIDC issuer / tool that already exists rather than retyping its id.
+
+/// Chat entry points this sender can deliver into (value = id, label = handle).
+final _entryPointsProvider =
+    FutureProvider.family<List<ChatEntryPointResponse>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  return api.listChatEntryPoints(tenantId);
+});
+
+/// `iss` of every configured HS256 shared secret — the credentialRef a
+/// `shared-secret-jwt` sender pins (matched against the token's iss).
+final _jwtSecretIssProvider =
+    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  final rows = await api.listTenantJwtSecrets(tenantId);
+  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toList()..sort();
+});
+
+/// `iss` of every trusted OIDC issuer — the credentialRef an `oidc` sender pins.
+final _oidcIssuerIssProvider =
+    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  final rows = await api.listTenantOidcIssuers(tenantId);
+  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toList()..sort();
+});
+
+/// Tool ids the agent could call to answer (the response tool).
+final _toolIdsProvider =
+    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  final tools = await api.listTools(tenant: tenantId);
+  return tools.map((t) => t.id).toList()..sort();
 });
 
 /// The "System Inbound" configuration surface (system-messaging-design.md §14):
@@ -87,6 +124,141 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
 
   List<String> _lines(TextEditingController c) =>
       c.text.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+
+  /// A dropdown backed by a live list of configured values (jwt iss, oidc iss,
+  /// tool ids). Falls back to a plain text field if the list can't be loaded so
+  /// the operator is never blocked. Tolerates a stored value that no longer
+  /// exists by surfacing it as a "(not configured)" option instead of dropping it.
+  Widget _asyncStringDropdown({
+    required String label,
+    String? helperText,
+    required String emptyLabel,
+    required String emptyListHelper,
+    required String currentValue,
+    required AsyncValue<List<String>> options,
+    required ValueChanged<String> onChanged,
+  }) {
+    return options.when(
+      loading: () => InputDecorator(
+        decoration: InputDecoration(labelText: label, helperText: helperText),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(vertical: 10),
+          child: LinearProgressIndicator(),
+        ),
+      ),
+      error: (_, _) => TextFormField(
+        initialValue: currentValue,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: 'Could not load options — enter the value manually.',
+        ),
+        onChanged: onChanged,
+      ),
+      data: (list) {
+        final missing = currentValue.isNotEmpty && !list.contains(currentValue);
+        return DropdownButtonFormField<String>(
+          initialValue: currentValue,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: label,
+            helperText: list.isEmpty ? emptyListHelper : helperText,
+          ),
+          items: [
+            DropdownMenuItem(
+              value: '',
+              child: Text(emptyLabel, style: const TextStyle(fontStyle: FontStyle.italic)),
+            ),
+            ...list.map((v) => DropdownMenuItem(value: v, child: Text(v, overflow: TextOverflow.ellipsis))),
+            if (missing)
+              DropdownMenuItem(value: currentValue, child: Text('$currentValue  (not configured)')),
+          ],
+          onChanged: (v) => onChanged(v ?? ''),
+        );
+      },
+    );
+  }
+
+  /// The credential the sender's token must carry (matched against its `iss`).
+  /// Which resource that is depends on the chosen authenticator, so the field
+  /// itself changes: a JWT-secret picker, an OIDC-issuer picker, or free text.
+  Widget _credentialField(AsyncValue<List<String>> jwtIss, AsyncValue<List<String>> oidcIss) {
+    switch (_authenticator) {
+      case 'shared-secret-jwt':
+        return _asyncStringDropdown(
+          label: 'JWT shared secret (iss)',
+          helperText: 'The configured shared secret that signs this sender\'s token.',
+          emptyLabel: '(any trusted secret)',
+          emptyListHelper: 'No JWT secrets yet — add one under "JWT secrets".',
+          currentValue: _credentialRefCtrl.text,
+          options: jwtIss,
+          onChanged: (v) => setState(() => _credentialRefCtrl.text = v),
+        );
+      case 'oidc':
+        return _asyncStringDropdown(
+          label: 'OIDC issuer (iss)',
+          helperText: 'The trusted issuer whose tokens this sender presents.',
+          emptyLabel: '(any trusted issuer)',
+          emptyListHelper: 'No OIDC issuers yet — add one under "OIDC issuers".',
+          currentValue: _credentialRefCtrl.text,
+          options: oidcIss,
+          onChanged: (v) => setState(() => _credentialRefCtrl.text = v),
+        );
+      default:
+        return TextField(
+          controller: _credentialRefCtrl,
+          decoration: const InputDecoration(
+            labelText: 'API key id / issuer (optional)',
+            helperText: 'Which credential to accept. Blank = any the authenticator trusts.',
+          ),
+        );
+    }
+  }
+
+  /// Entry-point picker (required). Value is the entry-point id; the label shows
+  /// the human name + handle so the operator recognises the chat.
+  Widget _entryPointField(AsyncValue<List<ChatEntryPointResponse>> options) {
+    final current = _entryPointCtrl.text;
+    return options.when(
+      loading: () => const InputDecorator(
+        decoration: InputDecoration(labelText: 'chat entry point'),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 10),
+          child: LinearProgressIndicator(),
+        ),
+      ),
+      error: (_, _) => TextFormField(
+        initialValue: current,
+        decoration: const InputDecoration(
+          labelText: 'chat entry point id',
+          helperText: 'Could not load entry points — enter the id manually.',
+        ),
+        onChanged: (v) => _entryPointCtrl.text = v,
+      ),
+      data: (list) {
+        final missing = current.isNotEmpty && !list.any((e) => e.id == current);
+        return DropdownButtonFormField<String>(
+          initialValue: current.isEmpty ? null : current,
+          isExpanded: true,
+          hint: const Text('select a chat…'),
+          decoration: InputDecoration(
+            labelText: 'chat entry point',
+            helperText: list.isEmpty
+                ? 'No chat entry points yet — create one under "Chats".'
+                : 'The chat this sender delivers into (the chat the user added).',
+          ),
+          items: [
+            ...list.map((e) => DropdownMenuItem(
+                  value: e.id,
+                  child: Text('${e.displayName}  ·  @${e.handle}', overflow: TextOverflow.ellipsis),
+                )),
+            if (missing)
+              DropdownMenuItem(value: current, child: Text('$current  (not found)')),
+          ],
+          onChanged: (v) => setState(() => _entryPointCtrl.text = v ?? ''),
+        );
+      },
+    );
+  }
 
   Future<void> _save() async {
     final tenant = ref.read(currentTenantOrNull);
@@ -212,6 +384,10 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
       return const TenantScopedEmptyState(resourceLabel: 'System senders');
     }
     final senders = ref.watch(systemSendersProvider(tenant));
+    final entryPoints = ref.watch(_entryPointsProvider(tenant));
+    final jwtIss = ref.watch(_jwtSecretIssProvider(tenant));
+    final oidcIss = ref.watch(_oidcIssuerIssProvider(tenant));
+    final toolIds = ref.watch(_toolIdsProvider(tenant));
 
     return AdminTwoPane(
       title: 'System inbound senders',
@@ -249,13 +425,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _entryPointCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'chat entry point id',
-                  helperText: 'The chat this sender delivers into (the chat the user added).',
-                ),
-              ),
+              _entryPointField(entryPoints),
               const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -268,20 +438,21 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: _authenticator,
-                decoration: const InputDecoration(labelText: 'security mechanism'),
+                decoration: const InputDecoration(
+                  labelText: 'security mechanism',
+                  helperText: 'How the sender proves trust — determines the credential field below.',
+                ),
                 items: _authenticators
                     .map((a) => DropdownMenuItem(value: a, child: Text(a)))
                     .toList(),
-                onChanged: (v) => setState(() => _authenticator = v ?? 'shared-secret-jwt'),
+                // Credential meaning differs per authenticator, so clear it on switch.
+                onChanged: (v) => setState(() {
+                  _authenticator = v ?? 'shared-secret-jwt';
+                  _credentialRefCtrl.clear();
+                }),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _credentialRefCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'credential ref (iss / key id / issuer)',
-                  helperText: 'Which secret/key to accept. Blank = any the authenticator trusts.',
-                ),
-              ),
+              _credentialField(jwtIss, oidcIss),
               const SizedBox(height: 12),
               TextField(
                 controller: _scopesCtrl,
@@ -306,12 +477,14 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
                 onChanged: (v) => setState(() => _mediation = v ?? 'VERBATIM'),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _responseToolCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'response tool id (optional)',
-                  helperText: 'The tool the agent calls to answer, e.g. system.reply.',
-                ),
+              _asyncStringDropdown(
+                label: 'response tool (optional)',
+                helperText: 'The tool the agent calls to answer, e.g. system.reply.',
+                emptyLabel: '(no reply tool)',
+                emptyListHelper: 'No tools configured yet — add one under "Tools".',
+                currentValue: _responseToolCtrl.text,
+                options: toolIds,
+                onChanged: (v) => setState(() => _responseToolCtrl.text = v),
               ),
               const Divider(),
               Text('Addressing', style: Theme.of(context).textTheme.labelLarge),
