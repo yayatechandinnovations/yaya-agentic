@@ -15,6 +15,7 @@ import '../../../models/admin/profile.dart';
 import '../auth_resolvers/auth_resolvers_screen.dart';
 import '../profiles/profiles_screen.dart';
 import '../shared/admin_shared.dart';
+import '../flows/start_flow_picker.dart';
 import 'web_image_picker.dart';
 
 /// Chat inbound channel admin: create branded entry points (the `LOGO | NAME`
@@ -654,6 +655,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
   String _onOverrideDenied = 'IGNORE';
   bool _requireVerifiedPhone = false;
   bool _discoverable = false;
+  String? _startFlowId;
   bool _busy = false;
 
   @override
@@ -685,6 +687,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       defaultLocale: _locale,
       tagline: _tagline.text.trim().isEmpty ? null : _tagline.text.trim(),
       discoverable: _discoverable,
+      startFlowId: _startFlowId,
       authMode: _authMode,
       authConfig: _buildAuthConfig(),
       requiresVerifiedPhone: _requireVerifiedPhone,
@@ -735,6 +738,7 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
       _onOverrideDenied = 'IGNORE';
       _requireVerifiedPhone = false;
       _discoverable = false;
+      _startFlowId = null;
     });
   }
 
@@ -786,6 +790,12 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
             _field(_tagline, 'Directory tagline',
                 hint: 'One line shown when this chat is listed publicly'),
             _localeDropdown(_locale, (v) => setState(() => _locale = v)),
+            const SizedBox(height: 12),
+            StartFlowPicker(
+              tenant: widget.tenant,
+              value: _startFlowId,
+              onChanged: (v) => setState(() => _startFlowId = v),
+            ),
             const SizedBox(height: 12),
             _AuthSection(
               tenant: widget.tenant,
@@ -871,6 +881,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
   late int? _authResolverId = widget.ep.authConfig.authResolverId;
   late String _onOverrideDenied = widget.ep.onOverrideDenied;
   late bool _discoverable = widget.ep.discoverable;
+  late String? _startFlowId = widget.ep.startFlowId;
 
   @override
   void dispose() {
@@ -946,6 +957,12 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               _row(_tagline, 'Directory tagline'),
               _localeDropdown(_localeValue, (v) => setState(() => _localeValue = v)),
               const SizedBox(height: 12),
+              StartFlowPicker(
+                tenant: widget.tenant,
+                value: _startFlowId,
+                onChanged: (v) => setState(() => _startFlowId = v),
+              ),
+              const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('List in public directory'),
@@ -988,6 +1005,7 @@ class _EditDialogState extends ConsumerState<_EditDialog> {
               defaultLocale: _localeValue,
               tagline: _tagline.text.trim(),
               discoverable: _discoverable,
+              startFlowId: _startFlowId,
               authMode: _authMode,
               authConfig: _buildAuthConfig(),
               allowedOverrideProfiles: _authMethod == 'RESOLVER' ? _allowedOverrideProfiles : const [],

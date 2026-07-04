@@ -32,7 +32,9 @@ mixin _$ProfileRequest {
   Map<String, dynamic> get metadata =>
       throw _privateConstructorUsedError; // Nullable commerce block: {catalogs:[{value,version}], currency,
   // checkoutTool:{value}, cartEnabled}. Null = not a store.
-  Map<String, dynamic>? get commerce => throw _privateConstructorUsedError;
+  Map<String, dynamic>? get commerce =>
+      throw _privateConstructorUsedError; // Default Session Start Flow id (null = none).
+  String? get defaultStartFlowId => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -62,6 +64,7 @@ abstract class $ProfileRequestCopyWith<$Res> {
     String language,
     Map<String, dynamic> metadata,
     Map<String, dynamic>? commerce,
+    String? defaultStartFlowId,
   });
 }
 
@@ -90,6 +93,7 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
     Object? language = null,
     Object? metadata = null,
     Object? commerce = freezed,
+    Object? defaultStartFlowId = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -133,6 +137,10 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
                 ? _value.commerce
                 : commerce // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>?,
+            defaultStartFlowId: freezed == defaultStartFlowId
+                ? _value.defaultStartFlowId
+                : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
+                      as String?,
           )
           as $Val,
     );
@@ -159,6 +167,7 @@ abstract class _$$ProfileRequestImplCopyWith<$Res>
     String language,
     Map<String, dynamic> metadata,
     Map<String, dynamic>? commerce,
+    String? defaultStartFlowId,
   });
 }
 
@@ -186,6 +195,7 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
     Object? language = null,
     Object? metadata = null,
     Object? commerce = freezed,
+    Object? defaultStartFlowId = freezed,
   }) {
     return _then(
       _$ProfileRequestImpl(
@@ -229,6 +239,10 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
             ? _value._commerce
             : commerce // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>?,
+        defaultStartFlowId: freezed == defaultStartFlowId
+            ? _value.defaultStartFlowId
+            : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
+                  as String?,
       ),
     );
   }
@@ -248,6 +262,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     this.language = 'en',
     final Map<String, dynamic> metadata = const <String, dynamic>{},
     final Map<String, dynamic>? commerce,
+    this.defaultStartFlowId,
   }) : _capabilities = capabilities,
        _metadata = metadata,
        _commerce = commerce;
@@ -302,9 +317,13 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     return EqualUnmodifiableMapView(value);
   }
 
+  // Default Session Start Flow id (null = none).
+  @override
+  final String? defaultStartFlowId;
+
   @override
   String toString() {
-    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, commerce: $commerce)';
+    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, commerce: $commerce, defaultStartFlowId: $defaultStartFlowId)';
   }
 
   @override
@@ -329,7 +348,9 @@ class _$ProfileRequestImpl implements _ProfileRequest {
             (identical(other.language, language) ||
                 other.language == language) &&
             const DeepCollectionEquality().equals(other._metadata, _metadata) &&
-            const DeepCollectionEquality().equals(other._commerce, _commerce));
+            const DeepCollectionEquality().equals(other._commerce, _commerce) &&
+            (identical(other.defaultStartFlowId, defaultStartFlowId) ||
+                other.defaultStartFlowId == defaultStartFlowId));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -346,6 +367,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     language,
     const DeepCollectionEquality().hash(_metadata),
     const DeepCollectionEquality().hash(_commerce),
+    defaultStartFlowId,
   );
 
   /// Create a copy of ProfileRequest
@@ -377,6 +399,7 @@ abstract class _ProfileRequest implements ProfileRequest {
     final String language,
     final Map<String, dynamic> metadata,
     final Map<String, dynamic>? commerce,
+    final String? defaultStartFlowId,
   }) = _$ProfileRequestImpl;
 
   factory _ProfileRequest.fromJson(Map<String, dynamic> json) =
@@ -402,7 +425,9 @@ abstract class _ProfileRequest implements ProfileRequest {
   Map<String, dynamic> get metadata; // Nullable commerce block: {catalogs:[{value,version}], currency,
   // checkoutTool:{value}, cartEnabled}. Null = not a store.
   @override
-  Map<String, dynamic>? get commerce;
+  Map<String, dynamic>? get commerce; // Default Session Start Flow id (null = none).
+  @override
+  String? get defaultStartFlowId;
 
   /// Create a copy of ProfileRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -431,6 +456,7 @@ mixin _$ProfileResponse {
   String? get status => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
   Map<String, dynamic>? get commerce => throw _privateConstructorUsedError;
+  String? get defaultStartFlowId => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileResponse to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -463,6 +489,7 @@ abstract class $ProfileResponseCopyWith<$Res> {
     String? status,
     String? createdAt,
     Map<String, dynamic>? commerce,
+    String? defaultStartFlowId,
   });
 }
 
@@ -494,6 +521,7 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
     Object? status = freezed,
     Object? createdAt = freezed,
     Object? commerce = freezed,
+    Object? defaultStartFlowId = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -549,6 +577,10 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
                 ? _value.commerce
                 : commerce // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>?,
+            defaultStartFlowId: freezed == defaultStartFlowId
+                ? _value.defaultStartFlowId
+                : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
+                      as String?,
           )
           as $Val,
     );
@@ -578,6 +610,7 @@ abstract class _$$ProfileResponseImplCopyWith<$Res>
     String? status,
     String? createdAt,
     Map<String, dynamic>? commerce,
+    String? defaultStartFlowId,
   });
 }
 
@@ -608,6 +641,7 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
     Object? status = freezed,
     Object? createdAt = freezed,
     Object? commerce = freezed,
+    Object? defaultStartFlowId = freezed,
   }) {
     return _then(
       _$ProfileResponseImpl(
@@ -663,6 +697,10 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
             ? _value._commerce
             : commerce // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>?,
+        defaultStartFlowId: freezed == defaultStartFlowId
+            ? _value.defaultStartFlowId
+            : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
+                  as String?,
       ),
     );
   }
@@ -685,6 +723,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     this.status,
     this.createdAt,
     final Map<String, dynamic>? commerce,
+    this.defaultStartFlowId,
   }) : _capabilities = capabilities,
        _metadata = metadata,
        _commerce = commerce;
@@ -742,8 +781,11 @@ class _$ProfileResponseImpl implements _ProfileResponse {
   }
 
   @override
+  final String? defaultStartFlowId;
+
+  @override
   String toString() {
-    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, commerce: $commerce)';
+    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, commerce: $commerce, defaultStartFlowId: $defaultStartFlowId)';
   }
 
   @override
@@ -772,7 +814,9 @@ class _$ProfileResponseImpl implements _ProfileResponse {
             (identical(other.status, status) || other.status == status) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
-            const DeepCollectionEquality().equals(other._commerce, _commerce));
+            const DeepCollectionEquality().equals(other._commerce, _commerce) &&
+            (identical(other.defaultStartFlowId, defaultStartFlowId) ||
+                other.defaultStartFlowId == defaultStartFlowId));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -792,6 +836,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     status,
     createdAt,
     const DeepCollectionEquality().hash(_commerce),
+    defaultStartFlowId,
   );
 
   /// Create a copy of ProfileResponse
@@ -826,6 +871,7 @@ abstract class _ProfileResponse implements ProfileResponse {
     final String? status,
     final String? createdAt,
     final Map<String, dynamic>? commerce,
+    final String? defaultStartFlowId,
   }) = _$ProfileResponseImpl;
 
   factory _ProfileResponse.fromJson(Map<String, dynamic> json) =
@@ -857,6 +903,8 @@ abstract class _ProfileResponse implements ProfileResponse {
   String? get createdAt;
   @override
   Map<String, dynamic>? get commerce;
+  @override
+  String? get defaultStartFlowId;
 
   /// Create a copy of ProfileResponse
   /// with the given fields replaced by the non-null parameter values.

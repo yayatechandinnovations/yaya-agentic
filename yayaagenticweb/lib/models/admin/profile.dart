@@ -18,6 +18,8 @@ class ProfileRequest with _$ProfileRequest {
     // Nullable commerce block: {catalogs:[{value,version}], currency,
     // checkoutTool:{value}, cartEnabled}. Null = not a store.
     Map<String, dynamic>? commerce,
+    // Default Session Start Flow id (null = none).
+    String? defaultStartFlowId,
   }) = _ProfileRequest;
 
   factory ProfileRequest.fromJson(Map<String, dynamic> json) =>
@@ -40,6 +42,7 @@ class ProfileResponse with _$ProfileResponse {
     String? status,
     String? createdAt,
     Map<String, dynamic>? commerce,
+    String? defaultStartFlowId,
   }) = _ProfileResponse;
 
   factory ProfileResponse.fromJson(Map<String, dynamic> json) =>

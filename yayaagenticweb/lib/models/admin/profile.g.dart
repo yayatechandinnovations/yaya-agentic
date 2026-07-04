@@ -24,6 +24,7 @@ _$ProfileRequestImpl _$$ProfileRequestImplFromJson(Map<String, dynamic> json) =>
           json['metadata'] as Map<String, dynamic>? ??
           const <String, dynamic>{},
       commerce: json['commerce'] as Map<String, dynamic>?,
+      defaultStartFlowId: json['defaultStartFlowId'] as String?,
     );
 
 Map<String, dynamic> _$$ProfileRequestImplToJson(
@@ -39,6 +40,7 @@ Map<String, dynamic> _$$ProfileRequestImplToJson(
   'language': instance.language,
   'metadata': instance.metadata,
   'commerce': instance.commerce,
+  'defaultStartFlowId': instance.defaultStartFlowId,
 };
 
 _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
@@ -62,6 +64,7 @@ _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
   status: json['status'] as String?,
   createdAt: json['createdAt'] as String?,
   commerce: json['commerce'] as Map<String, dynamic>?,
+  defaultStartFlowId: json['defaultStartFlowId'] as String?,
 );
 
 Map<String, dynamic> _$$ProfileResponseImplToJson(
@@ -80,4 +83,5 @@ Map<String, dynamic> _$$ProfileResponseImplToJson(
   'status': instance.status,
   'createdAt': instance.createdAt,
   'commerce': instance.commerce,
+  'defaultStartFlowId': instance.defaultStartFlowId,
 };

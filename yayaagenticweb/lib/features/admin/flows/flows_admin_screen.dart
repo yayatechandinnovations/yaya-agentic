@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,12 +5,15 @@ import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/start_flow.dart';
 import '../shared/admin_shared.dart';
+import 'flow_builder.dart';
+import 'flow_drafts.dart';
+import 'flow_templates.dart';
 
 /// Session Start Flow admin: author the ordered, data-bound tool steps that run
 /// deterministically when a conversation starts — recognize / verify / register
-/// / enrich, and shape the opening message. Bind a flow to a WhatsApp sender or
-/// chat entry point (their "Start flow id" field) or to a profile default.
-/// See `docs/design/session-start-flows.md`.
+/// / enrich, and shape the opening message. Built graphically (no JSON). Bind a
+/// flow to a WhatsApp sender or chat entry point (their "Start flow" field), or
+/// to a profile default. See `docs/design/session-start-flows.md`.
 
 final startFlowsProvider =
     FutureProvider.family<List<StartFlowResponse>, String>((ref, tenantId) async {
@@ -20,10 +21,11 @@ final startFlowsProvider =
   return api.listStartFlows(tenantId);
 });
 
-/// Carries a selected flow into the create/edit form for "Clone & edit".
-final _formSeedProvider = StateProvider<StartFlowResponse?>((ref) => null);
-
-const _encoder = JsonEncoder.withIndent('  ');
+final _toolIdsProvider = FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  final tools = await api.listTools(tenant: tenantId);
+  return tools.map((t) => t.id).toList()..sort();
+});
 
 class StartFlowsAdminScreen extends ConsumerWidget {
   const StartFlowsAdminScreen({super.key});
@@ -34,38 +36,64 @@ class StartFlowsAdminScreen extends ConsumerWidget {
     if (tenant == null) {
       return const TenantScopedEmptyState(resourceLabel: 'Start flows');
     }
-    return AdminTwoPane(
-      title: 'Start flows',
-      subtitle: 'Automation that runs when a conversation starts — top to bottom. '
-          'Bind a flow to a sender / chat entry point, or a profile default.',
-      list: _List(tenant: tenant),
-      form: _CreateForm(tenant: tenant),
+    final async = ref.watch(startFlowsProvider(tenant));
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Start flows', style: Theme.of(context).textTheme.headlineSmall),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Automation that runs when a conversation starts. Bind a flow to a sender / '
+                      'chat entry point, or set it as a profile default.',
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: Theme.of(context).colorScheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: () => _openEditor(context, ref, tenant, null),
+                icon: const Icon(Icons.add),
+                label: const Text('New flow'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: async.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(child: Text(formatError(e))),
+              data: (flows) => flows.isEmpty
+                  ? const Center(child: Text('No start flows yet. Create one with “New flow”.'))
+                  : ListView.separated(
+                      itemCount: flows.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _FlowCard(tenant: tenant, flow: flows[i]),
+                    ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _List extends ConsumerWidget {
-  const _List({required this.tenant});
-  final String tenant;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(startFlowsProvider(tenant));
-    return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text(formatError(e))),
-      data: (flows) {
-        if (flows.isEmpty) {
-          return const Center(child: Text('No start flows yet. Create one on the right.'));
-        }
-        return ListView.separated(
-          itemCount: flows.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (_, i) => _FlowCard(tenant: tenant, flow: flows[i]),
-        );
-      },
-    );
-  }
+Future<void> _openEditor(
+    BuildContext context, WidgetRef ref, String tenant, StartFlowResponse? existing) async {
+  final saved = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _FlowEditorDialog(tenant: tenant, existing: existing),
+  );
+  if (saved == true) ref.invalidate(startFlowsProvider(tenant));
 }
 
 class _FlowCard extends ConsumerWidget {
@@ -79,42 +107,23 @@ class _FlowCard extends ConsumerWidget {
     final statusColor = flow.isActive
         ? Colors.green
         : (flow.isArchived ? theme.colorScheme.outline : theme.colorScheme.tertiary);
-    return EditableRecordCard(
-      leading: Icon(Icons.play_circle_outline, color: theme.colorScheme.primary),
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(flow.name, style: theme.textTheme.titleSmall),
-          const SizedBox(height: 2),
-          Text('${flow.id}  ·  v${flow.version}  ·  ${flow.stepCount} step(s)  ·  ${flow.greetingMode}',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline)),
-        ],
-      ),
-      trailing: Chip(
-        label: Text(flow.status, style: const TextStyle(fontSize: 11)),
-        backgroundColor: statusColor.withValues(alpha: 0.15),
-        side: BorderSide(color: statusColor.withValues(alpha: 0.4)),
-        visualDensity: VisualDensity.compact,
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (flow.description != null && flow.description!.isNotEmpty)
-            DetailRow(label: 'Description', value: flow.description!),
-          DetailRow(label: 'Steps', value: _encoder.convert(flow.steps), mono: true),
-          DetailRow(label: 'Greeting', value: _encoder.convert(flow.greeting), mono: true),
-        ],
-      ),
-      extraActions: [
-        if (flow.isDraft)
-          FilledButton.tonalIcon(
-            onPressed: () => _publish(context, ref),
-            icon: const Icon(Icons.publish_outlined, size: 18),
-            label: const Text('Publish'),
+    return Card(
+      child: ListTile(
+        leading: Icon(Icons.play_circle_outline, color: theme.colorScheme.primary),
+        title: Text(flow.name),
+        subtitle: Text('${flow.id}  ·  v${flow.version}  ·  ${flow.stepCount} step(s)  ·  ${flow.greetingMode}'),
+        trailing: Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Chip(
+            label: Text(flow.status, style: const TextStyle(fontSize: 11)),
+            backgroundColor: statusColor.withValues(alpha: 0.15),
+            side: BorderSide(color: statusColor.withValues(alpha: 0.4)),
+            visualDensity: VisualDensity.compact,
           ),
-      ],
-      onCloneEdit: () => ref.read(_formSeedProvider.notifier).state = flow,
+          if (flow.isDraft)
+            TextButton(onPressed: () => _publish(context, ref), child: const Text('Publish')),
+          TextButton(onPressed: () => _openEditor(context, ref, tenant, flow), child: const Text('Edit')),
+        ]),
+      ),
     );
   }
 
@@ -130,214 +139,57 @@ class _FlowCard extends ConsumerWidget {
   }
 }
 
-// ---- create / edit form ------------------------------------------------
+// ---- editor dialog -----------------------------------------------------
 
-/// Starter templates — pre-fill the JSON editors with a working flow.
-const _templates = <String, Map<String, dynamic>>{
-  'Returning-customer recognition (LLM greeting)': {
-    'id': 'returning-customer',
-    'name': 'Returning customer recognition',
-    'description': 'Look the user up by phone and greet a recognized customer.',
-    'steps': [
-      {
-        'kind': 'RunTool',
-        'key': 'lookup',
-        'tool': {'value': 'account-lookup'},
-        'inputs': [
-          {
-            'argName': 'phone',
-            'source': {'kind': 'Channel', 'field': 'endUserPhone'},
-            'mode': 'FILL_IF_MISSING'
-          }
-        ],
-        'captures': [
-          {
-            'jsonPointer': '/name',
-            'target': {'kind': 'Entity', 'name': 'customerName', 'visibleToLlm': true}
-          }
-        ],
-        'next': [
-          {
-            'when': {
-              'left': {'kind': 'StepOutput', 'stepKey': 'lookup', 'jsonPointer': '/found'},
-              'op': 'EQ',
-              'right': true
-            },
-            'target': {'kind': 'End', 'outcomeLabel': 'success'}
-          }
-        ],
-        'onError': {'onError': 'ABORT', 'maxRetries': 0}
-      }
-    ],
-    'greeting': {
-      'mode': 'LLM_COMPOSED',
-      'outcomeGreetingTemplates': {'success': 'Welcome back, {customerName}!'},
-      'fallbackGreeting': 'Hi! How can I help you today?',
-      'quickReplyTemplates': ['Track my order'],
-      'llmOpening': {
-        'instruction': 'Greet the returning customer warmly by name and offer to help — one sentence.',
-        'briefingEntities': ['customerName'],
-        'quickReplyHints': [],
-        'stream': false
-      }
-    }
-  },
-  'Phone verification (OTP)': {
-    'id': 'phone-otp',
-    'name': 'Phone verification',
-    'description': 'Recognize the customer, ask for the code, verify it.',
-    'steps': [
-      {
-        'kind': 'RunTool',
-        'key': 'lookup',
-        'tool': {'value': 'account-lookup'},
-        'inputs': [],
-        'captures': [
-          {
-            'jsonPointer': '/name',
-            'target': {'kind': 'Entity', 'name': 'customerName', 'visibleToLlm': true}
-          }
-        ],
-        'next': [],
-        'onError': {'onError': 'ABORT', 'maxRetries': 0}
-      },
-      {
-        'kind': 'Elicit',
-        'key': 'otp',
-        'promptTemplate': 'Enter the code we texted you, {customerName}',
-        'quickReplyTemplates': [],
-        'uiHintKind': 'otp_entry',
-        'uiHintPayload': {},
-        'captureTarget': {'kind': 'StepVar', 'name': 'code'},
-        'next': []
-      },
-      {
-        'kind': 'RunTool',
-        'key': 'verify',
-        'tool': {'value': 'verify-otp'},
-        'inputs': [
-          {
-            'argName': 'code',
-            'source': {'kind': 'Entity', 'entityName': 'code'},
-            'mode': 'REQUIRED'
-          }
-        ],
-        'captures': [
-          {
-            'jsonPointer': '/verified',
-            'target': {'kind': 'Entity', 'name': 'phoneVerified', 'visibleToLlm': true}
-          }
-        ],
-        'next': [],
-        'onError': {'onError': 'ABORT', 'maxRetries': 0}
-      }
-    ],
-    'greeting': {
-      'mode': 'STATIC_TEMPLATE',
-      'outcomeGreetingTemplates': {'success': "You're verified, {customerName}!"},
-      'fallbackGreeting': 'Hi! How can I help?',
-      'quickReplyTemplates': []
-    }
-  },
-};
-
-class _CreateForm extends ConsumerStatefulWidget {
-  const _CreateForm({required this.tenant});
+class _FlowEditorDialog extends ConsumerStatefulWidget {
+  const _FlowEditorDialog({required this.tenant, this.existing});
   final String tenant;
+  final StartFlowResponse? existing;
 
   @override
-  ConsumerState<_CreateForm> createState() => _CreateFormState();
+  ConsumerState<_FlowEditorDialog> createState() => _FlowEditorDialogState();
 }
 
-class _CreateFormState extends ConsumerState<_CreateForm> {
-  final _id = TextEditingController();
-  final _name = TextEditingController();
-  final _description = TextEditingController();
-  final _steps = TextEditingController(text: '[]');
-  final _greeting =
-      TextEditingController(text: '{\n  "mode": "STATIC_TEMPLATE",\n  "fallbackGreeting": "Hi!"\n}');
+class _FlowEditorDialogState extends ConsumerState<_FlowEditorDialog> {
+  late FlowDraft _draft;
+  late bool _editing;
   bool _publish = false;
-  bool _editing = false;
+  bool _showTemplates = false;
   bool _busy = false;
+  int _rev = 0; // bumped when the draft is wholesale-replaced, to re-init fields
 
   @override
-  void dispose() {
-    for (final c in [_id, _name, _description, _steps, _greeting]) {
-      c.dispose();
-    }
-    super.dispose();
+  void initState() {
+    super.initState();
+    _editing = widget.existing != null;
+    _draft = widget.existing != null ? FlowDraft.fromResponse(widget.existing!) : FlowDraft();
   }
 
-  void _reset() {
+  void _loadTemplate(FlowDraft t) {
     setState(() {
-      _editing = false;
-      _publish = false;
-      _id.clear();
-      _name.clear();
-      _description.clear();
-      _steps.text = '[]';
-      _greeting.text = '{\n  "mode": "STATIC_TEMPLATE",\n  "fallbackGreeting": "Hi!"\n}';
-    });
-  }
-
-  void _loadFromFlow(StartFlowResponse f) {
-    setState(() {
-      _editing = true;
-      _publish = false;
-      _id.text = f.id;
-      _name.text = f.name;
-      _description.text = f.description ?? '';
-      _steps.text = _encoder.convert(f.steps);
-      _greeting.text = _encoder.convert(f.greeting);
-    });
-  }
-
-  void _applyTemplate(Map<String, dynamic> t) {
-    setState(() {
-      _editing = false;
-      _id.text = t['id'] as String;
-      _name.text = t['name'] as String;
-      _description.text = (t['description'] ?? '') as String;
-      _steps.text = _encoder.convert(t['steps']);
-      _greeting.text = _encoder.convert(t['greeting']);
+      _draft = t;
+      _showTemplates = false;
+      _rev++;
     });
   }
 
   Future<void> _save() async {
-    final List<dynamic> steps;
-    final Map<String, dynamic> greeting;
-    try {
-      steps = jsonDecode(_steps.text) as List<dynamic>;
-      greeting = Map<String, dynamic>.from(jsonDecode(_greeting.text) as Map);
-    } catch (e) {
-      showSnack(context, 'Steps / greeting must be valid JSON: $e', error: true);
-      return;
-    }
-    if (_id.text.trim().isEmpty || _name.text.trim().isEmpty) {
-      showSnack(context, 'Id and name are required', error: true);
+    if (_draft.id.trim().isEmpty || _draft.name.trim().isEmpty) {
+      showSnack(context, 'Flow id and name are required', error: true);
       return;
     }
     setState(() => _busy = true);
     try {
       final api = await ref.read(adminApiProvider.future);
-      final body = StartFlowRequest(
-        id: _id.text.trim(),
-        name: _name.text.trim(),
-        description: _description.text.trim().isEmpty ? null : _description.text.trim(),
-        steps: steps,
-        greeting: greeting,
-        policy: const {}, // backend applies FlowPolicy.defaults() for an empty policy
-        publish: _publish,
-      );
+      final body = _draft.toRequest(publish: _publish);
       if (_editing) {
         await api.updateStartFlow(widget.tenant, body.id, body);
       } else {
         await api.createStartFlow(widget.tenant, body);
       }
-      ref.invalidate(startFlowsProvider(widget.tenant));
       if (mounted) {
         showSnack(context, _editing ? 'Saved new version of ${body.id}' : 'Created ${body.id}');
-        _reset();
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
@@ -348,85 +200,141 @@ class _CreateFormState extends ConsumerState<_CreateForm> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<StartFlowResponse?>(_formSeedProvider, (_, next) {
-      if (next != null) {
-        _loadFromFlow(next);
-        ref.read(_formSeedProvider.notifier).state = null;
-      }
-    });
-
-    return SingleChildScrollView(
-      child: FormCard(
-        title: _editing ? 'Edit flow (saves a new version)' : 'New start flow',
-        actions: [
-          if (_editing)
-            TextButton(onPressed: _busy ? null : _reset, child: const Text('New')),
-          FilledButton(
-            onPressed: _busy ? null : _save,
-            child: Text(_busy ? 'Saving…' : (_editing ? 'Save new version' : 'Create')),
-          ),
-        ],
+    final toolIds = ref.watch(_toolIdsProvider(widget.tenant)).valueOrNull ?? const <String>[];
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 820),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DropdownButtonFormField<String>(
-              initialValue: null,
-              decoration: const InputDecoration(
-                  labelText: 'Start from a template', border: OutlineInputBorder()),
-              items: _templates.keys
-                  .map((k) => DropdownMenuItem(value: k, child: Text(k)))
-                  .toList(),
-              onChanged: _busy ? null : (k) => k == null ? null : _applyTemplate(_templates[k]!),
+            _header(context),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: KeyedSubtree(
+                  key: ValueKey(_rev),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _identityFields(),
+                      const SizedBox(height: 16),
+                      _steps(context, toolIds),
+                      const SizedBox(height: 20),
+                      _greeting(context),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _id,
-              enabled: !_editing,
-              decoration: const InputDecoration(
-                  labelText: 'Flow id', border: OutlineInputBorder(),
-                  helperText: 'Stable id (a-z, 0-9, -, _). Bind channels/profiles to this.'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _description,
-              decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            _jsonField('Steps (JSON)', _steps, 12),
-            const SizedBox(height: 12),
-            _jsonField('Greeting policy (JSON)', _greeting, 8),
-            const SizedBox(height: 12),
-            CheckboxListTile(
-              value: _publish,
-              onChanged: _busy || _editing ? null : (v) => setState(() => _publish = v ?? false),
-              title: const Text('Publish immediately'),
-              subtitle: Text(_editing
-                  ? 'New versions start as DRAFT — publish from the list.'
-                  : 'Otherwise saved as DRAFT.'),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-            ),
+            const Divider(height: 1),
+            _footer(context),
           ],
         ),
       ),
     );
   }
 
-  Widget _jsonField(String label, TextEditingController c, int lines) {
-    return TextField(
-      controller: c,
-      maxLines: lines,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        alignLabelWithHint: true,
-      ),
-    );
-  }
+  Widget _header(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+        child: Row(children: [
+          Expanded(
+            child: Text(_editing ? 'Edit flow — saves a new version' : 'New start flow',
+                style: Theme.of(context).textTheme.titleLarge),
+          ),
+          if (!_editing) ...[
+            if (!_showTemplates)
+              TextButton.icon(
+                onPressed: () => setState(() => _showTemplates = true),
+                icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                label: const Text('Start from a template'),
+              )
+            else
+              _templatePicker(),
+          ],
+          IconButton(onPressed: () => Navigator.of(context).pop(false), icon: const Icon(Icons.close)),
+        ]),
+      );
+
+  Widget _templatePicker() => SizedBox(
+        width: 280,
+        child: DropdownButtonFormField<String>(
+          initialValue: null,
+          isExpanded: true,
+          decoration: const InputDecoration(
+              labelText: 'Choose a template', border: OutlineInputBorder(), isDense: true),
+          items: kFlowTemplates.keys
+              .map((k) => DropdownMenuItem(value: k, child: Text(k, overflow: TextOverflow.ellipsis)))
+              .toList(),
+          onChanged: (k) => k == null ? null : _loadTemplate(kFlowTemplates[k]!()),
+        ),
+      );
+
+  Widget _identityFields() => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        TextFormField(
+          initialValue: _draft.id,
+          enabled: !_editing,
+          decoration: const InputDecoration(
+            labelText: 'Flow id', border: OutlineInputBorder(), isDense: true,
+            helperText: 'Stable id (a-z, 0-9, -, _). Bind channels / profiles to this.',
+          ),
+          onChanged: (v) => _draft.id = v.trim(),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          initialValue: _draft.name,
+          decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder(), isDense: true),
+          onChanged: (v) => _draft.name = v,
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          initialValue: _draft.description,
+          decoration:
+              const InputDecoration(labelText: 'Description', border: OutlineInputBorder(), isDense: true),
+          onChanged: (v) => _draft.description = v,
+        ),
+      ]);
+
+  Widget _steps(BuildContext context, List<String> toolIds) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Steps', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          FlowStepsEditor(flow: _draft, toolIds: toolIds, onChanged: () => setState(() {})),
+        ],
+      );
+
+  Widget _greeting(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Opening message', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          GreetingEditor(greeting: _draft.greeting, flow: _draft, onChanged: () => setState(() {})),
+        ],
+      );
+
+  Widget _footer(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+        child: Row(children: [
+          if (!_editing)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Checkbox(value: _publish, onChanged: (v) => setState(() => _publish = v ?? false)),
+              const Text('Publish immediately'),
+            ])
+          else
+            Text('New versions start as DRAFT — publish from the list.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.outline)),
+          const Spacer(),
+          TextButton(
+              onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+              child: const Text('Cancel')),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _busy ? null : _save,
+            child: Text(_busy ? 'Saving…' : (_editing ? 'Save new version' : 'Create')),
+          ),
+        ]),
+      );
 }

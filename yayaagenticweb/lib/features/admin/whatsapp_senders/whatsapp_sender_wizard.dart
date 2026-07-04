@@ -6,6 +6,7 @@ import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/whatsapp_sender.dart';
 import '../shared/admin_shared.dart';
+import '../flows/start_flow_picker.dart';
 import 'whatsapp_senders_screen.dart' show whatsAppSendersProvider;
 
 /// 4-step sender registration wizard. Tenants describe their business, pick
@@ -45,6 +46,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   // ---- step 3 — display name --------------------------------------------
   late final TextEditingController _publicDisplayNameCtrl;
   late final TextEditingController _localeCtrl;
+  String? _startFlowId;
 
   @override
   void initState() {
@@ -64,6 +66,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     _publicDisplayNameCtrl =
         TextEditingController(text: existing?.displayName ?? '');
     _localeCtrl = TextEditingController(text: existing?.defaultLocale ?? 'en-US');
+    _startFlowId = existing?.startFlowId;
   }
 
   @override
@@ -174,6 +177,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
       phoneE164: _phoneCtrl.text.trim(),
       displayName: _publicDisplayNameCtrl.text.trim(),
       defaultLocale: _localeCtrl.text.trim(),
+      startFlowId: _startFlowId,
       businessProfile: BusinessProfileFields(
         legalName: _legalNameCtrl.text.trim(),
         displayName: _businessDisplayNameCtrl.text.trim(),
@@ -347,6 +351,12 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
             helperText:
                 'BCP-47 tag, e.g. "en-US", "es-DO". Used for template selection.',
           ),
+        ),
+        const SizedBox(height: 12),
+        StartFlowPicker(
+          tenant: ref.read(currentTenantOrNull) ?? 'default',
+          value: _startFlowId,
+          onChanged: (v) => setState(() => _startFlowId = v),
         ),
         const SizedBox(height: 24),
         Card(

@@ -7,6 +7,7 @@ import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
 import '../capabilities/capabilities_screen.dart' show toolsProvider;
+import '../flows/start_flow_picker.dart';
 import '../product_catalogs/product_catalogs_screen.dart' show productCatalogsProvider;
 import '../shared/admin_shared.dart';
 import 'clone_profile_wizard.dart';
@@ -49,6 +50,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   final _capsSelected = <String>{};
   String? _authBinding;
   String _language = 'en';
+  String? _defaultStartFlowId;
   bool _saving = false;
   int? _cloningFromVersion;
 
@@ -78,6 +80,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _authBinding = p.authBindingId;
       _language =
           _languageOptions.containsKey(p.language) ? p.language : 'en';
+      _defaultStartFlowId = p.defaultStartFlowId;
       _loadCommerce(p.commerce);
       _cloningFromVersion = p.version;
     });
@@ -95,6 +98,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _capsSelected.clear();
       _authBinding = null;
       _language = 'en';
+      _defaultStartFlowId = null;
       _loadCommerce(null);
     });
   }
@@ -167,6 +171,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         capabilities: _capsSelected.toList(),
         authBindingId: _authBinding,
         language: _language,
+        defaultStartFlowId: _defaultStartFlowId,
         commerce: _buildCommerce(),
       ));
       ref.invalidate(profilesProvider);
@@ -180,6 +185,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         _capsSelected.clear();
         _authBinding = null;
         _language = 'en';
+        _defaultStartFlowId = null;
         _loadCommerce(null);
         _cloningFromVersion = null;
       });
@@ -354,6 +360,13 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                         ))
                     .toList(),
                 onChanged: (v) => setState(() => _language = v ?? 'en'),
+              ),
+              const SizedBox(height: 12),
+              StartFlowPicker(
+                tenant: ref.watch(currentTenantOrNull) ?? 'default',
+                value: _defaultStartFlowId,
+                label: 'Default start flow (optional)',
+                onChanged: (v) => setState(() => _defaultStartFlowId = v),
               ),
               const SizedBox(height: 16),
               const Divider(),

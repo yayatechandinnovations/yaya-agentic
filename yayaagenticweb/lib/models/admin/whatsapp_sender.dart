@@ -20,6 +20,7 @@ class WhatsAppSenderResponse {
     this.createdAt,
     this.updatedAt,
     this.lastSyncAt,
+    this.startFlowId,
   });
 
   final String id;
@@ -35,6 +36,7 @@ class WhatsAppSenderResponse {
   final String? createdAt;
   final String? updatedAt;
   final String? lastSyncAt;
+  final String? startFlowId;
 
   bool get isEditable => status == 'DRAFT' || status == 'FAILED';
 
@@ -59,6 +61,7 @@ class WhatsAppSenderResponse {
       createdAt: json['createdAt']?.toString(),
       updatedAt: json['updatedAt']?.toString(),
       lastSyncAt: json['lastSyncAt']?.toString(),
+      startFlowId: json['startFlowId'] as String?,
     );
   }
 }
@@ -161,12 +164,14 @@ class WhatsAppSenderRequest {
     required this.displayName,
     required this.businessProfile,
     this.defaultLocale,
+    this.startFlowId,
   });
 
   final String phoneE164;
   final String displayName;
   final BusinessProfileFields businessProfile;
   final String? defaultLocale;
+  final String? startFlowId;
 
   Map<String, dynamic> toJson() => {
         'phoneE164': phoneE164,
@@ -174,6 +179,8 @@ class WhatsAppSenderRequest {
         'businessProfile': businessProfile.toJson(),
         if (defaultLocale != null && defaultLocale!.isNotEmpty)
           'defaultLocale': defaultLocale,
+        // Always sent: a value binds a Session Start Flow, empty clears it.
+        'startFlowId': startFlowId ?? '',
       };
 }
 

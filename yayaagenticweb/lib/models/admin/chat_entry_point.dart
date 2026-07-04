@@ -98,6 +98,7 @@ class ChatEntryPointResponse {
     this.updatedAt,
     this.allowedOverrideProfiles = const [],
     this.onOverrideDenied = 'IGNORE',
+    this.startFlowId,
   });
 
   final String id;
@@ -123,6 +124,7 @@ class ChatEntryPointResponse {
   // Profile keys the resolver may override into; empty = any published.
   final List<String> allowedOverrideProfiles;
   final String onOverrideDenied; // 'IGNORE' | 'REJECT'
+  final String? startFlowId; // bound Session Start Flow (null = none)
 
   bool get isActive => status == 'ACTIVE';
   bool get isPaused => status == 'PAUSED';
@@ -157,6 +159,7 @@ class ChatEntryPointResponse {
         allowedOverrideProfiles:
             (json['allowedOverrideProfiles'] as List?)?.cast<String>() ?? const [],
         onOverrideDenied: (json['onOverrideDenied'] ?? 'IGNORE') as String,
+        startFlowId: json['startFlowId'] as String?,
       );
 }
 
@@ -177,6 +180,7 @@ class ChatEntryPointRequest {
     this.requiresVerifiedPhone,
     this.allowedOverrideProfiles,
     this.onOverrideDenied,
+    this.startFlowId,
   });
 
   final String profileId;
@@ -194,6 +198,7 @@ class ChatEntryPointRequest {
   final bool? requiresVerifiedPhone;
   final List<String>? allowedOverrideProfiles;
   final String? onOverrideDenied;
+  final String? startFlowId;
 
   Map<String, dynamic> toJson() => {
         'profileId': profileId,
@@ -211,6 +216,7 @@ class ChatEntryPointRequest {
         if (requiresVerifiedPhone != null) 'requiresVerifiedPhone': requiresVerifiedPhone,
         if (allowedOverrideProfiles != null) 'allowedOverrideProfiles': allowedOverrideProfiles,
         if (onOverrideDenied != null) 'onOverrideDenied': onOverrideDenied,
+        if (startFlowId != null && startFlowId!.isNotEmpty) 'startFlowId': startFlowId,
       };
 
   /// Update body. Rebinding the profile is allowed — the backend moves both the
@@ -231,5 +237,7 @@ class ChatEntryPointRequest {
         if (requiresVerifiedPhone != null) 'requiresVerifiedPhone': requiresVerifiedPhone,
         if (allowedOverrideProfiles != null) 'allowedOverrideProfiles': allowedOverrideProfiles,
         if (onOverrideDenied != null) 'onOverrideDenied': onOverrideDenied,
+        // Always sent on update: a value binds, empty clears.
+        'startFlowId': startFlowId ?? '',
       };
 }
