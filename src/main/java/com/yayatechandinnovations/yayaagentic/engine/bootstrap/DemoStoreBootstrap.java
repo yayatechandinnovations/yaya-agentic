@@ -95,27 +95,47 @@ public class DemoStoreBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        seedCatalogAndProducts();
-        seedProfile();
-        seedChatEntryPoint();
+        seedInto(DEMO_TENANT);
+    }
+
+    /** Seed the managed demo storefront (Database catalog + products + commerce
+     *  profile + chat entry point/binding) into {@code tenant}. Idempotent; reused
+     *  by the per-workspace demo provisioner so every account gets a demo store.
+     *  The chat-entry-point handle is per-tenant (the handle column is globally
+     *  unique) — {@code demo-store} for the default tenant, {@code <slug>-demo-store}
+     *  otherwise. */
+    @Transactional
+    public void seedInto(Ids.TenantId tenant) {
+        seedCatalogAndProducts(tenant);
+        seedProfile(tenant);
+        seedChatEntryPoint(tenant);
     }
 
     // ---- catalog + products (managed / Database path) ---------------------
 
-    private void seedCatalogAndProducts() {
-        if (catalogRegistry.find(DEMO_TENANT, DEMO_STORE_CATALOG).isPresent()) return;
+    private void seedCatalogAndProducts(Ids.TenantId tenant) {
+        if (catalogRegistry.find(tenant, DEMO_STORE_CATALOG).isPresent()) return;
         catalogRegistry.register(new ProductCatalog(
-                DEMO_STORE_CATALOG, DEMO_TENANT, "Aroma Coffee Roasters",
+                DEMO_STORE_CATALOG, tenant, "Aroma Coffee Roasters",
                 new CatalogLocation.Database(CATALOG_KEY),
                 CatalogSyncPolicy.live(), RetrievalPolicy.defaults(),
                 PermissionRequirement.none(), CURRENCY,
                 IMG + "aroma-coffee/1200/600"));
         // Products are seeded once, alongside the fresh catalog; afterwards the
         // operator owns the products table (edits/archives are never clobbered).
-        products.saveAll(demoProducts());
+        products.saveAll(demoProducts(tenant));
     }
 
-    private static List<ManagedProduct> demoProducts() {
+    private static List<ManagedProduct> demoProducts(Ids.TenantId tenant) {
+        // Builders below stamp DEMO_TENANT; remap onto the target tenant so the
+        // same catalog seeds into any account (CATALOG_KEY is tenant-independent).
+        return catalogTemplates().stream()
+                .map(p -> new ManagedProduct(tenant, p.catalogId(), p.product(),
+                        p.longDescription(), p.inventory(), p.status(), p.sortOrder(), p.updatedAt()))
+                .toList();
+    }
+
+    private static List<ManagedProduct> catalogTemplates() {
         int s = 0;
         return List.of(
                 bean(++s, "p_ethiopia", "Ethiopia Yirgacheffe", 1699,
@@ -193,11 +213,11 @@ public class DemoStoreBootstrap implements ApplicationRunner {
 
     // ---- profile ----------------------------------------------------------
 
-    private void seedProfile() {
-        if (profileRegistry.find(DEMO_TENANT, DEMO_STORE_PROFILE).isPresent()) return;
+    private void seedProfile(Ids.TenantId tenant) {
+        if (profileRegistry.find(tenant, DEMO_STORE_PROFILE).isPresent()) return;
         profileRegistry.register(new Profile(
                 DEMO_STORE_PROFILE,
-                DEMO_TENANT,
+                tenant,
                 "Aroma Coffee Roasters",
                 "Welcome to Aroma! Tell me how you brew and I'll help you find your beans.",
                 "You are the shopping assistant for Aroma Coffee Roasters, a specialty "
@@ -225,11 +245,15 @@ public class DemoStoreBootstrap implements ApplicationRunner {
 
     // ---- chat entry point (the reachable channel) -------------------------
 
-    private void seedChatEntryPoint() {
-        if (entryPoints.findByHandle(DEMO_STORE_HANDLE).isPresent()) return;
+    private void seedChatEntryPoint(Ids.TenantId tenant) {
+        boolean isDefault = DEMO_TENANT.value().equals(tenant.value());
+        // handle is globally unique — scope it per tenant for non-default accounts.
+        String handle = isDefault ? DEMO_STORE_HANDLE : tenant.value() + "-demo-store";
+        String entryPointId = isDefault ? ENTRY_POINT_ID : "chat_demostore_" + tenant.value();
+        if (entryPoints.findByHandle(handle).isPresent()) return;
 
         ChatEntryPointEntity e = new ChatEntryPointEntity(
-                ENTRY_POINT_ID, DEMO_TENANT.value(), DEMO_STORE_HANDLE,
+                entryPointId, tenant.value(), handle,
                 DEMO_STORE_PROFILE.value(), DEMO_STORE_PROFILE.version(),
                 "Aroma Coffee Roasters",
                 IMG + "aroma-logo/200/200",
@@ -243,8 +267,8 @@ public class DemoStoreBootstrap implements ApplicationRunner {
 
         // The MatchAny binding pins the entry point to the profile so
         // ChannelProfileResolver routes it the instant it is ACTIVE.
-        bindings.create(DEMO_TENANT,
-                new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(ENTRY_POINT_ID)),
+        bindings.create(tenant,
+                new ChannelEndpointRef.ChatEntryPointRef(new ChatEntryPointId(entryPointId)),
                 DEMO_STORE_PROFILE,
                 Optional.of(DEMO_STORE_PROFILE.version()),
                 new RoutingRule.MatchAny(),

@@ -77,32 +77,40 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        ensureTenant();
-        ensureAuthBinding();
-        ensureEchoTool();
-        ensureSayHelloCapability();
-        ensureHelloWorldProfile();
+        seedInto(DEFAULT_TENANT);
+    }
+
+    /** Seed the hello-world demo (tenant, auth binding, echo tool, say-hello
+     *  capability, profile) into {@code tenant}. Idempotent; reused by the
+     *  per-workspace demo provisioner so every account gets the demo. */
+    @Transactional
+    public void seedInto(Ids.TenantId tenant) {
+        ensureTenant(tenant);
+        ensureAuthBinding(tenant);
+        ensureEchoTool(tenant);
+        ensureSayHelloCapability(tenant);
+        ensureHelloWorldProfile(tenant);
         mirrorIntoRuntimeCatalog();
     }
 
     // ---- seeding ---------------------------------------------------------
 
-    private void ensureTenant() {
-        if (tenants.existsById(DEFAULT_TENANT.value())) return;
-        tenants.save(new TenantEntity(DEFAULT_TENANT.value(), "Default"));
+    private void ensureTenant(Ids.TenantId tenant) {
+        if (tenants.existsById(tenant.value())) return;
+        tenants.save(new TenantEntity(tenant.value(), "Default"));
     }
 
-    private void ensureAuthBinding() {
-        AuthBindingEntity.PK pk = new AuthBindingEntity.PK(DEFAULT_TENANT.value(), DEV_NOOP_AUTH.value());
+    private void ensureAuthBinding(Ids.TenantId tenant) {
+        AuthBindingEntity.PK pk = new AuthBindingEntity.PK(tenant.value(), DEV_NOOP_AUTH.value());
         if (authBindings.existsById(pk)) return;
-        authBindings.save(new AuthBindingEntity(DEFAULT_TENANT.value(), DEV_NOOP_AUTH.value(), "noop"));
+        authBindings.save(new AuthBindingEntity(tenant.value(), DEV_NOOP_AUTH.value(), "noop"));
     }
 
-    private void ensureEchoTool() {
-        ToolEntity.PK pk = new ToolEntity.PK(DEFAULT_TENANT.value(), ECHO.value(), 1);
+    private void ensureEchoTool(Ids.TenantId tenant) {
+        ToolEntity.PK pk = new ToolEntity.PK(tenant.value(), ECHO.value(), 1);
         if (tools.existsById(pk)) return;
         ToolEntity entity = new ToolEntity(
-                DEFAULT_TENANT.value(), ECHO.value(), 1,
+                tenant.value(), ECHO.value(), 1,
                 ECHO_INPUT_SCHEMA, ECHO_OUTPUT_SCHEMA, "BEAN");
         entity.setHandlerBeanName("echoTool");
         entity.setPolicyJson(writeJson(ToolPolicy.defaults()));
@@ -110,11 +118,11 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
         tools.save(entity);
     }
 
-    private void ensureSayHelloCapability() {
-        CapabilityEntity.PK pk = new CapabilityEntity.PK(DEFAULT_TENANT.value(), SAY_HELLO.value(), 1);
+    private void ensureSayHelloCapability(Ids.TenantId tenant) {
+        CapabilityEntity.PK pk = new CapabilityEntity.PK(tenant.value(), SAY_HELLO.value(), 1);
         if (capabilities.existsById(pk)) return;
         CapabilityEntity entity = new CapabilityEntity(
-                DEFAULT_TENANT.value(), SAY_HELLO.value(), 1, "Echo something back");
+                tenant.value(), SAY_HELLO.value(), 1, "Echo something back");
         entity.setDescription("I'll repeat what you say.");
         entity.setLlmGuidance("Use the echo tool when the user asks to repeat or echo a phrase.");
         entity.setToolIdsJson(writeJson(List.of(ECHO.value())));
@@ -122,11 +130,11 @@ public class HelloWorldProfileBootstrap implements ApplicationRunner {
         capabilities.save(entity);
     }
 
-    private void ensureHelloWorldProfile() {
-        if (profileRegistry.find(DEFAULT_TENANT, HELLO_WORLD_PROFILE).isPresent()) return;
+    private void ensureHelloWorldProfile(Ids.TenantId tenant) {
+        if (profileRegistry.find(tenant, HELLO_WORLD_PROFILE).isPresent()) return;
         profileRegistry.register(new Profile(
                 HELLO_WORLD_PROFILE,
-                DEFAULT_TENANT,
+                tenant,
                 "Yaya (Hello World)",
                 "I'm Yaya. I can echo what you say, or answer questions about myself.",
                 "You are Yaya, a helpful assistant in demo mode. Keep replies short. "

@@ -82,18 +82,26 @@ public class KnowledgeBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        KnowledgeSource source = inlineFaqSource();
+        seedInto(HelloWorldProfileBootstrap.DEFAULT_TENANT);
+    }
+
+    /** Seed the Yaya-FAQ knowledge demo (source + search-knowledge tool/capability +
+     *  hello-world binding + ingestion) into {@code tenant}. Idempotent; reused by the
+     *  per-workspace demo provisioner. Must run after the hello-world profile exists. */
+    @Transactional
+    public void seedInto(Ids.TenantId tenant) {
+        KnowledgeSource source = inlineFaqSource(tenant);
         ensurePersisted(source);
-        registerToolAndCapability();
+        registerToolAndCapability(tenant);
         registerInCatalog(source);
-        attachToHelloWorldProfile();
+        attachToHelloWorldProfile(tenant);
         // Ingest in the foreground at startup so the demo is ready as soon
         // as the app is reachable. For a real source list this would run
         // off the request thread via Spring @Scheduled in M3.
         ingestion.ingest(source);
     }
 
-    private KnowledgeSource inlineFaqSource() {
+    private KnowledgeSource inlineFaqSource(Ids.TenantId tenant) {
         List<SourceLocation.Inline.DocumentBlob> docs = List.of(
                 new SourceLocation.Inline.DocumentBlob(
                         "what-is-yaya",
@@ -134,7 +142,7 @@ public class KnowledgeBootstrap implements ApplicationRunner {
 
         return new KnowledgeSource(
                 YAYA_FAQ_SOURCE,
-                HelloWorldProfileBootstrap.DEFAULT_TENANT,
+                tenant,
                 "Yaya FAQ (demo)",
                 new SourceLocation.Inline(docs),
                 IngestionPolicy.defaults(),
@@ -157,16 +165,16 @@ public class KnowledgeBootstrap implements ApplicationRunner {
         sourceRepo.save(entity);
     }
 
-    private void registerToolAndCapability() {
+    private void registerToolAndCapability(Ids.TenantId tenant) {
         // Persist to PG so the admin Tools / Capabilities screens list it,
         // then mirror into the runtime catalog so the engine can resolve it
         // without a round-trip.
         ToolEntity.PK toolPk = new ToolEntity.PK(
-                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                tenant.value(),
                 SEARCH_KNOWLEDGE_TOOL.value(), 1);
         if (!toolRepo.existsById(toolPk)) {
             ToolEntity entity = new ToolEntity(
-                    HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                    tenant.value(),
                     SEARCH_KNOWLEDGE_TOOL.value(), 1,
                     SearchKnowledgeToolHandler.INPUT_SCHEMA,
                     SearchKnowledgeToolHandler.OUTPUT_SCHEMA,
@@ -185,11 +193,11 @@ public class KnowledgeBootstrap implements ApplicationRunner {
                 ToolPolicy.defaults()));
 
         CapabilityEntity.PK capPk = new CapabilityEntity.PK(
-                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                tenant.value(),
                 SEARCH_KNOWLEDGE_CAP.value(), 1);
         if (!capabilityRepo.existsById(capPk)) {
             CapabilityEntity entity = new CapabilityEntity(
-                    HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                    tenant.value(),
                     SEARCH_KNOWLEDGE_CAP.value(), 1,
                     "Search knowledge");
             entity.setDescription("I can search what I know and cite where the answer came from.");
@@ -217,20 +225,20 @@ public class KnowledgeBootstrap implements ApplicationRunner {
         catalog.registerKnowledgeSource(source);
     }
 
-    private void attachToHelloWorldProfile() {
+    private void attachToHelloWorldProfile(Ids.TenantId tenant) {
         catalog.bindProfileSources(
                 HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE,
                 List.of(YAYA_FAQ_SOURCE));
 
         ProfileKnowledgeBindingEntity.PK pk = new ProfileKnowledgeBindingEntity.PK(
-                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                tenant.value(),
                 HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE.value(),
                 HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE.version(),
                 YAYA_FAQ_SOURCE.value(),
                 SOURCE_VERSION);
         if (bindingRepo.existsById(pk)) return;
         bindingRepo.save(new ProfileKnowledgeBindingEntity(
-                HelloWorldProfileBootstrap.DEFAULT_TENANT.value(),
+                tenant.value(),
                 HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE.value(),
                 HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE.version(),
                 YAYA_FAQ_SOURCE.value(),

@@ -79,20 +79,28 @@ public class RetailStoreBootstrap implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        CommerceTools.managedDescriptors().forEach(this::registerTool);
-        registerCapabilities();
-        registerCatalog();
-        registerProfile();
+        seedInto(DEFAULT_TENANT);
+    }
+
+    /** Seed the commerce Bean tools + browse/cart/checkout capabilities + the
+     *  Inline body-care catalog + the {@code retail-store} profile into {@code
+     *  tenant}. Idempotent; reused by the per-workspace demo provisioner. */
+    @Transactional
+    public void seedInto(Ids.TenantId tenant) {
+        CommerceTools.managedDescriptors().forEach(d -> registerTool(tenant, d));
+        registerCapabilities(tenant);
+        registerCatalog(tenant);
+        registerProfile(tenant);
     }
 
     // ---- tools + capabilities ---------------------------------------------
 
-    private void registerTool(ToolDescriptor descriptor) {
+    private void registerTool(Ids.TenantId tenant, ToolDescriptor descriptor) {
         String beanName = ((ToolHandlerRef.Bean) descriptor.handler()).beanName();
-        ToolEntity.PK pk = new ToolEntity.PK(DEFAULT_TENANT.value(), descriptor.id().value(), 1);
+        ToolEntity.PK pk = new ToolEntity.PK(tenant.value(), descriptor.id().value(), 1);
         if (!toolRepo.existsById(pk)) {
             ToolEntity entity = new ToolEntity(
-                    DEFAULT_TENANT.value(), descriptor.id().value(), 1,
+                    tenant.value(), descriptor.id().value(), 1,
                     descriptor.inputSchemaJson(), descriptor.outputSchemaJson(), "BEAN");
             entity.setHandlerBeanName(beanName);
             entity.setPolicyJson(writeJson(descriptor.policy()));
@@ -102,8 +110,8 @@ public class RetailStoreBootstrap implements ApplicationRunner {
         catalog.registerTool(descriptor);
     }
 
-    private void registerCapabilities() {
-        registerCapability(new Capability(
+    private void registerCapabilities(Ids.TenantId tenant) {
+        registerCapability(tenant, new Capability(
                 BROWSE_CATALOG,
                 "Browse the store",
                 "Search and filter the product catalog and view product details.",
@@ -118,7 +126,7 @@ public class RetailStoreBootstrap implements ApplicationRunner {
                 List.of("show me soaps", "anything with castor oil", "gifts under $20"),
                 PermissionRequirement.none()));
 
-        registerCapability(new Capability(
+        registerCapability(tenant, new Capability(
                 MANAGE_CART,
                 "Manage my cart",
                 "Add, update, remove, or clear cart items and view the cart.",
@@ -136,7 +144,7 @@ public class RetailStoreBootstrap implements ApplicationRunner {
                 List.of("view my cart", "keep shopping"),
                 PermissionRequirement.none()));
 
-        registerCapability(new Capability(
+        registerCapability(tenant, new Capability(
                 CHECKOUT,
                 "Check out",
                 "Place the order and hand off to secure payment.",
@@ -150,11 +158,11 @@ public class RetailStoreBootstrap implements ApplicationRunner {
                 PermissionRequirement.none()));
     }
 
-    private void registerCapability(Capability cap) {
-        CapabilityEntity.PK pk = new CapabilityEntity.PK(DEFAULT_TENANT.value(), cap.id().value(), 1);
+    private void registerCapability(Ids.TenantId tenant, Capability cap) {
+        CapabilityEntity.PK pk = new CapabilityEntity.PK(tenant.value(), cap.id().value(), 1);
         if (!capabilityRepo.existsById(pk)) {
             CapabilityEntity entity = new CapabilityEntity(
-                    DEFAULT_TENANT.value(), cap.id().value(), 1, cap.userFacingLabel());
+                    tenant.value(), cap.id().value(), 1, cap.userFacingLabel());
             entity.setDescription(cap.userFacingDescription());
             entity.setLlmGuidance(cap.llmGuidance());
             entity.setToolIdsJson(writeJson(cap.tools().stream().map(Ids.ToolId::value).toList()));
@@ -167,10 +175,10 @@ public class RetailStoreBootstrap implements ApplicationRunner {
 
     // ---- catalog ----------------------------------------------------------
 
-    private void registerCatalog() {
-        if (catalogRegistry.find(DEFAULT_TENANT, BODY_CARE_CATALOG).isPresent()) return;
+    private void registerCatalog(Ids.TenantId tenant) {
+        if (catalogRegistry.find(tenant, BODY_CARE_CATALOG).isPresent()) return;
         catalogRegistry.register(new ProductCatalog(
-                BODY_CARE_CATALOG, DEFAULT_TENANT, "Body Care",
+                BODY_CARE_CATALOG, tenant, "Body Care",
                 new CatalogLocation.Inline(bodyCareProducts()),
                 CatalogSyncPolicy.live(), RetrievalPolicy.defaults(),
                 PermissionRequirement.none(), "USD"));
@@ -178,11 +186,11 @@ public class RetailStoreBootstrap implements ApplicationRunner {
 
     // ---- profile ----------------------------------------------------------
 
-    private void registerProfile() {
-        if (profileRegistry.find(DEFAULT_TENANT, RETAIL_STORE_PROFILE).isPresent()) return;
+    private void registerProfile(Ids.TenantId tenant) {
+        if (profileRegistry.find(tenant, RETAIL_STORE_PROFILE).isPresent()) return;
         profileRegistry.register(new Profile(
                 RETAIL_STORE_PROFILE,
-                DEFAULT_TENANT,
+                tenant,
                 "Yaya Store",
                 "Welcome! Browse our body-care range and I'll help you find and buy what you need.",
                 "You are Yaya, a friendly storefront assistant for a body-care "

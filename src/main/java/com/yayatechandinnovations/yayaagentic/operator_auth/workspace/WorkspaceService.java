@@ -14,6 +14,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.UserMembershipEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.UserMembershipRepository;
 import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlValidator;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,17 +43,20 @@ public class WorkspaceService {
     private final WorkspaceSlugger slugger;
     private final AccountAuditWriter audit;
     private final ObjectMapper json;
+    private final ApplicationEventPublisher events;
 
     public WorkspaceService(TenantRepository tenants,
                             UserMembershipRepository memberships,
                             WorkspaceSlugger slugger,
                             AccountAuditWriter audit,
-                            ObjectMapper json) {
+                            ObjectMapper json,
+                            ApplicationEventPublisher events) {
         this.tenants = tenants;
         this.memberships = memberships;
         this.slugger = slugger;
         this.audit = audit;
         this.json = json;
+        this.events = events;
     }
 
     // ------------------------------------------------------------------
@@ -147,6 +151,7 @@ public class WorkspaceService {
 
         audit.write("WORKSPACE_CREATE", actor, new TenantId(code), meta,
                 Map.of("code", code, "source", source));
+        events.publishEvent(new WorkspaceCreatedEvent(new TenantId(code)));
         return toSummary(t);
     }
 

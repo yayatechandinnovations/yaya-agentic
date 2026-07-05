@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.operator_auth.accounts;
 
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceCreatedEvent;
 import com.yayatechandinnovations.yayaagentic.email.MailMessage;
 import com.yayatechandinnovations.yayaagentic.email.OutboxMailQueue;
 import com.yayatechandinnovations.yayaagentic.persistence.EmailVerificationTokenEntity;
@@ -19,6 +20,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.UserMembershipReposito
 import com.yayatechandinnovations.yayaagentic.persistence.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +79,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
     private final WorkspaceSlugger slugger;
     private final AccountAuditWriter audit;
     private final AccountMailLinks links;
+    private final ApplicationEventPublisher events;
     private final Duration verifyTtl;
     private final Duration resetTtl;
 
@@ -94,6 +97,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
                                          WorkspaceSlugger slugger,
                                          AccountAuditWriter audit,
                                          AccountMailLinks links,
+                                         ApplicationEventPublisher events,
                                          YayaAgenticProperties props) {
         this.users = users;
         this.memberships = memberships;
@@ -109,6 +113,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
         this.slugger = slugger;
         this.audit = audit;
         this.links = links;
+        this.events = events;
 
         YayaAgenticProperties.UserAccounts ua = props.userAccounts();
         YayaAgenticProperties.UserAccounts.Verification v = (ua == null || ua.verification() == null)
@@ -232,6 +237,7 @@ public class DefaultOperatorAccountService implements OperatorAccountService {
         audit.write("WORKSPACE_CREATE", new UserId(user.getId()), new TenantId(slug),
                 null /* meta deferred — caller's meta already attached to VERIFY */,
                 Map.of("code", slug, "source", "signup_default"));
+        events.publishEvent(new WorkspaceCreatedEvent(new TenantId(slug)));
         return new TenantId(slug);
     }
 

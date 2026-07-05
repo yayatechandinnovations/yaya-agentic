@@ -60,13 +60,19 @@ public class StartFlowDemoBootstrap implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        seedInto(TENANT);
+    }
+
+    /** Seed the welcome-back Session Start Flow (+ its demo lookup tool) into
+     *  {@code tenant}. Idempotent; reused by the per-workspace demo provisioner. */
+    public void seedInto(Ids.TenantId tenant) {
         // Register the demo lookup tool into the runtime catalog (idempotent).
         catalog.registerTool(new ToolDescriptor(
                 DEMO_TOOL, "{\"type\":\"object\"}", "{\"type\":\"object\"}",
                 PermissionRequirement.none(),
                 new ToolHandlerRef.Bean("startflowDemoLookupTool"), ToolPolicy.defaults()));
 
-        if (startFlows.findLatest(TENANT, Ids.StartFlowId.latest(DEMO_FLOW.value())).isPresent()) {
+        if (startFlows.findLatest(tenant, Ids.StartFlowId.latest(DEMO_FLOW.value())).isPresent()) {
             return;   // already seeded
         }
 
@@ -90,11 +96,11 @@ public class StartFlowDemoBootstrap implements ApplicationRunner {
                         List.of("customerName", "tier"), List.of(), false, null));
 
         startFlows.register(new StartFlow(
-                DEMO_FLOW, TENANT, "Welcome back (demo)",
+                DEMO_FLOW, tenant, "Welcome back (demo)",
                 "Recognizes a returning customer and greets them with an LLM-composed opening.",
                 List.of(lookup), greeting, FlowPolicy.defaults(),
                 StartFlow.FlowStatus.ACTIVE, Instant.now(), Instant.now()));
 
-        log.info("Seeded demo Session Start Flow '{}' for tenant '{}'", DEMO_FLOW.value(), TENANT.value());
+        log.info("Seeded demo Session Start Flow '{}' for tenant '{}'", DEMO_FLOW.value(), tenant.value());
     }
 }

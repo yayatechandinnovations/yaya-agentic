@@ -6,6 +6,9 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.DemoStoreBootstrap;
+import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
+import com.yayatechandinnovations.yayaagentic.engine.bootstrap.RetailStoreBootstrap;
+import com.yayatechandinnovations.yayaagentic.engine.bootstrap.TenantDemoProvisioner;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
 import com.yayatechandinnovations.yayaagentic.profile.Profile;
@@ -48,6 +51,7 @@ class DemoStoreBootstrapIT {
     @Autowired ProfileRegistry profiles;
     @Autowired ChatEntryPointRepository entryPoints;
     @Autowired DemoStoreBootstrap bootstrap;
+    @Autowired TenantDemoProvisioner provisioner;
 
     @Test
     void seedsAManagedCatalogWithProducts() {
@@ -107,6 +111,30 @@ class DemoStoreBootstrapIT {
                 DemoStoreBootstrap.DEMO_TENANT.value()).stream()
                 .filter(e -> DemoStoreBootstrap.DEMO_STORE_HANDLE.equals(e.getHandle()))
                 .count(), "re-seeding must not duplicate the entry point");
+    }
+
+    @Test
+    void provisionsAllDemosIntoAnArbitraryTenant() {
+        // Mirrors what happens when a new operator account (its own tenant slug,
+        // never "default") is created — every demo must land in THAT tenant.
+        Ids.TenantId acme = new Ids.TenantId("acme-demo-test");
+        provisioner.provision(acme);
+
+        // The managed storefront (the whole point of this thread) under the account.
+        assertTrue(profiles.find(acme, DemoStoreBootstrap.DEMO_STORE_PROFILE).isPresent(),
+                "demo-store profile must be seeded into the account's tenant");
+        assertTrue(catalogs.find(acme, DemoStoreBootstrap.DEMO_STORE_CATALOG).isPresent());
+        assertTrue(products.countActive(acme, "demo-store") >= 10);
+
+        // ...and the rest of the demo set.
+        assertTrue(profiles.find(acme, HelloWorldProfileBootstrap.HELLO_WORLD_PROFILE).isPresent(),
+                "hello-world demo must be seeded into the account's tenant");
+        assertTrue(profiles.find(acme, RetailStoreBootstrap.RETAIL_STORE_PROFILE).isPresent(),
+                "retail-store demo must be seeded into the account's tenant");
+
+        // The chat handle is globally unique, so a non-default tenant gets a scoped handle.
+        assertTrue(entryPoints.findByHandle("acme-demo-test-demo-store").isPresent(),
+                "the account's demo store must be reachable at a per-tenant handle");
     }
 
     private static AuthContext auth() {
