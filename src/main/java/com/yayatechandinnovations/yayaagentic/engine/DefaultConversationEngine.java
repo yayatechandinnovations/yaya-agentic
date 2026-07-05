@@ -728,8 +728,15 @@ public class DefaultConversationEngine implements ConversationEngine {
         List<LlmClient.HistoryEntry> out = new java.util.ArrayList<>(turns.size());
         for (Turn t : turns) {
             switch (t.role()) {
-                case USER -> out.add(new LlmClient.HistoryEntry.User(
-                        t.content() == null ? "" : t.content()));
+                case USER -> {
+                    // Skip text-less user turns (e.g. a commerce action tap): replaying
+                    // them yields an empty text content block the LLM APIs reject. Mirrors
+                    // the assistant guard below; tool results carry the action's signal.
+                    String text = t.content() == null ? "" : t.content();
+                    if (!text.isBlank()) {
+                        out.add(new LlmClient.HistoryEntry.User(text));
+                    }
+                }
                 case ASSISTANT -> {
                     List<Turn.ToolCall> rawCalls = t.toolCalls() == null ? List.of() : t.toolCalls();
                     List<Turn.ToolResult> rawResults = t.toolResults() == null ? List.of() : t.toolResults();

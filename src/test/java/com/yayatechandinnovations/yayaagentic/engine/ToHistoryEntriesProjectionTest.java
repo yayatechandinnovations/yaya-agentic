@@ -193,6 +193,34 @@ class ToHistoryEntriesProjectionTest {
         assertThat(projected.get(0)).isInstanceOf(LlmClient.HistoryEntry.User.class);
     }
 
+    @Test
+    void textless_user_turn_is_dropped_so_no_empty_text_block_is_sent() {
+        // A commerce action (e.g. tapping add-to-cart) records a USER turn with
+        // no spoken text. Replaying it as an empty user message trips Anthropic's
+        // "messages: text content blocks must be non-empty". The projection must
+        // drop it — mirroring the empty-assistant guard — while the tool round
+        // (which carries the action's real signal) survives.
+        String callId = "call-action";
+        List<Turn> turns = List.of(
+                user(0, "show me beans"),
+                assistant(1, "Here are our beans.", List.of(), List.of()),
+                user(2, ""),   // text-less action turn
+                assistant(3, "",
+                        List.of(new Turn.ToolCall(callId, ECHO, Map.of("productId", "p_ethiopia"))),
+                        List.of(new Turn.ToolResult(callId, Turn.ToolResult.Status.OK,
+                                Map.of("itemCount", 1), null))));
+
+        List<LlmClient.HistoryEntry> projected = DefaultConversationEngine.toHistoryEntries(turns);
+
+        assertThat(projected)
+                .as("no blank user entry may survive — Anthropic rejects empty text blocks")
+                .noneMatch(e -> e instanceof LlmClient.HistoryEntry.User u
+                        && (u.content() == null || u.content().isBlank()));
+        // The genuine user turn and the tool round remain intact.
+        assertThat(projected.get(0)).isInstanceOf(LlmClient.HistoryEntry.User.class);
+        assertThat(projected).anyMatch(e -> e instanceof LlmClient.HistoryEntry.ToolResults);
+    }
+
     // ---- helpers ----------------------------------------------------
 
     /**

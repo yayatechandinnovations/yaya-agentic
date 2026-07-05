@@ -191,7 +191,12 @@ public class AnthropicLlmClient implements LlmClient {
         if (history == null) return out;
         for (HistoryEntry entry : history) {
             switch (entry) {
-                case HistoryEntry.User u -> out.add(new UserMessage(u.content() == null ? "" : u.content()));
+                case HistoryEntry.User u -> {
+                    // Anthropic rejects empty text content blocks — never send a blank
+                    // user message (defensive; the engine already drops text-less turns).
+                    String c = u.content();
+                    if (c != null && !c.isBlank()) out.add(new UserMessage(c));
+                }
                 case HistoryEntry.Assistant a -> {
                     List<AssistantMessage.ToolCall> calls = a.toolCalls() == null ? List.of()
                             : a.toolCalls().stream()

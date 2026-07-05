@@ -114,16 +114,21 @@ public class DemoStoreBootstrap implements ApplicationRunner {
     // ---- catalog + products (managed / Database path) ---------------------
 
     private void seedCatalogAndProducts(Ids.TenantId tenant) {
-        if (catalogRegistry.find(tenant, DEMO_STORE_CATALOG).isPresent()) return;
-        catalogRegistry.register(new ProductCatalog(
-                DEMO_STORE_CATALOG, tenant, "Aroma Coffee Roasters",
-                new CatalogLocation.Database(CATALOG_KEY),
-                CatalogSyncPolicy.live(), RetrievalPolicy.defaults(),
-                PermissionRequirement.none(), CURRENCY,
-                IMG + "aroma-coffee/1200/600"));
-        // Products are seeded once, alongside the fresh catalog; afterwards the
-        // operator owns the products table (edits/archives are never clobbered).
-        products.saveAll(demoProducts(tenant));
+        if (catalogRegistry.find(tenant, DEMO_STORE_CATALOG).isEmpty()) {
+            catalogRegistry.register(new ProductCatalog(
+                    DEMO_STORE_CATALOG, tenant, "Aroma Coffee Roasters",
+                    new CatalogLocation.Database(CATALOG_KEY),
+                    CatalogSyncPolicy.live(), RetrievalPolicy.defaults(),
+                    PermissionRequirement.none(), CURRENCY,
+                    IMG + "aroma-coffee/1200/600"));
+        }
+        // Seed products when the catalog has none — covers a fresh catalog AND
+        // self-heals a stale/partial one (exists but empty, e.g. an interrupted
+        // earlier seed). Guarding on countActive==0 never clobbers operator edits:
+        // once at least one product is active, the demo set is the operator's.
+        if (products.countActive(tenant, CATALOG_KEY) == 0) {
+            products.saveAll(demoProducts(tenant));
+        }
     }
 
     private static List<ManagedProduct> demoProducts(Ids.TenantId tenant) {

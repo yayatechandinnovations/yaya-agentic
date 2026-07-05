@@ -11,6 +11,8 @@ import com.yayatechandinnovations.yayaagentic.engine.bootstrap.RetailStoreBootst
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.TenantDemoProvisioner;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.CommerceCartEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.CommerceCartRepository;
 import com.yayatechandinnovations.yayaagentic.profile.Profile;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import com.yayatechandinnovations.yayaagentic.profile.StartConversationRequest;
@@ -52,6 +54,7 @@ class DemoStoreBootstrapIT {
     @Autowired ChatEntryPointRepository entryPoints;
     @Autowired DemoStoreBootstrap bootstrap;
     @Autowired TenantDemoProvisioner provisioner;
+    @Autowired CommerceCartRepository durableCarts;
 
     @Test
     void seedsAManagedCatalogWithProducts() {
@@ -135,6 +138,19 @@ class DemoStoreBootstrapIT {
         // The chat handle is globally unique, so a non-default tenant gets a scoped handle.
         assertTrue(entryPoints.findByHandle("acme-demo-test-demo-store").isPresent(),
                 "the account's demo store must be reachable at a per-tenant handle");
+    }
+
+    @Test
+    void durableCartPersistsWithoutNullUpdatedAt() {
+        // Regression: the entity never set updated_at, so Hibernate sent an explicit
+        // NULL (bypassing the DB DEFAULT) and the NOT NULL constraint blew up when a
+        // shopper added to cart. @PrePersist must stamp it.
+        Ids.SessionId sid = new Ids.SessionId(java.util.UUID.randomUUID().toString());
+        CommerceCartEntity saved = durableCarts.saveAndFlush(new CommerceCartEntity(
+                java.util.UUID.fromString(sid.value()),
+                DemoStoreBootstrap.DEMO_TENANT.value(),
+                "{\"lines\":[]}"));
+        assertNotNull(saved.getUpdatedAt(), "durable cart updated_at must be populated on insert");
     }
 
     private static AuthContext auth() {

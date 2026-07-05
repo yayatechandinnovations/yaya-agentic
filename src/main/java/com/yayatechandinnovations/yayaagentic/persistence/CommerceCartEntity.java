@@ -3,6 +3,8 @@ package com.yayatechandinnovations.yayaagentic.persistence;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -39,6 +41,14 @@ public class CommerceCartEntity {
         this.sessionId = sessionId;
         this.tenantId = tenantId;
         this.cartJson = cartJson;
+    }
+
+    // updated_at is NOT NULL; the entity owns it. Hibernate sends the column on
+    // every insert/update, so the DB DEFAULT never applies — stamp it here.
+    @PrePersist
+    @PreUpdate
+    void touch() {
+        this.updatedAt = OffsetDateTime.now();
     }
 
     public UUID getSessionId() { return sessionId; }
