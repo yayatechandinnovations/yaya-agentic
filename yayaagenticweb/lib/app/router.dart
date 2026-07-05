@@ -12,6 +12,7 @@ import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
 import '../features/admin/product_catalogs/product_catalogs_screen.dart';
+import '../features/admin/product_catalogs/managed_products_screen.dart';
 import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
@@ -92,6 +93,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/tools', builder: (_, __) => const ToolsScreen()),
           GoRoute(path: '/admin/knowledge-sources', builder: (_, __) => const KnowledgeSourcesScreen()),
           GoRoute(path: '/admin/product-catalogs', builder: (_, __) => const ProductCatalogsScreen()),
+          GoRoute(
+            path: '/admin/product-catalogs/:id/products',
+            builder: (_, state) =>
+                ManagedProductsScreen(catalogId: state.pathParameters['id']!),
+          ),
           GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
           GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),

@@ -91,15 +91,26 @@ class CatalogAdminIT {
     }
 
     @Test
-    void databaseKindIsRejected() {
+    void databaseKindIsAcceptedAsManagedCatalog() {
+        // The redesign promotes DATABASE to the default managed catalog (Pillar A);
+        // it now creates a catalog whose products live in the products table (0 to start).
         Map<String, Object> body = Map.of(
-                "tenant", TENANT, "id", "legacy", "displayName", "Legacy",
-                "currency", "USD", "locationKind", "DATABASE",
-                "location", Map.of("logicalName", "x"));
+                "tenant", TENANT, "id", "managed-store", "displayName", "Managed Store",
+                "currency", "USD", "locationKind", "DATABASE", "location", Map.of());
         client.post().uri("/v1/admin/product-catalogs")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.locationKind").isEqualTo("DATABASE")
+                .jsonPath("$.productCount").isEqualTo(0);
+
+        // The location's logicalName defaults to the catalog id when omitted.
+        client.get().uri("/v1/admin/product-catalogs/managed-store?tenant=" + TENANT)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.location.logicalName").isEqualTo("managed-store");
     }
 }

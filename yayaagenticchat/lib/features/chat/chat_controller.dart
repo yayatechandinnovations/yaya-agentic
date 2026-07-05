@@ -384,6 +384,31 @@ class ChatController extends StateNotifier<ChatState> {
   Future<bool> loadMore(String query, int nextPage) =>
       invokeAction(CommerceTools.searchProducts, {'query': query, 'page': nextPage});
 
+  /// Fetch a page of the catalog for the storefront browse sheet WITHOUT
+  /// appending it to the chat — the sheet renders it in a dedicated grid. Runs
+  /// `search_products` through the same executor + Authorizer as any action, but
+  /// captures the `product_catalog` payload instead of streaming it into the
+  /// message list. Pillar B §B.2.
+  Future<CatalogPayload?> searchCatalog({String query = '', int page = 0}) async {
+    if (state.sessionId == null) return null;
+    CatalogPayload? found;
+    final args = <String, Object?>{if (query.isNotEmpty) 'query': query, 'page': page};
+    try {
+      await for (final evt
+          in _api.sendAction(state.sessionId!, CommerceTools.searchProducts, args, bearer: state.bearer)) {
+        if (evt.event == 'ui_hint' &&
+            evt.data['kind'] == 'product_catalog' &&
+            evt.data['payload'] is Map) {
+          found = CatalogPayload.fromJson(Map<String, dynamic>.from(evt.data['payload'] as Map));
+        }
+      }
+    } on ChatApiException catch (e) {
+      state = state.copyWith(error: _friendly(e));
+      return null;
+    }
+    return found;
+  }
+
   /// Start checkout by tap. `checkout` is `confirmable`, so this raises the
   /// `confirm` UiHint (→ [state.pendingConfirm]); the shopper still explicitly
   /// approves before any PSP hand-off (§9, §11). The tool id comes from the

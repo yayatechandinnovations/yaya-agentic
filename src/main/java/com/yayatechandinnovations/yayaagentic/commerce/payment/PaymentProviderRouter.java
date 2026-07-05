@@ -20,26 +20,52 @@ public class PaymentProviderRouter implements PaymentProvider {
 
     private final DLocalPaymentProvider dlocal;
     private final StripeConnectPaymentProvider stripe;
+    private final PayPalPaymentProvider paypal;
     private final PaymentRoutingProperties routing;
 
     // Concrete providers injected by type (not List<PaymentProvider>) to avoid the
     // self-inclusion cycle a @Primary PaymentProvider would create.
     public PaymentProviderRouter(DLocalPaymentProvider dlocal,
                                  StripeConnectPaymentProvider stripe,
+                                 PayPalPaymentProvider paypal,
                                  PaymentRoutingProperties routing) {
         this.dlocal = dlocal;
         this.stripe = stripe;
+        this.paypal = paypal;
         this.routing = routing;
     }
 
+    /** The framework-default provider (no per-request preference). */
     PaymentProvider select() {
-        return switch (routing.effectiveProvider()) {
+        return resolve(null);
+    }
+
+    /**
+     * Resolve the provider for an explicit preference (a profile's
+     * {@code CommerceConfig.paymentProvider}); a blank/null preference falls back
+     * to the framework default ({@link PaymentRoutingProperties}). This is the
+     * seam that makes provider choice per-profile, not just global — the checkout
+     * handler resolves once and uses the same instance for {@code createCheckout}
+     * and the audit row's {@code name()}. Pillar C §C.2.
+     */
+    public PaymentProvider resolve(String providerPref) {
+        String pref = (providerPref == null || providerPref.isBlank())
+                ? routing.effectiveProvider()
+                : providerPref.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (pref) {
             case PaymentRoutingProperties.STRIPE -> stripe;
             case PaymentRoutingProperties.DLOCAL -> dlocal;
-            // auto: keep dLocal as the default (seeded DR store), unless Stripe is the
-            // only one actually wired for live charges.
-            default -> (stripe.isConfigured() && !dlocal.isConfigured()) ? stripe : dlocal;
+            case PaymentRoutingProperties.PAYPAL -> paypal;
+            default -> autoSelect();
         };
+    }
+
+    // auto: keep dLocal as the default (seeded DR store), unless exactly one of the
+    // redirect-based PSPs (PayPal/Stripe) is the only one wired live.
+    private PaymentProvider autoSelect() {
+        if (paypal.isConfigured() && !dlocal.isConfigured() && !stripe.isConfigured()) return paypal;
+        if (stripe.isConfigured() && !dlocal.isConfigured() && !paypal.isConfigured()) return stripe;
+        return dlocal;
     }
 
     @Override

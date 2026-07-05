@@ -12,9 +12,11 @@ class PaymentProviderRouterTest {
             new DLocalPaymentProvider(new DLocalProperties(null, null, null, null, null), json);
     private final StripeConnectPaymentProvider stripe =
             new StripeConnectPaymentProvider(new StripeProperties(null, null, null), json);
+    private final PayPalPaymentProvider paypal =
+            new PayPalPaymentProvider(new PayPalProperties(null, null, null, null, null, null), json);
 
     private PaymentProviderRouter router(String provider) {
-        return new PaymentProviderRouter(dlocal, stripe, new PaymentRoutingProperties(provider));
+        return new PaymentProviderRouter(dlocal, stripe, paypal, new PaymentRoutingProperties(provider));
     }
 
     @Test
@@ -33,6 +35,12 @@ class PaymentProviderRouterTest {
     @Test
     void explicitDlocalForcesDlocal() {
         assertEquals("dlocal", router("dlocal").name());
+    }
+
+    @Test
+    void explicitPaypalForcesPaypal() {
+        assertEquals("paypal", router("paypal").name());
+        assertEquals("paypal", router("PayPal").name());   // case-insensitive
     }
 
     @Test

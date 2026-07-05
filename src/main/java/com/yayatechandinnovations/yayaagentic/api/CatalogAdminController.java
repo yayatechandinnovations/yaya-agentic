@@ -5,8 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.dto.CatalogAdminDtos;
 import com.yayatechandinnovations.yayaagentic.commerce.CatalogLocation;
 import com.yayatechandinnovations.yayaagentic.commerce.CatalogSyncPolicy;
+import com.yayatechandinnovations.yayaagentic.commerce.ManagedProduct;
+import com.yayatechandinnovations.yayaagentic.commerce.Product;
 import com.yayatechandinnovations.yayaagentic.commerce.ProductCatalog;
 import com.yayatechandinnovations.yayaagentic.commerce.ProductCatalogRegistry;
+import com.yayatechandinnovations.yayaagentic.commerce.ProductRegistry;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.PermissionRequirement;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalPolicy;
@@ -20,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,13 +42,15 @@ public class CatalogAdminController {
     private static final TypeReference<PermissionRequirement> ACCESS = new TypeReference<>() {};
 
     private final ProductCatalogRegistry catalogs;
+    private final ProductRegistry products;
     private final ObjectMapper json;
     private final TenantGuard tenantGuard;
     private final WorkspaceAccessHelper workspaceAccess;
 
-    public CatalogAdminController(ProductCatalogRegistry catalogs, ObjectMapper json,
+    public CatalogAdminController(ProductCatalogRegistry catalogs, ProductRegistry products, ObjectMapper json,
                                   TenantGuard tenantGuard, WorkspaceAccessHelper workspaceAccess) {
         this.catalogs = catalogs;
+        this.products = products;
         this.json = json;
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
@@ -84,7 +90,7 @@ public class CatalogAdminController {
                 new Ids.ProductCatalogId(req.id(), version),
                 new Ids.TenantId(tenant),
                 req.displayName(),
-                location(req.locationKind(), req.location()),
+                location(req.locationKind(), req.location(), req.id()),
                 sync(req.sync()), search(req.search()), access(req.access()),
                 req.currency(), blankToNull(req.imageUrl()));
         catalogs.register(catalog);
@@ -106,24 +112,68 @@ public class CatalogAdminController {
                 new Ids.ProductCatalogId(id, version),
                 new Ids.TenantId(resolved),
                 req.displayName(),
-                location(req.locationKind(), req.location()),
+                location(req.locationKind(), req.location(), id),
                 sync(req.sync()), search(req.search()), access(req.access()),
                 req.currency(), blankToNull(req.imageUrl()));
         catalogs.register(catalog);
         return toView(catalog);
     }
 
+    /**
+     * Convert a legacy {@code Inline} catalog to a managed {@code Database} one:
+     * lift its inline products into the {@code products} table (single-row edits
+     * from here on), then flip the catalog's location. Idempotent-ish — safe to
+     * re-run; existing rows are upserted. See Pillar A §7.1 back-compat.
+     */
+    @PostMapping("/{id}/convert-to-managed")
+    @Transactional
+    public CatalogAdminDtos.ProductCatalogView convertToManaged(
+            @RequestParam(value = "tenant", required = false) String tenant,
+            @PathVariable("id") String id,
+            ServerWebExchange exchange) {
+        String resolved = workspaceAccess.require(tenant, exchange, Role.MEMBER);
+        tenantGuard.requireWritable(resolved);
+        ProductCatalog current = findLatestOrThrow(resolved, id);
+        if (!(current.location() instanceof CatalogLocation.Inline inline)) {
+            throw badRequest("catalog " + id + " is not INLINE; only inline catalogs convert to managed");
+        }
+        List<ManagedProduct> rows = new java.util.ArrayList<>();
+        List<Product> inlineProducts = inline.products();
+        for (int i = 0; i < inlineProducts.size(); i++) {
+            Product p = inlineProducts.get(i);
+            rows.add(new ManagedProduct(new Ids.TenantId(resolved), id, p, null, null,
+                    ManagedProduct.ACTIVE, i, null));
+        }
+        products.saveAll(rows);
+
+        int version = nextVersion(resolved, id);
+        ProductCatalog managed = new ProductCatalog(
+                new Ids.ProductCatalogId(id, version), new Ids.TenantId(resolved),
+                current.displayName(), new CatalogLocation.Database(id),
+                current.sync(), current.search(), current.access(),
+                current.currency(), current.imageUrl());
+        catalogs.register(managed);
+        return toView(managed);
+    }
+
     // ---- mapping ----------------------------------------------------------
 
-    private CatalogLocation location(String kind, Map<String, Object> location) {
+    private CatalogLocation location(String kind, Map<String, Object> location, String idFallback) {
         if (kind == null || kind.isBlank()) {
-            throw badRequest("locationKind is required (INLINE | HTTP_API)");
+            throw badRequest("locationKind is required (INLINE | HTTP_API | DATABASE)");
         }
-        if (!kind.equals("INLINE") && !kind.equals("HTTP_API")) {
-            throw badRequest("unsupported locationKind: " + kind + " (INLINE | HTTP_API)");
+        if (!kind.equals("INLINE") && !kind.equals("HTTP_API") && !kind.equals("DATABASE")) {
+            throw badRequest("unsupported locationKind: " + kind + " (INLINE | HTTP_API | DATABASE)");
         }
         Map<String, Object> withKind = new LinkedHashMap<>(location == null ? Map.of() : location);
         withKind.put("kind", kind);   // the @JsonTypeInfo discriminator
+        // A managed catalog's row set defaults to its own id when the operator didn't name one.
+        if (kind.equals("DATABASE")) {
+            Object logical = withKind.get("logicalName");
+            if (logical == null || String.valueOf(logical).isBlank()) {
+                withKind.put("logicalName", idFallback);
+            }
+        }
         try {
             return json.convertValue(withKind, CatalogLocation.class);
         } catch (IllegalArgumentException e) {
@@ -168,7 +218,11 @@ public class CatalogAdminController {
     }
 
     private CatalogAdminDtos.ProductCatalogView toView(ProductCatalog c) {
-        int count = c.location() instanceof CatalogLocation.Inline inline ? inline.products().size() : -1;
+        int count = switch (c.location()) {
+            case CatalogLocation.Inline inline -> inline.products().size();
+            case CatalogLocation.Database d -> (int) products.countActive(c.tenant(), c.id().value());
+            case CatalogLocation.HttpApi h -> -1;   // count unknown for a live merchant API
+        };
         return new CatalogAdminDtos.ProductCatalogView(
                 c.id().value(), c.id().version(), c.tenant().value(),
                 c.displayName(), c.currency(), c.imageUrl(), kindOf(c), count);

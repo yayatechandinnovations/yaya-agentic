@@ -26,6 +26,7 @@ public record PaymentRoutingProperties(String provider) {
     public static final String AUTO = "auto";
     public static final String DLOCAL = "dlocal";
     public static final String STRIPE = "stripe";
+    public static final String PAYPAL = "paypal";
 
     public String effectiveProvider() {
         return provider == null || provider.isBlank()

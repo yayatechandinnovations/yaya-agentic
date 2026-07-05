@@ -7,6 +7,7 @@ import com.yayatechandinnovations.yayaagentic.commerce.cart.ManagedCart;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.CheckoutOutcome;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.CheckoutRequest;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentProvider;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentProviderRouter;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
 import com.yayatechandinnovations.yayaagentic.persistence.CommerceOrderEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.CommerceOrderRepository;
@@ -33,11 +34,11 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
 
     private final CommerceRuntime runtime;
     private final ManagedCart cart;
-    private final PaymentProvider payments;
+    private final PaymentProviderRouter payments;
     private final CommerceOrderRepository orders;
     private final CommercePayloads payloads;
 
-    public CheckoutToolHandler(CommerceRuntime runtime, ManagedCart cart, PaymentProvider payments,
+    public CheckoutToolHandler(CommerceRuntime runtime, ManagedCart cart, PaymentProviderRouter payments,
                                CommerceOrderRepository orders, CommercePayloads payloads) {
         this.runtime = runtime;
         this.cart = cart;
@@ -63,13 +64,17 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
         Map<String, Object> fulfilment = input != null && input.get("fulfilment") instanceof Map<?, ?> m
                 ? (Map<String, Object>) m : Map.of();
 
-        CheckoutOutcome outcome = payments.createCheckout(new CheckoutRequest(
+        // Per-profile PSP: the profile's commerce block may pin a provider; a blank
+        // one falls back to the framework default. Resolve once so the audit row's
+        // provider name matches the provider that actually opened the checkout.
+        PaymentProvider provider = payments.resolve(cfg.paymentProvider());
+        CheckoutOutcome outcome = provider.createCheckout(new CheckoutRequest(
                 ctx.principal().tenant(), ctx.sessionId(),
                 ctx.principal().subject(), cfg.connectedAccountId(),
                 current, currency, fulfilment));
 
         String status = outcome instanceof CheckoutOutcome.OrderPlaced placed ? placed.status() : "PENDING";
-        recordOrder(ctx, outcome, status);
+        recordOrder(ctx, provider.name(), outcome, status);
 
         runtime.emit(ctx, CommercePayloads.CHECKOUT_RESULT, payloads.checkoutResult(outcome));
 
@@ -87,12 +92,12 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
         return result;
     }
 
-    private void recordOrder(ExecutionContext ctx, CheckoutOutcome outcome, String status) {
+    private void recordOrder(ExecutionContext ctx, String providerName, CheckoutOutcome outcome, String status) {
         UUID sessionUuid = parseUuid(ctx.sessionId().value());
         if (sessionUuid == null) return;   // non-UUID session (unit fixtures) — skip the durable row
         orders.save(new CommerceOrderEntity(
                 UUID.randomUUID(), sessionUuid, ctx.principal().tenant().value(),
-                payments.name(), outcome.orderRef(), outcome.amountMinor(), outcome.currency(), status));
+                providerName, outcome.orderRef(), outcome.amountMinor(), outcome.currency(), status));
     }
 
     private static UUID parseUuid(String value) {

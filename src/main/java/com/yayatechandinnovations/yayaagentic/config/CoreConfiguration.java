@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.config;
 
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.DLocalProperties;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentRoutingProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.StripeProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.BlobGcProperties;
@@ -28,7 +29,8 @@ import java.time.Clock;
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
         ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
         IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class,
-        DLocalProperties.class, StripeProperties.class, PaymentRoutingProperties.class})
+        DLocalProperties.class, StripeProperties.class, PayPalProperties.class,
+        PaymentRoutingProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 

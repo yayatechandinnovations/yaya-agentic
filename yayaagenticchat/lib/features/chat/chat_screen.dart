@@ -1,15 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme.dart';
 import '../../config.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/chat_message.dart';
+import '../../models/commerce/catalog_payload.dart';
 import '../../models/commerce/product.dart';
 import '../../widgets/brand_logo.dart';
 import 'chat_controller.dart';
 import 'commerce/cart_header_button.dart';
+import 'commerce/storefront_card.dart';
 import 'commerce/cart_sheet.dart';
 import 'commerce/checkout_handler.dart';
 import 'commerce/checkout_result_card.dart';
@@ -18,6 +23,7 @@ import 'commerce/mini_cart_bar.dart';
 import 'commerce/product_card_expanded.dart';
 import 'commerce/product_carousel.dart';
 import 'commerce/product_compact_card.dart';
+import 'commerce/storefront_browse_sheet.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.handle});
@@ -104,6 +110,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       appBar: AppBar(
         backgroundColor: accent,
         foregroundColor: Colors.white,
+        // Chat is usually reached via a stack-replacing go(), so there's no
+        // implicit back arrow — give an explicit one that pops if it can, else
+        // heads home to the directory.
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
+        ),
         title: card == null
             ? Text(title)
             : Row(
@@ -163,6 +177,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ],
             ),
+          // Catalog-first entry: a tappable storefront card that opens the full
+          // browse view (Pillar B §B.2). Shown for a store once the shopper is in.
+          if (state.isStore && !state.needsSignIn)
+            StorefrontCard(
+              accent: accent,
+              onBrowse: () => _openStorefront(accent),
+            ),
           Expanded(child: _body(state, accent)),
           if (!state.needsSignIn) ...[
             if (state.pendingConfirm != null)
@@ -193,6 +214,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         accent: accent,
         handle: widget.handle,
         onQuickReply: _send,
+      ),
+    );
+  }
+
+  /// Open the full storefront browse view over the live chat. Product taps and
+  /// add-to-cart route through the same controller the chat uses. Pillar B §B.2.
+  void _openStorefront(Color accent) {
+    final controller = ref.read(chatControllerProvider(widget.handle).notifier);
+    final messenger = ScaffoldMessenger.of(context);
+    final t = AppL10n.of(context);
+    Future<void> add(Product p, {String? variantId, int qty = 1}) async {
+      final ok = await controller.addToCart(p.id, variantId: variantId, qty: qty);
+      if (ok) messenger.showSnackBar(SnackBar(content: Text(t.addedToCart)));
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => StorefrontBrowseSheet(
+        accent: accent,
+        onSearch: (query, page) => controller.searchCatalog(query: query, page: page),
+        onOpenProduct: (p) => showProductSheet(
+          context, product: p, accent: accent,
+          onAdd: (variantId, qty) => add(p, variantId: variantId, qty: qty),
+        ),
+        onAddProduct: (p) => add(p),
       ),
     );
   }
@@ -233,6 +279,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       ),
     );
+  }
+}
+
+/// Detect a `product_catalog` descriptor that leaked into assistant text and
+/// parse it back into a [CatalogPayload]. Tolerates both the bare descriptor
+/// ({items, facets, …}) and a wrapped {kind, payload} frame. Returns null for
+/// ordinary prose. See Pillar B §B.1.3.
+CatalogPayload? _salvageCatalogFromText(String text) {
+  final trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is! Map) return null;
+    var map = decoded.cast<String, dynamic>();
+    // Unwrap a {kind, payload} envelope if that's what leaked.
+    if (map['kind'] == 'product_catalog' && map['payload'] is Map) {
+      map = (map['payload'] as Map).cast<String, dynamic>();
+    }
+    final looksLikeCatalog = map['items'] is List &&
+        (map.containsKey('facets') || map.containsKey('page') || map.containsKey('total'));
+    if (!looksLikeCatalog) return null;
+    return CatalogPayload.fromJson(map);
+  } catch (_) {
+    return null;   // not JSON, or not a catalog — leave it as ordinary text
   }
 }
 
@@ -289,7 +359,16 @@ class _Bubble extends ConsumerWidget {
     final isUser = message.isUser;
     final bg = isUser ? accent : Theme.of(context).colorScheme.surfaceContainerHighest;
     final fg = isUser ? Colors.white : Theme.of(context).colorScheme.onSurface;
-    final hasText = message.text.isNotEmpty || (message.streaming && !message.hasCommerce);
+
+    // Defence in depth (Pillar B §B.1.3): if a commerce descriptor ever arrives
+    // as assistant prose instead of a ui_hint frame, render it as a card rather
+    // than dumping raw JSON. The real fix is transport, but this makes a
+    // regression degrade to a rendered widget, never a wall of JSON.
+    final salvagedCatalog =
+        message.catalog == null && !isUser ? _salvageCatalogFromText(message.text) : null;
+    final effectiveCatalog = message.catalog ?? salvagedCatalog;
+    final hasText = salvagedCatalog == null &&
+        (message.text.isNotEmpty || (message.streaming && !message.hasCommerce));
 
     return Column(
       crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -330,9 +409,9 @@ class _Bubble extends ConsumerWidget {
           ),
 
         // ---- commerce attachments (engine-emitted chrome, never prose) ----
-        if (message.catalog != null)
+        if (effectiveCatalog != null)
           ProductCarousel(
-            catalog: message.catalog!,
+            catalog: effectiveCatalog,
             accent: accent,
             onOpenProduct: (p) => _openProduct(context, ref, p),
             onAddProduct: (p) => _addProduct(context, ref, p),

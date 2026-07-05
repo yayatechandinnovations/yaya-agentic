@@ -18,6 +18,12 @@ import com.yayatechandinnovations.yayaagentic.commerce.loader.CatalogLoaderRegis
 import com.yayatechandinnovations.yayaagentic.commerce.loader.InlineCatalogLoader;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.DLocalPaymentProvider;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.DLocalProperties;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentProviderRouter;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentRoutingProperties;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalPaymentProvider;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalProperties;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.StripeConnectPaymentProvider;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.StripeProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.search.ProductSearchService;
 import com.yayatechandinnovations.yayaagentic.commerce.testsupport.JsonWorkingMemory;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
@@ -32,6 +38,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.CommerceOrderRepositor
 import com.yayatechandinnovations.yayaagentic.tool.ToolException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.util.List;
@@ -60,6 +67,7 @@ class CheckoutToolHandlerTest {
     private ManagedCart cart;
     private CommerceRuntime runtime;
     private CheckoutToolHandler checkout;
+    private PaymentProviderRouter router;
     private CommerceOrderRepository orders;
 
     @BeforeEach
@@ -76,9 +84,12 @@ class CheckoutToolHandlerTest {
                 new FacetComputer(), (p, r, a, c) -> AuthzDecision.Allow.none());
         runtime = new CommerceRuntime(wm, json, search, pending);
 
-        DLocalPaymentProvider payments = new DLocalPaymentProvider(
-                new DLocalProperties(null, null, null, null, null), json);
-        checkout = new CheckoutToolHandler(runtime, cart, payments, orders, payloads);
+        router = new PaymentProviderRouter(
+                new DLocalPaymentProvider(new DLocalProperties(null, null, null, null, null), json),
+                new StripeConnectPaymentProvider(new StripeProperties(null, null, null), json),
+                new PayPalPaymentProvider(new PayPalProperties(null, null, null, null, null, null), json),
+                new PaymentRoutingProperties("auto"));   // default = dLocal
+        checkout = new CheckoutToolHandler(runtime, cart, router, orders, payloads);
 
         wm.merge(SESSION, Map.of("commerceConfig",
                 new CommerceConfig(List.of(CATALOG), "USD", new Ids.ToolId("checkout"), true, null)));
@@ -102,6 +113,26 @@ class CheckoutToolHandlerTest {
 
         // Hosted-url flow keeps the cart until payment is confirmed.
         assertEquals(1, cart.view(SESSION, "USD").lines().size());
+    }
+
+    @Test
+    void perProfilePaymentProviderOverrideSelectsThatPsp() {
+        CommerceConfig paypalCfg = new CommerceConfig(
+                List.of(CATALOG), "USD", new Ids.ToolId("checkout"), true, null, "paypal");
+        wm.merge(SESSION, Map.of("commerceConfig", paypalCfg));
+
+        cart.add(SESSION, "USD", new Ids.ProductId("p1"), null, 1, runtime.lookup(ctx(), paypalCfg));
+        pending.drain(SESSION);
+
+        Map<String, Object> out = checkout.execute(Map.of(), ctx());
+
+        // PayPal's sandbox order ref is "ppl_…" (dLocal's is "ord_…"), and the audit
+        // row records "paypal" — the profile's override routed the checkout, not the
+        // framework default (which would be dLocal here).
+        assertTrue(String.valueOf(out.get("orderRef")).startsWith("ppl_"));
+        ArgumentCaptor<CommerceOrderEntity> saved = ArgumentCaptor.forClass(CommerceOrderEntity.class);
+        verify(orders).save(saved.capture());
+        assertEquals("paypal", saved.getValue().getProvider());
     }
 
     @Test

@@ -28,10 +28,13 @@ class PaymentProviderWiringTest {
                 () -> new DLocalProperties(null, null, null, null, null));   // sandbox
         ctx.registerBean(StripeProperties.class,
                 () -> new StripeProperties(null, null, null));               // sandbox
+        ctx.registerBean(PayPalProperties.class,
+                () -> new PayPalProperties(null, null, null, null, null, null)); // sandbox
         ctx.registerBean(PaymentRoutingProperties.class,
                 () -> new PaymentRoutingProperties(provider));
         ctx.register(DLocalPaymentProvider.class,
                 StripeConnectPaymentProvider.class,
+                PayPalPaymentProvider.class,
                 PaymentProviderRouter.class);
         ctx.refresh();
         return ctx;
@@ -56,10 +59,20 @@ class PaymentProviderWiringTest {
     }
 
     @Test
-    void bothConcreteProvidersRemainAddressableByType() {
+    void routerSelectsPaypalWhenConfigured() {
+        try (AnnotationConfigApplicationContext ctx = context("paypal")) {
+            PaymentProvider primary = ctx.getBean(PaymentProvider.class);
+            assertInstanceOf(PaymentProviderRouter.class, primary);
+            assertEquals("paypal", primary.name());
+        }
+    }
+
+    @Test
+    void allConcreteProvidersRemainAddressableByType() {
         try (AnnotationConfigApplicationContext ctx = context("auto")) {
             assertEquals("dlocal", ctx.getBean(DLocalPaymentProvider.class).name());
             assertEquals("stripe", ctx.getBean(StripeConnectPaymentProvider.class).name());
+            assertEquals("paypal", ctx.getBean(PayPalPaymentProvider.class).name());
         }
     }
 }

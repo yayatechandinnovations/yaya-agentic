@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../api/api_config.dart';
@@ -98,7 +99,7 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
   final _nameCtrl = TextEditingController();
   String _currency = 'USD';
   String? _catalogImageUrl;
-  String _kind = 'INLINE';
+  String _kind = 'DATABASE';
   bool _saving = false;
   bool _uploadingCatalogImage = false;
   int? _cloningFromVersion;
@@ -175,6 +176,10 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
   }
 
   Map<String, dynamic> _buildLocation() {
+    // Managed catalog: products live in the products table, authored on the
+    // catalog's Products page — the location just names the row set (backend
+    // defaults logicalName to the catalog id).
+    if (_kind == 'DATABASE') return const {};
     if (_kind == 'INLINE') {
       return {
         'products': _products
@@ -223,12 +228,15 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
       showSnack(context, 'add at least one product (code + name)', error: true);
       return;
     }
+    final wasNew = _cloningFromVersion == null;
+    final catalogId = _idCtrl.text.trim();
+    final kind = _kind;
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
       await api.createProductCatalog(CreateProductCatalogRequest(
         tenant: tenant,
-        id: _idCtrl.text.trim(),
+        id: catalogId,
         displayName: _nameCtrl.text.trim(),
         currency: _currency,
         imageUrl: _catalogImageUrl,
@@ -236,11 +244,14 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
         location: _buildLocation(),
       ));
       if (!mounted) return;
-      showSnack(context, _cloningFromVersion == null
-          ? 'catalog created'
-          : 'saved as v${_cloningFromVersion! + 1}');
+      showSnack(context, wasNew ? 'catalog created' : 'saved as v${_cloningFromVersion! + 1}');
       ref.invalidate(productCatalogsProvider);
       _reset();
+      // A managed catalog has nowhere to add products in this form — take the
+      // operator straight to the product workspace after creating it.
+      if (wasNew && kind == 'DATABASE' && mounted) {
+        context.go('/admin/product-catalogs/$catalogId/products');
+      }
     } catch (e) {
       if (!mounted) return;
       showSnack(context, formatError(e), error: true);
@@ -256,7 +267,7 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
       _nameCtrl.clear();
       _currency = 'USD';
       _catalogImageUrl = null;
-      _kind = 'INLINE';
+      _kind = 'DATABASE';
       for (final p in _products) { p.dispose(); }
       _products
         ..clear()
@@ -278,21 +289,41 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
         _nameCtrl.text = d.displayName;
         _currency = _currencies.containsKey(d.currency) ? d.currency : 'USD';
         _catalogImageUrl = d.imageUrl;
-        _kind = d.locationKind == 'HTTP_API' ? 'HTTP_API' : 'INLINE';
+        _kind = switch (d.locationKind) {
+          'HTTP_API' => 'HTTP_API',
+          'DATABASE' => 'DATABASE',
+          _ => 'INLINE',
+        };
         for (final p in _products) { p.dispose(); }
         _products.clear();
+        _products.add(_ProductDraft());   // keep one draft alive for the inline editor path
         if (_kind == 'INLINE') {
+          _products.clear();
           for (final p in (d.location['products'] as List?) ?? const []) {
             if (p is Map) _products.add(_ProductDraft.from(p.cast<String, dynamic>()));
           }
           if (_products.isEmpty) _products.add(_ProductDraft());
-        } else {
-          _products.add(_ProductDraft());
+        } else if (_kind == 'HTTP_API') {
           _loadHttp(d.location);
         }
         _cloningFromVersion = d.version;
       });
       if (mounted) showSnack(context, 'Editing ${d.id}@${d.version} → saves as v${d.version + 1}');
+    } catch (e) {
+      if (mounted) showSnack(context, formatError(e), error: true);
+    }
+  }
+
+  Future<void> _convertToManaged(ProductCatalogResponse c) async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      await api.convertCatalogToManaged(tenant: tenant, id: c.id);
+      if (!mounted) return;
+      ref.invalidate(productCatalogsProvider);
+      showSnack(context, '${c.id} converted to managed — edit products here');
+      context.go('/admin/product-catalogs/${c.id}/products');
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     }
@@ -341,6 +372,9 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
                 itemBuilder: (_, i) => _CatalogCard(
                   catalog: list[i],
                   onCloneEdit: () => _loadForEdit(list[i]),
+                  onManageProducts: () =>
+                      context.go('/admin/product-catalogs/${list[i].id}/products'),
+                  onConvert: () => _convertToManaged(list[i]),
                 ),
               ),
       ),
@@ -385,8 +419,10 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
             const SizedBox(height: 16),
             SegmentedButton<String>(
               segments: const [
+                ButtonSegment(value: 'DATABASE', icon: Icon(Icons.table_rows_outlined),
+                    label: Text('Managed')),
                 ButtonSegment(value: 'INLINE', icon: Icon(Icons.inventory_2_outlined),
-                    label: Text('Build products')),
+                    label: Text('Inline')),
                 ButtonSegment(value: 'HTTP_API', icon: Icon(Icons.api),
                     label: Text('Merchant API')),
               ],
@@ -394,7 +430,12 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
               onSelectionChanged: (s) => setState(() => _kind = s.first),
             ),
             const SizedBox(height: 16),
-            if (_kind == 'INLINE') _inlineEditor(context) else _httpEditor(context),
+            if (_kind == 'DATABASE')
+              _managedNote(context)
+            else if (_kind == 'INLINE')
+              _inlineEditor(context)
+            else
+              _httpEditor(context),
             const SizedBox(height: 20),
             Row(mainAxisAlignment: MainAxisAlignment.end, children: [
               if (_cloningFromVersion != null) ...[
@@ -448,6 +489,40 @@ class _State extends ConsumerState<ProductCatalogsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _managedNote(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(children: [
+        Icon(Icons.table_rows_outlined, color: scheme.primary),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            _cloningFromVersion == null
+                ? 'Managed catalog: create it, then add products on its Products page — a paged '
+                    'table with quick-add, CSV import/export, and a full editor per product.'
+                : 'Managed catalog. Edit its products on the Products page (single-row edits, no '
+                    'version bump). Saving here only updates catalog settings.',
+            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+          ),
+        ),
+        if (_cloningFromVersion != null) ...[
+          const SizedBox(width: 8),
+          FilledButton.tonalIcon(
+            onPressed: () => context.go('/admin/product-catalogs/${_idCtrl.text.trim()}/products'),
+            icon: const Icon(Icons.inventory_2_outlined, size: 18),
+            label: const Text('Products'),
+          ),
+        ],
+      ]),
     );
   }
 
@@ -671,13 +746,27 @@ class _AddImageTile extends StatelessWidget {
 }
 
 class _CatalogCard extends StatelessWidget {
-  const _CatalogCard({required this.catalog, required this.onCloneEdit});
+  const _CatalogCard({
+    required this.catalog,
+    required this.onCloneEdit,
+    required this.onManageProducts,
+    required this.onConvert,
+  });
   final ProductCatalogResponse catalog;
   final VoidCallback onCloneEdit;
+  final VoidCallback onManageProducts;
+  final VoidCallback onConvert;
+
+  String get _source => switch (catalog.locationKind) {
+        'HTTP_API' => 'Merchant API',
+        'DATABASE' => 'Managed',
+        _ => 'Inline',
+      };
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final managed = catalog.locationKind == 'DATABASE';
     return EditableRecordCard(
       leading: catalog.imageUrl == null
           ? const Icon(Icons.shopping_bag_outlined)
@@ -692,12 +781,27 @@ class _CatalogCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DetailRow(label: 'currency', value: catalog.currency),
-          DetailRow(label: 'source', value: catalog.locationKind == 'HTTP_API' ? 'Merchant API' : 'Built-in'),
+          DetailRow(label: 'source', value: _source),
           DetailRow(
               label: 'products',
               value: catalog.productCount < 0 ? '(external)' : '${catalog.productCount}'),
           if (catalog.imageUrl != null)
             Text(catalog.imageUrl!, style: TextStyle(fontSize: 11, color: scheme.outline)),
+          const SizedBox(height: 8),
+          Row(children: [
+            if (managed)
+              FilledButton.tonalIcon(
+                onPressed: onManageProducts,
+                icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                label: const Text('Manage products'),
+              )
+            else if (catalog.locationKind == 'INLINE')
+              OutlinedButton.icon(
+                onPressed: onConvert,
+                icon: const Icon(Icons.upgrade, size: 18),
+                label: const Text('Convert to managed'),
+              ),
+          ]),
         ],
       ),
     );

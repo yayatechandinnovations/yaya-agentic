@@ -59,6 +59,9 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   final _commerceCatalogs = <String>{};
   final _commerceCurrencyCtrl = TextEditingController(text: 'USD');
   String? _commerceCheckoutTool;
+  // Per-profile PSP override: 'default' = framework config; else dlocal|stripe|paypal.
+  String _commercePaymentProvider = 'default';
+  final _commerceAccountCtrl = TextEditingController();   // merchant's PSP connected-account id
 
   /// Languages we surface in the dropdown. The backend accepts any BCP 47
   /// tag — operators with niche needs can extend the dropdown later. Until
@@ -112,12 +115,18 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _commerceEnabled = false;
       _commerceCurrencyCtrl.text = 'USD';
       _commerceCheckoutTool = null;
+      _commercePaymentProvider = 'default';
+      _commerceAccountCtrl.text = '';
       return;
     }
     _commerceEnabled = commerce['cartEnabled'] == true;
     _commerceCurrencyCtrl.text = commerce['currency']?.toString() ?? 'USD';
     final tool = commerce['checkoutTool'];
     _commerceCheckoutTool = tool is Map ? tool['value']?.toString() : tool?.toString();
+    final provider = commerce['paymentProvider']?.toString().toLowerCase();
+    _commercePaymentProvider =
+        const {'dlocal', 'stripe', 'paypal'}.contains(provider) ? provider! : 'default';
+    _commerceAccountCtrl.text = commerce['connectedAccountId']?.toString() ?? '';
     for (final c in (commerce['catalogs'] as List? ?? const [])) {
       if (c is Map && c['value'] != null) _commerceCatalogs.add(c['value'].toString());
     }
@@ -130,6 +139,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     _introCtrl.dispose();
     _promptCtrl.dispose();
     _commerceCurrencyCtrl.dispose();
+    _commerceAccountCtrl.dispose();
     super.dispose();
   }
 
@@ -146,6 +156,10 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       'currency': _commerceCurrencyCtrl.text.trim().isEmpty ? 'USD' : _commerceCurrencyCtrl.text.trim(),
       'checkoutTool': _commerceCheckoutTool == null ? null : {'value': _commerceCheckoutTool},
       'cartEnabled': true,
+      // Per-profile PSP override; 'default' means fall back to the framework config.
+      'paymentProvider': _commercePaymentProvider == 'default' ? null : _commercePaymentProvider,
+      'connectedAccountId':
+          _commerceAccountCtrl.text.trim().isEmpty ? null : _commerceAccountCtrl.text.trim(),
     };
   }
 
@@ -256,6 +270,31 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
               onChanged: (v) => setState(() => _commerceCheckoutTool = v),
             );
           },
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          initialValue: _commercePaymentProvider,
+          decoration: const InputDecoration(
+            labelText: 'payment provider',
+            helperText: 'Which PSP handles checkout for this profile. '
+                'Default uses the platform-wide setting.',
+          ),
+          items: const [
+            DropdownMenuItem(value: 'default', child: Text('Default (platform setting)')),
+            DropdownMenuItem(value: 'dlocal', child: Text('dLocal (LatAm / Dominican Republic)')),
+            DropdownMenuItem(value: 'paypal', child: Text('PayPal')),
+            DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
+          ],
+          onChanged: (v) => setState(() => _commercePaymentProvider = v ?? 'default'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _commerceAccountCtrl,
+          decoration: const InputDecoration(
+            labelText: 'merchant account id (optional)',
+            helperText: "The merchant's connected-account id on the chosen PSP "
+                '(e.g. Stripe acct_… / PayPal merchant id). Blank = platform charge.',
+          ),
         ),
       ],
     );

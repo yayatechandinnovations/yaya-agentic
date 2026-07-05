@@ -5,6 +5,8 @@
 **Anchors:** design `§5.2` (Profile), `§5.3` (Capability & Tool), `§5.7` (Session & Memory), `§5.8` (Knowledge Sources — the pattern we mirror), `§6.1`/`§9` (UiHint events), `§7` (Prompt composition), `§12` (Trust boundaries). CLAUDE.md non-negotiables **#1** (LLM never trusted), **#2** (no out-of-profile tools), **#5** (tool/retrieved data is untrusted), **#6** (explicit `AuthForwarding`), **#8** (quick-replies are engine-emitted UI hints).
 **Supersedes nothing.** Adds a `ProductCatalog` primitive (mirroring `KnowledgeSource`), a session-scoped **cart** in working memory, a family of **commerce tools**, three new **`UiHint` kinds**, and one new **client-initiated action channel**. No existing SPI or sealed type changes shape; the engine loop is untouched except for two new emit points that follow the existing `quick_replies` pattern.
 
+> **Follow-up (2026-07):** three parts of this doc are revised by [`commerce-redesign-authoring-rendering-paypal.md`](./commerce-redesign-authoring-rendering-paypal.md): §7.1's inline-in-`location_json` product **authoring** model → a managed `products` table with per-product CRUD, pagination, and CSV import (Pillar A); §10.1's carousel-only **rendering** → a catalog-first `storefront` card + browse view, plus a fix for the descriptor arriving as JSON prose instead of a `ui_hint` frame (Pillar B); and §11/Q#7's payment set → adds a **PayPal** `PaymentProvider` (Pillar C). Read that doc alongside this one.
+
 ---
 
 ## 1. Problem
