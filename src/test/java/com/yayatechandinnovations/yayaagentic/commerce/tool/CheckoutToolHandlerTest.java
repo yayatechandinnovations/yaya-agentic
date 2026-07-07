@@ -87,7 +87,7 @@ class CheckoutToolHandlerTest {
 
         router = new PaymentProviderRouter(
                 new DLocalPaymentProvider(new DLocalProperties(null, null, null, null, null), json),
-                new StripeConnectPaymentProvider(new StripeProperties(null, null, null), json),
+                new StripeConnectPaymentProvider(new StripeProperties(null, null, null, null), json),
                 new PayPalPaymentProvider(new PayPalProperties(null, null, null, null, null, null), json),
                 new PaymentRoutingProperties("auto"));   // default = dLocal
 

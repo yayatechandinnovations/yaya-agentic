@@ -23,7 +23,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record StripeProperties(
         String secretKey,
         String publishableKey,
-        String apiBase
+        String apiBase,
+        String webhookSigningSecret   // whsec_… — verifies account.updated onboarding webhooks
 ) {
 
     public static final String DEFAULT_API_BASE = "https://api.stripe.com";

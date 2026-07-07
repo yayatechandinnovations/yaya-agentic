@@ -27,7 +27,7 @@ class PaymentProviderWiringTest {
         ctx.registerBean(DLocalProperties.class,
                 () -> new DLocalProperties(null, null, null, null, null));   // sandbox
         ctx.registerBean(StripeProperties.class,
-                () -> new StripeProperties(null, null, null));               // sandbox
+                () -> new StripeProperties(null, null, null, null));               // sandbox
         ctx.registerBean(PayPalProperties.class,
                 () -> new PayPalProperties(null, null, null, null, null, null)); // sandbox
         ctx.registerBean(PaymentRoutingProperties.class,

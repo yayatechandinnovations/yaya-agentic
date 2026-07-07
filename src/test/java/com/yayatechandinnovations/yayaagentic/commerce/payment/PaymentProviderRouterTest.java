@@ -11,7 +11,7 @@ class PaymentProviderRouterTest {
     private final DLocalPaymentProvider dlocal =
             new DLocalPaymentProvider(new DLocalProperties(null, null, null, null, null), json);
     private final StripeConnectPaymentProvider stripe =
-            new StripeConnectPaymentProvider(new StripeProperties(null, null, null), json);
+            new StripeConnectPaymentProvider(new StripeProperties(null, null, null, null), json);
     private final PayPalPaymentProvider paypal =
             new PayPalPaymentProvider(new PayPalProperties(null, null, null, null, null, null), json);
 

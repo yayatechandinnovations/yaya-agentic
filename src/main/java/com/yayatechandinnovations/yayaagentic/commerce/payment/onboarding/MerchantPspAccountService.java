@@ -65,9 +65,16 @@ public class MerchantPspAccountService {
         row.setTrackingRef(trackingRef);
         row.setStatus(MerchantAccountStatus.ONBOARDING.name());
         row.setChargesEnabled(false);
-        repo.save(row);
 
-        return onboarding.start(new OnboardingStart(tenant, trackingRef, returnUrl, refreshUrl));
+        OnboardingSession session = onboarding.start(
+                new OnboardingStart(tenant, trackingRef, returnUrl, refreshUrl));
+        // Some providers (Stripe) mint the connected account up front — persist it
+        // now so the return/webhook can correlate by account id.
+        if (session.accountId() != null && !session.accountId().isBlank()) {
+            row.setAccountId(session.accountId());
+        }
+        repo.save(row);
+        return session;
     }
 
     /** Reconcile a return redirect (params) for a known tenant+provider. */
@@ -75,9 +82,8 @@ public class MerchantPspAccountService {
     public MerchantAccountView reconcileReturn(Ids.TenantId tenant, String provider, Map<String, Object> params) {
         MerchantOnboarding onboarding = require(provider);
         MerchantPspAccountEntity row = load(tenant, onboarding.provider());
-        ReconcileResult result = onboarding.reconcile(
-                new OnboardingCallback(tenant, row.getTrackingRef(), params));
-        return apply(row, onboarding.provider(), result);
+        return apply(row, onboarding.provider(),
+                onboarding.reconcile(new OnboardingCallback(tenant, row.getTrackingRef(), enrich(params, row))));
     }
 
     /**
@@ -87,13 +93,37 @@ public class MerchantPspAccountService {
     @Transactional
     public Optional<MerchantAccountView> reconcileWebhook(String trackingRef, Map<String, Object> payload) {
         if (trackingRef == null || trackingRef.isBlank()) return Optional.empty();
-        return repo.findByTrackingRef(trackingRef).map(row -> {
-            MerchantOnboarding onboarding = providers.get(norm(row.getProvider()));
-            if (onboarding == null) return null;
-            ReconcileResult result = onboarding.reconcile(
-                    new OnboardingCallback(new Ids.TenantId(row.getTenantId()), trackingRef, payload));
-            return apply(row, row.getProvider(), result);
-        });
+        return repo.findByTrackingRef(trackingRef).map(row -> reconcileRow(row, payload));
+    }
+
+    /**
+     * Reconcile a webhook that correlates by connected-account id rather than our
+     * tracking ref (Stripe's {@code account.updated} carries the {@code acct_…}, not
+     * our id). Returns empty for an unknown account.
+     */
+    @Transactional
+    public Optional<MerchantAccountView> reconcileWebhookByAccount(String provider, String accountId,
+                                                                   Map<String, Object> payload) {
+        if (accountId == null || accountId.isBlank()) return Optional.empty();
+        return repo.findByProviderAndAccountId(norm(provider), accountId)
+                .map(row -> reconcileRow(row, enrich(payload, row)));
+    }
+
+    private MerchantAccountView reconcileRow(MerchantPspAccountEntity row, Map<String, Object> payload) {
+        MerchantOnboarding onboarding = providers.get(norm(row.getProvider()));
+        if (onboarding == null) return null;
+        return apply(row, row.getProvider(), onboarding.reconcile(
+                new OnboardingCallback(new Ids.TenantId(row.getTenantId()), row.getTrackingRef(), payload)));
+    }
+
+    /** Fold the row's known account id into the callback data so a provider that
+     *  correlates by account (Stripe on return) can query its status. */
+    private static Map<String, Object> enrich(Map<String, Object> data, MerchantPspAccountEntity row) {
+        Map<String, Object> out = new java.util.HashMap<>(data == null ? Map.of() : data);
+        if (row.getAccountId() != null && !row.getAccountId().isBlank()) {
+            out.putIfAbsent("accountId", row.getAccountId());
+        }
+        return out;
     }
 
     @Transactional(readOnly = true)

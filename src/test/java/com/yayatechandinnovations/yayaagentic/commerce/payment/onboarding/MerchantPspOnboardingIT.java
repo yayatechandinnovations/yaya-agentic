@@ -73,6 +73,37 @@ class MerchantPspOnboardingIT {
     }
 
     @Test
+    void stripeMintsAccountUpFrontAndActivatesOnReturn() {
+        Ids.TenantId t = tenant("psp-onb-stripe");
+
+        OnboardingSession session = service.begin(t, "stripe",
+                "https://app.example/return", "https://app.example/refresh");
+        assertTrue(session.accountId().startsWith("acct_sandbox_"),
+                "Stripe mints the connected account at start");
+        assertEquals(MerchantAccountStatus.ONBOARDING, service.view(t, "stripe").status());
+
+        MerchantAccountView view = service.reconcileReturn(t, "stripe",
+                Map.of("sandbox", "1", "stripeAccount", session.accountId()));
+        assertTrue(view.connected());
+        assertEquals(session.accountId(),
+                service.resolveConnectedAccount(t, "stripe").orElseThrow());
+    }
+
+    @Test
+    void stripeWebhookCorrelatesByAccountId() {
+        Ids.TenantId t = tenant("psp-onb-stripe-wh");
+        OnboardingSession session = service.begin(t, "stripe",
+                "https://app.example/return", "https://app.example/refresh");
+
+        // account.updated carries the acct id (not our tracking ref).
+        MerchantAccountView view = service.reconcileWebhookByAccount("stripe", session.accountId(),
+                Map.of("charges_enabled", true, "details_submitted", true)).orElseThrow();
+
+        assertTrue(view.connected());
+        assertEquals(session.accountId(), service.resolveConnectedAccount(t, "stripe").orElseThrow());
+    }
+
+    @Test
     void dlocalHasNoSelfServeOnboarding() {
         assertFalse(service.supports("dlocal"));
         assertFalse(service.view(tenant("psp-onb-dlocal"), "dlocal").onboardingSupported());

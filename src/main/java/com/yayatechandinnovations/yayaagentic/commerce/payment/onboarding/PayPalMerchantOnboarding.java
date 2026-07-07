@@ -63,7 +63,7 @@ public class PayPalMerchantOnboarding implements MerchantOnboarding {
                     + "merchantIdInPayPal=SB-" + start.trackingRef()
                     + "&permissionsGranted=true&sandbox=1";
             log.info("PayPal sandbox onboarding {} (no partner credentials configured)", start.trackingRef());
-            return new OnboardingSession(actionUrl, start.trackingRef());
+            return new OnboardingSession(actionUrl, start.trackingRef(), null);
         }
         return live(start);
     }
@@ -86,7 +86,7 @@ public class PayPalMerchantOnboarding implements MerchantOnboarding {
             if (actionUrl == null) {
                 throw new PaymentException("PayPal Partner Referrals returned no action_url");
             }
-            return new OnboardingSession(actionUrl, start.trackingRef());
+            return new OnboardingSession(actionUrl, start.trackingRef(), null);
         } catch (PaymentException e) {
             throw e;
         } catch (Exception e) {

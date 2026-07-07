@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class StripeConnectPaymentProviderTest {
 
     private final StripeConnectPaymentProvider provider = new StripeConnectPaymentProvider(
-            new StripeProperties(null, null, null),   // unconfigured → sandbox
+            new StripeProperties(null, null, null, null),   // unconfigured → sandbox
             new ObjectMapper());
 
     private static Cart cart() {

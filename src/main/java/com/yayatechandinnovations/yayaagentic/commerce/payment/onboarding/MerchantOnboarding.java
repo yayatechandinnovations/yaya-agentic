@@ -32,8 +32,13 @@ public interface MerchantOnboarding {
     /** What the framework hands {@link #start}: the tenant + where the PSP returns the merchant. */
     record OnboardingStart(Ids.TenantId tenant, String trackingRef, String returnUrl, String refreshUrl) {}
 
-    /** The hosted URL the UI opens, plus the tracking ref echoed back on return/webhook. */
-    record OnboardingSession(String actionUrl, String trackingRef) {}
+    /**
+     * The hosted URL the UI opens, plus the tracking ref echoed back on
+     * return/webhook. {@code accountId} is set when the provider mints the
+     * connected account up front (Stripe creates the Account at start); null when
+     * it only arrives on return (PayPal).
+     */
+    record OnboardingSession(String actionUrl, String trackingRef, String accountId) {}
 
     /** A return redirect's query params or a webhook body, tagged with the tenant/tracking ref. */
     record OnboardingCallback(Ids.TenantId tenant, String trackingRef, Map<String, Object> data) {}
