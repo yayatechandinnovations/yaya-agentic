@@ -571,6 +571,10 @@ WorkspaceCreateRequest _$WorkspaceCreateRequestFromJson(
 mixin _$WorkspaceCreateRequest {
   String get displayName => throw _privateConstructorUsedError;
   String? get code => throw _privateConstructorUsedError;
+  String? get hostBaseUrl => throw _privateConstructorUsedError;
+  List<String>? get hostBaseUrlAllowlist => throw _privateConstructorUsedError;
+  List<String>? get inboundOriginAllowlist =>
+      throw _privateConstructorUsedError;
 
   /// Serializes this WorkspaceCreateRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -589,7 +593,13 @@ abstract class $WorkspaceCreateRequestCopyWith<$Res> {
     $Res Function(WorkspaceCreateRequest) then,
   ) = _$WorkspaceCreateRequestCopyWithImpl<$Res, WorkspaceCreateRequest>;
   @useResult
-  $Res call({String displayName, String? code});
+  $Res call({
+    String displayName,
+    String? code,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
+  });
 }
 
 /// @nodoc
@@ -609,7 +619,13 @@ class _$WorkspaceCreateRequestCopyWithImpl<
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = null, Object? code = freezed}) {
+  $Res call({
+    Object? displayName = null,
+    Object? code = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = freezed,
+    Object? inboundOriginAllowlist = freezed,
+  }) {
     return _then(
       _value.copyWith(
             displayName: null == displayName
@@ -620,6 +636,18 @@ class _$WorkspaceCreateRequestCopyWithImpl<
                 ? _value.code
                 : code // ignore: cast_nullable_to_non_nullable
                       as String?,
+            hostBaseUrl: freezed == hostBaseUrl
+                ? _value.hostBaseUrl
+                : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                      as String?,
+            hostBaseUrlAllowlist: freezed == hostBaseUrlAllowlist
+                ? _value.hostBaseUrlAllowlist
+                : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                      as List<String>?,
+            inboundOriginAllowlist: freezed == inboundOriginAllowlist
+                ? _value.inboundOriginAllowlist
+                : inboundOriginAllowlist // ignore: cast_nullable_to_non_nullable
+                      as List<String>?,
           )
           as $Val,
     );
@@ -635,7 +663,13 @@ abstract class _$$WorkspaceCreateRequestImplCopyWith<$Res>
   ) = __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String displayName, String? code});
+  $Res call({
+    String displayName,
+    String? code,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
+  });
 }
 
 /// @nodoc
@@ -652,7 +686,13 @@ class __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? displayName = null, Object? code = freezed}) {
+  $Res call({
+    Object? displayName = null,
+    Object? code = freezed,
+    Object? hostBaseUrl = freezed,
+    Object? hostBaseUrlAllowlist = freezed,
+    Object? inboundOriginAllowlist = freezed,
+  }) {
     return _then(
       _$WorkspaceCreateRequestImpl(
         displayName: null == displayName
@@ -663,6 +703,18 @@ class __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>
             ? _value.code
             : code // ignore: cast_nullable_to_non_nullable
                   as String?,
+        hostBaseUrl: freezed == hostBaseUrl
+            ? _value.hostBaseUrl
+            : hostBaseUrl // ignore: cast_nullable_to_non_nullable
+                  as String?,
+        hostBaseUrlAllowlist: freezed == hostBaseUrlAllowlist
+            ? _value._hostBaseUrlAllowlist
+            : hostBaseUrlAllowlist // ignore: cast_nullable_to_non_nullable
+                  as List<String>?,
+        inboundOriginAllowlist: freezed == inboundOriginAllowlist
+            ? _value._inboundOriginAllowlist
+            : inboundOriginAllowlist // ignore: cast_nullable_to_non_nullable
+                  as List<String>?,
       ),
     );
   }
@@ -671,7 +723,14 @@ class __$$WorkspaceCreateRequestImplCopyWithImpl<$Res>
 /// @nodoc
 @JsonSerializable()
 class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
-  const _$WorkspaceCreateRequestImpl({required this.displayName, this.code});
+  const _$WorkspaceCreateRequestImpl({
+    required this.displayName,
+    this.code,
+    this.hostBaseUrl,
+    final List<String>? hostBaseUrlAllowlist,
+    final List<String>? inboundOriginAllowlist,
+  }) : _hostBaseUrlAllowlist = hostBaseUrlAllowlist,
+       _inboundOriginAllowlist = inboundOriginAllowlist;
 
   factory _$WorkspaceCreateRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$WorkspaceCreateRequestImplFromJson(json);
@@ -680,10 +739,33 @@ class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
   final String displayName;
   @override
   final String? code;
+  @override
+  final String? hostBaseUrl;
+  final List<String>? _hostBaseUrlAllowlist;
+  @override
+  List<String>? get hostBaseUrlAllowlist {
+    final value = _hostBaseUrlAllowlist;
+    if (value == null) return null;
+    if (_hostBaseUrlAllowlist is EqualUnmodifiableListView)
+      return _hostBaseUrlAllowlist;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(value);
+  }
+
+  final List<String>? _inboundOriginAllowlist;
+  @override
+  List<String>? get inboundOriginAllowlist {
+    final value = _inboundOriginAllowlist;
+    if (value == null) return null;
+    if (_inboundOriginAllowlist is EqualUnmodifiableListView)
+      return _inboundOriginAllowlist;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(value);
+  }
 
   @override
   String toString() {
-    return 'WorkspaceCreateRequest(displayName: $displayName, code: $code)';
+    return 'WorkspaceCreateRequest(displayName: $displayName, code: $code, hostBaseUrl: $hostBaseUrl, hostBaseUrlAllowlist: $hostBaseUrlAllowlist, inboundOriginAllowlist: $inboundOriginAllowlist)';
   }
 
   @override
@@ -693,12 +775,29 @@ class _$WorkspaceCreateRequestImpl implements _WorkspaceCreateRequest {
             other is _$WorkspaceCreateRequestImpl &&
             (identical(other.displayName, displayName) ||
                 other.displayName == displayName) &&
-            (identical(other.code, code) || other.code == code));
+            (identical(other.code, code) || other.code == code) &&
+            (identical(other.hostBaseUrl, hostBaseUrl) ||
+                other.hostBaseUrl == hostBaseUrl) &&
+            const DeepCollectionEquality().equals(
+              other._hostBaseUrlAllowlist,
+              _hostBaseUrlAllowlist,
+            ) &&
+            const DeepCollectionEquality().equals(
+              other._inboundOriginAllowlist,
+              _inboundOriginAllowlist,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, displayName, code);
+  int get hashCode => Object.hash(
+    runtimeType,
+    displayName,
+    code,
+    hostBaseUrl,
+    const DeepCollectionEquality().hash(_hostBaseUrlAllowlist),
+    const DeepCollectionEquality().hash(_inboundOriginAllowlist),
+  );
 
   /// Create a copy of WorkspaceCreateRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -722,6 +821,9 @@ abstract class _WorkspaceCreateRequest implements WorkspaceCreateRequest {
   const factory _WorkspaceCreateRequest({
     required final String displayName,
     final String? code,
+    final String? hostBaseUrl,
+    final List<String>? hostBaseUrlAllowlist,
+    final List<String>? inboundOriginAllowlist,
   }) = _$WorkspaceCreateRequestImpl;
 
   factory _WorkspaceCreateRequest.fromJson(Map<String, dynamic> json) =
@@ -731,6 +833,12 @@ abstract class _WorkspaceCreateRequest implements WorkspaceCreateRequest {
   String get displayName;
   @override
   String? get code;
+  @override
+  String? get hostBaseUrl;
+  @override
+  List<String>? get hostBaseUrlAllowlist;
+  @override
+  List<String>? get inboundOriginAllowlist;
 
   /// Create a copy of WorkspaceCreateRequest
   /// with the given fields replaced by the non-null parameter values.

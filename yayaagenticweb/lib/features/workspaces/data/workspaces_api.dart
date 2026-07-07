@@ -32,12 +32,26 @@ class WorkspacesApi {
   /// verbatim instead of deriving a slug from [displayName] — pass it when
   /// the workspace code must match an external integration. 409 with
   /// `workspace_code_taken` surfaces if the code is already in use.
-  Future<Workspace> create(String displayName, {String? code}) async {
+  ///
+  /// [hostBaseUrl] and the two allowlists are optional URL config, mirroring
+  /// [patch] — supply them to have HTTP tools / auth resolvers work on the
+  /// first try. A bad URL shape surfaces as 400.
+  Future<Workspace> create(
+    String displayName, {
+    String? code,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
+  }) async {
     try {
       final res = await _dio.post('/v1/admin/workspaces',
           data: WorkspaceCreateRequest(
             displayName: displayName,
             code: (code == null || code.isEmpty) ? null : code,
+            hostBaseUrl:
+                (hostBaseUrl == null || hostBaseUrl.isEmpty) ? null : hostBaseUrl,
+            hostBaseUrlAllowlist: hostBaseUrlAllowlist,
+            inboundOriginAllowlist: inboundOriginAllowlist,
           ).toJson());
       return Workspace.fromJson(_asMap(res.data));
     } on DioException catch (e) {

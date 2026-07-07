@@ -31,7 +31,13 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
   final _formKey = GlobalKey<FormState>();
   final _displayName = TextEditingController();
   final _code = TextEditingController();
+  // Optional URL config, same three knobs as the General settings tab.
+  // Hidden by default so the common "just name it" path stays a single field.
+  final _hostBase = TextEditingController();
+  final _hostAllowlist = TextEditingController();
+  final _inboundOrigins = TextEditingController();
   bool _useCustomCode = false;
+  bool _showUrlConfig = false;
   bool _saving = false;
   String? _error;
   String? _codeError;
@@ -40,7 +46,21 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
   void dispose() {
     _displayName.dispose();
     _code.dispose();
+    _hostBase.dispose();
+    _hostAllowlist.dispose();
+    _inboundOrigins.dispose();
     super.dispose();
+  }
+
+  /// One pattern per line → trimmed, non-empty entries (mirrors the settings
+  /// screen). Returns null when blank so the field is simply omitted.
+  static List<String>? _parseAllowlist(String raw) {
+    final list = raw
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return list.isEmpty ? null : list;
   }
 
   String? _validateCode(String? raw) {
@@ -67,6 +87,9 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
       final created = await api.create(
         _displayName.text.trim(),
         code: _useCustomCode ? _code.text.trim() : null,
+        hostBaseUrl: _hostBase.text.trim().isEmpty ? null : _hostBase.text.trim(),
+        hostBaseUrlAllowlist: _parseAllowlist(_hostAllowlist.text),
+        inboundOriginAllowlist: _parseAllowlist(_inboundOrigins.text),
       );
       // Refresh the membership list so the new workspace is visible
       // everywhere it's rendered (switcher, list page).
@@ -100,7 +123,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
     return AlertDialog(
       title: const Text('Create a workspace'),
       content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
+        constraints: const BoxConstraints(maxWidth: 440),
         child: Form(
           key: _formKey,
           child: Column(
@@ -172,6 +195,81 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
                   style: theme.textTheme.bodySmall
                       ?.copyWith(color: theme.colorScheme.outline),
                 ),
+              const SizedBox(height: 8),
+              const Divider(height: 24),
+              // Optional URL config. Setting the host base URL here means an
+              // HTTP auth resolver / HTTP tool works immediately — otherwise
+              // it fails config_error until it's set on the General tab.
+              if (!_showUrlConfig)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed:
+                        _saving ? null : () => setState(() => _showUrlConfig = true),
+                    icon: const Icon(Icons.link, size: 16),
+                    label: const Text('Configure host URLs (optional)'),
+                  ),
+                ),
+              if (_showUrlConfig) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('URL configuration',
+                          style: theme.textTheme.titleSmall),
+                    ),
+                    IconButton(
+                      tooltip: 'Hide',
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _showUrlConfig = false),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Set this if the workspace uses HTTP tools or an HTTP auth '
+                  'resolver — the engine joins their path-only templates onto '
+                  'this base. You can change it later on the General tab.',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.outline),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _hostBase,
+                  decoration: const InputDecoration(
+                    labelText: 'Host base URL (outbound)',
+                    hintText: 'https://api.example.com',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _hostAllowlist,
+                  minLines: 1,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Per-call override hosts (outbound)',
+                    hintText: 'One pattern per line, e.g. https://*.example.com',
+                    helperText:
+                        'Optional. Lets X-Yaya-Host-Base-Url override the base for a single call.',
+                    helperMaxLines: 2,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _inboundOrigins,
+                  minLines: 1,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Allowed origins (inbound)',
+                    hintText:
+                        'One per line, e.g. https://yayaagentic.smartlottery.do',
+                    helperText:
+                        'Browser origins allowed to call /v1/sessions/*. Glob wildcards allowed.',
+                    helperMaxLines: 2,
+                  ),
+                ),
+              ],
               if (_error != null) const SizedBox(height: 12),
               if (_error != null)
                 Text(_error!,

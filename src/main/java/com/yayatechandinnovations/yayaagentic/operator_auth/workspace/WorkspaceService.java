@@ -115,6 +115,9 @@ public class WorkspaceService {
     public WorkspaceSummary create(UserId actor,
                                    String displayName,
                                    String explicitCode,
+                                   String hostBaseUrl,
+                                   List<String> hostBaseUrlAllowlist,
+                                   List<String> inboundOriginAllowlist,
                                    OperatorAccountService.RequestMeta meta) {
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName is required");
@@ -140,6 +143,11 @@ public class WorkspaceService {
         t.setCreatedBy(actor.toString());
         t.setCode(code);
         t.setOwnerUserId(actor.value());
+        // Optional URL config supplied at creation. Same validation the
+        // General-settings PATCH runs — a new tenant defaults require_https,
+        // so an http:// base is rejected up front rather than at first HTTP
+        // tool / auth-resolver dispatch (channel-auth-resolver-design §5.2).
+        applyUrlConfig(t, hostBaseUrl, hostBaseUrlAllowlist, inboundOriginAllowlist);
         tenants.save(t);
 
         memberships.save(new UserMembershipEntity(
@@ -155,10 +163,51 @@ public class WorkspaceService {
         return toSummary(t);
     }
 
+    /** Back-compat overload — no URL config, derives nothing new. */
+    @Transactional
+    public WorkspaceSummary create(UserId actor,
+                                   String displayName,
+                                   String explicitCode,
+                                   OperatorAccountService.RequestMeta meta) {
+        return create(actor, displayName, explicitCode, null, null, null, meta);
+    }
+
     /** Back-compat overload — derives the code from {@code displayName}. */
     @Transactional
     public WorkspaceSummary create(UserId actor, String displayName, OperatorAccountService.RequestMeta meta) {
-        return create(actor, displayName, null, meta);
+        return create(actor, displayName, null, null, null, null, meta);
+    }
+
+    /**
+     * Validate + set the three URL knobs on a fresh entity. Mirrors the
+     * per-field validation in {@link #patch}: {@code null}/blank base clears
+     * it, allowlist entries are pattern-checked. {@code requireHttps} is read
+     * from the entity so it tracks the tenant's own policy.
+     */
+    private void applyUrlConfig(TenantEntity t,
+                                String hostBaseUrl,
+                                List<String> hostBaseUrlAllowlist,
+                                List<String> inboundOriginAllowlist) {
+        boolean requireHttps = t.isRequireHttps();
+        if (hostBaseUrl != null) {
+            String trimmed = hostBaseUrl.isBlank() ? null : hostBaseUrl.trim();
+            if (trimmed != null) {
+                BaseUrlValidator.validateHostBaseUrl(trimmed, requireHttps);
+            }
+            t.setHostBaseUrl(trimmed);
+        }
+        if (hostBaseUrlAllowlist != null) {
+            for (String entry : hostBaseUrlAllowlist) {
+                BaseUrlValidator.validateUrlPattern(entry, requireHttps);
+            }
+            t.setHostBaseUrlAllowlistJson(writeStringList(hostBaseUrlAllowlist));
+        }
+        if (inboundOriginAllowlist != null) {
+            for (String entry : inboundOriginAllowlist) {
+                BaseUrlValidator.validateOriginPattern(entry, requireHttps);
+            }
+            t.setInboundOriginAllowlistJson(writeStringList(inboundOriginAllowlist));
+        }
     }
 
     /**

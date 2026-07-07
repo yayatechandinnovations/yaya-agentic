@@ -49,11 +49,18 @@ class WorkspaceListItem with _$WorkspaceListItem {
 /// the backend uses it verbatim (after shape/reserved/uniqueness checks)
 /// instead of deriving a slug from `displayName`. Useful when the workspace
 /// code must match an external system byte-for-byte.
+///
+/// The three URL fields mirror [WorkspacePatchRequest] — supplying them at
+/// creation avoids the "HTTP auth resolver / HTTP tool fails until General
+/// settings is opened" trap. All optional; omitted (`null`) leaves them unset.
 @freezed
 class WorkspaceCreateRequest with _$WorkspaceCreateRequest {
   const factory WorkspaceCreateRequest({
     required String displayName,
     String? code,
+    String? hostBaseUrl,
+    List<String>? hostBaseUrlAllowlist,
+    List<String>? inboundOriginAllowlist,
   }) = _WorkspaceCreateRequest;
 
   factory WorkspaceCreateRequest.fromJson(Map<String, dynamic> json) =>

@@ -56,6 +56,13 @@ _$WorkspaceCreateRequestImpl _$$WorkspaceCreateRequestImplFromJson(
 ) => _$WorkspaceCreateRequestImpl(
   displayName: json['displayName'] as String,
   code: json['code'] as String?,
+  hostBaseUrl: json['hostBaseUrl'] as String?,
+  hostBaseUrlAllowlist: (json['hostBaseUrlAllowlist'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
+  inboundOriginAllowlist: (json['inboundOriginAllowlist'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
 );
 
 Map<String, dynamic> _$$WorkspaceCreateRequestImplToJson(
@@ -63,6 +70,9 @@ Map<String, dynamic> _$$WorkspaceCreateRequestImplToJson(
 ) => <String, dynamic>{
   'displayName': instance.displayName,
   'code': instance.code,
+  'hostBaseUrl': instance.hostBaseUrl,
+  'hostBaseUrlAllowlist': instance.hostBaseUrlAllowlist,
+  'inboundOriginAllowlist': instance.inboundOriginAllowlist,
 };
 
 _$WorkspacePatchRequestImpl _$$WorkspacePatchRequestImplFromJson(

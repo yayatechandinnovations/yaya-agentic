@@ -68,7 +68,12 @@ public class WorkspaceController {
         }
         UserId me = currentUserId(exchange);
         RequestMeta meta = metaOf(exchange);
-        return Mono.fromCallable(() -> workspaces.create(me, body.displayName(), body.code(), meta))
+        return Mono.fromCallable(() -> workspaces.create(
+                        me, body.displayName(), body.code(),
+                        body.hostBaseUrl(),
+                        body.hostBaseUrlAllowlist(),
+                        body.inboundOriginAllowlist(),
+                        meta))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(w -> ResponseEntity.status(HttpStatus.CREATED).body(WorkspaceDto.of(w)));
     }
@@ -155,8 +160,20 @@ public class WorkspaceController {
      * derived from {@code displayName}, so the workspace code can match an
      * external system byte-for-byte. Invalid shapes return 400; collisions
      * return 409 {@code workspace_code_taken}.
+     *
+     * <p>The three URL fields are optional and mirror {@link PatchRequest} —
+     * they let an operator set the outbound host + allowlists at creation so
+     * an HTTP auth resolver / HTTP tool works on the first try instead of
+     * failing {@code config_error} until General settings is opened. Same
+     * validation as PATCH; a bad shape returns 400.
      */
-    public record CreateRequest(String displayName, String code) {}
+    public record CreateRequest(
+            String displayName,
+            String code,
+            String hostBaseUrl,
+            List<String> hostBaseUrlAllowlist,
+            List<String> inboundOriginAllowlist
+    ) {}
 
     /**
      * Each field is optional ({@code null} → "leave untouched"). Empty
