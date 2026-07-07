@@ -24,6 +24,7 @@ import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalPaymentProv
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.StripeConnectPaymentProvider;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.StripeProperties;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantPspAccountService;
 import com.yayatechandinnovations.yayaagentic.commerce.search.ProductSearchService;
 import com.yayatechandinnovations.yayaagentic.commerce.testsupport.JsonWorkingMemory;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
@@ -89,7 +90,12 @@ class CheckoutToolHandlerTest {
                 new StripeConnectPaymentProvider(new StripeProperties(null, null, null), json),
                 new PayPalPaymentProvider(new PayPalProperties(null, null, null, null, null, null), json),
                 new PaymentRoutingProperties("auto"));   // default = dLocal
-        checkout = new CheckoutToolHandler(runtime, cart, router, orders, payloads);
+
+        // No in-app onboarding record in these unit tests → checkout falls back to
+        // the profile's connectedAccountId (or platform charge).
+        MerchantPspAccountService merchantAccounts = mock(MerchantPspAccountService.class);
+        when(merchantAccounts.resolveConnectedAccount(any(), any())).thenReturn(Optional.empty());
+        checkout = new CheckoutToolHandler(runtime, cart, router, merchantAccounts, orders, payloads);
 
         wm.merge(SESSION, Map.of("commerceConfig",
                 new CommerceConfig(List.of(CATALOG), "USD", new Ids.ToolId("checkout"), true, null)));

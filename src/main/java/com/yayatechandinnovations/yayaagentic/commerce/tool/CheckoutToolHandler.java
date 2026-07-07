@@ -8,6 +8,7 @@ import com.yayatechandinnovations.yayaagentic.commerce.payment.CheckoutOutcome;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.CheckoutRequest;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentProvider;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentProviderRouter;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantPspAccountService;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
 import com.yayatechandinnovations.yayaagentic.persistence.CommerceOrderEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.CommerceOrderRepository;
@@ -35,14 +36,17 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
     private final CommerceRuntime runtime;
     private final ManagedCart cart;
     private final PaymentProviderRouter payments;
+    private final MerchantPspAccountService merchantAccounts;
     private final CommerceOrderRepository orders;
     private final CommercePayloads payloads;
 
     public CheckoutToolHandler(CommerceRuntime runtime, ManagedCart cart, PaymentProviderRouter payments,
+                               MerchantPspAccountService merchantAccounts,
                                CommerceOrderRepository orders, CommercePayloads payloads) {
         this.runtime = runtime;
         this.cart = cart;
         this.payments = payments;
+        this.merchantAccounts = merchantAccounts;
         this.orders = orders;
         this.payloads = payloads;
     }
@@ -68,9 +72,21 @@ public class CheckoutToolHandler implements ToolHandler<Map<String, Object>, Map
         // one falls back to the framework default. Resolve once so the audit row's
         // provider name matches the provider that actually opened the checkout.
         PaymentProvider provider = payments.resolve(cfg.paymentProvider());
+
+        // Connected account precedence (design §6): explicit profile override →
+        // the tenant's ACTIVE in-app onboarding record for this provider → null
+        // (platform charge). So a merchant who clicked "Connect PayPal" gets funds
+        // routed to their account with nothing pasted anywhere.
+        String connectedAccountId = cfg.connectedAccountId();
+        if (connectedAccountId == null || connectedAccountId.isBlank()) {
+            connectedAccountId = merchantAccounts
+                    .resolveConnectedAccount(ctx.principal().tenant(), provider.name())
+                    .orElse(null);
+        }
+
         CheckoutOutcome outcome = provider.createCheckout(new CheckoutRequest(
                 ctx.principal().tenant(), ctx.sessionId(),
-                ctx.principal().subject(), cfg.connectedAccountId(),
+                ctx.principal().subject(), connectedAccountId,
                 current, currency, fulfilment));
 
         String status = outcome instanceof CheckoutOutcome.OrderPlaced placed ? placed.status() : "PENDING";

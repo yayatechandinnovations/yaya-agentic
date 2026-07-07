@@ -1,0 +1,177 @@
+package com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantOnboarding.OnboardingCallback;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantOnboarding.OnboardingSession;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantOnboarding.OnboardingStart;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantOnboarding.ReconcileResult;
+import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.persistence.MerchantPspAccountEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.MerchantPspAccountRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Orchestrates in-app merchant PSP onboarding: begins the hosted flow, reconciles
+ * the return/webhook into a persisted {@code merchant_psp_accounts} row, and
+ * resolves the connected account id for checkout. Provider-specific work lives in
+ * the {@link MerchantOnboarding} beans; this owns persistence, tracking-ref
+ * correlation, and the tenant/provider status. See
+ * {@code merchant-psp-onboarding-design.md} §3, §6.
+ */
+@Service
+public class MerchantPspAccountService {
+
+    private static final Logger log = LoggerFactory.getLogger(MerchantPspAccountService.class);
+
+    private final Map<String, MerchantOnboarding> providers;
+    private final MerchantPspAccountRepository repo;
+    private final ObjectMapper json;
+
+    public MerchantPspAccountService(List<MerchantOnboarding> onboarders,
+                                     MerchantPspAccountRepository repo,
+                                     ObjectMapper json) {
+        this.providers = onboarders.stream().collect(
+                java.util.stream.Collectors.toMap(o -> o.provider().toLowerCase(Locale.ROOT), o -> o));
+        this.repo = repo;
+        this.json = json;
+    }
+
+    /** Whether a provider supports self-serve onboarding (has a bean) — dLocal doesn't. */
+    public boolean supports(String provider) {
+        return providers.containsKey(norm(provider));
+    }
+
+    /**
+     * Start onboarding: mint a tracking ref, move the row to ONBOARDING, and ask
+     * the provider for the hosted URL. {@code returnUrl} is the absolute URL the
+     * PSP sends the merchant back to (our return endpoint).
+     */
+    @Transactional
+    public OnboardingSession begin(Ids.TenantId tenant, String provider, String returnUrl, String refreshUrl) {
+        MerchantOnboarding onboarding = require(provider);
+        String trackingRef = "onb_" + UUID.randomUUID().toString().replace("-", "");
+
+        MerchantPspAccountEntity row = load(tenant, onboarding.provider());
+        row.setTrackingRef(trackingRef);
+        row.setStatus(MerchantAccountStatus.ONBOARDING.name());
+        row.setChargesEnabled(false);
+        repo.save(row);
+
+        return onboarding.start(new OnboardingStart(tenant, trackingRef, returnUrl, refreshUrl));
+    }
+
+    /** Reconcile a return redirect (params) for a known tenant+provider. */
+    @Transactional
+    public MerchantAccountView reconcileReturn(Ids.TenantId tenant, String provider, Map<String, Object> params) {
+        MerchantOnboarding onboarding = require(provider);
+        MerchantPspAccountEntity row = load(tenant, onboarding.provider());
+        ReconcileResult result = onboarding.reconcile(
+                new OnboardingCallback(tenant, row.getTrackingRef(), params));
+        return apply(row, onboarding.provider(), result);
+    }
+
+    /**
+     * Reconcile an async PSP webhook. The webhook carries our tracking ref (not the
+     * tenant), so resolve the row by it. Returns empty for an unknown ref.
+     */
+    @Transactional
+    public Optional<MerchantAccountView> reconcileWebhook(String trackingRef, Map<String, Object> payload) {
+        if (trackingRef == null || trackingRef.isBlank()) return Optional.empty();
+        return repo.findByTrackingRef(trackingRef).map(row -> {
+            MerchantOnboarding onboarding = providers.get(norm(row.getProvider()));
+            if (onboarding == null) return null;
+            ReconcileResult result = onboarding.reconcile(
+                    new OnboardingCallback(new Ids.TenantId(row.getTenantId()), trackingRef, payload));
+            return apply(row, row.getProvider(), result);
+        });
+    }
+
+    @Transactional(readOnly = true)
+    public MerchantAccountView view(Ids.TenantId tenant, String provider) {
+        String p = norm(provider);
+        if (!providers.containsKey(p)) return MerchantAccountView.unsupported(p);
+        return repo.findByTenantIdAndProvider(tenant.value(), p)
+                .map(this::toView)
+                .orElse(new MerchantAccountView(p, MerchantAccountStatus.PENDING, false, null, true));
+    }
+
+    /** Disconnect (soft) — the row stays for audit; checkout stops routing to it. */
+    @Transactional
+    public MerchantAccountView disconnect(Ids.TenantId tenant, String provider) {
+        MerchantOnboarding onboarding = require(provider);
+        MerchantPspAccountEntity row = load(tenant, onboarding.provider());
+        row.setStatus(MerchantAccountStatus.DISABLED.name());
+        row.setChargesEnabled(false);
+        return toView(repo.save(row));
+    }
+
+    /**
+     * The connected account id to charge for {@code (tenant, provider)} — only when
+     * ACTIVE and charges-enabled. Empty ⇒ checkout falls back to a platform charge.
+     * Called by {@code CheckoutToolHandler} (design §6).
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> resolveConnectedAccount(Ids.TenantId tenant, String provider) {
+        return repo.findByTenantIdAndProvider(tenant.value(), norm(provider))
+                .filter(r -> MerchantAccountStatus.ACTIVE.name().equals(r.getStatus()) && r.isChargesEnabled())
+                .map(MerchantPspAccountEntity::getAccountId)
+                .filter(id -> id != null && !id.isBlank());
+    }
+
+    // ---- internals ---------------------------------------------------------
+
+    private MerchantAccountView apply(MerchantPspAccountEntity row, String provider, ReconcileResult result) {
+        if (result.accountId() != null && !result.accountId().isBlank()) {
+            row.setAccountId(result.accountId());
+        }
+        row.setStatus(result.status().name());
+        row.setChargesEnabled(result.chargesEnabled());
+        row.setDetailJson(writeJson(result.detail()));
+        MerchantAccountView view = toView(repo.save(row));
+        log.info("PSP onboarding reconciled: tenant={} provider={} status={} chargesEnabled={}",
+                row.getTenantId(), provider, view.status(), view.chargesEnabled());
+        return view;
+    }
+
+    private MerchantPspAccountEntity load(Ids.TenantId tenant, String provider) {
+        return repo.findByTenantIdAndProvider(tenant.value(), norm(provider))
+                .orElseGet(() -> new MerchantPspAccountEntity(tenant.value(), norm(provider)));
+    }
+
+    private MerchantAccountView toView(MerchantPspAccountEntity e) {
+        return new MerchantAccountView(
+                e.getProvider(),
+                MerchantAccountStatus.valueOf(e.getStatus()),
+                e.isChargesEnabled(),
+                e.getAccountId(),
+                true);
+    }
+
+    private MerchantOnboarding require(String provider) {
+        MerchantOnboarding o = providers.get(norm(provider));
+        if (o == null) throw new IllegalArgumentException("provider does not support onboarding: " + provider);
+        return o;
+    }
+
+    private static String norm(String provider) {
+        return provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String writeJson(Object v) {
+        try {
+            return json.writeValueAsString(v);
+        } catch (JsonProcessingException e) {
+            return "{}";
+        }
+    }
+}

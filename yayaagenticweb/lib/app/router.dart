@@ -14,6 +14,7 @@ import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
 import '../features/admin/product_catalogs/product_catalogs_screen.dart';
 import '../features/admin/product_catalogs/managed_products_screen.dart';
 import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
+import '../features/admin/payments/payments_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
@@ -98,6 +99,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, state) =>
                 ManagedProductsScreen(catalogId: state.pathParameters['id']!),
           ),
+          GoRoute(path: '/admin/payments', builder: (_, __) => const PaymentsScreen()),
           GoRoute(path: '/admin/auth-bindings', builder: (_, __) => const AuthBindingsScreen()),
           GoRoute(path: '/admin/oidc-issuers', builder: (_, __) => const OidcIssuersScreen()),
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),
@@ -265,6 +267,7 @@ const _navItems = <_NavEntry>[
     _NavItem('Tools', Icons.build_outlined, Icons.build, '/admin/tools'),
     _NavItem('Knowledge', Icons.menu_book_outlined, Icons.menu_book, '/admin/knowledge-sources'),
     _NavItem('Catalogs', Icons.shopping_bag_outlined, Icons.shopping_bag, '/admin/product-catalogs'),
+    _NavItem('Payments', Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, '/admin/payments'),
     _NavItem('Recording', Icons.fiber_manual_record_outlined, Icons.fiber_manual_record, '/admin/recording-strategies'),
   ]),
 

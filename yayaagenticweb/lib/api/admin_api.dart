@@ -16,6 +16,7 @@ import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/product.dart';
 import '../models/admin/product_catalog.dart';
 import '../models/admin/profile.dart';
+import '../models/admin/psp_account.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
@@ -106,6 +107,24 @@ class AdminApi {
       queryParameters: {'tenant': tenant, 'dryRun': dryRun},
     );
     return MigrateToPathPlan.fromJson(_asMap(res.data));
+  }
+
+  // ---- Merchant PSP onboarding (Connect PayPal/Stripe) ---------------
+
+  Future<PspAccountView> pspStatus(String tenant, String provider) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenant/commerce/psp/$provider');
+    return PspAccountView.fromJson(_asMap(res.data));
+  }
+
+  Future<PspOnboardingLink> pspOnboardingLink(String tenant, String provider) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenant/commerce/psp/$provider/onboarding-link');
+    return PspOnboardingLink.fromJson(_asMap(res.data));
+  }
+
+  Future<PspAccountView> pspDisconnect(String tenant, String provider) async {
+    final res = await _dio.delete('/v1/admin/tenants/$tenant/commerce/psp/$provider');
+    return PspAccountView.fromJson(_asMap(res.data));
   }
 
   // ---- Profiles ------------------------------------------------------

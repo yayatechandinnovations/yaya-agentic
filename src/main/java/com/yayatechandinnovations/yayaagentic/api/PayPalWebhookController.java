@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PayPalProperties;
 import com.yayatechandinnovations.yayaagentic.commerce.payment.PaymentStatusService;
+import com.yayatechandinnovations.yayaagentic.commerce.payment.onboarding.MerchantPspAccountService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -43,12 +44,15 @@ public class PayPalWebhookController {
 
     private final PayPalProperties props;
     private final PaymentStatusService paymentStatus;
+    private final MerchantPspAccountService merchantAccounts;
     private final ObjectMapper json;
     private final RestClient http = RestClient.create();
 
-    public PayPalWebhookController(PayPalProperties props, PaymentStatusService paymentStatus, ObjectMapper json) {
+    public PayPalWebhookController(PayPalProperties props, PaymentStatusService paymentStatus,
+                                   MerchantPspAccountService merchantAccounts, ObjectMapper json) {
         this.props = props;
         this.paymentStatus = paymentStatus;
+        this.merchantAccounts = merchantAccounts;
         this.json = json;
     }
 
@@ -64,20 +68,45 @@ public class PayPalWebhookController {
             log.warn("PayPal webhook signature rejected");
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
-        String orderRef;
+        JsonNode node;
         String eventType;
         try {
-            JsonNode node = json.readTree(rawBody == null ? "{}" : rawBody);
+            node = json.readTree(rawBody == null ? "{}" : rawBody);
             eventType = node.path("event_type").asText(null);
-            orderRef = orderRefOf(node.path("resource"));
         } catch (Exception e) {
             return ResponseEntity.badRequest().build();
         }
-        if (orderRef == null || orderRef.isBlank() || eventType == null) {
+        if (eventType == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // Merchant-onboarding events (Partner Referrals) carry our tracking_id, not
+        // an order custom_id — route them to the onboarding service instead.
+        if (eventType.toUpperCase(Locale.ROOT).startsWith("MERCHANT.")) {
+            JsonNode resource = node.path("resource");
+            String trackingRef = firstText(resource, "tracking_id", "partner_client_id");
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("event_type", eventType);
+            String merchantId = firstText(resource, "merchant_id", "merchantIdInPayPal");
+            if (merchantId != null) payload.put("merchant_id", merchantId);
+            merchantAccounts.reconcileWebhook(trackingRef, payload);
+            return ResponseEntity.ok().build();
+        }
+
+        String orderRef = orderRefOf(node.path("resource"));
+        if (orderRef == null || orderRef.isBlank()) {
             return ResponseEntity.badRequest().build();
         }
         paymentStatus.applyStatus(orderRef, normalize(eventType));
         return ResponseEntity.ok().build();   // ack even for unknown order — idempotent, stops retries
+    }
+
+    private static String firstText(JsonNode node, String... fields) {
+        for (String f : fields) {
+            String v = node.path(f).asText(null);
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
     }
 
     /** Our orderRef is the purchase unit's custom_id, present on both order and capture resources. */
