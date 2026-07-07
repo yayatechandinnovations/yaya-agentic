@@ -116,9 +116,12 @@ class AdminApi {
     return PspAccountView.fromJson(_asMap(res.data));
   }
 
-  Future<PspOnboardingLink> pspOnboardingLink(String tenant, String provider) async {
+  Future<PspOnboardingLink> pspOnboardingLink(String tenant, String provider,
+      {String? origin}) async {
     final res = await _dio.post(
-        '/v1/admin/tenants/$tenant/commerce/psp/$provider/onboarding-link');
+      '/v1/admin/tenants/$tenant/commerce/psp/$provider/onboarding-link',
+      queryParameters: {if (origin != null && origin.isNotEmpty) 'origin': origin},
+    );
     return PspOnboardingLink.fromJson(_asMap(res.data));
   }
 

@@ -60,6 +60,7 @@ public class MerchantPspOnboardingController {
     @PostMapping("/onboarding-link")
     public OnboardingLinkResponse onboardingLink(@PathVariable("tenantId") String tenantId,
                                                  @PathVariable("provider") String provider,
+                                                 @RequestParam(value = "origin", required = false) String origin,
                                                  ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
@@ -67,14 +68,35 @@ public class MerchantPspOnboardingController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "provider does not support self-serve onboarding: " + provider);
         }
-        // The PSP redirects the merchant back to OUR return endpoint (derived from
-        // this request's origin), where we reconcile the connected account.
-        String returnUrl = UriComponentsBuilder.fromUri(exchange.getRequest().getURI())
-                .replacePath("/v1/admin/tenants/" + tenantId + "/commerce/psp/" + provider + "/return")
-                .replaceQuery(null)
-                .build().toUriString();
+        // The PSP redirects the merchant back to OUR return endpoint, so it must be
+        // an absolute URL the *browser* can reach. The server's own view of the
+        // request (getURI) is the internal bind address behind a proxy/container, so
+        // prefer the browser-facing origin the client supplies; fall back to the
+        // request only when absent (no proxy).
+        String base = browserOrigin(origin, exchange);
+        String returnUrl = base + "/v1/admin/tenants/" + tenantId
+                + "/commerce/psp/" + provider + "/return";
         OnboardingSession session = accounts.begin(new Ids.TenantId(tenantId), provider, returnUrl, returnUrl);
         return new OnboardingLinkResponse(session.actionUrl(), session.trackingRef());
+    }
+
+    /** scheme://host[:port] the browser reaches us at — the client-supplied origin
+     *  (validated to http/https, path/query discarded) or the request's own origin. */
+    private static String browserOrigin(String origin, ServerWebExchange exchange) {
+        if (origin != null && !origin.isBlank()) {
+            try {
+                java.net.URI o = java.net.URI.create(origin.trim());
+                String scheme = o.getScheme();
+                if (("http".equals(scheme) || "https".equals(scheme)) && o.getAuthority() != null) {
+                    return scheme + "://" + o.getAuthority();
+                }
+            } catch (IllegalArgumentException ignored) {
+                // fall through to the request-derived origin
+            }
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid origin");
+        }
+        return UriComponentsBuilder.fromUri(exchange.getRequest().getURI())
+                .replacePath(null).replaceQuery(null).build().toUriString();
     }
 
     /**

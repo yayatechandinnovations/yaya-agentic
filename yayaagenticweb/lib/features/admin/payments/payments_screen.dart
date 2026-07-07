@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../api/api_config.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/psp_account.dart';
 import '../shared/admin_shared.dart';
@@ -86,7 +87,15 @@ class _ProviderCardState extends ConsumerState<_ProviderCard> {
     setState(() => _busy = true);
     try {
       final api = await ref.read(adminApiProvider.future);
-      final link = await api.pspOnboardingLink(widget.tenant, widget.provider);
+      // The PSP return endpoint must be an absolute URL the browser can reach —
+      // give the backend our browser-facing origin (it only sees its internal
+      // bind address behind a proxy/container).
+      final config = await ref.read(apiConfigProvider.future);
+      final origin = config.baseUrl.startsWith('http')
+          ? Uri.parse(config.baseUrl).origin
+          : html.window.location.origin;
+      final link = await api.pspOnboardingLink(widget.tenant, widget.provider,
+          origin: origin);
       html.window.open(link.actionUrl, 'psp_onboarding_${widget.provider}',
           'width=540,height=760');
       // The popup returns to our /return endpoint which reconciles the account;
