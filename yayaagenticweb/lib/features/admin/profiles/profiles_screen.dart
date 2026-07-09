@@ -6,9 +6,7 @@ import '../../../app/selected_tenant.dart';
 import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
-import '../capabilities/capabilities_screen.dart' show toolsProvider;
 import '../flows/start_flow_picker.dart';
-import '../product_catalogs/product_catalogs_screen.dart' show productCatalogsProvider;
 import '../shared/admin_shared.dart';
 import 'clone_profile_wizard.dart';
 
@@ -54,14 +52,13 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   bool _saving = false;
   int? _cloningFromVersion;
 
-  // Commerce block (nullable on the profile): turns this profile into a store.
+  // Commerce binding (nullable on the profile): points this profile at a
+  // yaya-sales store. Catalogs/pricing/PSP config live in the yaya-sales
+  // console, not here.
   bool _commerceEnabled = false;
-  final _commerceCatalogs = <String>{};
-  final _commerceCurrencyCtrl = TextEditingController(text: 'USD');
-  String? _commerceCheckoutTool;
-  // Per-profile PSP override: 'default' = framework config; else dlocal|stripe|paypal.
-  String _commercePaymentProvider = 'default';
-  final _commerceAccountCtrl = TextEditingController();   // merchant's PSP connected-account id
+  final _commerceStoreIdCtrl = TextEditingController();
+  final _commerceCheckoutToolCtrl = TextEditingController(text: 'checkout');
+  bool _commerceCartEnabled = true;
 
   /// Languages we surface in the dropdown. The backend accepts any BCP 47
   /// tag — operators with niche needs can extend the dropdown later. Until
@@ -107,29 +104,23 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   }
 
   /// Populates the commerce controls from a profile's `commerce` block, whose
-  /// shape mirrors the backend CommerceConfig (catalogs as {value,version},
-  /// checkoutTool as {value}).
+  /// shape mirrors the backend CommerceBinding {storeId, cartEnabled,
+  /// checkoutTool}. Tolerates the legacy {value} wrapper on checkoutTool.
   void _loadCommerce(Map<String, dynamic>? commerce) {
-    _commerceCatalogs.clear();
     if (commerce == null) {
       _commerceEnabled = false;
-      _commerceCurrencyCtrl.text = 'USD';
-      _commerceCheckoutTool = null;
-      _commercePaymentProvider = 'default';
-      _commerceAccountCtrl.text = '';
+      _commerceStoreIdCtrl.text = '';
+      _commerceCheckoutToolCtrl.text = 'checkout';
+      _commerceCartEnabled = true;
       return;
     }
-    _commerceEnabled = commerce['cartEnabled'] == true;
-    _commerceCurrencyCtrl.text = commerce['currency']?.toString() ?? 'USD';
+    _commerceEnabled = true;
+    _commerceStoreIdCtrl.text = commerce['storeId']?.toString() ?? '';
     final tool = commerce['checkoutTool'];
-    _commerceCheckoutTool = tool is Map ? tool['value']?.toString() : tool?.toString();
-    final provider = commerce['paymentProvider']?.toString().toLowerCase();
-    _commercePaymentProvider =
-        const {'dlocal', 'stripe', 'paypal'}.contains(provider) ? provider! : 'default';
-    _commerceAccountCtrl.text = commerce['connectedAccountId']?.toString() ?? '';
-    for (final c in (commerce['catalogs'] as List? ?? const [])) {
-      if (c is Map && c['value'] != null) _commerceCatalogs.add(c['value'].toString());
-    }
+    final toolId = tool is Map ? tool['value']?.toString() : tool?.toString();
+    _commerceCheckoutToolCtrl.text =
+        (toolId == null || toolId.isEmpty) ? 'checkout' : toolId;
+    _commerceCartEnabled = commerce['cartEnabled'] != false;
   }
 
   @override
@@ -138,28 +129,21 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     _nameCtrl.dispose();
     _introCtrl.dispose();
     _promptCtrl.dispose();
-    _commerceCurrencyCtrl.dispose();
-    _commerceAccountCtrl.dispose();
+    _commerceStoreIdCtrl.dispose();
+    _commerceCheckoutToolCtrl.dispose();
     super.dispose();
   }
 
-  /// Builds the commerce block in CommerceConfig JSON shape, or null when the
-  /// store toggle is off. Catalog versions come from the loaded catalog list.
+  /// Builds the commerce block in CommerceBinding JSON shape, or null when
+  /// the store toggle is off.
   Map<String, dynamic>? _buildCommerce() {
     if (!_commerceEnabled) return null;
-    final catalogs = ref.read(productCatalogsProvider).valueOrNull ?? const [];
-    final versionById = {for (final c in catalogs) c.id: c.version};
+    final storeId = _commerceStoreIdCtrl.text.trim();
+    final checkoutTool = _commerceCheckoutToolCtrl.text.trim();
     return {
-      'catalogs': _commerceCatalogs
-          .map((id) => {'value': id, 'version': versionById[id] ?? 1})
-          .toList(),
-      'currency': _commerceCurrencyCtrl.text.trim().isEmpty ? 'USD' : _commerceCurrencyCtrl.text.trim(),
-      'checkoutTool': _commerceCheckoutTool == null ? null : {'value': _commerceCheckoutTool},
-      'cartEnabled': true,
-      // Per-profile PSP override; 'default' means fall back to the framework config.
-      'paymentProvider': _commercePaymentProvider == 'default' ? null : _commercePaymentProvider,
-      'connectedAccountId':
-          _commerceAccountCtrl.text.trim().isEmpty ? null : _commerceAccountCtrl.text.trim(),
+      'storeId': storeId.isEmpty ? null : storeId,
+      'checkoutTool': checkoutTool.isEmpty ? 'checkout' : checkoutTool,
+      'cartEnabled': _commerceCartEnabled,
     };
   }
 
@@ -215,86 +199,33 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   }
 
   Widget _commerceSection(BuildContext context) {
-    final catalogs = ref.watch(productCatalogsProvider);
-    final tools = ref.watch(toolsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
-        Text('Catalogs', style: Theme.of(context).textTheme.labelLarge),
-        catalogs.when(
-          loading: () => const LinearProgressIndicator(),
-          error: (e, _) => Text(formatError(e),
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          data: (list) => list.isEmpty
-              ? const Text('No catalogs yet — create one under Catalogs.',
-                  style: TextStyle(fontSize: 12))
-              : Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: list
-                      .map((c) => FilterChip(
-                            label: Text('${c.id}@${c.version}'),
-                            selected: _commerceCatalogs.contains(c.id),
-                            onSelected: (sel) => setState(() {
-                              if (sel) {
-                                _commerceCatalogs.add(c.id);
-                              } else {
-                                _commerceCatalogs.remove(c.id);
-                              }
-                            }),
-                          ))
-                      .toList(),
-                ),
+        TextField(
+          controller: _commerceStoreIdCtrl,
+          decoration: const InputDecoration(
+            labelText: 'store id',
+            helperText: 'The yaya-sales store this profile sells from.',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
-          controller: _commerceCurrencyCtrl,
-          decoration: const InputDecoration(labelText: 'currency (ISO-4217)'),
-        ),
-        const SizedBox(height: 12),
-        tools.when(
-          loading: () => const SizedBox.shrink(),
-          error: (e, _) => Text(formatError(e),
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          data: (list) {
-            final ids = list.map((t) => t.id).toSet();
-            final value = ids.contains(_commerceCheckoutTool) ? _commerceCheckoutTool : null;
-            return DropdownButtonFormField<String?>(
-              initialValue: value,
-              decoration: const InputDecoration(labelText: 'checkout tool'),
-              items: [
-                const DropdownMenuItem(value: null, child: Text('— none —')),
-                ...ids.map((id) => DropdownMenuItem(value: id, child: Text(id))),
-              ],
-              onChanged: (v) => setState(() => _commerceCheckoutTool = v),
-            );
-          },
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: _commercePaymentProvider,
+          controller: _commerceCheckoutToolCtrl,
           decoration: const InputDecoration(
-            labelText: 'payment provider',
-            helperText: 'Which PSP handles checkout for this profile. '
-                'Default uses the platform-wide setting.',
+            labelText: 'checkout tool',
+            helperText: 'Tool id the agent calls to check out (default: checkout).',
           ),
-          items: const [
-            DropdownMenuItem(value: 'default', child: Text('Default (platform setting)')),
-            DropdownMenuItem(value: 'dlocal', child: Text('dLocal (LatAm / Dominican Republic)')),
-            DropdownMenuItem(value: 'paypal', child: Text('PayPal')),
-            DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
-          ],
-          onChanged: (v) => setState(() => _commercePaymentProvider = v ?? 'default'),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _commerceAccountCtrl,
-          decoration: const InputDecoration(
-            labelText: 'merchant account id (optional)',
-            helperText: "The merchant's connected-account id on the chosen PSP "
-                '(e.g. Stripe acct_… / PayPal merchant id). Blank = platform charge.',
-          ),
+        const SizedBox(height: 4),
+        SwitchListTile(
+          value: _commerceCartEnabled,
+          onChanged: (v) => setState(() => _commerceCartEnabled = v),
+          title: const Text('Cart enabled'),
+          subtitle: const Text('Shows the cart affordance to shoppers.',
+              style: TextStyle(fontSize: 12)),
+          contentPadding: EdgeInsets.zero,
         ),
       ],
     );
@@ -414,8 +345,8 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                 onChanged: (v) => setState(() => _commerceEnabled = v),
                 title: const Text('Commerce (storefront)'),
                 subtitle: const Text(
-                    'Turn this profile into a store: bind catalogs, currency, and '
-                    'a checkout tool. Shows the cart affordance to shoppers.',
+                    'Bind this profile to a yaya-sales store. Catalogs, pricing, '
+                    'and payment providers are managed in the yaya-sales console.',
                     style: TextStyle(fontSize: 12)),
                 contentPadding: EdgeInsets.zero,
               ),

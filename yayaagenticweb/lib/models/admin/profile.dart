@@ -15,8 +15,8 @@ class ProfileRequest with _$ProfileRequest {
     String? authBindingId,
     @Default('en') String language,
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
-    // Nullable commerce block: {catalogs:[{value,version}], currency,
-    // checkoutTool:{value}, cartEnabled}. Null = not a store.
+    // Nullable CommerceBinding block: {storeId, checkoutTool, cartEnabled}.
+    // Null = not a store. Catalogs/pricing/PSP live in yaya-sales.
     Map<String, dynamic>? commerce,
     // Default Session Start Flow id (null = none).
     String? defaultStartFlowId,

@@ -13,10 +13,7 @@ import '../models/admin/clone.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/operator_auth_strategies.dart';
-import '../models/admin/product.dart';
-import '../models/admin/product_catalog.dart';
 import '../models/admin/profile.dart';
-import '../models/admin/psp_account.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
@@ -107,27 +104,6 @@ class AdminApi {
       queryParameters: {'tenant': tenant, 'dryRun': dryRun},
     );
     return MigrateToPathPlan.fromJson(_asMap(res.data));
-  }
-
-  // ---- Merchant PSP onboarding (Connect PayPal/Stripe) ---------------
-
-  Future<PspAccountView> pspStatus(String tenant, String provider) async {
-    final res = await _dio.get('/v1/admin/tenants/$tenant/commerce/psp/$provider');
-    return PspAccountView.fromJson(_asMap(res.data));
-  }
-
-  Future<PspOnboardingLink> pspOnboardingLink(String tenant, String provider,
-      {String? origin}) async {
-    final res = await _dio.post(
-      '/v1/admin/tenants/$tenant/commerce/psp/$provider/onboarding-link',
-      queryParameters: {if (origin != null && origin.isNotEmpty) 'origin': origin},
-    );
-    return PspOnboardingLink.fromJson(_asMap(res.data));
-  }
-
-  Future<PspAccountView> pspDisconnect(String tenant, String provider) async {
-    final res = await _dio.delete('/v1/admin/tenants/$tenant/commerce/psp/$provider');
-    return PspAccountView.fromJson(_asMap(res.data));
   }
 
   // ---- Profiles ------------------------------------------------------
@@ -843,153 +819,6 @@ class AdminApi {
       data: {'contentType': contentType, 'dataBase64': dataBase64},
     );
     return (_asMap(res.data)['url'] ?? '') as String;
-  }
-
-  // ---- Product catalogs ------------------------------------------------
-
-  Future<List<ProductCatalogResponse>> listProductCatalogs({String tenant = 'default'}) async {
-    final res = await _dio.get('/v1/admin/product-catalogs',
-        queryParameters: {'tenant': tenant});
-    final items = (res.data['items'] as List? ?? const []);
-    return items.map((e) => ProductCatalogResponse.fromJson(_asMap(e))).toList();
-  }
-
-  Future<ProductCatalogResponse> createProductCatalog(CreateProductCatalogRequest req) async {
-    final res = await _dio.post('/v1/admin/product-catalogs', data: req.toJson());
-    return ProductCatalogResponse.fromJson(_asMap(res.data));
-  }
-
-  /// Full detail (incl. the raw location) for edit-in-place.
-  Future<ProductCatalogDetail> getProductCatalog({
-    String tenant = 'default',
-    required String id,
-  }) async {
-    final res = await _dio.get('/v1/admin/product-catalogs/$id',
-        queryParameters: {'tenant': tenant});
-    return ProductCatalogDetail.fromJson(_asMap(res.data));
-  }
-
-  /// Convert a legacy INLINE catalog to a managed (DATABASE) one — lifts its
-  /// inline products into the products table so they can be edited per-row.
-  Future<ProductCatalogResponse> convertCatalogToManaged({
-    String tenant = 'default',
-    required String id,
-  }) async {
-    final res = await _dio.post('/v1/admin/product-catalogs/$id/convert-to-managed',
-        queryParameters: {'tenant': tenant});
-    return ProductCatalogResponse.fromJson(_asMap(res.data));
-  }
-
-  // ---- Managed products (Database catalog backing store) ---------------
-
-  Future<ProductsPage> listProducts({
-    String tenant = 'default',
-    required String catalogId,
-    int page = 0,
-    int size = 25,
-    String? q,
-    String? category,
-    String? availability,
-    String? status,
-    String? sort,
-  }) async {
-    final res = await _dio.get('/v1/admin/product-catalogs/$catalogId/products',
-        queryParameters: {
-          'tenant': tenant,
-          'page': page,
-          'size': size,
-          if (q != null && q.isNotEmpty) 'q': q,
-          if (category != null && category.isNotEmpty) 'category': category,
-          if (availability != null && availability.isNotEmpty) 'availability': availability,
-          if (status != null && status.isNotEmpty) 'status': status,
-          if (sort != null && sort.isNotEmpty) 'sort': sort,
-        });
-    return ProductsPage.fromJson(_asMap(res.data));
-  }
-
-  Future<ProductDetail> getProduct({
-    String tenant = 'default',
-    required String catalogId,
-    required String productId,
-  }) async {
-    final res = await _dio.get('/v1/admin/product-catalogs/$catalogId/products/$productId',
-        queryParameters: {'tenant': tenant});
-    return ProductDetail.fromJson(_asMap(res.data));
-  }
-
-  /// Create a product (POST) — used by the quick-add row and new-product editor.
-  Future<ProductDetail> createProduct({
-    String tenant = 'default',
-    required String catalogId,
-    required Map<String, dynamic> body,
-  }) async {
-    final res = await _dio.post('/v1/admin/product-catalogs/$catalogId/products',
-        queryParameters: {'tenant': tenant}, data: body);
-    return ProductDetail.fromJson(_asMap(res.data));
-  }
-
-  /// Update one product — single-row PUT, no catalog version bump.
-  Future<ProductDetail> updateProduct({
-    String tenant = 'default',
-    required String catalogId,
-    required String productId,
-    required Map<String, dynamic> body,
-  }) async {
-    final res = await _dio.put('/v1/admin/product-catalogs/$catalogId/products/$productId',
-        queryParameters: {'tenant': tenant}, data: body);
-    return ProductDetail.fromJson(_asMap(res.data));
-  }
-
-  Future<void> archiveProduct({
-    String tenant = 'default',
-    required String catalogId,
-    required String productId,
-    bool restore = false,
-  }) async {
-    final action = restore ? 'restore' : 'archive';
-    await _dio.post('/v1/admin/product-catalogs/$catalogId/products/$productId/$action',
-        queryParameters: {'tenant': tenant});
-  }
-
-  /// Upsert many products in one call — backs CSV import; returns
-  /// {upserted, errors:[{index, productId, reason}]}.
-  Future<Map<String, dynamic>> bulkUpsertProducts({
-    String tenant = 'default',
-    required String catalogId,
-    required List<Map<String, dynamic>> products,
-  }) async {
-    final res = await _dio.post('/v1/admin/product-catalogs/$catalogId/products/bulk',
-        queryParameters: {'tenant': tenant}, data: {'products': products});
-    return _asMap(res.data);
-  }
-
-  /// The full catalog exported as CSV text (all statuses) for a spreadsheet round-trip.
-  Future<String> exportProductsCsv({
-    String tenant = 'default',
-    required String catalogId,
-  }) async {
-    final res = await _dio.get('/v1/admin/product-catalogs/$catalogId/products/export.csv',
-        queryParameters: {'tenant': tenant},
-        options: Options(responseType: ResponseType.plain));
-    return res.data?.toString() ?? '';
-  }
-
-  /// Uploads a catalog/product image and returns the RELATIVE serving path
-  /// (e.g. {@code /v1/commerce/images/{tenant}/{blobId}}). Callers prefix it
-  /// with the backend base URL to store an absolute, publicly-fetchable URL.
-  Future<String> uploadCommerceImage({
-    required String tenant,
-    required List<int> bytes,
-    required String filename,
-    required String contentType,
-  }) async {
-    final form = FormData.fromMap({
-      'file': MultipartFile.fromBytes(bytes, filename: filename,
-          contentType: DioMediaType.parse(contentType)),
-    });
-    final res = await _dio.post('/v1/admin/commerce/images',
-        queryParameters: {'tenant': tenant}, data: form);
-    return _asMap(res.data)['url']?.toString() ?? '';
   }
 
   // ---- Session Start Flows ---------------------------------------------
