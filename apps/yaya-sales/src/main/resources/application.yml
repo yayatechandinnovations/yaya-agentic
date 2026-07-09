@@ -43,6 +43,20 @@ yaya:
     outbox:
       poll-enabled: ${SALES_OUTBOX_POLL_ENABLED:true}
       poll-interval-ms: ${SALES_OUTBOX_POLL_INTERVAL_MS:2000}
+    notifications:
+      # Post-purchase updates → the shopper's chat, via yaya-agentic's trusted
+      # system-message ingest (design §11.3/§13; system-messaging-design.md §5).
+      # Disabled by default: no publisher bean is registered, so outbox rows are
+      # only marked published by whatever other consumers exist.
+      enabled: ${SALES_NOTIFICATIONS_ENABLED:false}
+      # The yaya-agentic deployment that fronts the shopper's chat.
+      agent-base-url: ${SALES_NOTIFICATIONS_AGENT_BASE_URL:http://localhost:8080}
+      # URL parts of POST /v1/integrations/{tenantId}/senders/{senderId}/messages.
+      tenant-id: ${SALES_NOTIFICATIONS_TENANT_ID:}
+      sender-id: ${SALES_NOTIFICATIONS_SENDER_ID:}
+      # Bearer credential the sender's configured trust verifies (shared-secret
+      # JWT / API key carrying system:inbound:send). Opaque to yaya-sales.
+      sender-token: ${SALES_NOTIFICATIONS_SENDER_TOKEN:}
     inventory:
       # Abandoned-cart holds are released automatically (§7.3): HELD past
       # expires_at → EXPIRED, availability recovers.

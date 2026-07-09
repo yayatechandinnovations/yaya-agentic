@@ -8,6 +8,15 @@ class AppConfig {
     defaultValue: 'http://localhost:8080',
   );
 
+  /// The yaya-sales deployment behind the courier mode (yaya-sales-design.md
+  /// §11.5). Couriers talk to yaya-sales DIRECTLY with the yaya-sales-issued
+  /// agent token — never through yaya-agentic (§10.4/§15).
+  ///   flutter run --dart-define=SALES_API_BASE_URL=https://sales.example.com
+  static const String salesApiBase = String.fromEnvironment(
+    'SALES_API_BASE_URL',
+    defaultValue: 'http://localhost:8092',
+  );
+
   /// Resolve a (possibly root-relative) URL — e.g. a platform-hosted logo at
   /// `/v1/chat/logos/{id}` — against the API base.
   static String resolveUrl(String url) {
