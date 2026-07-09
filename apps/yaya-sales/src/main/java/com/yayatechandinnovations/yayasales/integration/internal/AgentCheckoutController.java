@@ -61,40 +61,7 @@ public class AgentCheckoutController {
                         body.slotId() == null ? null
                                 : new com.yayatechandinnovations.yayasales.platform.Ids.SlotId(body.slotId())));
 
-        return switch (outcome) {
-            case CheckoutService.CheckoutOutcome.HostedUrl hosted -> UiHints.framed(
-                    Map.of("status", "AWAITING_PAYMENT",
-                            "orderId", hosted.order().id().value(),
-                            "paymentUrl", hosted.url()),
-                    "checkout", Map.of("kind", "hosted_url",
-                            "orderId", hosted.order().id().value(), "url", hosted.url()));
-            case CheckoutService.CheckoutOutcome.PaymentIntent intent -> UiHints.framed(
-                    Map.of("status", "AWAITING_PAYMENT",
-                            "orderId", intent.order().id().value(),
-                            "clientSecret", intent.clientSecret(),
-                            "publishableKey", intent.publishableKey()),
-                    "checkout", Map.of("kind", "payment_intent",
-                            "orderId", intent.order().id().value(),
-                            "clientSecret", intent.clientSecret(),
-                            "publishableKey", intent.publishableKey()));
-            case CheckoutService.CheckoutOutcome.Placed placed -> UiHints.framed(
-                    Map.of("status", "PLACED",
-                            "orderId", placed.order().id().value(),
-                            "instructions", placed.instructions()),
-                    "checkout", Map.of("kind", "placed",
-                            "orderId", placed.order().id().value(),
-                            "instructions", placed.instructions()));
-            case CheckoutService.CheckoutOutcome.Paid paid -> UiHints.framed(
-                    Map.of("status", "PAID", "orderId", paid.order().id().value()),
-                    "checkout", Map.of("kind", "paid", "orderId", paid.order().id().value()));
-            case CheckoutService.CheckoutOutcome.Insufficient insufficient -> UiHints.framed(
-                    Map.of("status", "INSUFFICIENT_STOCK",
-                            "sku", insufficient.sku().value(),
-                            "available", insufficient.available()),
-                    "checkout", Map.of("kind", "insufficient",
-                            "sku", insufficient.sku().value(),
-                            "available", insufficient.available()));
-        };
+        return CheckoutResponses.framed(outcome);
     }
 
     @GetMapping("/orders/{id}")

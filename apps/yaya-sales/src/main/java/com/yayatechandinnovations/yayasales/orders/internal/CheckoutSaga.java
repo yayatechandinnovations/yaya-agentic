@@ -1,6 +1,5 @@
 package com.yayatechandinnovations.yayasales.orders.internal;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayasales.cart.CartService;
 import com.yayatechandinnovations.yayasales.cart.CartView;
 import com.yayatechandinnovations.yayasales.inventory.InventoryLedger;
@@ -8,18 +7,11 @@ import com.yayatechandinnovations.yayasales.inventory.ReserveResult;
 import com.yayatechandinnovations.yayasales.orders.CheckoutDelivery;
 import com.yayatechandinnovations.yayasales.orders.CheckoutService;
 import com.yayatechandinnovations.yayasales.orders.OrderView;
-import com.yayatechandinnovations.yayasales.payments.StoreCreditService;
-import com.yayatechandinnovations.yayasales.payments.TenderKind;
-import com.yayatechandinnovations.yayasales.payments.TenderOutcome;
-import com.yayatechandinnovations.yayasales.payments.TenderService;
-import com.yayatechandinnovations.yayasales.payments.TenderView;
 import com.yayatechandinnovations.yayasales.platform.Address;
-import com.yayatechandinnovations.yayasales.platform.Ids.OrderId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ReservationId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 import com.yayatechandinnovations.yayasales.platform.Ids.VariantId;
 import com.yayatechandinnovations.yayasales.platform.idempotency.IdempotencyStore;
-import com.yayatechandinnovations.yayasales.platform.money.Money;
 import com.yayatechandinnovations.yayasales.platform.web.ApiErrors;
 import com.yayatechandinnovations.yayasales.pricing.PricedQuote;
 import com.yayatechandinnovations.yayasales.stores.RegionView;
@@ -35,9 +27,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * §8.2 — the checkout saga. NOT one big transaction on purpose: the PSP call
@@ -57,29 +47,27 @@ public class CheckoutSaga implements CheckoutService {
 
     private final CartService carts;
     private final InventoryLedger ledger;
-    private final TenderService tenders;
-    private final StoreCreditService storeCredit;
+    private final TenderStep tenderStep;
+    private final CheckoutOutcomes outcomes;
     private final DefaultOrderService orders;
     private final StoreDirectory stores;
     private final SellingContextService sellingContext;
     private final IdempotencyStore idempotency;
-    private final ObjectMapper json;
     private final ObjectProvider<CheckoutDelivery> delivery;
 
-    public CheckoutSaga(CartService carts, InventoryLedger ledger, TenderService tenders,
-                        StoreCreditService storeCredit, DefaultOrderService orders,
+    public CheckoutSaga(CartService carts, InventoryLedger ledger, TenderStep tenderStep,
+                        CheckoutOutcomes outcomes, DefaultOrderService orders,
                         StoreDirectory stores, SellingContextService sellingContext,
-                        IdempotencyStore idempotency, ObjectMapper json,
+                        IdempotencyStore idempotency,
                         ObjectProvider<CheckoutDelivery> delivery) {
         this.carts = carts;
         this.ledger = ledger;
-        this.tenders = tenders;
-        this.storeCredit = storeCredit;
+        this.tenderStep = tenderStep;
+        this.outcomes = outcomes;
         this.orders = orders;
         this.stores = stores;
         this.sellingContext = sellingContext;
         this.idempotency = idempotency;
-        this.json = json;
         this.delivery = delivery;
     }
 
@@ -101,7 +89,7 @@ public class CheckoutSaga implements CheckoutService {
                 throw new ApiErrors.ConflictException(
                         "Idempotency-Key reused with a different checkout request");
             }
-            return reconstruct(replay.get().responseJson());
+            return outcomes.reconstruct(replay.get().responseJson());
         }
 
         if (handoff.lines().isEmpty()) {
@@ -177,46 +165,13 @@ public class CheckoutSaga implements CheckoutService {
                 }
                 deliveryPort().bookSlot(command.slotId(), order.id());
             }
-            Money grand = quote.grandTotal();
-            long creditApplied = 0;
-            if (command.applyStoreCredit() && command.customerRef() != null) {
-                long balance = storeCredit
-                        .balance(store, command.customerRef(), grand.currency()).amountMinor();
-                creditApplied = Math.min(balance, grand.amountMinor());
-                if (creditApplied > 0) {
-                    TenderView credit = tenders.create(store, order.id(), TenderKind.STORE_CREDIT,
-                            new Money(creditApplied, grand.currency()));
-                    tenders.begin(credit.id(), new TenderService.BeginContext(
-                            command.returnUrl(), command.customerRef()));
-                }
-            }
-
-            long remainder = grand.amountMinor() - creditApplied;
-            CheckoutOutcome outcome;
-            if (remainder > 0) {
-                TenderView main = tenders.create(store, order.id(), command.tender(),
-                        new Money(remainder, grand.currency()));
-                TenderOutcome begun = tenders.begin(main.id(), new TenderService.BeginContext(
-                        command.returnUrl(), command.customerRef()));
-                outcome = switch (begun) {
-                    case TenderOutcome.HostedUrl hosted ->
-                            new CheckoutOutcome.HostedUrl(freshView(order.id()), hosted.url());
-                    case TenderOutcome.PaymentIntent intent ->
-                            new CheckoutOutcome.PaymentIntent(freshView(order.id()),
-                                    intent.clientSecret(), intent.publishableKey());
-                    case TenderOutcome.NothingDueNow nothing ->
-                            new CheckoutOutcome.Placed(freshView(order.id()), nothing.instructions());
-                    case TenderOutcome.SettledInstantly ignored ->
-                            new CheckoutOutcome.Paid(freshView(order.id()));
-                };
-            } else {
-                // Store credit covered everything; the settle event already flipped it PAID.
-                outcome = new CheckoutOutcome.Paid(freshView(order.id()));
-            }
+            CheckoutOutcome outcome = tenderStep.collect(store, order.id(), command.tender(),
+                    quote.grandTotal(), command.applyStoreCredit(), command.returnUrl(),
+                    command.customerRef());
 
             // Step 8 — the cart became an order: empty it WITHOUT releasing holds.
             carts.handOff(command.cart());
-            idempotency.put(store, idemKey, requestHash, serialize(outcome));
+            idempotency.put(store, idemKey, requestHash, outcomes.serialize(outcome));
             return outcome;
 
         } catch (RuntimeException e) {
@@ -230,10 +185,6 @@ public class CheckoutSaga implements CheckoutService {
             }
             throw e;
         }
-    }
-
-    private OrderView freshView(OrderId id) {
-        return orders.order(id).orElseThrow();
     }
 
     private CheckoutDelivery deliveryPort() {
@@ -254,65 +205,6 @@ public class CheckoutSaga implements CheckoutService {
                 quote.label(), quote.price().amountMinor(), quote.promisedFrom(),
                 quote.promisedTo(), quote.carrier() == null ? null : quote.carrier().value(),
                 command.slotId() == null ? null : command.slotId().value(), shipTo);
-    }
-
-    // ── idempotent replay plumbing ───────────────────────────────────────────
-
-    private String serialize(CheckoutOutcome outcome) {
-        Map<String, Object> stored = new LinkedHashMap<>();
-        switch (outcome) {
-            case CheckoutOutcome.HostedUrl h -> {
-                stored.put("type", "HOSTED_URL");
-                stored.put("orderId", h.order().id().value());
-                stored.put("url", h.url());
-            }
-            case CheckoutOutcome.PaymentIntent pi -> {
-                // Stored so a retried checkout replays the SAME intent — Stripe's
-                // Idempotency-Key (the order id) made it the same intent anyway.
-                stored.put("type", "PAYMENT_INTENT");
-                stored.put("orderId", pi.order().id().value());
-                stored.put("clientSecret", pi.clientSecret());
-                stored.put("publishableKey", pi.publishableKey());
-            }
-            case CheckoutOutcome.Placed p -> {
-                stored.put("type", "PLACED");
-                stored.put("orderId", p.order().id().value());
-                stored.put("instructions", p.instructions());
-            }
-            case CheckoutOutcome.Paid p -> {
-                stored.put("type", "PAID");
-                stored.put("orderId", p.order().id().value());
-            }
-            case CheckoutOutcome.Insufficient ignored ->
-                    throw new IllegalStateException("Insufficient outcomes are not stored");
-        }
-        try {
-            return json.writeValueAsString(stored);
-        } catch (Exception e) {
-            throw new IllegalStateException("unserializable checkout outcome", e);
-        }
-    }
-
-    private CheckoutOutcome reconstruct(String storedJson) {
-        try {
-            Map<?, ?> stored = json.readValue(storedJson, Map.class);
-            OrderView order = freshView(new OrderId(String.valueOf(stored.get("orderId"))));
-            return switch (String.valueOf(stored.get("type"))) {
-                case "HOSTED_URL" -> new CheckoutOutcome.HostedUrl(order,
-                        String.valueOf(stored.get("url")));
-                case "PAYMENT_INTENT" -> new CheckoutOutcome.PaymentIntent(order,
-                        String.valueOf(stored.get("clientSecret")),
-                        String.valueOf(stored.get("publishableKey")));
-                case "PLACED" -> new CheckoutOutcome.Placed(order,
-                        String.valueOf(stored.get("instructions")));
-                case "PAID" -> new CheckoutOutcome.Paid(order);
-                default -> throw new IllegalStateException("unknown stored outcome");
-            };
-        } catch (ApiErrors.NotFoundException | IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("corrupt stored checkout outcome", e);
-        }
     }
 
     private static String hash(CheckoutCommand command) {

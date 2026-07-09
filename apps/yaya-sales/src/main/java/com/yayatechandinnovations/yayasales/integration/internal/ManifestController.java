@@ -74,7 +74,25 @@ public class ManifestController {
                         "{\"cartHandle\":\"{ctx.cartHandle}\",\"address\":{address}}", false),
                 tool("sales.track_delivery", "Track an order's delivery (\"where's my order?\")",
                         "GET", "/v1/sales/agent/orders/{orderId}/track",
-                        Map.of("orderId", Map.of("type", "string")), null, false)));
+                        Map.of("orderId", Map.of("type", "string")), null, false),
+                tool("sales.create_draft_order",
+                        "Assemble a draft order for the shopper (approved one-off prices allowed)",
+                        "POST", "/v1/sales/agent/draft-orders",
+                        Map.of("lines", Map.of("type", "array",
+                                        "items", Map.of("type", "object", "properties", Map.of(
+                                                "sku", Map.of("type", "string"),
+                                                "qty", Map.of("type", "integer"),
+                                                "unitPriceMinor", Map.of("type", "integer")))),
+                               "note", Map.of("type", "string")),
+                        "{\"lines\":{lines},\"note\":\"{note}\"}", false),
+                tool("sales.send_draft_order",
+                        "Send a draft order for payment — \"tap to pay\" (confirm first)",
+                        "POST", "/v1/sales/agent/draft-orders/{draftOrderId}/send",
+                        Map.of("draftOrderId", Map.of("type", "string"),
+                               "tender", Map.of("type", "string",
+                                        "enum", List.of("PSP", "COD", "MANUAL", "STORE_CREDIT")),
+                               "returnUrl", Map.of("type", "string")),
+                        "{\"tender\":\"{tender}\",\"returnUrl\":\"{returnUrl}\"}", true)));
     }
 
     private static Map<String, Object> tool(String id, String description, String method,

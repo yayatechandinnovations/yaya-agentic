@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayasales.orders.internal;
 
 import com.yayatechandinnovations.yayasales.orders.OrderStatus;
+import com.yayatechandinnovations.yayasales.orders.OrderView;
 import com.yayatechandinnovations.yayasales.platform.web.ApiErrors;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -85,6 +86,16 @@ public class OrderEntity {
         this.createdAt = Instant.now();
     }
 
+    /** §8.1 — a draft starts BEFORE the FSM's money path: no holds, no tender yet. */
+    static OrderEntity draft(String id, String storeId, String channelId, String regionId,
+                             String customerRef, String currency,
+                             String linesJson, String pricingJson) {
+        OrderEntity order = new OrderEntity(id, storeId, channelId, regionId, customerRef,
+                currency, OrderView.Source.DRAFT.name(), linesJson, pricingJson);
+        order.status = OrderStatus.DRAFT.name();
+        return order;
+    }
+
     public String getId() { return id; }
     public String getStoreId() { return storeId; }
     public String getChannelId() { return channelId; }
@@ -102,6 +113,9 @@ public class OrderEntity {
 
     public void setDeliveryJson(String deliveryJson) { this.deliveryJson = deliveryJson; }
     public void setFulfillmentState(String fulfillmentState) { this.fulfillmentState = fulfillmentState; }
+    void setLinesJson(String linesJson) { this.linesJson = linesJson; }
+    void setPricingJson(String pricingJson) { this.pricingJson = pricingJson; }
+    void setCustomerRef(String customerRef) { this.customerRef = customerRef; }
 
     public OrderStatus status() {
         return OrderStatus.valueOf(status);

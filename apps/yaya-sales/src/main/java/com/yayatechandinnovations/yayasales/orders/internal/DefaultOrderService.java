@@ -3,6 +3,9 @@ package com.yayatechandinnovations.yayasales.orders.internal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayasales.inventory.InventoryLedger;
+import com.yayatechandinnovations.yayasales.inventory.Ref;
+import com.yayatechandinnovations.yayasales.inventory.ReservationKind;
+import com.yayatechandinnovations.yayasales.inventory.ReserveResult;
 import com.yayatechandinnovations.yayasales.orders.CheckoutDelivery;
 import com.yayatechandinnovations.yayasales.orders.OrderService;
 import com.yayatechandinnovations.yayasales.orders.OrderStatus;
@@ -16,6 +19,7 @@ import com.yayatechandinnovations.yayasales.platform.Ids;
 import com.yayatechandinnovations.yayasales.platform.Ids.CarrierId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ChannelId;
 import com.yayatechandinnovations.yayasales.platform.Ids.DeliveryMethodId;
+import com.yayatechandinnovations.yayasales.platform.Ids.LocationId;
 import com.yayatechandinnovations.yayasales.platform.Ids.OrderId;
 import com.yayatechandinnovations.yayasales.platform.Ids.RegionId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ReservationId;
@@ -32,7 +36,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -113,6 +119,80 @@ public class DefaultOrderService implements OrderService {
         outbox.append(store, "order", order.getId(), "order.created",
                 "{\"orderId\":\"" + order.getId() + "\"}");
         return toView(order);
+    }
+
+    // ── draft orders (§8.1 — assembled cold, made real by send) ─────────────
+
+    @Transactional
+    public OrderView createDraft(StoreId store, ChannelId channel, RegionId region,
+                                 String customerRef, String currency, List<StoredLine> lines,
+                                 PricedQuote quote, String actor, String eventData) {
+        OrderEntity order = OrderEntity.draft(Ids.newId(), store.value(), channel.value(),
+                region.value(), customerRef, currency, write(lines),
+                write(PricingSnapshot.of(quote)));
+        orders.save(order);
+        events.save(new OrderEventEntity(order.getId(), "draft_order.created", actor,
+                null, OrderStatus.DRAFT.name(), eventData));
+        return toView(order);
+    }
+
+    @Transactional
+    public OrderView updateDraft(OrderId id, List<StoredLine> lines, PricedQuote quote,
+                                 String actor, String eventData) {
+        OrderEntity order = locked(id);
+        requireDraft(order);
+        order.setLinesJson(write(lines));
+        order.setPricingJson(write(PricingSnapshot.of(quote)));
+        events.save(new OrderEventEntity(order.getId(), "draft_order.updated", actor,
+                OrderStatus.DRAFT.name(), OrderStatus.DRAFT.name(), eventData));
+        return toView(order);
+    }
+
+    /**
+     * §8.1 — the moment a draft touches reality: FIRM holds with the checkout
+     * TTL, the fresh quote snapshotted, DRAFT → PENDING_PAYMENT. An
+     * insufficient line throws {@link DraftStockInsufficientException} and the
+     * ROLLBACK undoes the sibling holds too — the draft stays intact, nothing
+     * is held.
+     */
+    @Transactional
+    public OrderView prepareDraftSend(OrderId id, LocationId location, Duration firmTtl,
+                                      PricedQuote requote, String customerRef, String actor) {
+        OrderEntity order = locked(id);
+        requireDraft(order);
+        if (customerRef != null) {
+            order.setCustomerRef(customerRef);
+        }
+
+        List<StoredLine> reserved = new ArrayList<>();
+        for (StoredLine line : readLines(order)) {
+            ReserveResult result = ledger.reserve(new VariantId(line.sku()), location,
+                    line.qty(), ReservationKind.FIRM, Ref.order(order.getId()), firmTtl);
+            if (result instanceof ReserveResult.Insufficient insufficient) {
+                throw new DraftStockInsufficientException(
+                        new VariantId(line.sku()), insufficient.available());
+            }
+            reserved.add(new StoredLine(line.sku(), line.title(), line.qty(),
+                    line.unitPriceMinor(), List.of(((ReserveResult.Held) result).id().value())));
+        }
+
+        order.setLinesJson(write(reserved));
+        order.setPricingJson(write(PricingSnapshot.of(requote)));
+        order.transition(OrderStatus.PENDING_PAYMENT);
+        events.save(new OrderEventEntity(order.getId(), "draft_order.sent", actor,
+                OrderStatus.DRAFT.name(), OrderStatus.PENDING_PAYMENT.name(), null));
+        outbox.append(new StoreId(order.getStoreId()), "order", order.getId(),
+                "draft_order.sent", "{\"orderId\":\"" + order.getId()
+                        + "\",\"grandTotalMinor\":" + requote.grandTotal().amountMinor()
+                        + ",\"currency\":\"" + order.getCurrency() + "\"}");
+        return toView(order);
+    }
+
+    private static void requireDraft(OrderEntity order) {
+        if (order.status() != OrderStatus.DRAFT) {
+            throw new ApiErrors.ConflictException(
+                    "order " + order.getId() + " is " + order.getStatus() + " — not an editable draft");
+        }
     }
 
     // ── reads ─────────────────────────────────────────────────────────────────
