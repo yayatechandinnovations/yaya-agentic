@@ -32,6 +32,8 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     /** Annotate a freshly-started chat session with its account + entry point so
      *  it can be found for resume (chat-account-self-service-design.md §5.3). Only
      *  touches two index columns — the recorder still owns the row's lifecycle. */
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "keyed by the session's own id, minted this request for the authenticated chat account")
     @Modifying
     @Query("update SessionEntity s set s.chatAccountId = :accountId, s.entryPointId = :entryPointId "
             + "where s.id = :id")
@@ -41,9 +43,14 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     /** The resume candidate: the most recent session this account held at this
      *  entry point (§7.2). */
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "chat-account self lookup: the account id comes from the caller's authenticated "
+                    + "account, which is itself tenant-bound — the account IS the scope")
     Optional<SessionEntity> findFirstByChatAccountIdAndEntryPointIdOrderByCreatedAtDesc(
             UUID chatAccountId, String entryPointId);
 
     /** Every session for an account — drives GDPR erasure on account delete (§6.3). */
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "chat-account self lookup (GDPR erasure): account id from the authenticated account")
     List<SessionEntity> findByChatAccountId(UUID chatAccountId);
 }
