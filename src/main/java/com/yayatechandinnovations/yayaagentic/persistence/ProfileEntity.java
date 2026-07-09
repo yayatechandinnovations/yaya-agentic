@@ -46,7 +46,9 @@ public class ProfileEntity {
     @Column(name = "metadata_json", columnDefinition = "jsonb", nullable = false)
     private String metadataJson = "{}";
 
-    // Nullable: null == not a store. Carries the profile's CommerceConfig.
+    // Nullable: null == not a store. Carries the profile's CommerceBinding
+    // (legacy rows may still hold the retired CommerceConfig shape; reads are
+    // lenient, writes always emit the binding).
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "commerce_json", columnDefinition = "jsonb")
     private String commerceJson;

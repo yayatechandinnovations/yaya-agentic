@@ -1,4 +1,4 @@
-package com.yayatechandinnovations.yayaagentic.commerce.testsupport;
+package com.yayatechandinnovations.yayaagentic.testsupport;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

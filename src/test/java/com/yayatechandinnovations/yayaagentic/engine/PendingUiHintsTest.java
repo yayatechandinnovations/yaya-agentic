@@ -1,7 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yayatechandinnovations.yayaagentic.commerce.testsupport.JsonWorkingMemory;
+import com.yayatechandinnovations.yayaagentic.testsupport.JsonWorkingMemory;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import org.junit.jupiter.api.Test;
 

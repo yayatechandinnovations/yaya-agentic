@@ -31,13 +31,6 @@ public final class Ids {
     public record CapabilityId(String value) {}
     public record ToolId(String value) {}
     public record KnowledgeSourceId(String value) {}
-
-    /** Versioned like a ProfileId — a catalog is tenant-scoped config, not a session row. */
-    public record ProductCatalogId(String value, int version) {
-        public ProductCatalogId(String value) { this(value, 1); }
-    }
-
-    public record ProductId(String value) {}
     public record AuthBindingId(String value) {}
     public record RecorderId(String value) {}
 

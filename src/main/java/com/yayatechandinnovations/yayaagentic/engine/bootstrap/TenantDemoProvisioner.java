@@ -19,8 +19,9 @@ import java.util.function.Consumer;
  * Seeds the full demo set into a tenant, so every account (not just the built-in
  * {@code default} tenant) gets the demos out of the box. It reuses the same
  * {@code seedInto(tenant)} the startup bootstraps use — hello-world profile +
- * Yaya-FAQ knowledge, the retail-store playground store, the managed demo
- * storefront + its chat channel, and the welcome-back Session Start Flow.
+ * Yaya-FAQ knowledge and the welcome-back Session Start Flow. (The demo
+ * storefronts moved out of the core with the commerce subsystem — stores are
+ * provisioned in yaya-sales now.)
  *
  * <p>Two triggers, both gated by {@code yaya.agentic.demo.provision-per-workspace}
  * (default on):
@@ -44,35 +45,27 @@ public class TenantDemoProvisioner implements ApplicationRunner {
 
     private final HelloWorldProfileBootstrap helloWorld;
     private final KnowledgeBootstrap knowledge;
-    private final RetailStoreBootstrap retailStore;
-    private final DemoStoreBootstrap demoStore;
     private final Optional<StartFlowDemoBootstrap> startFlowDemo;   // @ConditionalOnProperty — may be absent
     private final TenantRepository tenants;
     private final boolean enabled;
 
     public TenantDemoProvisioner(HelloWorldProfileBootstrap helloWorld,
                                  KnowledgeBootstrap knowledge,
-                                 RetailStoreBootstrap retailStore,
-                                 DemoStoreBootstrap demoStore,
                                  Optional<StartFlowDemoBootstrap> startFlowDemo,
                                  TenantRepository tenants,
                                  @Value("${yaya.agentic.demo.provision-per-workspace:true}") boolean enabled) {
         this.helloWorld = helloWorld;
         this.knowledge = knowledge;
-        this.retailStore = retailStore;
-        this.demoStore = demoStore;
         this.startFlowDemo = startFlowDemo;
         this.tenants = tenants;
         this.enabled = enabled;
     }
 
     /** Seed all demos into {@code tenant}. Order matters: knowledge attaches to
-     *  the hello-world profile; the demo store reuses the retail capabilities. */
+     *  the hello-world profile. */
     public void provision(Ids.TenantId tenant) {
         step(tenant, "hello-world", helloWorld::seedInto);
         step(tenant, "knowledge", knowledge::seedInto);
-        step(tenant, "retail-store", retailStore::seedInto);
-        step(tenant, "demo-store", demoStore::seedInto);
         startFlowDemo.ifPresent(sf -> step(tenant, "start-flow", sf::seedInto));
     }
 

@@ -188,12 +188,6 @@ public class DefaultConversationEngine implements ConversationEngine {
         recorder.onSessionStarted(session, ctx(req.tenant(), principal));
         active.put(session.id(), session);
 
-        // Stash the profile's commerce config so managed cart/catalog tools can
-        // resolve catalogs + currency for this session (ecommerce-chat-design §8).
-        if (profile.isStore()) {
-            workingMemory.merge(session.id(), Map.of("commerceConfig", profile.commerce()));
-        }
-
         @SuppressWarnings("unchecked")
         List<String> introQuickReplies = (List<String>) profile.metadata().getOrDefault("introQuickReplies", List.of());
         String greeting = profile.introOneLiner();
@@ -1526,7 +1520,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             events.add(captureOutcome.conflictUiHint());
         }
 
-        // Flush any UiHints a tool enqueued (e.g. managed commerce tools emit
+        // Flush any UiHints a tool enqueued (e.g. sales.* tools surface
         // product_catalog / cart here instead of narrating them in text, #8).
         if (recordedResult.status() == Turn.ToolResult.Status.OK) {
             events.addAll(pendingUiHints.drain(session.id()));

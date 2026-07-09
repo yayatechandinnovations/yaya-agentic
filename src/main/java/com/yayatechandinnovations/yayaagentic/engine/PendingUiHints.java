@@ -15,8 +15,9 @@ import java.util.Map;
  * (it returns a value), so it {@link #enqueue} render payloads here; the engine
  * {@link #drain}s them right after the tool result and streams them as
  * {@code TurnEvent.UiHint}s — the same discipline as {@code quick_replies}
- * (non-negotiable #8). Commerce uses this to paint {@code product_catalog} /
- * {@code cart} without leaking product/price data into the model's text output.
+ * (non-negotiable #8). For example, sales tools use this to paint
+ * {@code product_catalog} / {@code cart} without leaking product/price data
+ * into the model's text output.
  */
 @Component
 public class PendingUiHints {

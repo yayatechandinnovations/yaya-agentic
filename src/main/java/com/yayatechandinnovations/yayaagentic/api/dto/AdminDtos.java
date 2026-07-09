@@ -28,7 +28,7 @@ public final class AdminDtos {
             String authBindingId,
             String language,
             Map<String, Object> metadata,
-            /** Nullable commerce block: {catalogs:[], currency, checkoutTool, cartEnabled}. */
+            /** Nullable commerce block (CommerceBinding shape): {storeId, checkoutTool, cartEnabled}. */
             Map<String, Object> commerce,
             /** Nullable id of the Session Start Flow to run by default for this profile. */
             String defaultStartFlowId

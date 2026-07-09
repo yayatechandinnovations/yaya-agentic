@@ -2,7 +2,7 @@ package com.yayatechandinnovations.yayaagentic.api.dto;
 
 import com.yayatechandinnovations.yayaagentic.channel.chat.AuthConfig;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
-import com.yayatechandinnovations.yayaagentic.commerce.CommerceConfig;
+import com.yayatechandinnovations.yayaagentic.profile.CommerceBinding;
 
 import java.util.List;
 import java.util.Map;
@@ -78,14 +78,15 @@ public final class PublicChatDtos {
     ) {}
 
     /** The commerce trait the client reads at session start to render cart chrome
-     *  the moment a store chat opens (ecommerce-chat-design.md §3). Carries only
-     *  what the renderer needs — currency, whether the cart affordance shows, and
-     *  the checkout tool id a "Checkout" tap invokes. Null = not a store. */
-    public record CommerceInfo(String currency, boolean cartEnabled, String checkoutTool) {
-        public static CommerceInfo of(CommerceConfig c) {
+     *  the moment a store chat opens. Carries only what the renderer needs — the
+     *  yaya-sales store id, whether the cart affordance shows, and the checkout
+     *  tool id a "Checkout" tap invokes. Catalog data (products, currency, prices)
+     *  arrives via {@code sales.*} tool results, not here. Null = not a store. */
+    public record CommerceInfo(String storeId, boolean cartEnabled, String checkoutTool) {
+        public static CommerceInfo of(CommerceBinding c) {
             if (c == null) return null;
             String checkoutTool = c.checkoutTool() == null ? null : c.checkoutTool().value();
-            return new CommerceInfo(c.currency(), c.cartEnabled(), checkoutTool);
+            return new CommerceInfo(c.storeId(), c.cartEnabled(), checkoutTool);
         }
     }
 

@@ -3,10 +3,10 @@ package com.yayatechandinnovations.yayaagentic.profile.persistence;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yayatechandinnovations.yayaagentic.commerce.CommerceConfig;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ProfileRepository;
+import com.yayatechandinnovations.yayaagentic.profile.CommerceBinding;
 import com.yayatechandinnovations.yayaagentic.profile.Profile;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -30,7 +30,9 @@ public class PostgresProfileRegistry implements ProfileRegistry {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
-    private static final TypeReference<CommerceConfig> COMMERCE = new TypeReference<>() {};
+    // CommerceBinding is @JsonIgnoreProperties(ignoreUnknown): legacy rows still
+    // carry the retired CommerceConfig fields and must read leniently.
+    private static final TypeReference<CommerceBinding> COMMERCE = new TypeReference<>() {};
 
     private final ProfileRepository repo;
     private final ObjectMapper json;
@@ -92,7 +94,7 @@ public class PostgresProfileRegistry implements ProfileRegistry {
     private Profile toRecord(ProfileEntity e) {
         List<String> capIds = readJson(e.getCapabilitiesJson(), STRING_LIST);
         Map<String, Object> metadata = readJson(e.getMetadataJson(), STRING_MAP);
-        CommerceConfig commerce = e.getCommerceJson() == null
+        CommerceBinding commerce = e.getCommerceJson() == null
                 ? null
                 : readJson(e.getCommerceJson(), COMMERCE);
         return new Profile(
