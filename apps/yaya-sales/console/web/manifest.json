@@ -1,0 +1,10 @@
+{
+  "name": "yaya-sales console",
+  "short_name": "yaya-sales",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#0B6E4F",
+  "description": "Admin console for yaya-sales.",
+  "icons": []
+}
