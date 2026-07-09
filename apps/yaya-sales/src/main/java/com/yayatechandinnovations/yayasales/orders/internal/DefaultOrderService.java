@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayasales.orders.internal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayasales.inventory.InventoryLedger;
+import com.yayatechandinnovations.yayasales.orders.CheckoutDelivery;
 import com.yayatechandinnovations.yayasales.orders.OrderService;
 import com.yayatechandinnovations.yayasales.orders.OrderStatus;
 import com.yayatechandinnovations.yayasales.orders.OrderView;
@@ -10,11 +11,15 @@ import com.yayatechandinnovations.yayasales.payments.StoreCreditService;
 import com.yayatechandinnovations.yayasales.payments.TenderKind;
 import com.yayatechandinnovations.yayasales.payments.TenderService;
 import com.yayatechandinnovations.yayasales.payments.TenderView;
+import com.yayatechandinnovations.yayasales.platform.Address;
 import com.yayatechandinnovations.yayasales.platform.Ids;
+import com.yayatechandinnovations.yayasales.platform.Ids.CarrierId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ChannelId;
+import com.yayatechandinnovations.yayasales.platform.Ids.DeliveryMethodId;
 import com.yayatechandinnovations.yayasales.platform.Ids.OrderId;
 import com.yayatechandinnovations.yayasales.platform.Ids.RegionId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ReservationId;
+import com.yayatechandinnovations.yayasales.platform.Ids.SlotId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 import com.yayatechandinnovations.yayasales.platform.Ids.VariantId;
 import com.yayatechandinnovations.yayasales.platform.money.Money;
@@ -23,9 +28,11 @@ import com.yayatechandinnovations.yayasales.platform.web.ApiErrors;
 import com.yayatechandinnovations.yayasales.pricing.PricedQuote;
 import com.yayatechandinnovations.yayasales.stores.StoreDirectory;
 import com.yayatechandinnovations.yayasales.stores.StorePolicies;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -46,11 +53,15 @@ public class DefaultOrderService implements OrderService {
     private final StoreDirectory stores;
     private final Outbox outbox;
     private final ObjectMapper json;
+    // Provider, not a direct dependency: the port is implemented by fulfillment,
+    // which itself consumes orders — direct wiring would knot the bean graph.
+    private final ObjectProvider<CheckoutDelivery> delivery;
 
     public DefaultOrderService(OrderRepository orders, OrderEventRepository events,
                                TenderService tenders, StoreCreditService storeCredit,
                                InventoryLedger ledger, StoreDirectory stores,
-                               Outbox outbox, ObjectMapper json) {
+                               Outbox outbox, ObjectMapper json,
+                               ObjectProvider<CheckoutDelivery> delivery) {
         this.orders = orders;
         this.events = events;
         this.tenders = tenders;
@@ -59,6 +70,7 @@ public class DefaultOrderService implements OrderService {
         this.stores = stores;
         this.outbox = outbox;
         this.json = json;
+        this.delivery = delivery;
     }
 
     // ── stored shapes ─────────────────────────────────────────────────────────
@@ -77,15 +89,24 @@ public class DefaultOrderService implements OrderService {
         }
     }
 
+    /** The §8.2 delivery snapshot: chosen method + promised window + slot + validated ship-to. */
+    record StoredDelivery(String methodId, String kind, String label, long priceMinor,
+                          Instant promisedFrom, Instant promisedTo, String carrierId,
+                          String slotId, Address shipTo) {}
+
     // ── creation (called by the saga, its own tx) ────────────────────────────
 
     @Transactional
     public OrderView createFromCheckout(StoreId store, ChannelId channel, RegionId region,
                                         String customerRef, String currency,
-                                        List<StoredLine> lines, PricedQuote quote) {
+                                        List<StoredLine> lines, PricedQuote quote,
+                                        StoredDelivery delivery) {
         OrderEntity order = new OrderEntity(Ids.newId(), store.value(), channel.value(),
                 region.value(), customerRef, currency, OrderView.Source.CHECKOUT.name(),
                 write(lines), write(PricingSnapshot.of(quote)));
+        if (delivery != null) {
+            order.setDeliveryJson(write(delivery));
+        }
         orders.save(order);
         events.save(new OrderEventEntity(order.getId(), "order.created", "checkout",
                 null, OrderStatus.PENDING_PAYMENT.name(), null));
@@ -140,6 +161,7 @@ public class DefaultOrderService implements OrderService {
             }
         }
         releaseHolds(order);
+        releaseSlot(order);
 
         events.save(new OrderEventEntity(order.getId(), "order.cancelled", actor,
                 from, OrderStatus.CANCELLED.name(), null));
@@ -177,7 +199,8 @@ public class DefaultOrderService implements OrderService {
         order.setPaymentState("PAID");
 
         // Deduction point (§5.3, decision 2): ON_PAYMENT commits the holds into
-        // SALE movements now; ON_FULFILLMENT keeps them until dispatch (S5).
+        // SALE movements now; ON_FULFILLMENT committed them at dispatch (§8.6) —
+        // a COD order ships before it settles.
         StorePolicies policies = stores.policiesOf(new StoreId(order.getStoreId()));
         if (policies.deductionPoint() == StorePolicies.DeductionPoint.ON_PAYMENT) {
             commitHolds(order);
@@ -188,6 +211,35 @@ public class DefaultOrderService implements OrderService {
         outbox.append(new StoreId(order.getStoreId()), "order", order.getId(), "order.paid",
                 "{\"orderId\":\"" + order.getId() + "\",\"grandTotalMinor\":" + pricing.grandMinor()
                         + ",\"currency\":\"" + order.getCurrency() + "\"}");
+
+        // COD catch-up: the goods may already be out (or delivered) — the FSM
+        // could not leave PENDING_PAYMENT until the money settled.
+        statusFollowsFulfillment(order, order.getFulfillmentState());
+    }
+
+    @Override
+    @Transactional
+    public OrderView updateFulfillment(OrderId id, FulfillmentState state, String actor) {
+        OrderEntity order = locked(id);
+        String from = order.getFulfillmentState();
+        order.setFulfillmentState(state.name());
+        statusFollowsFulfillment(order, state.name());
+        events.save(new OrderEventEntity(order.getId(), "order.fulfillment", actor,
+                from, state.name(), null));
+        return toView(order);
+    }
+
+    /** The order FSM follows the fulfillment sub-state where it legally can (§8.1/§8.6). */
+    private void statusFollowsFulfillment(OrderEntity order, String fulfillmentState) {
+        OrderStatus target = switch (fulfillmentState) {
+            case "FULFILLING" -> OrderStatus.FULFILLING;
+            case "PARTIALLY_FULFILLED" -> OrderStatus.PARTIALLY_FULFILLED;
+            case "FULFILLED" -> OrderStatus.FULFILLED;
+            default -> null;
+        };
+        if (target != null && order.status() != target && order.status().canTransition(target)) {
+            order.transition(target);
+        }
     }
 
     @Override
@@ -238,6 +290,18 @@ public class DefaultOrderService implements OrderService {
         }
     }
 
+    /** §8.2 comp: a cancelled order gives its delivery slot's capacity back. Idempotent. */
+    private void releaseSlot(OrderEntity order) {
+        StoredDelivery stored = readDelivery(order);
+        if (stored == null || stored.slotId() == null) {
+            return;
+        }
+        CheckoutDelivery port = delivery.getIfAvailable();
+        if (port != null) {
+            port.releaseSlot(new SlotId(stored.slotId()), new OrderId(order.getId()));
+        }
+    }
+
     private OrderEntity locked(OrderId id) {
         return orders.lockById(id.value())
                 .orElseThrow(() -> new ApiErrors.NotFoundException("order", id.value()));
@@ -250,6 +314,15 @@ public class DefaultOrderService implements OrderService {
                 .map(l -> new OrderView.Line(new VariantId(l.sku()), l.title(), l.qty(),
                         new Money(l.unitPriceMinor(), currency), l.reservationIds()))
                 .toList();
+        StoredDelivery storedDelivery = readDelivery(order);
+        OrderView.Delivery deliveryView = storedDelivery == null ? null
+                : new OrderView.Delivery(new DeliveryMethodId(storedDelivery.methodId()),
+                        storedDelivery.kind(), storedDelivery.label(),
+                        new Money(storedDelivery.priceMinor(), currency),
+                        storedDelivery.promisedFrom(), storedDelivery.promisedTo(),
+                        storedDelivery.carrierId() == null ? null : new CarrierId(storedDelivery.carrierId()),
+                        storedDelivery.slotId() == null ? null : new SlotId(storedDelivery.slotId()),
+                        storedDelivery.shipTo());
         return new OrderView(new OrderId(order.getId()), new StoreId(order.getStoreId()),
                 new ChannelId(order.getChannelId()), new RegionId(order.getRegionId()),
                 order.getCustomerRef(), currency,
@@ -261,7 +334,7 @@ public class DefaultOrderService implements OrderService {
                         new Money(pricing.taxMinor(), currency), pricing.taxInclusive(),
                         new Money(pricing.shippingMinor(), currency),
                         new Money(pricing.grandMinor(), currency)),
-                order.getCreatedAt());
+                deliveryView, order.getCreatedAt());
     }
 
     private List<StoredLine> readLines(OrderEntity order) {
@@ -277,6 +350,17 @@ public class DefaultOrderService implements OrderService {
             return json.readValue(order.getPricingJson(), PricingSnapshot.class);
         } catch (Exception e) {
             throw new IllegalStateException("corrupt order pricing_json", e);
+        }
+    }
+
+    private StoredDelivery readDelivery(OrderEntity order) {
+        if (order.getDeliveryJson() == null) {
+            return null;
+        }
+        try {
+            return json.readValue(order.getDeliveryJson(), StoredDelivery.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("corrupt order delivery_json", e);
         }
     }
 

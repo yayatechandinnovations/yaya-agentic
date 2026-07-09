@@ -175,6 +175,12 @@ public class DefaultCartService implements CartService {
     @Override
     @Transactional(readOnly = true)
     public PricedQuote quote(CartId id, String couponCode) {
+        return quote(id, couponCode, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PricedQuote quote(CartId id, String couponCode, Money shipping) {
         CartEntity cart = require(id);
         RegionView region = sellingContext.region(new RegionId(cart.getRegionId()))
                 .orElseThrow(() -> new IllegalStateException("cart region vanished"));
@@ -186,7 +192,8 @@ public class DefaultCartService implements CartService {
         return pricing.quote(new CartSnapshot(new StoreId(cart.getStoreId()), lines),
                 new PricingContext(new RegionId(cart.getRegionId()),
                         new ChannelId(cart.getChannelId()), cart.getCurrency(),
-                        region.tax(), null, couponCode, Money.zero(cart.getCurrency())));
+                        region.tax(), null, couponCode,
+                        shipping == null ? Money.zero(cart.getCurrency()) : shipping));
     }
 
     @Override

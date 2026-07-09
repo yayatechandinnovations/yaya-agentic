@@ -24,7 +24,16 @@ public interface OrderService {
      */
     OrderView refund(OrderId id, Money amount, boolean toStoreCredit, String actor);
 
+    /**
+     * §8.6 — shipments drive the fulfillment sub-state; the order FSM follows
+     * where it legally can (a COD order can be FULFILLED-in-substance while
+     * still PENDING_PAYMENT — the status catches up when the tender settles).
+     */
+    OrderView updateFulfillment(OrderId id, FulfillmentState state, String actor);
+
     List<Event> eventsOf(OrderId id);
+
+    enum FulfillmentState { UNFULFILLED, FULFILLING, PARTIALLY_FULFILLED, FULFILLED }
 
     record Event(String type, String actor, String fromState, String toState, Instant at) {}
 }

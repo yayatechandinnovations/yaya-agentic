@@ -31,7 +31,8 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
                                             SalesAuthProperties props,
-                                            ServiceTokenFilter serviceTokenFilter) throws Exception {
+                                            ServiceTokenFilter serviceTokenFilter,
+                                            CourierTokenFilter courierTokenFilter) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -40,9 +41,14 @@ public class SecurityConfig {
                     new org.springframework.security.web.authentication.HttpStatusEntryPoint(
                             org.springframework.http.HttpStatus.UNAUTHORIZED)))
             .addFilterBefore(serviceTokenFilter, BasicAuthenticationFilter.class)
+            .addFilterBefore(courierTokenFilter, BasicAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v1/sales/webhooks/**").permitAll()
+                // §10.4: register/verify are the only public courier endpoints —
+                // gated by the signed invite token and the phone OTP respectively.
+                .requestMatchers("/v1/sales/delivery/agents/register",
+                                 "/v1/sales/delivery/agents/verify").permitAll()
                 .anyRequest().authenticated());
 
         if (props.jwtConfigured()) {

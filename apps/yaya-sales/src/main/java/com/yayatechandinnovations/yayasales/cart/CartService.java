@@ -4,6 +4,7 @@ import com.yayatechandinnovations.yayasales.platform.Ids.CartId;
 import com.yayatechandinnovations.yayasales.platform.Ids.RegionId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 import com.yayatechandinnovations.yayasales.platform.Ids.VariantId;
+import com.yayatechandinnovations.yayasales.platform.money.Money;
 import com.yayatechandinnovations.yayasales.pricing.PricedQuote;
 import com.yayatechandinnovations.yayasales.stores.ChannelView;
 
@@ -29,6 +30,13 @@ public interface CartService {
 
     /** The authoritative totals — re-quoted through pricing on every call. */
     PricedQuote quote(CartId id, String couponCode);
+
+    /**
+     * The checkout variant (§8.2 step 2a): the chosen delivery option's price
+     * feeds the pricing context's shipping (§8.4) — computed by the server,
+     * never the model. Null shipping quotes as zero.
+     */
+    PricedQuote quote(CartId id, String couponCode, Money shipping);
 
     /** Anonymous → authenticated merge on login: quantities sum; source is emptied. */
     CartView merge(CartId from, CartId into);

@@ -45,6 +45,10 @@ public class OrderEntity {
     @Column(name = "pricing_json", nullable = false)
     private String pricingJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "delivery_json")
+    private String deliveryJson;
+
     @Column(nullable = false)
     private String status;
 
@@ -90,10 +94,14 @@ public class OrderEntity {
     public String getSource() { return source; }
     public String getLinesJson() { return linesJson; }
     public String getPricingJson() { return pricingJson; }
+    public String getDeliveryJson() { return deliveryJson; }
     public String getStatus() { return status; }
     public String getPaymentState() { return paymentState; }
     public String getFulfillmentState() { return fulfillmentState; }
     public Instant getCreatedAt() { return createdAt; }
+
+    public void setDeliveryJson(String deliveryJson) { this.deliveryJson = deliveryJson; }
+    public void setFulfillmentState(String fulfillmentState) { this.fulfillmentState = fulfillmentState; }
 
     public OrderStatus status() {
         return OrderStatus.valueOf(status);

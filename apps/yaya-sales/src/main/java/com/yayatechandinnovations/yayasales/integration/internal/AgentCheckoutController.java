@@ -53,7 +53,13 @@ public class AgentCheckoutController {
                         new CartId(body.cartHandle()), body.tender(),
                         Boolean.TRUE.equals(body.applyStoreCredit()),
                         body.returnUrl(), body.couponCode(), principal(),
-                        idempotencyKey));
+                        idempotencyKey,
+                        body.shipTo() == null ? null : body.shipTo().toAddress(),
+                        body.deliveryMethodId() == null ? null
+                                : new com.yayatechandinnovations.yayasales.platform.Ids.DeliveryMethodId(
+                                        body.deliveryMethodId()),
+                        body.slotId() == null ? null
+                                : new com.yayatechandinnovations.yayasales.platform.Ids.SlotId(body.slotId())));
 
         return switch (outcome) {
             case CheckoutService.CheckoutOutcome.HostedUrl hosted -> UiHints.framed(
@@ -121,5 +127,8 @@ public class AgentCheckoutController {
                            @NotNull TenderKind tender,
                            Boolean applyStoreCredit,
                            String returnUrl,
-                           String couponCode) {}
+                           String couponCode,
+                           AgentDeliveryController.AddressBody shipTo,
+                           String deliveryMethodId,
+                           String slotId) {}
 }

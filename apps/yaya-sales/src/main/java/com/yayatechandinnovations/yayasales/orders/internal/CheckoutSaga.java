@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayasales.cart.CartService;
 import com.yayatechandinnovations.yayasales.cart.CartView;
 import com.yayatechandinnovations.yayasales.inventory.InventoryLedger;
 import com.yayatechandinnovations.yayasales.inventory.ReserveResult;
+import com.yayatechandinnovations.yayasales.orders.CheckoutDelivery;
 import com.yayatechandinnovations.yayasales.orders.CheckoutService;
 import com.yayatechandinnovations.yayasales.orders.OrderView;
 import com.yayatechandinnovations.yayasales.payments.StoreCreditService;
@@ -12,9 +13,11 @@ import com.yayatechandinnovations.yayasales.payments.TenderKind;
 import com.yayatechandinnovations.yayasales.payments.TenderOutcome;
 import com.yayatechandinnovations.yayasales.payments.TenderService;
 import com.yayatechandinnovations.yayasales.payments.TenderView;
+import com.yayatechandinnovations.yayasales.platform.Address;
 import com.yayatechandinnovations.yayasales.platform.Ids.OrderId;
 import com.yayatechandinnovations.yayasales.platform.Ids.ReservationId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
+import com.yayatechandinnovations.yayasales.platform.Ids.VariantId;
 import com.yayatechandinnovations.yayasales.platform.idempotency.IdempotencyStore;
 import com.yayatechandinnovations.yayasales.platform.money.Money;
 import com.yayatechandinnovations.yayasales.platform.web.ApiErrors;
@@ -24,6 +27,7 @@ import com.yayatechandinnovations.yayasales.stores.SellingContextService;
 import com.yayatechandinnovations.yayasales.stores.StoreDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -41,9 +45,10 @@ import java.util.Map;
  * transactions with explicit compensations; the idempotency key makes a
  * retried call re-attach instead of re-reserving.
  *
- * <p>S3 scope note: address validation and delivery quoting/slots (§8.2 steps
- * 1/2a-b) join the saga in S5 with the fulfillment module — shipping is
- * quoted as zero until then.
+ * <p>Delivery (steps 1/2a-b) rides the {@link CheckoutDelivery} port: the
+ * ship-to is validated before any hold firms (§14 address gate), the chosen
+ * method's price becomes the quote's shipping, and a slot books after the
+ * order exists so the cancel compensation releases it.
  */
 @Service
 public class CheckoutSaga implements CheckoutService {
@@ -59,11 +64,13 @@ public class CheckoutSaga implements CheckoutService {
     private final SellingContextService sellingContext;
     private final IdempotencyStore idempotency;
     private final ObjectMapper json;
+    private final ObjectProvider<CheckoutDelivery> delivery;
 
     public CheckoutSaga(CartService carts, InventoryLedger ledger, TenderService tenders,
                         StoreCreditService storeCredit, DefaultOrderService orders,
                         StoreDirectory stores, SellingContextService sellingContext,
-                        IdempotencyStore idempotency, ObjectMapper json) {
+                        IdempotencyStore idempotency, ObjectMapper json,
+                        ObjectProvider<CheckoutDelivery> delivery) {
         this.carts = carts;
         this.ledger = ledger;
         this.tenders = tenders;
@@ -73,6 +80,7 @@ public class CheckoutSaga implements CheckoutService {
         this.sellingContext = sellingContext;
         this.idempotency = idempotency;
         this.json = json;
+        this.delivery = delivery;
     }
 
     @Override
@@ -106,6 +114,17 @@ public class CheckoutSaga implements CheckoutService {
                     "tender " + command.tender() + " is not offered in region " + region.name());
         }
 
+        // Step 1 — address gate (decision 9, §14): an unservable ship-to fails
+        // HERE, before any reservation firms or tender begins.
+        Address shipTo = null;
+        if (command.shipTo() != null) {
+            if (command.deliveryMethodId() == null) {
+                throw new ApiErrors.UnprocessableException(
+                        "deliveryMethodId is required when a ship-to address is given");
+            }
+            shipTo = deliveryPort().validate(store, cart.region(), command.shipTo());
+        }
+
         // Step 2 — revalidate every hold → FIRM with the checkout TTL. Fresh
         // holds stand; lapsed ones re-reserve against live stock or fail the line.
         Duration firmTtl = Duration.ofSeconds(
@@ -126,16 +145,38 @@ public class CheckoutSaga implements CheckoutService {
                     line.qty(), line.unitPriceMinor(), firmed));
         }
 
-        // Step 2a — the authoritative quote (pricing; shipping joins in S5).
-        PricedQuote quote = carts.quote(command.cart(), command.couponCode());
+        // Step 2a — the authoritative quote. With a ship-to, the chosen method
+        // is priced against the goods total and fed back as the quote's shipping.
+        PricedQuote quote;
+        CheckoutDelivery.Quote deliveryQuote = null;
+        if (shipTo != null) {
+            PricedQuote goods = carts.quote(command.cart(), command.couponCode());
+            deliveryQuote = deliveryPort().quote(store, cart.region(), shipTo,
+                    command.deliveryMethodId(),
+                    orderLines.stream().map(l -> new CheckoutDelivery.QuoteLine(
+                            new VariantId(l.sku()), l.qty())).toList(),
+                    goods.subtotal().minus(goods.discountTotal()));
+            quote = carts.quote(command.cart(), command.couponCode(), deliveryQuote.price());
+        } else {
+            quote = carts.quote(command.cart(), command.couponCode());
+        }
 
-        // Step 3 — create Order(PENDING_PAYMENT), own tx.
+        // Step 3 — create Order(PENDING_PAYMENT), own tx, delivery snapshotted.
         OrderView order = orders.createFromCheckout(store, cart.channel(), cart.region(),
-                command.customerRef(), cart.currency(), orderLines, quote);
+                command.customerRef(), cart.currency(), orderLines, quote,
+                storedDelivery(deliveryQuote, command, shipTo));
 
-        // Step 4 — tenders. Compensation from here on: cancel the order (which
-        // voids tenders, re-issues redeemed credit, and releases the holds).
+        // Steps 2b + 4 — slot + tenders. Compensation from here on: cancel the
+        // order (voids tenders, re-issues redeemed credit, releases the holds,
+        // and gives the slot's capacity back).
         try {
+            if (command.slotId() != null) {
+                if (deliveryQuote == null) {
+                    throw new ApiErrors.UnprocessableException(
+                            "a delivery slot requires a ship-to address and delivery method");
+                }
+                deliveryPort().bookSlot(command.slotId(), order.id());
+            }
             Money grand = quote.grandTotal();
             long creditApplied = 0;
             if (command.applyStoreCredit() && command.customerRef() != null) {
@@ -193,6 +234,26 @@ public class CheckoutSaga implements CheckoutService {
 
     private OrderView freshView(OrderId id) {
         return orders.order(id).orElseThrow();
+    }
+
+    private CheckoutDelivery deliveryPort() {
+        CheckoutDelivery port = delivery.getIfAvailable();
+        if (port == null) {
+            throw new ApiErrors.UnprocessableException(
+                    "delivery is not available on this deployment");
+        }
+        return port;
+    }
+
+    private static DefaultOrderService.StoredDelivery storedDelivery(
+            CheckoutDelivery.Quote quote, CheckoutCommand command, Address shipTo) {
+        if (quote == null) {
+            return null;
+        }
+        return new DefaultOrderService.StoredDelivery(quote.method().value(), quote.kind(),
+                quote.label(), quote.price().amountMinor(), quote.promisedFrom(),
+                quote.promisedTo(), quote.carrier() == null ? null : quote.carrier().value(),
+                command.slotId() == null ? null : command.slotId().value(), shipTo);
     }
 
     // ── idempotent replay plumbing ───────────────────────────────────────────
@@ -256,7 +317,10 @@ public class CheckoutSaga implements CheckoutService {
 
     private static String hash(CheckoutCommand command) {
         String material = command.cart().value() + "|" + command.tender()
-                + "|" + command.applyStoreCredit() + "|" + command.couponCode();
+                + "|" + command.applyStoreCredit() + "|" + command.couponCode()
+                + "|" + (command.deliveryMethodId() == null ? "" : command.deliveryMethodId().value())
+                + "|" + (command.slotId() == null ? "" : command.slotId().value())
+                + "|" + (command.shipTo() == null ? "" : command.shipTo());
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(material.getBytes(StandardCharsets.UTF_8)));

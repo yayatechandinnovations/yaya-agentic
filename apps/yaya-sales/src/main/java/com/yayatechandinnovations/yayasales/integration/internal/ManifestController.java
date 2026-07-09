@@ -60,6 +60,20 @@ public class ManifestController {
                                 + "\"returnUrl\":\"{returnUrl}\"}", true),
                 tool("sales.get_order", "Check an order's status (post-purchase)",
                         "GET", "/v1/sales/agent/orders/{orderId}",
+                        Map.of("orderId", Map.of("type", "string")), null, false),
+                tool("sales.delivery_options",
+                        "Quote the delivery methods, prices and promised windows for an address",
+                        "POST", "/v1/sales/agent/delivery/options",
+                        Map.of("address", Map.of("type", "object", "properties", Map.of(
+                                "line1", Map.of("type", "string"),
+                                "line2", Map.of("type", "string"),
+                                "city", Map.of("type", "string"),
+                                "region", Map.of("type", "string"),
+                                "postalCode", Map.of("type", "string"),
+                                "country", Map.of("type", "string")))),
+                        "{\"cartHandle\":\"{ctx.cartHandle}\",\"address\":{address}}", false),
+                tool("sales.track_delivery", "Track an order's delivery (\"where's my order?\")",
+                        "GET", "/v1/sales/agent/orders/{orderId}/track",
                         Map.of("orderId", Map.of("type", "string")), null, false)));
     }
 

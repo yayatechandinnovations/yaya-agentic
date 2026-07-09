@@ -48,3 +48,11 @@ yaya:
       # expires_at → EXPIRED, availability recovers.
       sweep-enabled: ${SALES_INVENTORY_SWEEP_ENABLED:true}
       sweep-interval-ms: ${SALES_INVENTORY_SWEEP_INTERVAL_MS:30000}
+    delivery:
+      # Courier fleet (design §8.9). otp-echo-enabled returns the registration
+      # OTP in the register response for DEV/TEST ONLY — production keeps it
+      # false and delivers the OTP out-of-band (SMS wired to the
+      # delivery_agent.registered outbox event). Stored hashed either way.
+      otp-echo-enabled: ${SALES_DELIVERY_OTP_ECHO_ENABLED:false}
+      otp-ttl-minutes: ${SALES_DELIVERY_OTP_TTL_MINUTES:10}
+      invite-ttl-hours: ${SALES_DELIVERY_INVITE_TTL_HOURS:72}
