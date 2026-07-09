@@ -1,0 +1,83 @@
+# yaya-identity — self-contained stack (Postgres + backend + console).
+#
+#   cd apps/yaya-identity/deploy
+#   ./deploy.sh            # generates secrets into .env, then `up -d --build`
+#
+# The console (nginx) serves the SPA and proxies OAuth/API paths to the backend,
+# so everything is same-origin — no CORS. In production it sits under
+# https://yayaagentic.smartlottery.do/identity via the agent host vhost
+# (see nginx.agent-location.conf); the backend runs with context-path=/identity.
+
+name: yaya-identity
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${IDENTITY_DB_NAME:-yaya_identity}
+      POSTGRES_USER: ${IDENTITY_DB_USER:-identity}
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD in .env}
+    volumes:
+      - identity_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  identity:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      IDENTITY_DB_URL: jdbc:postgresql://postgres:5432/${IDENTITY_DB_NAME:-yaya_identity}
+      IDENTITY_DB_USER: ${IDENTITY_DB_USER:-identity}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD in .env}
+      # Root of trust — required. base64 32-byte key (openssl rand -base64 32).
+      YAYA_IDENTITY_SECRETS_ENCRYPTION_KEY: ${YAYA_IDENTITY_SECRETS_ENCRYPTION_KEY:?set the master key in .env}
+      # Serve under the subpath so relative redirects (e.g. /identity/login) line up.
+      SERVER_SERVLET_CONTEXT_PATH: ${IDENTITY_BASE_PATH:-}
+      # Public issuer = full browser-facing URL (origin + subpath).
+      YAYA_IDENTITY_ISSUER: ${PUBLIC_ORIGIN:-http://localhost:8091}
+      YAYA_IDENTITY_BOOTSTRAP_CONSOLE_CLIENT_REDIRECT_URI: ${PUBLIC_ORIGIN:-http://localhost:8091}/callback
+      # Trust X-Forwarded-* from the host TLS proxy so redirects/cookies are https.
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      YAYA_IDENTITY_BOOTSTRAP_SERVICE_CLIENT_SECRET: ${YAYA_IDENTITY_BOOTSTRAP_SERVICE_CLIENT_SECRET:-}
+      # First-access master user (create the console login).
+      YAYA_IDENTITY_BOOTSTRAP_OWNER_EMAIL: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_EMAIL:-}
+      YAYA_IDENTITY_BOOTSTRAP_OWNER_PASSWORD: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_PASSWORD:-}
+      YAYA_IDENTITY_BOOTSTRAP_OWNER_ORG: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_ORG:-Root Org}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090${IDENTITY_BASE_PATH:-}/oauth2/jwks >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+    ports:
+      - "8090:8090"
+
+  console:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.console
+      args:
+        IDENTITY_BASE_URL: ${PUBLIC_ORIGIN:-http://localhost:8091}
+        CONSOLE_REDIRECT_URI: ${PUBLIC_ORIGIN:-http://localhost:8091}/callback
+        IDENTITY_BASE_PATH: ${IDENTITY_BASE_PATH:-}
+    environment:
+      # Runtime: nginx renders the template with this prefix; filter keeps
+      # envsubst from touching nginx's own $host/$uri/... variables.
+      IDENTITY_BASE_PATH: ${IDENTITY_BASE_PATH:-}
+      NGINX_ENVSUBST_FILTER: IDENTITY_BASE_PATH
+    depends_on:
+      identity:
+        condition: service_healthy
+    ports:
+      - "8091:80"
+
+volumes:
+  identity_pg_data:

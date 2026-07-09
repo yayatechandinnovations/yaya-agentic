@@ -1,0 +1,29 @@
+# yaya-identity console — Flutter web → nginx.
+# Build context: apps/yaya-identity/  (so it can read console/ and deploy/nginx.conf.template)
+ARG FLUTTER_VERSION=3.41.1
+FROM ghcr.io/cirruslabs/flutter:${FLUTTER_VERSION} AS build
+
+# Public origin the browser uses (may include a subpath, e.g. .../identity).
+ARG IDENTITY_BASE_URL=http://localhost:8091
+ARG CONSOLE_CLIENT_ID=yaya-console
+ARG CONSOLE_REDIRECT_URI=http://localhost:8091/callback
+# Subpath prefix ('' for root, '/identity' for the subpath deploy).
+ARG IDENTITY_BASE_PATH=
+
+WORKDIR /app
+COPY console/ .
+RUN flutter pub get
+# base-href must be "<prefix>/" — "/" at root, "/identity/" under a subpath.
+RUN flutter build web --release --pwa-strategy=none --base-href "${IDENTITY_BASE_PATH}/" \
+    --dart-define=IDENTITY_BASE_URL=${IDENTITY_BASE_URL} \
+    --dart-define=CONSOLE_CLIENT_ID=${CONSOLE_CLIENT_ID} \
+    --dart-define=CONSOLE_REDIRECT_URI=${CONSOLE_REDIRECT_URI}
+
+FROM nginx:alpine
+ARG IDENTITY_BASE_PATH=
+# nginx renders the template at start using $IDENTITY_BASE_PATH (see compose env).
+COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
+# Serve the bundle from a dir matching the prefix, so plain `root` (not alias)
+# resolves /identity/main.dart.js → html/identity/main.dart.js.
+COPY --from=build /app/build/web /usr/share/nginx/html${IDENTITY_BASE_PATH}
+EXPOSE 80

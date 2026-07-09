@@ -1,0 +1,43 @@
+# Rendered by the nginx image at start (envsubst) using $IDENTITY_BASE_PATH,
+# which is restricted to just that var via NGINX_ENVSUBST_FILTER so nginx's own
+# $host/$uri/... are left untouched.
+#
+# Same-origin: serves the SPA and proxies OAuth/OIDC, login, PDP, and admin
+# paths to the backend (which runs with servlet context-path = $IDENTITY_BASE_PATH),
+# so the /identity prefix is consistent everywhere and there's no CORS.
+
+map $http_x_forwarded_proto $fwd_proto {
+    default   $scheme;
+    "~."      $http_x_forwarded_proto;
+}
+
+upstream identity_backend {
+    server identity:8090;
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $fwd_proto;
+    proxy_http_version 1.1;
+
+    # --- backend paths (prefix preserved; backend context-path matches) ---
+    location = ${IDENTITY_BASE_PATH}/login  { proxy_pass http://identity_backend; }
+    location = ${IDENTITY_BASE_PATH}/logout { proxy_pass http://identity_backend; }
+    location ${IDENTITY_BASE_PATH}/oauth2/      { proxy_pass http://identity_backend; }
+    location ${IDENTITY_BASE_PATH}/.well-known/ { proxy_pass http://identity_backend; }
+    location ${IDENTITY_BASE_PATH}/pdp/         { proxy_pass http://identity_backend; }
+    location ${IDENTITY_BASE_PATH}/v1/          { proxy_pass http://identity_backend; }
+    location ${IDENTITY_BASE_PATH}/actuator/    { proxy_pass http://identity_backend; }
+
+    # --- SPA (static files live under html${IDENTITY_BASE_PATH}) ---
+    location ${IDENTITY_BASE_PATH}/ {
+        try_files $uri $uri/ ${IDENTITY_BASE_PATH}/index.html;
+    }
+}

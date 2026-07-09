@@ -1,0 +1,96 @@
+# yaya-sales — self-contained stack (Postgres + backend).
+#
+#   cd apps/yaya-sales/deploy
+#   ./deploy.sh            # generates secrets into .env, then `up -d --build`
+#
+# yaya-agentic reaches this app only through HTTP tools (`/v1/sales/agent/*`)
+# authenticated by the per-tenant X-Yaya-Service-Token secret configured below.
+# The operator cutover from the legacy in-core commerce is docs/RUNBOOK.md.
+
+name: yaya-sales
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${SALES_DB_NAME:-yaya_sales}
+      POSTGRES_USER: ${SALES_DB_USER:-sales}
+      POSTGRES_PASSWORD: ${SALES_DB_PASSWORD:?set SALES_DB_PASSWORD in .env}
+    volumes:
+      - sales_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  sales:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Optional git-ignored extras (PSP live keys, notification knobs, any
+    # additional Spring relaxed-binding env) — create deploy/.env.local to use.
+    env_file:
+      - path: ./.env.local
+        required: false
+    environment:
+      SALES_DB_URL: jdbc:postgresql://postgres:5432/${SALES_DB_NAME:-yaya_sales}
+      SALES_DB_USER: ${SALES_DB_USER:-sales}
+      SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?set SALES_DB_PASSWORD in .env}
+      # Root of trust — required for PSP/carrier credential + KYC encryption at
+      # rest. base64 32-byte key (openssl rand -base64 32).
+      YAYA_SALES_SECRETS_ENCRYPTION_KEY: ${YAYA_SALES_SECRETS_ENCRYPTION_KEY:?set the master key in .env}
+      # OIDC issuer whose JWTs authenticate operators + forwarded shoppers —
+      # point it at your yaya-identity deployment. Blank = JWT auth off
+      # (only service tokens can call in; admin endpoints stay locked).
+      YAYA_SALES_AUTH_ISSUER_URI: ${YAYA_SALES_AUTH_ISSUER_URI:-}
+      # Per-tenant HMAC secret verifying X-Yaya-Service-Token minted by
+      # yaya-agentic's HttpToolDispatcher. `yaya.sales.auth.service-secrets` is
+      # a MAP keyed by tenant id — env relaxed binding mangles map keys (dots,
+      # dashes), so it rides SPRING_APPLICATION_JSON instead. Multi-tenant:
+      # replace this literal with the full map, or move it to .env.local.
+      SPRING_APPLICATION_JSON: >-
+        {"yaya":{"sales":{"auth":{"service-secrets":{"${SALES_TENANT_ID:-default}":"${SALES_SERVICE_TOKEN_SECRET:-}"}}}}}
+      # Sandbox PSP webhook signature secret (X-Sandbox-Signature). Live PSP
+      # keys (stripe/paypal/dlocal) belong in .env.local — see .env.example.
+      YAYA_SALES_PAYMENTS_SANDBOX_WEBHOOK_SECRET: ${YAYA_SALES_PAYMENTS_SANDBOX_WEBHOOK_SECRET:-}
+      # Background machinery — defaults mirror application.yml.
+      SALES_OUTBOX_POLL_ENABLED: ${SALES_OUTBOX_POLL_ENABLED:-true}
+      SALES_OUTBOX_POLL_INTERVAL_MS: ${SALES_OUTBOX_POLL_INTERVAL_MS:-2000}
+      SALES_INVENTORY_SWEEP_ENABLED: ${SALES_INVENTORY_SWEEP_ENABLED:-true}
+      SALES_INVENTORY_SWEEP_INTERVAL_MS: ${SALES_INVENTORY_SWEEP_INTERVAL_MS:-30000}
+      # Courier-fleet OTP knobs. otp-echo is DEV/TEST ONLY — never true in prod.
+      SALES_DELIVERY_OTP_ECHO_ENABLED: ${SALES_DELIVERY_OTP_ECHO_ENABLED:-false}
+      SALES_DELIVERY_OTP_TTL_MINUTES: ${SALES_DELIVERY_OTP_TTL_MINUTES:-10}
+      SALES_DELIVERY_INVITE_TTL_HOURS: ${SALES_DELIVERY_INVITE_TTL_HOURS:-72}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8092/actuator/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+    ports:
+      - "${SALES_PORT:-8092}:8092"
+
+  # TODO(console): the yaya-sales merchant console is being built in parallel.
+  # When it lands, mirror yaya-identity's pattern (Dockerfile.console building
+  # the SPA, nginx same-origin proxy in front of the backend) and uncomment:
+  #
+  # console:
+  #   build:
+  #     context: ..
+  #     dockerfile: deploy/Dockerfile.console
+  #     args:
+  #       SALES_BASE_URL: ${PUBLIC_ORIGIN:-http://localhost:8093}
+  #   depends_on:
+  #     sales:
+  #       condition: service_healthy
+  #   ports:
+  #     - "8093:80"
+
+volumes:
+  sales_pg_data:

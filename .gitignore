@@ -10,8 +10,12 @@ target/
 *.pem
 *.key
 
-### Deploy tooling (local-only, never tracked)
-deploy/
+### Deploy tooling (local-only, never tracked) — ROOT ONLY.
+# The apps' deploy bundles (apps/*/deploy) ARE shipped; only their
+# generated secrets stay local.
+/deploy/
+apps/*/deploy/.env
+apps/*/deploy/.env.local
 
 ### Flutter build artifacts
 yayaagenticweb/build/
