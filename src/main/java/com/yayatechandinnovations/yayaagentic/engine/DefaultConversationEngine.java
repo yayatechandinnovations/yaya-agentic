@@ -1442,8 +1442,24 @@ public class DefaultConversationEngine implements ConversationEngine {
                     case ToolExecutor.Outcome.NeedsInput ni ->
                             elicitationFlow(toolDescriptor, effectiveArgs, ni, personality, session, exec, recorder, turnId, message);
                     case ToolExecutor.Outcome.Dispatched(var result) ->
-                            dispatchedFlow(toolDescriptor, effectiveArgs, result, profile, session, exec, recorder, turnId, message, llmDriven);
+                            dispatchedFlow(toolDescriptor, effectiveArgs,
+                                    passThroughUiHint(session, result),
+                                    profile, session, exec, recorder, turnId, message, llmDriven);
                 });
+    }
+
+    /** yaya-sales design §11.2 — see {@link UiHintPassThrough}. */
+    private Turn.ToolResult passThroughUiHint(Session session, Turn.ToolResult result) {
+        UiHintPassThrough.Split split = result == null
+                ? null : UiHintPassThrough.split(result.value());
+        if (split == null) {
+            return result;
+        }
+        if (split.kind() != null) {
+            pendingUiHints.enqueue(session.id(), split.kind(), split.payload());
+        }
+        return new Turn.ToolResult(result.callId(), result.status(), split.strippedValue(),
+                result.error(), result.capturedEntities(), result.diagnostics());
     }
 
     /** B2.8 — Two-phase preview: stream tool_call + UiHint(confirm) and wait for the next turn. */

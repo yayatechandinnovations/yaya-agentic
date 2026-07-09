@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: yaya-sales
+  datasource:
+    url: ${SALES_DB_URL:jdbc:postgresql://localhost:5432/yaya_sales}
+    username: ${SALES_DB_USER:postgres}
+    password: ${SALES_DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: none          # Flyway owns the schema; Hibernate never mutates it.
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: yaya_sales
+  flyway:
+    enabled: true
+    # Own schema, zero cross-schema FKs/joins (design §12.4 / decision 5) — a
+    # shared Postgres instance is fine in v1, and the app lifts to its own
+    # instance with no query changes.
+    schemas: yaya_sales
+    default-schema: yaya_sales
+    create-schemas: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SALES_PORT:8092}
+
+yaya:
+  sales:
+    secrets:
+      # base64-encoded 32-byte AES-256 master key — generate with `openssl rand -base64 32`.
+      # Encrypts PSP/carrier credentials and KYC documents at rest (design §15).
+      encryption-key: ${YAYA_SALES_SECRETS_ENCRYPTION_KEY:}
+    auth:
+      # OIDC issuer whose JWTs authenticate operators (admin API) and forwarded
+      # shopper principals (agent API). Same issuer trust yaya-agentic uses
+      # (design §11.3) — e.g. the yaya-identity deployment. Blank = JWT auth off
+      # (only service tokens can authenticate; endpoints stay locked).
+      issuer-uri: ${YAYA_SALES_AUTH_ISSUER_URI:}
+      # Per-tenant HMAC secrets (base64) verifying X-Yaya-Service-Token minted by
+      # yaya-agentic's HttpToolDispatcher. Map: tenantId -> base64 secret.
+      service-secrets: {}
+    outbox:
+      poll-enabled: ${SALES_OUTBOX_POLL_ENABLED:true}
+      poll-interval-ms: ${SALES_OUTBOX_POLL_INTERVAL_MS:2000}
+    inventory:
+      # Abandoned-cart holds are released automatically (§7.3): HELD past
+      # expires_at → EXPIRED, availability recovers.
+      sweep-enabled: ${SALES_INVENTORY_SWEEP_ENABLED:true}
+      sweep-interval-ms: ${SALES_INVENTORY_SWEEP_INTERVAL_MS:30000}
