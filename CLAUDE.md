@@ -61,11 +61,23 @@ yaya-agentic/
 │       └── M0-skeleton.md … M5-multi-tenant-admin.md
 ├── src/                          Spring Boot backend (Java 21)
 ├── yayaagenticweb/               Flutter web app (admin + playground)
+├── yayaagenticchat/              Flutter web app (end-user chat / storefront)
+├── apps/                         Shippable INTEGRATIONS — standalone apps, NOT the core
+│   └── yaya-sales/               Standalone sales/commerce app (design: apps/yaya-sales/docs/design/)
 ├── pom.xml
 └── CLAUDE.md
 ```
 
 The Flutter app uses **flutter_riverpod + dio + freezed + json_serializable + go_router** (decided in M0). Its package structure is defined in `docs/milestones/M0-skeleton.md` (F0.2).
+
+## `apps/` — shippable integrations (NOT part of yaya-agentic)
+
+`apps/` holds **standalone applications we ship *with* yaya-agentic but that are NOT part of its core.** yaya-agentic is a **framework** (profile-driven, auth-aware agents) and must stay domain-neutral — it knows how to run an agent, not how to sell a product or book a room. Anything that is a **business domain** belongs in an app under `apps/`, never in `com.yayatechandinnovations.yayaagentic.*`.
+
+Each app: is separately deployable (its own build, DB/migrations, container, release cadence); does **not** import yaya-agentic internals and is **not** imported by yaya-agentic; integrates **only** through the published seams — HTTP tools (`ToolHandlerRef.Http` + `HttpToolSpec`, §5.3), explicit `AuthForwarding` (§5.4/§5.5), and engine-emitted `TurnEvent.UiHint` frames (§6.1/§9). The test: *domain → app; a way to build agents → core.* When unsure, keep the core thin and push the domain into an app. See `apps/README.md`.
+
+- **`yaya-sales`** — standalone commerce/sales app (catalog, inventory, pricing, cart, orders, payments + merchant PSP onboarding, fulfillment). It **replaces** the in-core `commerce/*` subsystem, which is being extracted out of yaya-agentic; the agent integrates commerce as `sales.*` HTTP tools on a profile. Design + migration plan: `apps/yaya-sales/docs/design/yaya-sales-design.md` (§12 = what moves out of the core, in what order). Until that migration lands, `commerce/*` still lives in the core — treat it as legacy on the way out.
+- **`yaya-identity`** — a **platform-service app**: the shared identity provider & authorization service the other apps delegate AuthN/AuthZ to (organizations, users, groups, roles, permissions, policies). OAuth2/OIDC issuer + a Policy Decision Point (`decide → Permit | Deny(userSafeReason, auditReason)`, mirroring the agent's `AuthzDecision` two-reason rule). Not part of the core: yaya-agentic *trusts* it as an OIDC issuer via the existing `tenant_oidc_issuers` machinery (zero new agent code) but does not import it. Design: `apps/yaya-identity/docs/design/yaya-identity-design.md`.
 
 ## Backend package map
 

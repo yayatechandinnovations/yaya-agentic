@@ -1,0 +1,8 @@
+target/
+console/build/
+console/.dart_tool/
+console/.flutter-plugins*
+**/*.iml
+.git/
+deploy/.env
+docs/

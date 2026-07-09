@@ -1,0 +1,58 @@
+package com.yayatechandinnovations.yayaidentity.api;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.yayatechandinnovations.yayaidentity.platform.Ids.OrgId;
+import com.yayatechandinnovations.yayaidentity.policies.Policy;
+import com.yayatechandinnovations.yayaidentity.policies.PolicyDecisionPoint;
+import com.yayatechandinnovations.yayaidentity.policies.PolicyService;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * Policy admin (design §9.3): create a policy and run the simulator (a dry-run
+ * decision that persists nothing — US-45/US-61). Full admin CRUD + the console
+ * land at I5; this exposes the load-bearing operations now that they're secured.
+ */
+@RestController
+@RequestMapping("/v1/identity/admin/orgs/{org}/policies")
+public class PolicyAdminController {
+
+    private final PolicyService policies;
+    private final PolicyDecisionPoint pdp;
+
+    public PolicyAdminController(PolicyService policies, PolicyDecisionPoint pdp) {
+        this.policies = policies;
+        this.pdp = pdp;
+    }
+
+    public record CreatePolicyDto(String name, String effect, JsonNode target, JsonNode condition,
+                                  Integer priority, String userReason, String auditReason) {}
+
+    public record PolicyDto(String id, String name, String effect, int priority) {}
+
+    @org.springframework.web.bind.annotation.GetMapping
+    public java.util.List<PolicyDto> list(@PathVariable String org) {
+        return policies.listPolicies(new OrgId(org)).stream()
+                .map(p -> new PolicyDto(p.id().value(), p.name(), p.effect().name(), p.priority()))
+                .toList();
+    }
+
+    @PostMapping
+    public PolicyDto create(@PathVariable String org, @RequestBody CreatePolicyDto body) {
+        Policy p = policies.create(
+                new OrgId(org), body.name(), Policy.Effect.valueOf(body.effect()),
+                body.target().toString(),
+                body.condition() == null || body.condition().isNull() ? null : body.condition().toString(),
+                body.priority() == null ? 0 : body.priority(),
+                body.userReason(), body.auditReason());
+        return new PolicyDto(p.id().value(), p.name(), p.effect().name(), p.priority());
+    }
+
+    @PostMapping("/simulate")
+    public DecisionDto simulate(@PathVariable String org, @RequestBody DecideRequestDto request) {
+        return DecisionDto.of(pdp.simulate(request.toDomain()));
+    }
+}

@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: yaya-identity
+  datasource:
+    url: ${IDENTITY_DB_URL:jdbc:postgresql://localhost:5432/yaya_identity}
+    username: ${IDENTITY_DB_USER:postgres}
+    password: ${IDENTITY_DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: none          # Flyway owns the schema; Hibernate never mutates it.
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: yaya_identity
+  flyway:
+    enabled: true
+    schemas: yaya_identity      # own schema — lifts to a separate instance without migration (FR-7.2)
+    default-schema: yaya_identity
+    create-schemas: true
+    locations: classpath:db/migration
+
+server:
+  port: ${IDENTITY_PORT:8090}
+
+yaya:
+  identity:
+    # Public issuer URL — the value registered in yaya-agentic's tenant_oidc_issuers.
+    # Leave blank in dev/test so Spring Authorization Server derives it per request.
+    issuer: ${YAYA_IDENTITY_ISSUER:}
+    secrets:
+      # base64-encoded 32-byte AES-256 master key — generate with `openssl rand -base64 32`.
+      # Required: signing-key private material is encrypted at rest with it (root of trust).
+      encryption-key: ${YAYA_IDENTITY_SECRETS_ENCRYPTION_KEY:}
+    keys:
+      # Bootstrap one ACTIVE RS256 signing key on first boot if none exists.
+      bootstrap: ${YAYA_IDENTITY_KEYS_BOOTSTRAP:true}
+    bootstrap:
+      # Temporary I1a seed of a client-credentials service client (moves to DB at I4).
+      service-client:
+        id: ${YAYA_IDENTITY_BOOTSTRAP_SERVICE_CLIENT_ID:yaya-agentic}
+        secret: ${YAYA_IDENTITY_BOOTSTRAP_SERVICE_CLIENT_SECRET:}
+      # First-access master user. When set, a root org + ACTIVE owner user is
+      # created once so the console can be signed into. Password must be >= 12 chars.
+      owner:
+        email: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_EMAIL:}
+        password: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_PASSWORD:}
+        org-name: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_ORG:Root Org}
