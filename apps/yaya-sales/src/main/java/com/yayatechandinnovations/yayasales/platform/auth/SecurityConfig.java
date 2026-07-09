@@ -3,13 +3,20 @@ package com.yayatechandinnovations.yayasales.platform.auth;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
 import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Trust boundary (design §15): yaya-sales trusts only the platform. Stateless;
@@ -35,11 +42,14 @@ public class SecurityConfig {
                                             CourierTokenFilter courierTokenFilter) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
+            // The admin console and the courier surface are SPAs on their own
+            // origins; without an allowance the browser blocks them before any
+            // auth runs. Off by default — the operator lists origins explicitly.
+            .cors(cors -> cors.configurationSource(corsSource(props)))
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             // No credentials is 401 (not Spring's default 403) even when JWT auth is off.
             .exceptionHandling(e -> e.authenticationEntryPoint(
-                    new org.springframework.security.web.authentication.HttpStatusEntryPoint(
-                            org.springframework.http.HttpStatus.UNAUTHORIZED)))
+                    new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
             .addFilterBefore(serviceTokenFilter, BasicAuthenticationFilter.class)
             .addFilterBefore(courierTokenFilter, BasicAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
@@ -57,5 +67,18 @@ public class SecurityConfig {
         }
 
         return http.build();
+    }
+
+    private static CorsConfigurationSource corsSource(SalesAuthProperties props) {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        if (props.corsAllowedOrigins() != null && !props.corsAllowedOrigins().isEmpty()) {
+            CorsConfiguration config = new CorsConfiguration();
+            config.setAllowedOrigins(props.corsAllowedOrigins());
+            config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+            config.setAllowedHeaders(List.of("Authorization", "Content-Type",
+                    "X-Yaya-Store-Id", "Idempotency-Key"));
+            source.registerCorsConfiguration("/**", config);
+        }
+        return source;
     }
 }

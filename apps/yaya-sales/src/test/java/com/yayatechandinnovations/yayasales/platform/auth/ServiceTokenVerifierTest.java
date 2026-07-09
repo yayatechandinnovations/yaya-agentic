@@ -23,7 +23,7 @@ class ServiceTokenVerifierTest {
     private static final String TENANT = "tenant-a";
 
     private final ServiceTokenVerifier verifier = new ServiceTokenVerifier(new SalesAuthProperties(
-            null, Map.of(TENANT, Base64.getEncoder().encodeToString(SECRET))));
+            null, Map.of(TENANT, Base64.getEncoder().encodeToString(SECRET)), null));
 
     @Test
     void acceptsAValidToken() {

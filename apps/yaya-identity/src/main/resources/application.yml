@@ -27,6 +27,9 @@ yaya:
     # Public issuer URL — the value registered in yaya-agentic's tenant_oidc_issuers.
     # Leave blank in dev/test so Spring Authorization Server derives it per request.
     issuer: ${YAYA_IDENTITY_ISSUER:}
+    # Comma-separated SPA origins allowed to call the token/JWKS endpoints
+    # cross-origin (e.g. the yaya-sales console). Empty = CORS off.
+    cors-allowed-origins: ${YAYA_IDENTITY_CORS_ALLOWED_ORIGINS:}
     secrets:
       # base64-encoded 32-byte AES-256 master key — generate with `openssl rand -base64 32`.
       # Required: signing-key private material is encrypted at rest with it (root of trust).

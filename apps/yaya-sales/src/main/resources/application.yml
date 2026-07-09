@@ -40,6 +40,9 @@ yaya:
       # Per-tenant HMAC secrets (base64) verifying X-Yaya-Service-Token minted by
       # yaya-agentic's HttpToolDispatcher. Map: tenantId -> base64 secret.
       service-secrets: {}
+      # Origins allowed to call this API from a browser (the admin console,
+      # the courier surface). Empty = CORS off.
+      cors-allowed-origins: ${YAYA_SALES_CORS_ALLOWED_ORIGINS:}
     outbox:
       poll-enabled: ${SALES_OUTBOX_POLL_ENABLED:true}
       poll-interval-ms: ${SALES_OUTBOX_POLL_INTERVAL_MS:2000}

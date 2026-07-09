@@ -12,10 +12,13 @@ import java.util.Map;
  * {@code X-Yaya-Service-Token} (minted by the agent's HttpToolDispatcher).
  */
 @ConfigurationProperties(prefix = "yaya.sales.auth")
-public record SalesAuthProperties(String issuerUri, Map<String, String> serviceSecrets) {
+public record SalesAuthProperties(String issuerUri, Map<String, String> serviceSecrets,
+                                  java.util.List<String> corsAllowedOrigins) {
 
     public SalesAuthProperties {
         serviceSecrets = serviceSecrets == null ? Map.of() : Map.copyOf(serviceSecrets);
+        corsAllowedOrigins = corsAllowedOrigins == null
+                ? java.util.List.of() : java.util.List.copyOf(corsAllowedOrigins);
     }
 
     public boolean jwtConfigured() {

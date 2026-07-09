@@ -28,16 +28,36 @@ public class AuthorizationServerConfig {
     /** Chain 1: the OAuth2/OIDC protocol endpoints (authorize, token, jwks, userinfo, discovery). */
     @Bean
     @Order(1)
-    SecurityFilterChain authorizationServerChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain authorizationServerChain(HttpSecurity http,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${yaya.identity.cors-allowed-origins:}") String corsAllowedOrigins)
+            throws Exception {
         OAuth2AuthorizationServerConfigurer authServer =
                 OAuth2AuthorizationServerConfigurer.authorizationServer();
         http
                 .securityMatcher(authServer.getEndpointsMatcher())
                 .with(authServer, server -> server.oidc(Customizer.withDefaults()))
+                // SPA consoles on their own origins (e.g. the yaya-sales console)
+                // exchange the PKCE code at /oauth2/token via XHR — the browser
+                // blocks that without an explicit allowance. Empty = CORS off;
+                // the same-origin identity console is unaffected.
+                .cors(cors -> cors.configurationSource(corsSource(corsAllowedOrigins)))
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 // Tokens are verified as a resource server too (introspection/self-calls).
                 .oauth2ResourceServer(rs -> rs.jwt(Customizer.withDefaults()));
         return http.build();
+    }
+
+    private static org.springframework.web.cors.CorsConfigurationSource corsSource(String origins) {
+        var source = new org.springframework.web.cors.UrlBasedCorsConfigurationSource();
+        if (StringUtils.hasText(origins)) {
+            var config = new org.springframework.web.cors.CorsConfiguration();
+            config.setAllowedOrigins(java.util.List.of(origins.split(",")));
+            config.setAllowedMethods(java.util.List.of("GET", "POST", "OPTIONS"));
+            config.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type"));
+            source.registerCorsConfiguration("/**", config);
+        }
+        return source;
     }
 
     /**

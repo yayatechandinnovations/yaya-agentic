@@ -43,6 +43,8 @@ services:
       SERVER_SERVLET_CONTEXT_PATH: ${IDENTITY_BASE_PATH:-}
       # Public issuer = full browser-facing URL (origin + subpath).
       YAYA_IDENTITY_ISSUER: ${PUBLIC_ORIGIN:-http://localhost:8091}
+      # SPA origins allowed at the token/JWKS endpoints (e.g. the yaya-sales console).
+      YAYA_IDENTITY_CORS_ALLOWED_ORIGINS: ${YAYA_IDENTITY_CORS_ALLOWED_ORIGINS:-}
       YAYA_IDENTITY_BOOTSTRAP_CONSOLE_CLIENT_REDIRECT_URI: ${PUBLIC_ORIGIN:-http://localhost:8091}/callback
       # Trust X-Forwarded-* from the host TLS proxy so redirects/cookies are https.
       SERVER_FORWARD_HEADERS_STRATEGY: framework
