@@ -29,11 +29,15 @@ public interface CheckoutService {
             String idempotencyKey) {}
 
     sealed interface CheckoutOutcome
-            permits CheckoutOutcome.HostedUrl, CheckoutOutcome.Placed,
-                    CheckoutOutcome.Paid, CheckoutOutcome.Insufficient {
+            permits CheckoutOutcome.HostedUrl, CheckoutOutcome.PaymentIntent,
+                    CheckoutOutcome.Placed, CheckoutOutcome.Paid, CheckoutOutcome.Insufficient {
 
         /** PSP: shopper completes payment at the URL; the webhook flips PAID. */
         record HostedUrl(OrderView order, String url) implements CheckoutOutcome {}
+
+        /** PSP drop-in (Stripe): the client mounts the sheet with the secret; the webhook flips PAID. */
+        record PaymentIntent(OrderView order, String clientSecret, String publishableKey)
+                implements CheckoutOutcome {}
 
         /** COD / MANUAL: order placed PENDING_PAYMENT, money moves later. */
         record Placed(OrderView order, String instructions) implements CheckoutOutcome {}

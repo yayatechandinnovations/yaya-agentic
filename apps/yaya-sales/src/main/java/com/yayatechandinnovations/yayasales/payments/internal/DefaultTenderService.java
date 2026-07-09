@@ -36,28 +36,22 @@ public class DefaultTenderService implements TenderService {
     private final TenderRepository tenders;
     private final PaymentTransactionRepository transactions;
     private final StoreCreditService storeCredit;
-    private final Map<String, PaymentProvider> providers;
+    private final PaymentProviderRouter providerRouter;
     private final ApplicationEventPublisher events;
     private final ObjectMapper json;
-    private final String defaultPspProvider;
 
     public DefaultTenderService(TenderRepository tenders,
                                 PaymentTransactionRepository transactions,
                                 StoreCreditService storeCredit,
-                                List<PaymentProvider> providers,
+                                PaymentProviderRouter providerRouter,
                                 ApplicationEventPublisher events,
-                                ObjectMapper json,
-                                @org.springframework.beans.factory.annotation.Value(
-                                        "${yaya.sales.payments.default-provider:sandbox}")
-                                String defaultPspProvider) {
+                                ObjectMapper json) {
         this.tenders = tenders;
         this.transactions = transactions;
         this.storeCredit = storeCredit;
-        this.providers = providers.stream()
-                .collect(java.util.stream.Collectors.toMap(PaymentProvider::name, p -> p));
+        this.providerRouter = providerRouter;
         this.events = events;
         this.json = json;
-        this.defaultPspProvider = defaultPspProvider;
     }
 
     @Override
@@ -84,7 +78,7 @@ public class DefaultTenderService implements TenderService {
 
         return switch (TenderKind.valueOf(tender.getKind())) {
             case PSP -> {
-                PaymentProvider provider = pspProvider();
+                PaymentProvider provider = providerRouter.resolve(new StoreId(tender.getStoreId()));
                 PaymentProvider.AuthorizeOutcome outcome = provider.authorize(
                         new PaymentProvider.AuthorizeRequest(new StoreId(tender.getStoreId()),
                                 new OrderId(tender.getOrderId()), amount, ctx.returnUrl()));
@@ -95,6 +89,15 @@ public class DefaultTenderService implements TenderService {
                                 "provider", provider.name(), "pspRef", hosted.pspRef(),
                                 "hostedUrl", hosted.url())));
                         yield new TenderOutcome.HostedUrl(hosted.url(), hosted.pspRef());
+                    }
+                    case PaymentProvider.AuthorizeOutcome.Intent intent -> {
+                        record(tender, provider.name(), "AUTH", amount, intent.pspRef(), "OK");
+                        // The clientSecret is a bearer credential for the payment sheet —
+                        // handed to the shopper once, NEVER persisted on the tender.
+                        tender.setDetailJson(write(Map.of(
+                                "provider", provider.name(), "pspRef", intent.pspRef())));
+                        yield new TenderOutcome.PaymentIntent(intent.clientSecret(),
+                                intent.publishableKey(), intent.pspRef());
                     }
                     case PaymentProvider.AuthorizeOutcome.Captured captured -> {
                         record(tender, provider.name(), "CAPTURE", amount, captured.pspRef(), "OK");
@@ -193,7 +196,7 @@ public class DefaultTenderService implements TenderService {
         }
         if (TenderKind.valueOf(settledTender.getKind()) == TenderKind.PSP) {
             String pspRef = String.valueOf(readDetail(settledTender).get("pspRef"));
-            PaymentProvider provider = pspProvider();
+            PaymentProvider provider = providerRouter.resolve(store);
             PaymentProvider.RefundOutcome outcome = provider.refund(
                     new PaymentProvider.RefundRequest(store, order, amount, pspRef));
             if (outcome instanceof PaymentProvider.RefundOutcome.Failed failed) {
@@ -293,14 +296,6 @@ public class DefaultTenderService implements TenderService {
     private OrderTenderEntity locked(TenderId id) {
         return tenders.lockById(id.value())
                 .orElseThrow(() -> new ApiErrors.NotFoundException("tender", id.value()));
-    }
-
-    private PaymentProvider pspProvider() {
-        PaymentProvider provider = providers.get(defaultPspProvider);
-        if (provider == null) {
-            throw new IllegalStateException("no PaymentProvider named '" + defaultPspProvider + "'");
-        }
-        return provider;
     }
 
     private String providerOf(OrderTenderEntity tender) {

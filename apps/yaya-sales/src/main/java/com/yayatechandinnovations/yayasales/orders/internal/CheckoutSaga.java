@@ -160,6 +160,9 @@ public class CheckoutSaga implements CheckoutService {
                 outcome = switch (begun) {
                     case TenderOutcome.HostedUrl hosted ->
                             new CheckoutOutcome.HostedUrl(freshView(order.id()), hosted.url());
+                    case TenderOutcome.PaymentIntent intent ->
+                            new CheckoutOutcome.PaymentIntent(freshView(order.id()),
+                                    intent.clientSecret(), intent.publishableKey());
                     case TenderOutcome.NothingDueNow nothing ->
                             new CheckoutOutcome.Placed(freshView(order.id()), nothing.instructions());
                     case TenderOutcome.SettledInstantly ignored ->
@@ -202,6 +205,14 @@ public class CheckoutSaga implements CheckoutService {
                 stored.put("orderId", h.order().id().value());
                 stored.put("url", h.url());
             }
+            case CheckoutOutcome.PaymentIntent pi -> {
+                // Stored so a retried checkout replays the SAME intent — Stripe's
+                // Idempotency-Key (the order id) made it the same intent anyway.
+                stored.put("type", "PAYMENT_INTENT");
+                stored.put("orderId", pi.order().id().value());
+                stored.put("clientSecret", pi.clientSecret());
+                stored.put("publishableKey", pi.publishableKey());
+            }
             case CheckoutOutcome.Placed p -> {
                 stored.put("type", "PLACED");
                 stored.put("orderId", p.order().id().value());
@@ -228,6 +239,9 @@ public class CheckoutSaga implements CheckoutService {
             return switch (String.valueOf(stored.get("type"))) {
                 case "HOSTED_URL" -> new CheckoutOutcome.HostedUrl(order,
                         String.valueOf(stored.get("url")));
+                case "PAYMENT_INTENT" -> new CheckoutOutcome.PaymentIntent(order,
+                        String.valueOf(stored.get("clientSecret")),
+                        String.valueOf(stored.get("publishableKey")));
                 case "PLACED" -> new CheckoutOutcome.Placed(order,
                         String.valueOf(stored.get("instructions")));
                 case "PAID" -> new CheckoutOutcome.Paid(order);

@@ -62,6 +62,15 @@ public class AgentCheckoutController {
                             "paymentUrl", hosted.url()),
                     "checkout", Map.of("kind", "hosted_url",
                             "orderId", hosted.order().id().value(), "url", hosted.url()));
+            case CheckoutService.CheckoutOutcome.PaymentIntent intent -> UiHints.framed(
+                    Map.of("status", "AWAITING_PAYMENT",
+                            "orderId", intent.order().id().value(),
+                            "clientSecret", intent.clientSecret(),
+                            "publishableKey", intent.publishableKey()),
+                    "checkout", Map.of("kind", "payment_intent",
+                            "orderId", intent.order().id().value(),
+                            "clientSecret", intent.clientSecret(),
+                            "publishableKey", intent.publishableKey()));
             case CheckoutService.CheckoutOutcome.Placed placed -> UiHints.framed(
                     Map.of("status", "PLACED",
                             "orderId", placed.order().id().value(),

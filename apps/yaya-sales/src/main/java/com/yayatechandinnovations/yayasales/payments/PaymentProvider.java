@@ -22,8 +22,12 @@ public interface PaymentProvider {
     record RefundRequest(StoreId store, OrderId order, Money amount, String pspRef) {}
 
     sealed interface AuthorizeOutcome
-            permits AuthorizeOutcome.HostedUrl, AuthorizeOutcome.Captured, AuthorizeOutcome.Failed {
+            permits AuthorizeOutcome.HostedUrl, AuthorizeOutcome.Intent,
+                    AuthorizeOutcome.Captured, AuthorizeOutcome.Failed {
         record HostedUrl(String url, String pspRef) implements AuthorizeOutcome {}
+        /** Stripe's drop-in path: the client mounts the PSP sheet with the secret. */
+        record Intent(String clientSecret, String publishableKey, String pspRef)
+                implements AuthorizeOutcome {}
         record Captured(String pspRef) implements AuthorizeOutcome {}
         record Failed(String reason) implements AuthorizeOutcome {}
     }
