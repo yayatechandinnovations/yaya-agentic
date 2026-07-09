@@ -14,6 +14,12 @@ public final class ApiErrors {
         }
     }
 
+    public static class ForbiddenException extends RuntimeException {
+        public ForbiddenException(String message) {
+            super(message);
+        }
+    }
+
     public static class ConflictException extends RuntimeException {
         public ConflictException(String message) {
             super(message);

@@ -266,7 +266,8 @@ class ReportingIT {
     private JsonNode report(String path) throws Exception {
         MvcResult result = mvc.perform(get(path)
                         .header("X-Yaya-Store-Id", store.value())
-                        .with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner")))))
+                        .with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))
+                                .claim("org", "tenant-s6-reports"))))
                 .andExpect(status().isOk()).andReturn();
         return json.readTree(result.getResponse().getContentAsString());
     }

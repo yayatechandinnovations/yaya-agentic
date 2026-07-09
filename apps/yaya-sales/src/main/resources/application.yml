@@ -43,6 +43,12 @@ yaya:
       # Origins allowed to call this API from a browser (the admin console,
       # the courier surface). Empty = CORS off.
       cors-allowed-origins: ${YAYA_SALES_CORS_ALLOWED_ORIGINS:}
+      # Admin-plane tenant binding (§15): the operator JWT claim whose value
+      # must equal the store's tenant id. Enforcement is ON by default;
+      # single-merchant deployments whose issuer mints no tenant claim can
+      # opt out explicitly.
+      operator-tenant-claim: ${YAYA_SALES_OPERATOR_TENANT_CLAIM:org}
+      enforce-operator-tenant: ${YAYA_SALES_ENFORCE_OPERATOR_TENANT:true}
     outbox:
       poll-enabled: ${SALES_OUTBOX_POLL_ENABLED:true}
       poll-interval-ms: ${SALES_OUTBOX_POLL_INTERVAL_MS:2000}

@@ -127,7 +127,8 @@ class AdminHttpIT {
 
     /** An operator JWT (roles claim) + the acting store header. */
     private static MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder req, String storeId) {
-        req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))));
+        req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))
+                .claim("org", "tenant-http")));
         if (storeId != null) {
             req.header("X-Yaya-Store-Id", storeId);
         }

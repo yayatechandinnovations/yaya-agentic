@@ -16,6 +16,11 @@ public class ApiErrorAdvice {
         return body(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    @ExceptionHandler(ApiErrors.ForbiddenException.class)
+    ResponseEntity<Map<String, String>> forbidden(ApiErrors.ForbiddenException e) {
+        return body(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
     @ExceptionHandler(ApiErrors.ConflictException.class)
     ResponseEntity<Map<String, String>> conflict(ApiErrors.ConflictException e) {
         return body(HttpStatus.CONFLICT, e.getMessage());

@@ -297,7 +297,8 @@ class CourierFleetIT {
     }
 
     private MockHttpServletRequestBuilder admin(MockHttpServletRequestBuilder req) {
-        req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))));
+        req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))
+                .claim("org", "tenant-fleet")));
         return req.header("X-Yaya-Store-Id", store.value());
     }
 

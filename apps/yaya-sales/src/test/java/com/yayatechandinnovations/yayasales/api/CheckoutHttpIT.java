@@ -224,7 +224,8 @@ class CheckoutHttpIT {
     }
 
     private MockHttpServletRequestBuilder operator(MockHttpServletRequestBuilder req) {
-        return req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))))
+        return req.with(jwt().jwt(j -> j.subject("op-1").claim("roles", List.of("owner"))
+                        .claim("org", TENANT)))
                 .header("X-Yaya-Store-Id", store.value());
     }
 

@@ -45,13 +45,20 @@ public class StoreAdminController {
 
     @PostMapping("/stores")
     @ResponseStatus(HttpStatus.CREATED)
-    public StoreView create(@Valid @RequestBody CreateStore body) {
+    public StoreView create(jakarta.servlet.http.HttpServletRequest request,
+                            @Valid @RequestBody CreateStore body) {
+        // An operator may only create stores for their own tenant (§15).
+        com.yayatechandinnovations.yayasales.platform.auth.OperatorTenants
+                .requireAllowed(request, body.tenantId());
         return service.create(new TenantRef(body.tenantId()), body.displayName(),
                 body.defaultCurrency(), body.policies());
     }
 
     @GetMapping("/stores")
-    public List<StoreView> byTenant(@RequestParam String tenantId) {
+    public List<StoreView> byTenant(jakarta.servlet.http.HttpServletRequest request,
+                                    @RequestParam String tenantId) {
+        com.yayatechandinnovations.yayasales.platform.auth.OperatorTenants
+                .requireAllowed(request, tenantId);
         return directory.storesOf(new TenantRef(tenantId));
     }
 

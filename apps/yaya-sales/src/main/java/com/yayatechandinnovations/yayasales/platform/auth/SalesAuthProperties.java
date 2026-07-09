@@ -13,12 +13,20 @@ import java.util.Map;
  */
 @ConfigurationProperties(prefix = "yaya.sales.auth")
 public record SalesAuthProperties(String issuerUri, Map<String, String> serviceSecrets,
-                                  java.util.List<String> corsAllowedOrigins) {
+                                  java.util.List<String> corsAllowedOrigins,
+                                  String operatorTenantClaim,
+                                  Boolean enforceOperatorTenant) {
 
     public SalesAuthProperties {
         serviceSecrets = serviceSecrets == null ? Map.of() : Map.copyOf(serviceSecrets);
         corsAllowedOrigins = corsAllowedOrigins == null
                 ? java.util.List.of() : java.util.List.copyOf(corsAllowedOrigins);
+        if (operatorTenantClaim == null || operatorTenantClaim.isBlank()) {
+            operatorTenantClaim = "org";
+        }
+        if (enforceOperatorTenant == null) {
+            enforceOperatorTenant = true;   // secure by default; opt OUT explicitly
+        }
     }
 
     public boolean jwtConfigured() {

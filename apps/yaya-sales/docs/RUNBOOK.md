@@ -22,6 +22,15 @@ additive and reversible.
 
 ---
 
+> **Tenant identity convention (multi-tenant deployments).** The admin plane
+> binds operators to stores by tenant: the operator JWT's `org` claim (name
+> configurable via `YAYA_SALES_OPERATOR_TENANT_CLAIM`) must equal the store's
+> tenant id — which is the SAME id the agent plane's service-token secrets are
+> keyed by. In practice: use the yaya-identity organization id as the tenant id
+> when creating stores and when wiring `tenant-secrets`, or mint a custom
+> tenant claim in yaya-identity. Single-merchant deployments whose tokens carry
+> no such claim may set `YAYA_SALES_ENFORCE_OPERATOR_TENANT=false`.
+
 ## 0. Prerequisites
 
 - Docker + Docker Compose v2, `openssl` on the deploy host.
