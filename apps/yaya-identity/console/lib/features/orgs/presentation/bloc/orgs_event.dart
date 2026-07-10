@@ -12,10 +12,20 @@ class OrgsRequested extends OrgsEvent {
 }
 
 class OrgCreateRequested extends OrgsEvent {
-  const OrgCreateRequested(this.name);
+  const OrgCreateRequested(this.draft);
 
-  final String name;
+  final OrgDraft draft;
 
   @override
-  List<Object?> get props => [name];
+  List<Object?> get props => [draft];
+}
+
+class OrgUpdateRequested extends OrgsEvent {
+  const OrgUpdateRequested(this.orgId, this.draft);
+
+  final String orgId;
+  final OrgDraft draft;
+
+  @override
+  List<Object?> get props => [orgId, draft];
 }

@@ -3,8 +3,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
+import '../theme/app_theme.dart';
 
-/// The authenticated shell: a nav rail across the primary sections plus sign-out.
+/// The authenticated shell: a brand-navy nav rail (logo on top, sign-out at the
+/// bottom) across the primary sections.
 class ConsoleShell extends StatelessWidget {
   const ConsoleShell({super.key, required this.child, required this.location});
 
@@ -37,9 +39,14 @@ class ConsoleShell extends StatelessWidget {
             selectedIndex: _selectedIndex,
             onDestinationSelected: (i) => context.go(_destinations[i].$1),
             labelType: NavigationRailLabelType.all,
-            leading: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Icon(Icons.shield_moon),
+            leading: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                // The logo lockup ships on the same navy as the rail, so it
+                // blends seamlessly.
+                child: Image.asset(AppBrand.logoAsset, width: 68),
+              ),
             ),
             trailing: Expanded(
               child: Align(
@@ -48,6 +55,7 @@ class ConsoleShell extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: IconButton(
                     tooltip: 'Sign out',
+                    color: Colors.white70,
                     icon: const Icon(Icons.logout),
                     onPressed: () => context.read<AuthBloc>().add(const AuthLogoutRequested()),
                   ),
@@ -58,7 +66,6 @@ class ConsoleShell extends StatelessWidget {
                 .map((d) => NavigationRailDestination(icon: Icon(d.$2), label: Text(d.$3)))
                 .toList(),
           ),
-          const VerticalDivider(width: 1),
           Expanded(child: child),
         ],
       ),

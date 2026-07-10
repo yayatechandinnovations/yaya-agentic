@@ -28,5 +28,6 @@ class DeleteUser {
 class InviteUser {
   const InviteUser(this._repo);
   final UserRepository _repo;
-  Future<String> call(String org, String email) => _repo.invite(org, email);
+  Future<String> call(String org, String email, {String? role}) =>
+      _repo.invite(org, email, role);
 }

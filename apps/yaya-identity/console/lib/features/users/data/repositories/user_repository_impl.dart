@@ -25,7 +25,8 @@ class UserRepositoryImpl implements UserRepository {
   Future<void> delete(String userId) => _guard(() => _remote.delete(userId));
 
   @override
-  Future<String> invite(String org, String email) => _guard(() => _remote.invite(org, email));
+  Future<String> invite(String org, String email, String? role) =>
+      _guard(() => _remote.invite(org, email, role));
 
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {

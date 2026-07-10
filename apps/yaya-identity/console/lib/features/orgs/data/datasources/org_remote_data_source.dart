@@ -10,10 +10,18 @@ class OrgRemoteDataSource {
     return (res.data ?? []).cast<Map<String, dynamic>>();
   }
 
-  Future<Map<String, dynamic>> create(String name) async {
+  Future<Map<String, dynamic>> create(Map<String, dynamic> draft) async {
     final res = await _dio.post<Map<String, dynamic>>(
       '/v1/identity/admin/orgs',
-      data: {'name': name},
+      data: draft,
+    );
+    return res.data ?? const {};
+  }
+
+  Future<Map<String, dynamic>> update(String org, Map<String, dynamic> draft) async {
+    final res = await _dio.put<Map<String, dynamic>>(
+      '/v1/identity/admin/orgs/$org',
+      data: draft,
     );
     return res.data ?? const {};
   }

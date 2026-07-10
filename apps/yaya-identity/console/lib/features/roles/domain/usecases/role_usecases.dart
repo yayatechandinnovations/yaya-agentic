@@ -20,3 +20,9 @@ class AssignRole {
   final RoleRepository _repo;
   Future<void> call(RoleAssignmentRequest request) => _repo.assign(request);
 }
+
+class GetPermissionCatalog {
+  const GetPermissionCatalog(this._repo);
+  final RoleRepository _repo;
+  Future<List<String>> call() => _repo.permissionCatalog();
+}

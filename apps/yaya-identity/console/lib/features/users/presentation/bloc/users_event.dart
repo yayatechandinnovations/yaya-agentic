@@ -39,9 +39,10 @@ class UserDeleteRequested extends UsersEvent {
 }
 
 class UserInviteRequested extends UsersEvent {
-  const UserInviteRequested(this.org, this.email);
+  const UserInviteRequested(this.org, this.email, {this.role});
   final String org;
   final String email;
+  final String? role;
   @override
-  List<Object?> get props => [org, email];
+  List<Object?> get props => [org, email, role];
 }

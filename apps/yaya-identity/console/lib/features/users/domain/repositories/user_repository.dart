@@ -6,6 +6,7 @@ abstract class UserRepository {
   Future<void> disable(String userId);
   Future<void> delete(String userId);
 
-  /// Invite by email; returns the one-time invitation token to deliver.
-  Future<String> invite(String org, String email);
+  /// Invite by email with an optional role; returns the one-time invitation
+  /// token to deliver.
+  Future<String> invite(String org, String email, String? role);
 }

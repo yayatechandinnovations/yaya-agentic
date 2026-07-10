@@ -22,10 +22,27 @@ class GroupCreateRequested extends GroupsEvent {
   List<Object?> get props => [org, name];
 }
 
+class GroupMembersRequested extends GroupsEvent {
+  const GroupMembersRequested(this.groupId);
+  final String groupId;
+  @override
+  List<Object?> get props => [groupId];
+}
+
 class GroupMemberAddRequested extends GroupsEvent {
-  const GroupMemberAddRequested(this.groupId, this.userId);
+  const GroupMemberAddRequested(this.org, this.groupId, this.userId);
+  final String org;
   final String groupId;
   final String userId;
   @override
-  List<Object?> get props => [groupId, userId];
+  List<Object?> get props => [org, groupId, userId];
+}
+
+class GroupMemberRemoveRequested extends GroupsEvent {
+  const GroupMemberRemoveRequested(this.org, this.groupId, this.userId);
+  final String org;
+  final String groupId;
+  final String userId;
+  @override
+  List<Object?> get props => [org, groupId, userId];
 }

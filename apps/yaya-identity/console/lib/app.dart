@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'core/context/org_context_bloc.dart';
 import 'core/di/service_locator.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
@@ -13,8 +14,11 @@ class ConsoleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final authBloc = sl<AuthBloc>()..add(const AuthStarted());
     final router = AppRouter.build(authBloc);
-    return BlocProvider.value(
-      value: authBloc,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: authBloc),
+        BlocProvider.value(value: sl<OrgContextBloc>()),
+      ],
       child: MaterialApp.router(
         title: 'yaya-identity console',
         theme: AppTheme.light,

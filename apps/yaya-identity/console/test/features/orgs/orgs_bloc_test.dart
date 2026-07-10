@@ -12,8 +12,13 @@ class MockOrgRepository extends Mock implements OrgRepository {}
 void main() {
   late MockOrgRepository repo;
 
-  OrgsBloc build() => OrgsBloc(listOrgs: ListOrgs(repo), createOrg: CreateOrg(repo));
+  OrgsBloc build() => OrgsBloc(
+        listOrgs: ListOrgs(repo),
+        createOrg: CreateOrg(repo),
+        updateOrg: UpdateOrg(repo),
+      );
 
+  setUpAll(() => registerFallbackValue(const OrgDraft(name: 'x')));
   setUp(() => repo = MockOrgRepository());
 
   const orgs = [Organization(id: 'org_1', name: 'Acme', slug: 'acme')];
@@ -41,18 +46,39 @@ void main() {
   );
 
   blocTest<OrgsBloc, OrgsState>(
-    'OrgCreateRequested creates then refreshes the list',
+    'OrgCreateRequested creates (full draft) then refreshes the list',
     setUp: () {
       when(() => repo.create(any()))
           .thenAnswer((_) async => const Organization(id: 'org_2', name: 'New', slug: 'new'));
       when(repo.list).thenAnswer((_) async => orgs);
     },
     build: build,
-    act: (b) => b.add(const OrgCreateRequested('New')),
+    act: (b) => b.add(const OrgCreateRequested(
+        OrgDraft(name: 'New', description: 'Retailer', country: 'DO'))),
     expect: () => [
-      const OrgsState(status: OrgsStatus.loading),
-      const OrgsState(status: OrgsStatus.loaded, orgs: orgs),
+      isA<OrgsState>().having((s) => s.message, 'message', 'Organization "New" created.'),
+      isA<OrgsState>().having((s) => s.status, 'status', OrgsStatus.loading),
+      isA<OrgsState>().having((s) => s.orgs, 'orgs', orgs),
     ],
-    verify: (_) => verify(() => repo.create('New')).called(1),
+    verify: (_) => verify(() => repo.create(
+        const OrgDraft(name: 'New', description: 'Retailer', country: 'DO'))).called(1),
+  );
+
+  blocTest<OrgsBloc, OrgsState>(
+    'OrgUpdateRequested updates the profile then refreshes',
+    setUp: () {
+      when(() => repo.update(any(), any())).thenAnswer(
+          (_) async => const Organization(id: 'org_1', name: 'Acme Intl', slug: 'acme'));
+      when(repo.list).thenAnswer((_) async => orgs);
+    },
+    build: build,
+    act: (b) => b.add(const OrgUpdateRequested('org_1', OrgDraft(name: 'Acme Intl'))),
+    expect: () => [
+      isA<OrgsState>().having((s) => s.message, 'message', 'Organization updated.'),
+      isA<OrgsState>().having((s) => s.status, 'status', OrgsStatus.loading),
+      isA<OrgsState>().having((s) => s.orgs, 'orgs', orgs),
+    ],
+    verify: (_) =>
+        verify(() => repo.update('org_1', const OrgDraft(name: 'Acme Intl'))).called(1),
   );
 }

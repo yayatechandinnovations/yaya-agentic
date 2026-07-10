@@ -90,6 +90,11 @@ public class RoleService {
     }
 
     @Transactional(readOnly = true)
+    public List<Role> systemRoles() {
+        return roles.findByOrgIdIsNull().stream().map(RoleEntity::toDomain).toList();
+    }
+
+    @Transactional(readOnly = true)
     public Optional<Role> systemRole(String name) {
         return roles.findByOrgIdIsNullAndName(name).map(RoleEntity::toDomain);
     }

@@ -10,5 +10,11 @@ class ListOrgs {
 class CreateOrg {
   const CreateOrg(this._repo);
   final OrgRepository _repo;
-  Future<Organization> call(String name) => _repo.create(name);
+  Future<Organization> call(OrgDraft draft) => _repo.create(draft);
+}
+
+class UpdateOrg {
+  const UpdateOrg(this._repo);
+  final OrgRepository _repo;
+  Future<Organization> call(String orgId, OrgDraft draft) => _repo.update(orgId, draft);
 }

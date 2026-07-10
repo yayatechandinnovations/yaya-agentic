@@ -6,6 +6,7 @@ class UsersState extends Equatable {
   const UsersState({
     this.status = UsersStatus.initial,
     this.members = const [],
+    this.roles = const [],
     this.org = '',
     this.error,
     this.inviteToken,
@@ -13,6 +14,7 @@ class UsersState extends Equatable {
 
   final UsersStatus status;
   final List<Member> members;
+  final List<Role> roles;
   final String org;
   final String? error;
   final String? inviteToken;
@@ -20,6 +22,7 @@ class UsersState extends Equatable {
   UsersState copyWith({
     UsersStatus? status,
     List<Member>? members,
+    List<Role>? roles,
     String? org,
     String? error,
     String? inviteToken,
@@ -27,11 +30,12 @@ class UsersState extends Equatable {
       UsersState(
         status: status ?? this.status,
         members: members ?? this.members,
+        roles: roles ?? this.roles,
         org: org ?? this.org,
         error: error,
         inviteToken: inviteToken,
       );
 
   @override
-  List<Object?> get props => [status, members, org, error, inviteToken];
+  List<Object?> get props => [status, members, roles, org, error, inviteToken];
 }

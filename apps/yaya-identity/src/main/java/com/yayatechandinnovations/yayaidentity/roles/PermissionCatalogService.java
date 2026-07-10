@@ -50,6 +50,12 @@ public class PermissionCatalogService {
                 .toList();
     }
 
+    /** Every declared permission across apps — powers the console's permission picker. */
+    @Transactional(readOnly = true)
+    public List<String> listAll() {
+        return permissions.findAll().stream().map(PermissionEntity::getKey).sorted().toList();
+    }
+
     @Transactional(readOnly = true)
     public boolean exists(String key) {
         return permissions.existsById(key);

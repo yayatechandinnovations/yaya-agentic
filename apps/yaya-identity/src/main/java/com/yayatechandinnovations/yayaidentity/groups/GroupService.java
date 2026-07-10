@@ -45,6 +45,14 @@ public class GroupService {
         members.deleteById(new GroupMemberEntity.Key(group.value(), user.value()));
     }
 
+    /** The users in a group — the console's group-membership view. */
+    @Transactional(readOnly = true)
+    public List<UserId> membersOf(GroupId group) {
+        return members.findByIdGroupId(group.value()).stream()
+                .map(m -> new UserId(m.getId().userId()))
+                .toList();
+    }
+
     /** The groups a user belongs to — the input to scoped-permission resolution via groups. */
     @Transactional(readOnly = true)
     public List<GroupId> groupIdsOf(UserId user) {

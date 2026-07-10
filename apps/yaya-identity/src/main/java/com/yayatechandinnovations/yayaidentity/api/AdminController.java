@@ -9,9 +9,11 @@ import com.yayatechandinnovations.yayaidentity.organizations.Organization;
 import com.yayatechandinnovations.yayaidentity.organizations.OrganizationService;
 import com.yayatechandinnovations.yayaidentity.platform.Ids.GroupId;
 import com.yayatechandinnovations.yayaidentity.platform.Ids.OrgId;
+import com.yayatechandinnovations.yayaidentity.platform.Ids.PermissionKey;
 import com.yayatechandinnovations.yayaidentity.platform.Ids.RoleId;
 import com.yayatechandinnovations.yayaidentity.platform.Ids.UserId;
 import com.yayatechandinnovations.yayaidentity.roles.AssignmentSubject;
+import com.yayatechandinnovations.yayaidentity.roles.PermissionCatalogService;
 import com.yayatechandinnovations.yayaidentity.roles.Role;
 import com.yayatechandinnovations.yayaidentity.roles.RoleAssignmentService;
 import com.yayatechandinnovations.yayaidentity.roles.RoleService;
@@ -20,6 +22,7 @@ import com.yayatechandinnovations.yayaidentity.users.User;
 import com.yayatechandinnovations.yayaidentity.users.UserService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -29,13 +32,17 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * The identity admin API (design §9.3) — orgs, users, groups, roles, scoped
  * assignments, and clients. Token-protected by the resource-server chain; the
  * console (I5 frontend) drives it. Full per-request PDP-gating is a follow-up.
+ * List/read DTOs are deliberately rich (names, emails, counts, permissions) so
+ * the console can offer pickers instead of raw-id inputs.
  */
 @RestController
 @RequestMapping("/v1/identity/admin")
@@ -48,10 +55,11 @@ public class AdminController {
     private final RoleAssignmentService assignments;
     private final GroupService groups;
     private final ClientService clients;
+    private final PermissionCatalogService permissions;
 
     public AdminController(OrganizationService orgs, InvitationService invitations, UserService users,
                           RoleService roles, RoleAssignmentService assignments, GroupService groups,
-                          ClientService clients) {
+                          ClientService clients, PermissionCatalogService permissions) {
         this.orgs = orgs;
         this.invitations = invitations;
         this.users = users;
@@ -59,41 +67,67 @@ public class AdminController {
         this.assignments = assignments;
         this.groups = groups;
         this.clients = clients;
+        this.permissions = permissions;
     }
 
     // --- organizations ---
 
-    public record CreateOrgDto(String name) {}
+    public record CreateOrgDto(String name, String description, String contactEmail,
+                               String contactPhone, String website, String country) {}
+    public record UpdateOrgDto(String name, String description, String contactEmail,
+                               String contactPhone, String website, String country) {}
     public record InviteDto(String email, String role, Integer ttlDays) {}
     public record MfaDto(boolean required) {}
 
     @PostMapping("/orgs")
     public Map<String, Object> createOrg(@RequestBody CreateOrgDto body) {
         Organization o = orgs.create(body.name());
-        return Map.of("id", o.id().value(), "name", o.name(), "slug", o.slug());
+        Organization.Profile profile = new Organization.Profile(
+                body.description(), body.contactEmail(), body.contactPhone(),
+                body.website(), body.country());
+        if (!Organization.Profile.EMPTY.equals(profile)) {
+            o = orgs.update(o.id(), o.name(), profile);
+        }
+        return orgDto(o);
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs")
+    @GetMapping("/orgs")
     public List<Map<String, Object>> listOrgs() {
-        return orgs.list().stream()
-                .map(o -> Map.<String, Object>of("id", o.id().value(), "name", o.name(),
-                        "slug", o.slug(), "mfaRequired", o.mfaRequired()))
-                .toList();
+        return orgs.list().stream().map(this::orgDto).toList();
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs/{org}")
+    @GetMapping("/orgs/{org}")
     public Map<String, Object> getOrg(@PathVariable String org) {
-        return orgs.byId(new OrgId(org))
-                .map(o -> Map.<String, Object>of("id", o.id().value(), "name", o.name(),
-                        "slug", o.slug(), "mfaRequired", o.mfaRequired()))
+        return orgs.byId(new OrgId(org)).map(this::orgDto)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "no such org"));
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs/{org}/groups")
-    public List<Map<String, Object>> listGroups(@PathVariable String org) {
-        return groups.listGroups(new OrgId(org)).stream()
-                .map(g -> Map.<String, Object>of("id", g.id().value(), "name", g.name()))
-                .toList();
+    @PutMapping("/orgs/{org}")
+    public Map<String, Object> updateOrg(@PathVariable String org, @RequestBody UpdateOrgDto body) {
+        if (body.name() == null || body.name().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required");
+        }
+        Organization o = orgs.update(new OrgId(org), body.name().trim(),
+                new Organization.Profile(body.description(), body.contactEmail(),
+                        body.contactPhone(), body.website(), body.country()));
+        return orgDto(o);
+    }
+
+    private Map<String, Object> orgDto(Organization o) {
+        Map<String, Object> dto = new LinkedHashMap<>();
+        dto.put("id", o.id().value());
+        dto.put("name", o.name());
+        dto.put("slug", o.slug());
+        dto.put("status", o.status().name());
+        dto.put("mfaRequired", o.mfaRequired());
+        dto.put("description", o.profile().description());
+        dto.put("contactEmail", o.profile().contactEmail());
+        dto.put("contactPhone", o.profile().contactPhone());
+        dto.put("website", o.profile().website());
+        dto.put("country", o.profile().country());
+        dto.put("createdAt", o.createdAt());
+        dto.put("memberCount", orgs.memberCount(o.id()));
+        return dto;
     }
 
     @PutMapping("/orgs/{org}/mfa")
@@ -109,11 +143,25 @@ public class AdminController {
         return Map.of("invitationId", result.invitation().id(), "token", result.token());
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs/{org}/members")
+    @GetMapping("/orgs/{org}/members")
     public List<Map<String, Object>> members(@PathVariable String org) {
         return orgs.membersOf(new OrgId(org)).stream()
-                .map(m -> Map.<String, Object>of("user", m.user().value(), "status", m.status().name()))
+                .map(m -> memberDto(m.user(), m.status().name()))
                 .toList();
+    }
+
+    /** Membership rows joined with the user record — the console shows people, not ids. */
+    private Map<String, Object> memberDto(UserId userId, String membershipStatus) {
+        Map<String, Object> dto = new LinkedHashMap<>();
+        dto.put("user", userId.value());
+        dto.put("status", membershipStatus);
+        users.byId(userId).ifPresent(u -> {
+            dto.put("email", u.primaryEmail());
+            dto.put("displayName", u.displayName());
+            dto.put("kind", u.kind().name());
+            dto.put("userStatus", u.status().name());
+        });
+        return dto;
     }
 
     // --- users ---
@@ -152,14 +200,31 @@ public class AdminController {
     public Map<String, Object> createRole(@PathVariable String org, @RequestBody CreateRoleDto body) {
         Role r = roles.createRole(new OrgId(org), body.name(),
                 body.permissions() == null ? List.of() : body.permissions());
-        return Map.of("id", r.id().value(), "name", r.name());
+        return roleDto(r);
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs/{org}/roles")
+    /** Org roles plus the built-in system roles — both are assignable, so both are listed. */
+    @GetMapping("/orgs/{org}/roles")
     public List<Map<String, Object>> listRoles(@PathVariable String org) {
-        return roles.listRoles(new OrgId(org)).stream()
-                .map(r -> Map.<String, Object>of("id", r.id().value(), "name", r.name()))
+        return Stream.concat(roles.systemRoles().stream(), roles.listRoles(new OrgId(org)).stream())
+                .map(this::roleDto)
                 .toList();
+    }
+
+    private Map<String, Object> roleDto(Role r) {
+        Map<String, Object> dto = new LinkedHashMap<>();
+        dto.put("id", r.id().value());
+        dto.put("name", r.name());
+        dto.put("system", r.system());
+        dto.put("permissions", roles.permissionsOf(r.id()).stream()
+                .map(PermissionKey::value).sorted().toList());
+        return dto;
+    }
+
+    /** The declared permission catalog across apps — powers the role-composition picker. */
+    @GetMapping("/permissions")
+    public List<String> permissionCatalog() {
+        return permissions.listAll();
     }
 
     @PostMapping("/orgs/{org}/role-assignments")
@@ -183,10 +248,31 @@ public class AdminController {
         return Map.of("id", g.id().value(), "name", g.name());
     }
 
+    @GetMapping("/orgs/{org}/groups")
+    public List<Map<String, Object>> listGroups(@PathVariable String org) {
+        return groups.listGroups(new OrgId(org)).stream()
+                .map(g -> Map.<String, Object>of("id", g.id().value(), "name", g.name(),
+                        "memberCount", groups.membersOf(g.id()).size()))
+                .toList();
+    }
+
+    @GetMapping("/groups/{gid}/members")
+    public List<Map<String, Object>> groupMembers(@PathVariable String gid) {
+        return groups.membersOf(new GroupId(gid)).stream()
+                .map(u -> memberDto(u, "MEMBER"))
+                .toList();
+    }
+
     @PutMapping("/groups/{gid}/members/{userId}")
     public Map<String, Object> addGroupMember(@PathVariable String gid, @PathVariable String userId) {
         groups.addMember(new GroupId(gid), new UserId(userId));
         return Map.of("group", gid, "user", userId);
+    }
+
+    @DeleteMapping("/groups/{gid}/members/{userId}")
+    public Map<String, Object> removeGroupMember(@PathVariable String gid, @PathVariable String userId) {
+        groups.removeMember(new GroupId(gid), new UserId(userId));
+        return Map.of("group", gid, "user", userId, "status", "removed");
     }
 
     // --- clients / service accounts ---
@@ -208,7 +294,7 @@ public class AdminController {
         return Map.of("clientId", clientId, "status", "rotated");
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/clients")
+    @GetMapping("/clients")
     public List<Map<String, Object>> listClients() {
         return clients.list().stream()
                 .map(c -> Map.<String, Object>of("clientId", c.clientId(), "type", c.type().name(),

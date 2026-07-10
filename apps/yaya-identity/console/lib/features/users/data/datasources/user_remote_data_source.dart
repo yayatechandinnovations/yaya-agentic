@@ -19,10 +19,10 @@ class UserRemoteDataSource {
   Future<void> delete(String userId) =>
       _dio.delete<Map<String, dynamic>>('/v1/identity/admin/users/$userId');
 
-  Future<String> invite(String org, String email) async {
+  Future<String> invite(String org, String email, String? role) async {
     final res = await _dio.post<Map<String, dynamic>>(
       '/v1/identity/admin/orgs/$org/invitations',
-      data: {'email': email},
+      data: {'email': email, if (role != null && role.isNotEmpty) 'role': role},
     );
     return res.data?['token'] as String? ?? '';
   }

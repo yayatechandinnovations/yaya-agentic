@@ -22,9 +22,20 @@ class OrgRepositoryImpl implements OrgRepository {
   }
 
   @override
-  Future<Organization> create(String name) async {
+  Future<Organization> create(OrgDraft draft) async {
     try {
-      return OrganizationModel.fromJson(await _remote.create(name));
+      return OrganizationModel.fromJson(
+          await _remote.create(OrganizationModel.draftToJson(draft)));
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  @override
+  Future<Organization> update(String orgId, OrgDraft draft) async {
+    try {
+      return OrganizationModel.fromJson(
+          await _remote.update(orgId, OrganizationModel.draftToJson(draft)));
     } on DioException catch (e) {
       throw _mapError(e);
     }

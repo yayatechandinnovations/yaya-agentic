@@ -9,4 +9,6 @@ public interface MembershipRepository extends JpaRepository<MembershipEntity, Me
     List<MembershipEntity> findByIdOrgId(String orgId);
 
     List<MembershipEntity> findByIdUserId(String userId);
+
+    long countByIdOrgId(String orgId);
 }

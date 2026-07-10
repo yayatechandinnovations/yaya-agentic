@@ -49,6 +49,21 @@ public class OrganizationService {
         return orgs.findById(id.value()).map(OrganizationEntity::toDomain);
     }
 
+    @Transactional
+    public Organization update(OrgId id, String name, Organization.Profile profile) {
+        OrganizationEntity e = orgs.findById(id.value())
+                .orElseThrow(() -> new IllegalArgumentException("no such org: " + id.value()));
+        e.update(name, profile == null ? Organization.Profile.EMPTY : profile);
+        outbox.append("organization", e.getId(), "organization.updated",
+                "{\"id\":\"" + e.getId() + "\"}");
+        return e.toDomain();
+    }
+
+    @Transactional(readOnly = true)
+    public long memberCount(OrgId org) {
+        return memberships.countByIdOrgId(org.value());
+    }
+
     @Transactional(readOnly = true)
     public List<Organization> list() {
         return orgs.findAll().stream().map(OrganizationEntity::toDomain).toList();

@@ -30,6 +30,21 @@ public class OrganizationEntity {
     @Column(name = "mfa_required", nullable = false)
     private boolean mfaRequired;
 
+    @Column
+    private String description;
+
+    @Column(name = "contact_email")
+    private String contactEmail;
+
+    @Column(name = "contact_phone")
+    private String contactPhone;
+
+    @Column
+    private String website;
+
+    @Column
+    private String country;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -49,10 +64,23 @@ public class OrganizationEntity {
     public Organization toDomain() {
         return new Organization(new OrgId(id), name, slug,
                 Organization.Status.valueOf(status),
-                parentId == null ? null : new OrgId(parentId), mfaRequired, createdAt);
+                parentId == null ? null : new OrgId(parentId), mfaRequired,
+                new Organization.Profile(description, contactEmail, contactPhone, website, country),
+                createdAt);
+    }
+
+    /** The slug is the immutable handle; everything else about the profile can change. */
+    public void update(String name, Organization.Profile profile) {
+        this.name = name;
+        this.description = profile.description();
+        this.contactEmail = profile.contactEmail();
+        this.contactPhone = profile.contactPhone();
+        this.website = profile.website();
+        this.country = profile.country();
     }
 
     public String getId() { return id; }
+    public String getName() { return name; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public boolean isMfaRequired() { return mfaRequired; }

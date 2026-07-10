@@ -61,6 +61,7 @@ import '../../features/roles/domain/repositories/role_repository.dart';
 import '../../features/roles/domain/usecases/role_usecases.dart';
 import '../../features/roles/presentation/bloc/roles_bloc.dart';
 import '../config/app_config.dart';
+import '../context/org_context_bloc.dart';
 import '../network/dio_client.dart';
 import '../storage/token_store.dart';
 
@@ -95,12 +96,23 @@ Future<void> configureDependencies() async {
   // --- orgs ---
   sl.registerSingleton(OrgRemoteDataSource(sl<Dio>()));
   sl.registerSingleton<OrgRepository>(OrgRepositoryImpl(sl()));
-  sl.registerFactory(() => OrgsBloc(listOrgs: ListOrgs(sl()), createOrg: CreateOrg(sl())));
+  sl.registerFactory(() => OrgsBloc(
+        listOrgs: ListOrgs(sl()),
+        createOrg: CreateOrg(sl()),
+        updateOrg: UpdateOrg(sl()),
+      ));
+
+  // --- org scope (console-wide picker) ---
+  sl.registerLazySingleton(() => OrgContextBloc(listOrgs: ListOrgs(sl()), prefs: prefs));
 
   // --- policies ---
   sl.registerSingleton(PolicyRemoteDataSource(sl<Dio>()));
   sl.registerSingleton<PolicyRepository>(PolicyRepositoryImpl(sl()));
-  sl.registerFactory(() => SimulatorBloc(simulate: SimulateDecision(sl())));
+  sl.registerFactory(() => SimulatorBloc(
+        simulate: SimulateDecision(sl()),
+        listMembers: ListMembers(sl()),
+        getPermissionCatalog: GetPermissionCatalog(sl()),
+      ));
 
   // --- roles ---
   sl.registerSingleton(RoleRemoteDataSource(sl<Dio>()));
@@ -109,6 +121,9 @@ Future<void> configureDependencies() async {
         listRoles: ListRoles(sl()),
         createRole: CreateRole(sl()),
         assignRole: AssignRole(sl()),
+        getPermissionCatalog: GetPermissionCatalog(sl()),
+        listMembers: ListMembers(sl()),
+        listGroups: ListGroups(sl()),
       ));
 
   // --- audit ---
@@ -125,6 +140,7 @@ Future<void> configureDependencies() async {
         disableUser: DisableUser(sl()),
         deleteUser: DeleteUser(sl()),
         inviteUser: InviteUser(sl()),
+        listRoles: ListRoles(sl()),
       ));
 
   // --- clients ---
@@ -142,7 +158,10 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => GroupsBloc(
         listGroups: ListGroups(sl()),
         createGroup: CreateGroup(sl()),
+        listGroupMembers: ListGroupMembers(sl()),
         addGroupMember: AddGroupMember(sl()),
+        removeGroupMember: RemoveGroupMember(sl()),
+        listMembers: ListMembers(sl()),
       ));
 
   // --- policy editor ---
@@ -151,6 +170,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => PolicyEditorBloc(
         listPolicies: ListPolicies(sl()),
         createPolicy: CreatePolicy(sl()),
+        getPermissionCatalog: GetPermissionCatalog(sl()),
       ));
 
   // --- signup (public onboarding) ---

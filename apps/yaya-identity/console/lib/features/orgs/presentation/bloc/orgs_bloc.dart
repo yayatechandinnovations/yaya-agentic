@@ -9,16 +9,22 @@ part 'orgs_event.dart';
 part 'orgs_state.dart';
 
 class OrgsBloc extends Bloc<OrgsEvent, OrgsState> {
-  OrgsBloc({required ListOrgs listOrgs, required CreateOrg createOrg})
-      : _listOrgs = listOrgs,
+  OrgsBloc({
+    required ListOrgs listOrgs,
+    required CreateOrg createOrg,
+    required UpdateOrg updateOrg,
+  })  : _listOrgs = listOrgs,
         _createOrg = createOrg,
+        _updateOrg = updateOrg,
         super(const OrgsState()) {
     on<OrgsRequested>(_onRequested);
     on<OrgCreateRequested>(_onCreateRequested);
+    on<OrgUpdateRequested>(_onUpdateRequested);
   }
 
   final ListOrgs _listOrgs;
   final CreateOrg _createOrg;
+  final UpdateOrg _updateOrg;
 
   Future<void> _onRequested(OrgsRequested event, Emitter<OrgsState> emit) async {
     emit(state.copyWith(status: OrgsStatus.loading));
@@ -32,8 +38,19 @@ class OrgsBloc extends Bloc<OrgsEvent, OrgsState> {
 
   Future<void> _onCreateRequested(OrgCreateRequested event, Emitter<OrgsState> emit) async {
     try {
-      await _createOrg(event.name);
+      await _createOrg(event.draft);
+      emit(state.copyWith(message: 'Organization "${event.draft.name}" created.'));
       add(const OrgsRequested());   // refresh the list after a create
+    } on Failure catch (f) {
+      emit(state.copyWith(status: OrgsStatus.failure, error: f.message));
+    }
+  }
+
+  Future<void> _onUpdateRequested(OrgUpdateRequested event, Emitter<OrgsState> emit) async {
+    try {
+      await _updateOrg(event.orgId, event.draft);
+      emit(state.copyWith(message: 'Organization updated.'));
+      add(const OrgsRequested());
     } on Failure catch (f) {
       emit(state.copyWith(status: OrgsStatus.failure, error: f.message));
     }

@@ -1,77 +1,48 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/theme/app_theme.dart';
+import '../../../../core/widgets/org_scope_gate.dart';
+import '../../../../core/widgets/org_scope_picker.dart';
 import '../../domain/entities/role.dart';
 import '../../domain/entities/role_assignment_request.dart';
 import '../bloc/roles_bloc.dart';
 
-/// Roles & scoped assignments — the load-bearing RBAC screen. List/create roles
-/// for an org, and grant a role to a subject within a scope (org-wide or one
-/// resource like `store:st_123`).
-class RolesPage extends StatefulWidget {
+/// Roles & scoped assignments — the load-bearing RBAC screen. Roles show their
+/// permissions as chips; composing a role picks from the declared permission
+/// catalog; assigning picks the user or group from a dropdown (no raw ids).
+class RolesPage extends StatelessWidget {
   const RolesPage({super.key});
-
-  @override
-  State<RolesPage> createState() => _RolesPageState();
-}
-
-class _RolesPageState extends State<RolesPage> {
-  final _org = TextEditingController();
-
-  @override
-  void dispose() {
-    _org.dispose();
-    super.dispose();
-  }
-
-  void _load(BuildContext context) =>
-      context.read<RolesBloc>().add(RolesRequested(_org.text.trim()));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Roles & assignments')),
-      body: BlocConsumer<RolesBloc, RolesState>(
-        listenWhen: (p, c) => c.message != null && p.message != c.message,
-        listener: (context, state) {
-          if (state.message != null) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text(state.message!)));
-          }
-        },
-        builder: (context, state) {
-          return Column(
+      appBar: AppBar(title: const Text('Roles & assignments'), actions: const [OrgScopePicker()]),
+      body: OrgScopeGate(
+        onOrg: (context, orgId) => context.read<RolesBloc>().add(RolesRequested(orgId)),
+        builder: (context, orgId) => BlocConsumer<RolesBloc, RolesState>(
+          listenWhen: (p, c) => c.message != null && p.message != c.message,
+          listener: (context, state) => ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(state.message!))),
+          builder: (context, state) => Column(
             children: [
               Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _org,
-                        decoration: const InputDecoration(labelText: 'Organization id'),
-                        onSubmitted: (_) => _load(context),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    FilledButton.icon(
-                      onPressed: () => _load(context),
-                      icon: const Icon(Icons.search),
-                      label: const Text('Load'),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton.icon(
-                      onPressed: state.org.isEmpty ? null : () => _promptCreate(context, state.org),
-                      icon: const Icon(Icons.add),
-                      label: const Text('New role'),
-                    ),
-                  ],
-                ),
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                child: Row(children: [
+                  Text('${state.roles.length} role${state.roles.length == 1 ? '' : 's'}',
+                      style: const TextStyle(color: Colors.black54)),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: () => _promptCreate(context, orgId),
+                    icon: const Icon(Icons.add),
+                    label: const Text('New role'),
+                  ),
+                ]),
               ),
               Expanded(child: _body(context, state)),
             ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -79,119 +50,252 @@ class _RolesPageState extends State<RolesPage> {
   Widget _body(BuildContext context, RolesState state) {
     switch (state.status) {
       case RolesStatus.initial:
-        return const Center(child: Text('Enter an org id and load its roles.'));
       case RolesStatus.loading:
         return const Center(child: CircularProgressIndicator());
       case RolesStatus.failure:
         return Center(child: Semantics(liveRegion: true, child: Text(state.error ?? 'Failed')));
       case RolesStatus.loaded:
-        if (state.roles.isEmpty) return const Center(child: Text('No roles in this org yet.'));
-        return ListView.separated(
+        if (state.roles.isEmpty) return const Center(child: Text('No roles yet.'));
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
           itemCount: state.roles.length,
-          separatorBuilder: (_, __) => const Divider(height: 1),
-          itemBuilder: (_, i) {
-            final role = state.roles[i];
-            return ListTile(
-              leading: const Icon(Icons.badge),
-              title: Text(role.name),
-              subtitle: Text(role.id),
-              trailing: TextButton.icon(
-                icon: const Icon(Icons.person_add),
-                label: const Text('Assign'),
-                onPressed: () => _promptAssign(context, state.org, role),
-              ),
-            );
-          },
+          itemBuilder: (_, i) => _RoleCard(role: state.roles[i], org: state.org),
         );
     }
   }
 
   Future<void> _promptCreate(BuildContext context, String org) async {
-    final name = TextEditingController();
-    final perms = TextEditingController();
     final bloc = context.read<RolesBloc>();
+    final catalog = bloc.state.catalog;
+    final name = TextEditingController();
+    final selected = <String>{};
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New role'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: name, decoration: const InputDecoration(labelText: 'Role name')),
-            TextField(
-              controller: perms,
-              decoration: const InputDecoration(
-                labelText: 'Permissions (comma-separated)',
-                hintText: 'sales.order:read, sales.order:refund',
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('New role'),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: name,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Role name'),
+                ),
+                const SizedBox(height: 16),
+                const Text('Permissions', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                if (catalog.isEmpty)
+                  const Text(
+                    'No permissions declared yet — apps declare their catalog via '
+                    'the manifest endpoint, then roles can be composed here.',
+                    style: TextStyle(color: Colors.black54, fontSize: 13),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: catalog
+                            .map((p) => FilterChip(
+                                  label: Text(p, style: const TextStyle(fontSize: 12)),
+                                  selected: selected.contains(p),
+                                  onSelected: (on) => setLocal(() {
+                                    if (on) {
+                                      selected.add(p);
+                                    } else {
+                                      selected.remove(p);
+                                    }
+                                  }),
+                                ))
+                            .toList(),
+                      ),
+                    ),
+                  ),
+              ],
             ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Create')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Create')),
-        ],
       ),
     );
     if (ok == true && name.text.trim().isNotEmpty) {
-      final permissions = perms.text
-          .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
-          .toList();
-      bloc.add(RoleCreateRequested(org, name.text.trim(), permissions));
+      bloc.add(RoleCreateRequested(org, name.text.trim(), selected.toList()..sort()));
     }
+  }
+}
+
+class _RoleCard extends StatelessWidget {
+  const _RoleCard({required this.role, required this.org});
+
+  final Role role;
+  final String org;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(role.system ? Icons.verified_user : Icons.badge,
+                color: role.system ? AppBrand.cyan : AppBrand.violet),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Text(role.name,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    if (role.system) ...[
+                      const SizedBox(width: 8),
+                      const Chip(
+                        label: Text('built-in'),
+                        visualDensity: VisualDensity.compact,
+                        labelStyle: TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ]),
+                  if (role.permissions.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: role.permissions
+                          .map((p) => Chip(
+                                label: Text(p, style: const TextStyle(fontSize: 11)),
+                                visualDensity: VisualDensity.compact,
+                              ))
+                          .toList(),
+                    ),
+                  ] else if (role.system) ...[
+                    const SizedBox(height: 4),
+                    const Text('Platform-defined capabilities',
+                        style: TextStyle(fontSize: 12, color: Colors.black45)),
+                  ],
+                ],
+              ),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.person_add, size: 18),
+              label: const Text('Assign'),
+              onPressed: () => _promptAssign(context, org, role),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _promptAssign(BuildContext context, String org, Role role) async {
-    final subjectId = TextEditingController();
+    final bloc = context.read<RolesBloc>();
+    final members = bloc.state.members;
+    final groups = bloc.state.groups;
     final scopeType = TextEditingController();
     final scopeId = TextEditingController();
     var subjectKind = 'USER';
-    final bloc = context.read<RolesBloc>();
+    String? subjectId;
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           title: Text('Assign "${role.name}"'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: subjectKind,
-                decoration: const InputDecoration(labelText: 'Subject kind'),
-                items: const [
-                  DropdownMenuItem(value: 'USER', child: Text('User')),
-                  DropdownMenuItem(value: 'GROUP', child: Text('Group')),
-                ],
-                onChanged: (v) => setLocal(() => subjectKind = v ?? 'USER'),
-              ),
-              TextField(controller: subjectId, decoration: const InputDecoration(labelText: 'Subject id')),
-              const SizedBox(height: 8),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Scope — leave blank for org-wide', style: TextStyle(fontSize: 12)),
-              ),
-              Row(children: [
-                Expanded(child: TextField(controller: scopeType, decoration: const InputDecoration(labelText: 'Resource type'))),
-                const SizedBox(width: 8),
-                Expanded(child: TextField(controller: scopeId, decoration: const InputDecoration(labelText: 'Resource id'))),
-              ]),
-            ],
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'USER', icon: Icon(Icons.person), label: Text('User')),
+                    ButtonSegment(value: 'GROUP', icon: Icon(Icons.groups), label: Text('Group')),
+                  ],
+                  selected: {subjectKind},
+                  onSelectionChanged: (s) => setLocal(() {
+                    subjectKind = s.first;
+                    subjectId = null;
+                  }),
+                ),
+                const SizedBox(height: 16),
+                if (subjectKind == 'USER')
+                  DropdownButtonFormField<String>(
+                    initialValue: subjectId,
+                    decoration: const InputDecoration(labelText: 'User'),
+                    items: members
+                        .map((m) => DropdownMenuItem(
+                              value: m.userId,
+                              child: Text(
+                                (m.email ?? '').isNotEmpty && m.email != m.label
+                                    ? '${m.label} (${m.email})'
+                                    : m.label,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setLocal(() => subjectId = v),
+                  )
+                else
+                  DropdownButtonFormField<String>(
+                    initialValue: subjectId,
+                    decoration: const InputDecoration(labelText: 'Group'),
+                    items: groups
+                        .map((g) => DropdownMenuItem(value: g.id, child: Text(g.name)))
+                        .toList(),
+                    onChanged: (v) => setLocal(() => subjectId = v),
+                  ),
+                const SizedBox(height: 16),
+                const Text('Scope — leave blank for org-wide',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: scopeType,
+                      decoration: const InputDecoration(
+                          labelText: 'Resource type', hintText: 'store'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: scopeId,
+                      decoration: const InputDecoration(
+                          labelText: 'Resource id', hintText: 'st_123'),
+                    ),
+                  ),
+                ]),
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Assign')),
+            FilledButton(
+              onPressed: subjectId == null ? null : () => Navigator.pop(ctx, true),
+              child: const Text('Assign'),
+            ),
           ],
         ),
       ),
     );
-    if (ok == true && subjectId.text.trim().isNotEmpty) {
+    if (ok == true && subjectId != null) {
       bloc.add(RoleAssignRequested(RoleAssignmentRequest(
         org: org,
         subjectKind: subjectKind,
-        subjectId: subjectId.text.trim(),
+        subjectId: subjectId!,
         roleId: role.id,
         scopeType: scopeType.text.trim(),
         scopeId: scopeId.text.trim(),

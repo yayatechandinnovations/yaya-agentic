@@ -12,6 +12,11 @@ class RoleRemoteDataSource {
     return (res.data ?? []).cast<Map<String, dynamic>>();
   }
 
+  Future<List<String>> permissionCatalog() async {
+    final res = await _dio.get<List<dynamic>>('/v1/identity/admin/permissions');
+    return (res.data ?? []).cast<String>();
+  }
+
   Future<Map<String, dynamic>> create(String org, String name, List<String> permissions) async {
     final res = await _dio.post<Map<String, dynamic>>(
       '/v1/identity/admin/orgs/$org/roles',

@@ -5,4 +5,7 @@ abstract class RoleRepository {
   Future<List<Role>> list(String org);
   Future<Role> create(String org, String name, List<String> permissions);
   Future<void> assign(RoleAssignmentRequest request);
+
+  /// Every declared permission across apps — for the role-composition picker.
+  Future<List<String>> permissionCatalog();
 }

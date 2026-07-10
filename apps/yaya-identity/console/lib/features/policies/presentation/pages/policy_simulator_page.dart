@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/widgets/org_scope_gate.dart';
+import '../../../../core/widgets/org_scope_picker.dart';
 import '../../domain/entities/decision.dart';
 import '../../domain/entities/decision_query.dart';
 import '../bloc/simulator_bloc.dart';
 
-/// The policy simulator (US-45/US-61): dry-run a decision and render the outcome.
-/// A DENY shows the user-safe reason prominently and the audit reason in a
-/// separate operator-only panel — the two never blur together (#3).
+/// The policy simulator (US-45/US-61): dry-run a decision and render the
+/// outcome. Subject and action are picked from the org's members and the
+/// declared catalog. A DENY shows the user-safe reason prominently and the
+/// audit reason in a separate operator-only panel — the two never blur (#3).
 class PolicySimulatorPage extends StatefulWidget {
   const PolicySimulatorPage({super.key});
 
@@ -16,25 +19,24 @@ class PolicySimulatorPage extends StatefulWidget {
 }
 
 class _PolicySimulatorPageState extends State<PolicySimulatorPage> {
-  final _org = TextEditingController();
-  final _subject = TextEditingController();
-  final _action = TextEditingController();
   final _resourceType = TextEditingController();
   final _resourceId = TextEditingController();
+  String? _subject;
+  String? _action;
 
   @override
   void dispose() {
-    for (final c in [_org, _subject, _action, _resourceType, _resourceId]) {
-      c.dispose();
-    }
+    _resourceType.dispose();
+    _resourceId.dispose();
     super.dispose();
   }
 
-  void _run(BuildContext context) {
+  void _run(BuildContext context, String org) {
+    if (_subject == null || _action == null) return;
     context.read<SimulatorBloc>().add(SimulateRequested(DecisionQuery(
-          org: _org.text.trim(),
-          subject: _subject.text.trim(),
-          action: _action.text.trim(),
+          org: org,
+          subject: _subject!,
+          action: _action!,
           resourceType: _resourceType.text.trim(),
           resourceId: _resourceId.text.trim(),
         )));
@@ -43,47 +45,101 @@ class _PolicySimulatorPageState extends State<PolicySimulatorPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Policy simulator')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: ListView(
-          children: [
-            _field(_org, 'Organization id'),
-            _field(_subject, 'Subject (user id)'),
-            _field(_action, 'Action  (e.g. sales.order:refund)'),
-            Row(children: [
-              Expanded(child: _field(_resourceType, 'Resource type (optional)')),
-              const SizedBox(width: 12),
-              Expanded(child: _field(_resourceId, 'Resource id (optional)')),
-            ]),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => _run(context),
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Simulate'),
-            ),
-            const SizedBox(height: 24),
-            BlocBuilder<SimulatorBloc, SimulatorState>(
-              builder: (context, state) => switch (state.status) {
+      appBar: AppBar(title: const Text('Policy simulator'), actions: const [OrgScopePicker()]),
+      body: OrgScopeGate(
+        onOrg: (context, orgId) {
+          setState(() {
+            _subject = null;
+            _action = null;
+          });
+          context.read<SimulatorBloc>().add(SimulatorContextRequested(orgId));
+        },
+        builder: (context, orgId) => BlocBuilder<SimulatorBloc, SimulatorState>(
+          builder: (context, state) => ListView(
+            padding: const EdgeInsets.all(24),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Would this be allowed?',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        initialValue: _subject,
+                        decoration: const InputDecoration(labelText: 'Subject (member)'),
+                        items: state.subjects
+                            .map((m) => DropdownMenuItem(
+                                  value: m.userId,
+                                  child: Text(
+                                    (m.email ?? '').isNotEmpty && m.email != m.label
+                                        ? '${m.label} (${m.email})'
+                                        : m.label,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ))
+                            .toList(),
+                        onChanged: (v) => setState(() => _subject = v),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: _action,
+                        decoration: const InputDecoration(labelText: 'Action'),
+                        items: state.actions
+                            .map((a) => DropdownMenuItem(value: a, child: Text(a)))
+                            .toList(),
+                        onChanged: (v) => setState(() => _action = v),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _resourceType,
+                            decoration: const InputDecoration(
+                                labelText: 'Resource type (optional)', hintText: 'store'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _resourceId,
+                            decoration: const InputDecoration(
+                                labelText: 'Resource id (optional)', hintText: 'st_123'),
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: _subject == null || _action == null
+                            ? null
+                            : () => _run(context, orgId),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Simulate'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              switch (state.status) {
                 SimulatorStatus.idle => const SizedBox.shrink(),
-                SimulatorStatus.running => const Center(child: CircularProgressIndicator()),
+                SimulatorStatus.running =>
+                  const Center(child: CircularProgressIndicator()),
                 SimulatorStatus.failure => Semantics(
                     liveRegion: true,
-                    child: Text(state.error ?? 'Failed', style: const TextStyle(color: Colors.red)),
+                    child: Text(state.error ?? 'Failed',
+                        style: const TextStyle(color: Colors.red)),
                   ),
                 SimulatorStatus.result => _DecisionResult(decision: state.decision!),
               },
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
-
-  Widget _field(TextEditingController c, String label) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: TextField(controller: c, decoration: InputDecoration(labelText: label)),
-      );
 }
 
 class _DecisionResult extends StatelessWidget {

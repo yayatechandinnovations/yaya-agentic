@@ -7,6 +7,15 @@ sealed class SimulatorEvent extends Equatable {
   List<Object?> get props => [];
 }
 
+class SimulatorContextRequested extends SimulatorEvent {
+  const SimulatorContextRequested(this.org);
+
+  final String org;
+
+  @override
+  List<Object?> get props => [org];
+}
+
 class SimulateRequested extends SimulatorEvent {
   const SimulateRequested(this.query);
 

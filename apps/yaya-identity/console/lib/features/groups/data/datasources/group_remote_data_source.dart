@@ -18,6 +18,14 @@ class GroupRemoteDataSource {
     return res.data ?? const {};
   }
 
+  Future<List<Map<String, dynamic>>> members(String groupId) async {
+    final res = await _dio.get<List<dynamic>>('/v1/identity/admin/groups/$groupId/members');
+    return (res.data ?? []).cast<Map<String, dynamic>>();
+  }
+
   Future<void> addMember(String groupId, String userId) =>
       _dio.put<Map<String, dynamic>>('/v1/identity/admin/groups/$groupId/members/$userId');
+
+  Future<void> removeMember(String groupId, String userId) =>
+      _dio.delete<Map<String, dynamic>>('/v1/identity/admin/groups/$groupId/members/$userId');
 }

@@ -23,6 +23,9 @@ class RoleRepositoryImpl implements RoleRepository {
   @override
   Future<void> assign(RoleAssignmentRequest request) => _guard(() => _remote.assign(request));
 
+  @override
+  Future<List<String>> permissionCatalog() => _guard(() => _remote.permissionCatalog());
+
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {
       return await action();

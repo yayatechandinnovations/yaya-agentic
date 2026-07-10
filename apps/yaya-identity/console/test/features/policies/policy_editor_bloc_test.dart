@@ -7,18 +7,31 @@ import 'package:yaya_identity_console/features/policies/domain/entities/policy_d
 import 'package:yaya_identity_console/features/policies/domain/repositories/policy_admin_repository.dart';
 import 'package:yaya_identity_console/features/policies/domain/usecases/policy_admin_usecases.dart';
 import 'package:yaya_identity_console/features/policies/presentation/bloc/policy_editor_bloc.dart';
+import 'package:yaya_identity_console/features/roles/domain/repositories/role_repository.dart';
+import 'package:yaya_identity_console/features/roles/domain/usecases/role_usecases.dart';
 
 class MockPolicyAdminRepository extends Mock implements PolicyAdminRepository {}
 
+class MockRoleRepository extends Mock implements RoleRepository {}
+
 void main() {
   late MockPolicyAdminRepository repo;
+  late MockRoleRepository roleRepo;
 
-  PolicyEditorBloc build() =>
-      PolicyEditorBloc(listPolicies: ListPolicies(repo), createPolicy: CreatePolicy(repo));
+  PolicyEditorBloc build() => PolicyEditorBloc(
+        listPolicies: ListPolicies(repo),
+        createPolicy: CreatePolicy(repo),
+        getPermissionCatalog: GetPermissionCatalog(roleRepo),
+      );
 
   setUpAll(() => registerFallbackValue(
       const PolicyDraft(org: 'o', name: 'n', effect: 'DENY', targetJson: '{}')));
-  setUp(() => repo = MockPolicyAdminRepository());
+  setUp(() {
+    repo = MockPolicyAdminRepository();
+    roleRepo = MockRoleRepository();
+    when(roleRepo.permissionCatalog)
+        .thenAnswer((_) async => const ['sales.order:refund']);
+  });
 
   const policies = [Policy(id: 'pol_1', name: 'refund-cap', effect: 'DENY', priority: 100)];
   const draft = PolicyDraft(
@@ -37,7 +50,10 @@ void main() {
     act: (b) => b.add(const PoliciesRequested('org_1')),
     expect: () => [
       const PolicyEditorState(status: PolicyEditorStatus.loading, org: 'org_1'),
-      const PolicyEditorState(status: PolicyEditorStatus.loaded, policies: policies, org: 'org_1'),
+      isA<PolicyEditorState>()
+          .having((s) => s.status, 'status', PolicyEditorStatus.loaded)
+          .having((s) => s.policies, 'policies', policies)
+          .having((s) => s.catalog, 'catalog', const ['sales.order:refund']),
     ],
   );
 
@@ -51,8 +67,10 @@ void main() {
     act: (b) => b.add(const PolicyCreateRequested(draft)),
     expect: () => [
       isA<PolicyEditorState>().having((s) => s.message, 'message', 'Policy "refund-cap" created.'),
-      const PolicyEditorState(status: PolicyEditorStatus.loading, org: 'org_1'),
-      const PolicyEditorState(status: PolicyEditorStatus.loaded, policies: policies, org: 'org_1'),
+      isA<PolicyEditorState>().having((s) => s.status, 'status', PolicyEditorStatus.loading),
+      isA<PolicyEditorState>()
+          .having((s) => s.status, 'status', PolicyEditorStatus.loaded)
+          .having((s) => s.policies, 'policies', policies),
     ],
   );
 
