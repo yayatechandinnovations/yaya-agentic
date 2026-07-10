@@ -10,4 +10,6 @@ public interface UserRepository extends JpaRepository<UserEntity, String> {
 
     @Query("select u from UserEntity u where lower(u.primaryEmail) = lower(:email)")
     Optional<UserEntity> findByEmailIgnoreCase(@Param("email") String email);
+
+    Optional<UserEntity> findFirstByPhoneAndStatus(String phone, String status);
 }

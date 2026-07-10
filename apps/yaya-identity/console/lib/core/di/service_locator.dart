@@ -34,6 +34,12 @@ import '../../features/policies/data/repositories/policy_admin_repository_impl.d
 import '../../features/policies/domain/repositories/policy_admin_repository.dart';
 import '../../features/policies/domain/usecases/policy_admin_usecases.dart';
 import '../../features/policies/presentation/bloc/policy_editor_bloc.dart';
+import '../../features/signup/data/datasources/signup_remote_data_source.dart';
+import '../../features/signup/data/repositories/signup_repository_impl.dart';
+import '../../features/signup/domain/repositories/signup_repository.dart';
+import '../../features/signup/domain/usecases/signup_usecases.dart';
+import '../../features/signup/presentation/bloc/accept_invite_bloc.dart';
+import '../../features/signup/presentation/bloc/signup_bloc.dart';
 import '../../features/settings/data/datasources/settings_data_source.dart';
 import '../../features/settings/data/repositories/settings_repository_impl.dart';
 import '../../features/settings/domain/repositories/settings_repository.dart';
@@ -146,6 +152,16 @@ Future<void> configureDependencies() async {
         listPolicies: ListPolicies(sl()),
         createPolicy: CreatePolicy(sl()),
       ));
+
+  // --- signup (public onboarding) ---
+  sl.registerSingleton(SignupRemoteDataSource(sl<Dio>()));
+  sl.registerSingleton<SignupRepository>(SignupRepositoryImpl(sl()));
+  sl.registerFactory(() => SignupBloc(
+        registerSignup: RegisterSignup(sl()),
+        verifySignup: VerifySignup(sl()),
+        resendSignupOtp: ResendSignupOtp(sl()),
+      ));
+  sl.registerFactory(() => AcceptInviteBloc(acceptInvitation: AcceptInvitation(sl())));
 
   // --- settings ---
   sl.registerSingleton(SettingsDataSource(sl<Dio>()));

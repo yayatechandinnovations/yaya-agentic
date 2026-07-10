@@ -66,6 +66,21 @@ public class UserService {
         return repo.findByEmailIgnoreCase(email).map(UserEntity::toDomain);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<User> activeByPhone(String phone) {
+        return repo.findFirstByPhoneAndStatus(phone, User.Status.ACTIVE.name())
+                .map(UserEntity::toDomain);
+    }
+
+    /** Re-signup before activation may correct the phone/name captured earlier. */
+    @Transactional
+    public User updateProfile(UserId id, String phone, String displayName) {
+        UserEntity e = repo.findById(id.value())
+                .orElseThrow(() -> new IllegalArgumentException("no such user: " + id.value()));
+        e.updateProfile(phone, displayName);
+        return e.toDomain();
+    }
+
     /** Lock or disable — both stop authentication and (from I1c) revoke sessions. */
     @Transactional
     public User setStatus(UserId id, User.Status status) {

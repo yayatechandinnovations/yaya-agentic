@@ -34,6 +34,9 @@ server {
     location ${IDENTITY_BASE_PATH}/.well-known/ { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/pdp/         { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/v1/          { proxy_pass http://identity_backend; }
+    # Public onboarding API. Exactly /signup (no slash) is the SPA page and
+    # falls through to the SPA block; /signup/register|verify|... is backend.
+    location ${IDENTITY_BASE_PATH}/signup/      { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/actuator/    { proxy_pass http://identity_backend; }
 
     # --- SPA (static files live under html${IDENTITY_BASE_PATH}) ---

@@ -37,6 +37,23 @@ yaya:
     keys:
       # Bootstrap one ACTIVE RS256 signing key on first boot if none exists.
       bootstrap: ${YAYA_IDENTITY_KEYS_BOOTSTRAP:true}
+    signup:
+      # Public phone-verified self-registration. OFF by default — an open
+      # registration endpoint on the IdP is opt-in attack surface.
+      enabled: ${YAYA_IDENTITY_SIGNUP_ENABLED:false}
+      pending-ttl-seconds: ${YAYA_IDENTITY_SIGNUP_PENDING_TTL_SECONDS:1800}
+      resend-cooldown-seconds: ${YAYA_IDENTITY_SIGNUP_RESEND_COOLDOWN_SECONDS:60}
+      max-sends-per-phone-per-hour: ${YAYA_IDENTITY_SIGNUP_MAX_SENDS_PER_PHONE_PER_HOUR:5}
+      max-sends-per-ip-per-hour: ${YAYA_IDENTITY_SIGNUP_MAX_SENDS_PER_IP_PER_HOUR:20}
+      # DEV ONLY: return locally-generated OTPs in the register/resend response.
+      otp-echo-enabled: ${YAYA_IDENTITY_SIGNUP_OTP_ECHO_ENABLED:false}
+      # Twilio Verify delivers + checks the code when all three are set;
+      # otherwise the local hashed-OTP channel is used (operator delivers).
+      twilio:
+        account-sid: ${TWILIO_ACCOUNT_SID:}
+        auth-token: ${TWILIO_AUTH_TOKEN:}
+        verify-service-sid: ${TWILIO_VERIFY_SERVICE_SID:}
+        base-url: ${TWILIO_VERIFY_BASE_URL:https://verify.twilio.com}
     bootstrap:
       # Temporary I1a seed of a client-credentials service client (moves to DB at I4).
       service-client:

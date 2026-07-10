@@ -22,6 +22,10 @@ import '../../features/policies/presentation/bloc/simulator_bloc.dart';
 import '../../features/policies/presentation/pages/policy_simulator_page.dart';
 import '../../features/roles/presentation/bloc/roles_bloc.dart';
 import '../../features/roles/presentation/pages/roles_page.dart';
+import '../../features/signup/presentation/bloc/accept_invite_bloc.dart';
+import '../../features/signup/presentation/bloc/signup_bloc.dart';
+import '../../features/signup/presentation/pages/accept_invite_page.dart';
+import '../../features/signup/presentation/pages/signup_page.dart';
 import '../di/service_locator.dart';
 import 'console_shell.dart';
 import 'go_router_refresh_stream.dart';
@@ -37,14 +41,30 @@ class AppRouter {
         final authed = authBloc.state.isAuthenticated;
         final loc = state.matchedLocation;
         if (loc == '/callback') return null;             // callback exchanges the code
-        // '/signin' is the SPA sign-in page; the backend's own credential form is
-        // at '/login' (kept distinct so a same-origin nginx can route both).
-        if (!authed && loc != '/signin') return '/signin';
+        // Public onboarding pages — reachable without a session by design.
+        const public = {'/signin', '/signup', '/accept-invite'};
+        if (!authed && !public.contains(loc)) return '/signin';
         if (authed && loc == '/signin') return '/orgs';
         return null;
       },
       routes: [
+        // '/signin' is the SPA sign-in page; the backend's own credential form is
+        // at '/login' (kept distinct so a same-origin nginx can route both).
         GoRoute(path: '/signin', builder: (_, __) => const LoginPage()),
+        GoRoute(
+          path: '/signup',
+          builder: (_, __) => BlocProvider(
+            create: (_) => sl<SignupBloc>(),
+            child: const SignupPage(),
+          ),
+        ),
+        GoRoute(
+          path: '/accept-invite',
+          builder: (_, state) => BlocProvider(
+            create: (_) => sl<AcceptInviteBloc>(),
+            child: AcceptInvitePage(token: state.uri.queryParameters['token']),
+          ),
+        ),
         GoRoute(
           path: '/callback',
           builder: (_, state) => CallbackPage(code: state.uri.queryParameters['code']),

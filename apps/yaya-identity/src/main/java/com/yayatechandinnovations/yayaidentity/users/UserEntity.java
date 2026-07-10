@@ -57,6 +57,11 @@ public class UserEntity {
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
+    public void updateProfile(String phone, String displayName) {
+        this.phone = phone;
+        this.displayName = displayName;
+    }
+
     /** Scrub PII on deletion (AC-44). The row and id survive so audit references stay valid. */
     public void scrubPii(Instant at) {
         this.primaryEmail = null;

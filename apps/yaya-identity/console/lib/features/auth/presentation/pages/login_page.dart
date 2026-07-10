@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../bloc/auth_bloc.dart';
 
@@ -42,6 +43,11 @@ class LoginPage extends StatelessWidget {
                         const SizedBox(height: 16),
                         const CircularProgressIndicator(),
                       ],
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: () => context.go('/signup'),
+                        child: const Text('New here? Create your organization'),
+                      ),
                     ],
                   );
                 },

@@ -53,6 +53,14 @@ services:
       YAYA_IDENTITY_BOOTSTRAP_OWNER_EMAIL: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_EMAIL:-}
       YAYA_IDENTITY_BOOTSTRAP_OWNER_PASSWORD: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_PASSWORD:-}
       YAYA_IDENTITY_BOOTSTRAP_OWNER_ORG: ${YAYA_IDENTITY_BOOTSTRAP_OWNER_ORG:-Root Org}
+      # Public phone-verified self-registration (OFF by default). With the
+      # Twilio Verify trio set, Twilio delivers + checks the SMS code;
+      # without it a local hashed OTP is used (dev echo via the flag below).
+      YAYA_IDENTITY_SIGNUP_ENABLED: ${YAYA_IDENTITY_SIGNUP_ENABLED:-false}
+      YAYA_IDENTITY_SIGNUP_OTP_ECHO_ENABLED: ${YAYA_IDENTITY_SIGNUP_OTP_ECHO_ENABLED:-false}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_VERIFY_SERVICE_SID: ${TWILIO_VERIFY_SERVICE_SID:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8090${IDENTITY_BASE_PATH:-}/oauth2/jwks >/dev/null 2>&1 || exit 1"]
       interval: 10s

@@ -137,7 +137,8 @@ public record Membership(UserId user, OrgId org, MembershipStatus status, Instan
 ```
 
 - A user is a global identity; **membership** ties them to an org. Credentials attach to the user; roles attach within a `(user, org, scope)`.
-- **Invitations** (org invites a user by email/phone → they set credentials) mirror the invite-gated self-registration used by yaya-sales (merchant PSP onboarding, courier registration). Self-service signup that *creates* an org is a separate, guarded flow.
+- **Invitations** (org invites a user by email/phone → they set credentials) mirror the invite-gated self-registration used by yaya-sales (merchant PSP onboarding, courier registration). Redemption is public: `POST /signup/invitations/accept {token, displayName, password}` — the admin-issued token (hashed at rest, single-use, TTL'd) IS the authorization.
+- **Self-registration** (signup that *creates* an org) is a separate, guarded flow — `signup/` package, OFF by default (`yaya.identity.signup.enabled`). `POST /signup/register {orgName, displayName, email, phone, password}` creates an INVITED user + a `pending_signups` row; the caller proves control of the phone via OTP (`/signup/verify`, `/signup/resend`) and only then — in one transaction, mirroring `OwnerBootstrap` — the user turns ACTIVE and becomes system `owner` of the newly created org. OTP delivery/check is a port (`OtpChannel`): **Twilio Verify** when `yaya.identity.signup.twilio.*` is configured (Twilio stores the code; nothing OTP-shaped in our DB), otherwise the local hashed-OTP channel (credentials `PHONE_OTP`, dev echo flag for delivery). Sends are rate-limited per phone and per IP (SMS pumping is billable fraud), resends have a cooldown, and pendings expire.
 - `SERVICE` users are service accounts (§5.6).
 
 ### 5.3 Group
