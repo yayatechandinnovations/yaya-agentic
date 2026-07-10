@@ -17,4 +17,12 @@ class PolicyAdminDataSource {
     );
     return res.data ?? const {};
   }
+
+  Future<Map<String, dynamic>> setActive(String org, String policyId, bool active) async {
+    final res = await _dio.put<Map<String, dynamic>>(
+      '/v1/identity/admin/orgs/$org/policies/$policyId/active',
+      data: {'active': active},
+    );
+    return res.data ?? const {};
+  }
 }

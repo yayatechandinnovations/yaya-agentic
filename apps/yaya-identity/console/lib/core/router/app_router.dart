@@ -8,6 +8,8 @@ import '../../features/clients/presentation/bloc/clients_bloc.dart';
 import '../../features/clients/presentation/pages/clients_page.dart';
 import '../../features/groups/presentation/bloc/groups_bloc.dart';
 import '../../features/groups/presentation/pages/groups_page.dart';
+import '../../features/modules/presentation/bloc/modules_bloc.dart';
+import '../../features/modules/presentation/pages/modules_page.dart';
 import '../../features/policies/presentation/bloc/policy_editor_bloc.dart';
 import '../../features/policies/presentation/pages/policy_editor_page.dart';
 import '../../features/settings/presentation/bloc/settings_bloc.dart';
@@ -106,6 +108,13 @@ class AppRouter {
               builder: (_, __) => BlocProvider(
                 create: (_) => sl<GroupsBloc>(),
                 child: const GroupsPage(),
+              ),
+            ),
+            GoRoute(
+              path: '/modules',
+              builder: (_, __) => BlocProvider(
+                create: (_) => sl<ModulesBloc>()..add(const ModulesRequested()),
+                child: const ModulesPage(),
               ),
             ),
             GoRoute(

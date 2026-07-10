@@ -183,6 +183,55 @@ class AdminConsoleSupportIT {
         });
     }
 
+    @Test
+    void policyListingIsRichAndTheActiveToggleGovernsThePdp() {
+        HttpHeaders h = bearer();
+
+        String org = (String) post("/v1/identity/admin/orgs", Map.of("name", "Policy Co"), h).get("id");
+        rest.exchange("/v1/identity/apps/sales/permissions", HttpMethod.POST,
+                new HttpEntity<>(List.of("sales.order:refund"), h), List.class);
+        String roleId = (String) post("/v1/identity/admin/orgs/" + org + "/roles",
+                Map.of("name", "refunder", "permissions", List.of("sales.order:refund")), h).get("id");
+        String userId = (String) post("/v1/identity/admin/users",
+                Map.of("email", "refunder@acme.test", "displayName", "Refunder"), h).get("id");
+        rest.exchange("/v1/identity/admin/orgs/" + org + "/role-assignments", HttpMethod.POST,
+                new HttpEntity<>(Map.of("subjectKind", "USER", "subjectId", userId, "roleId", roleId), h),
+                Map.class);
+        Map<String, Object> decideBody = Map.of("org", org, "subject", userId,
+                "action", "sales.order:refund");
+        assertThat(post("/pdp/decide", decideBody, h).get("decision")).isEqualTo("PERMIT");
+
+        // A DENY policy built the way the console builder does it.
+        Map<String, Object> created = post("/v1/identity/admin/orgs/" + org + "/policies", Map.of(
+                "name", "refund-freeze",
+                "effect", "DENY",
+                "target", Map.of("actions", List.of("sales.order:refund")),
+                "priority", 100,
+                "userReason", "Refunds are paused right now.",
+                "auditReason", "ops incident 4711 — refunds frozen"), h);
+        String policyId = (String) created.get("id");
+        assertThat(created.get("active")).isEqualTo(true);
+        assertThat(post("/pdp/decide", decideBody, h).get("decision")).isEqualTo("DENY");
+
+        // The list carries everything the console cards render.
+        List<Map<String, Object>> listed = rest.exchange("/v1/identity/admin/orgs/" + org + "/policies",
+                HttpMethod.GET, new HttpEntity<>(h), List.class).getBody();
+        assertThat(listed).anySatisfy(p -> {
+            assertThat(p.get("name")).isEqualTo("refund-freeze");
+            assertThat((String) p.get("targetJson")).contains("sales.order:refund");
+            assertThat(p.get("userReason")).isEqualTo("Refunds are paused right now.");
+            assertThat(p.get("auditReason")).isEqualTo("ops incident 4711 — refunds frozen");
+            assertThat(p.get("active")).isEqualTo(true);
+        });
+
+        // Deactivating (not deleting) lifts the freeze; the policy stays listed.
+        Map<String, Object> toggled = rest.exchange(
+                "/v1/identity/admin/orgs/" + org + "/policies/" + policyId + "/active",
+                HttpMethod.PUT, new HttpEntity<>(Map.of("active", false), h), Map.class).getBody();
+        assertThat(toggled.get("active")).isEqualTo(false);
+        assertThat(post("/pdp/decide", decideBody, h).get("decision")).isEqualTo("PERMIT");
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> post(String path, Object body, HttpHeaders h) {
         return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(body, h), Map.class).getBody();

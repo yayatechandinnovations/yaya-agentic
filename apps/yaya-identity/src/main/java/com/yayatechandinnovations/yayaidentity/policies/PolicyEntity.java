@@ -74,6 +74,8 @@ public class PolicyEntity {
     }
 
     public Policy.Effect effect() { return Policy.Effect.valueOf(effect); }
+    public String getOrgId() { return orgId; }
+    public void setActive(boolean active) { this.active = active; }
     public String getTargetJson() { return targetJson; }
     public String getConditionJson() { return conditionJson; }
     public int getPriority() { return priority; }

@@ -5,16 +5,19 @@ import com.yayatechandinnovations.yayaidentity.platform.Ids.OrgId;
 import com.yayatechandinnovations.yayaidentity.policies.Policy;
 import com.yayatechandinnovations.yayaidentity.policies.PolicyDecisionPoint;
 import com.yayatechandinnovations.yayaidentity.policies.PolicyService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Policy admin (design §9.3): create a policy and run the simulator (a dry-run
- * decision that persists nothing — US-45/US-61). Full admin CRUD + the console
- * land at I5; this exposes the load-bearing operations now that they're secured.
+ * Policy admin (design §9.3): create a policy, toggle it, and run the simulator
+ * (a dry-run decision that persists nothing — US-45/US-61). The list DTO is
+ * rich (target, condition, reasons, active) so the console renders policies as
+ * readable cards, not opaque names.
  */
 @RestController
 @RequestMapping("/v1/identity/admin/orgs/{org}/policies")
@@ -31,13 +34,20 @@ public class PolicyAdminController {
     public record CreatePolicyDto(String name, String effect, JsonNode target, JsonNode condition,
                                   Integer priority, String userReason, String auditReason) {}
 
-    public record PolicyDto(String id, String name, String effect, int priority) {}
+    public record ActiveDto(boolean active) {}
 
-    @org.springframework.web.bind.annotation.GetMapping
+    public record PolicyDto(String id, String name, String effect, int priority, boolean active,
+                            String targetJson, String conditionJson,
+                            String userReason, String auditReason) {
+        static PolicyDto of(Policy p) {
+            return new PolicyDto(p.id().value(), p.name(), p.effect().name(), p.priority(),
+                    p.active(), p.targetJson(), p.conditionJson(), p.userReason(), p.auditReason());
+        }
+    }
+
+    @GetMapping
     public java.util.List<PolicyDto> list(@PathVariable String org) {
-        return policies.listPolicies(new OrgId(org)).stream()
-                .map(p -> new PolicyDto(p.id().value(), p.name(), p.effect().name(), p.priority()))
-                .toList();
+        return policies.listPolicies(new OrgId(org)).stream().map(PolicyDto::of).toList();
     }
 
     @PostMapping
@@ -48,7 +58,13 @@ public class PolicyAdminController {
                 body.condition() == null || body.condition().isNull() ? null : body.condition().toString(),
                 body.priority() == null ? 0 : body.priority(),
                 body.userReason(), body.auditReason());
-        return new PolicyDto(p.id().value(), p.name(), p.effect().name(), p.priority());
+        return PolicyDto.of(p);
+    }
+
+    @PutMapping("/{policyId}/active")
+    public PolicyDto setActive(@PathVariable String org, @PathVariable String policyId,
+                               @RequestBody ActiveDto body) {
+        return PolicyDto.of(policies.setActive(new OrgId(org), policyId, body.active()));
     }
 
     @PostMapping("/simulate")

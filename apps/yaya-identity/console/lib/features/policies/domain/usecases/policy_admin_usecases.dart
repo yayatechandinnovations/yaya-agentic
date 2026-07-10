@@ -13,3 +13,10 @@ class CreatePolicy {
   final PolicyAdminRepository _repo;
   Future<Policy> call(PolicyDraft draft) => _repo.create(draft);
 }
+
+class SetPolicyActive {
+  const SetPolicyActive(this._repo);
+  final PolicyAdminRepository _repo;
+  Future<Policy> call(String org, String policyId, bool active) =>
+      _repo.setActive(org, policyId, active);
+}

@@ -51,6 +51,15 @@ class PolicyAdminRepositoryImpl implements PolicyAdminRepository {
     }
   }
 
+  @override
+  Future<Policy> setActive(String org, String policyId, bool active) async {
+    try {
+      return PolicyModel.fromJson(await _remote.setActive(org, policyId, active));
+    } on DioException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
   Failure _mapError(DioException e) {
     if (e.response?.statusCode == 401) {
       return const AuthFailure('session expired — please sign in again');

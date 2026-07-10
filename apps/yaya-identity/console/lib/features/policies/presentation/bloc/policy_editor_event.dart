@@ -20,3 +20,12 @@ class PolicyCreateRequested extends PolicyEditorEvent {
   @override
   List<Object?> get props => [draft];
 }
+
+class PolicyActiveToggled extends PolicyEditorEvent {
+  const PolicyActiveToggled(this.org, this.policyId, this.active);
+  final String org;
+  final String policyId;
+  final bool active;
+  @override
+  List<Object?> get props => [org, policyId, active];
+}

@@ -18,6 +18,7 @@ class ConsoleShell extends StatelessWidget {
     ('/users', Icons.people, 'Users'),
     ('/groups', Icons.groups, 'Groups'),
     ('/roles', Icons.badge, 'Roles'),
+    ('/modules', Icons.widgets, 'Modules'),
     ('/policies', Icons.policy, 'Policies'),
     ('/clients', Icons.smart_toy, 'Clients'),
     ('/simulator', Icons.rule, 'Simulator'),

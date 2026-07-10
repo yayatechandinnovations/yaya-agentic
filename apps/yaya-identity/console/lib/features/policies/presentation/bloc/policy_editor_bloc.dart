@@ -15,17 +15,21 @@ class PolicyEditorBloc extends Bloc<PolicyEditorEvent, PolicyEditorState> {
     required ListPolicies listPolicies,
     required CreatePolicy createPolicy,
     required GetPermissionCatalog getPermissionCatalog,
+    required SetPolicyActive setPolicyActive,
   })  : _listPolicies = listPolicies,
         _createPolicy = createPolicy,
         _getPermissionCatalog = getPermissionCatalog,
+        _setPolicyActive = setPolicyActive,
         super(const PolicyEditorState()) {
     on<PoliciesRequested>(_onRequested);
     on<PolicyCreateRequested>(_onCreate);
+    on<PolicyActiveToggled>(_onToggle);
   }
 
   final ListPolicies _listPolicies;
   final CreatePolicy _createPolicy;
   final GetPermissionCatalog _getPermissionCatalog;
+  final SetPolicyActive _setPolicyActive;
 
   Future<void> _onRequested(PoliciesRequested event, Emitter<PolicyEditorState> emit) async {
     emit(state.copyWith(status: PolicyEditorStatus.loading, org: event.org));
@@ -50,6 +54,19 @@ class PolicyEditorBloc extends Bloc<PolicyEditorEvent, PolicyEditorState> {
       await _createPolicy(event.draft);
       emit(state.copyWith(message: 'Policy "${event.draft.name}" created.'));
       add(PoliciesRequested(event.draft.org));
+    } on Failure catch (f) {
+      emit(state.copyWith(status: PolicyEditorStatus.failure, error: f.message));
+    }
+  }
+
+  /// Toggle in place — swap the one policy in the list, no full reload flicker.
+  Future<void> _onToggle(PolicyActiveToggled event, Emitter<PolicyEditorState> emit) async {
+    try {
+      final updated = await _setPolicyActive(event.org, event.policyId, event.active);
+      emit(state.copyWith(
+        policies: state.policies.map((p) => p.id == updated.id ? updated : p).toList(),
+        message: 'Policy ${event.active ? 'activated' : 'deactivated'}.',
+      ));
     } on Failure catch (f) {
       emit(state.copyWith(status: PolicyEditorStatus.failure, error: f.message));
     }

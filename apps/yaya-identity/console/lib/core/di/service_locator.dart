@@ -29,6 +29,11 @@ import '../../features/groups/data/repositories/group_repository_impl.dart';
 import '../../features/groups/domain/repositories/group_repository.dart';
 import '../../features/groups/domain/usecases/group_usecases.dart';
 import '../../features/groups/presentation/bloc/groups_bloc.dart';
+import '../../features/modules/data/datasources/module_remote_data_source.dart';
+import '../../features/modules/data/repositories/module_repository_impl.dart';
+import '../../features/modules/domain/repositories/module_repository.dart';
+import '../../features/modules/domain/usecases/module_usecases.dart';
+import '../../features/modules/presentation/bloc/modules_bloc.dart';
 import '../../features/policies/data/datasources/policy_admin_data_source.dart';
 import '../../features/policies/data/repositories/policy_admin_repository_impl.dart';
 import '../../features/policies/domain/repositories/policy_admin_repository.dart';
@@ -171,6 +176,15 @@ Future<void> configureDependencies() async {
         listPolicies: ListPolicies(sl()),
         createPolicy: CreatePolicy(sl()),
         getPermissionCatalog: GetPermissionCatalog(sl()),
+        setPolicyActive: SetPolicyActive(sl()),
+      ));
+
+  // --- permission modules ---
+  sl.registerSingleton(ModuleRemoteDataSource(sl<Dio>()));
+  sl.registerSingleton<ModuleRepository>(ModuleRepositoryImpl(sl()));
+  sl.registerFactory(() => ModulesBloc(
+        loadModules: LoadModules(sl()),
+        declareModule: DeclareModule(sl()),
       ));
 
   // --- signup (public onboarding) ---

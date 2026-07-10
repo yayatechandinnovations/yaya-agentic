@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/org_scope_gate.dart';
 import '../../../../core/widgets/org_scope_picker.dart';
+import '../../../../core/widgets/permission_picker.dart';
 import '../../domain/entities/role.dart';
 import '../../domain/entities/role_assignment_request.dart';
 import '../bloc/roles_bloc.dart';
@@ -89,35 +90,15 @@ class RolesPage extends StatelessWidget {
                 const SizedBox(height: 16),
                 const Text('Permissions', style: TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                if (catalog.isEmpty)
-                  const Text(
-                    'No permissions declared yet — apps declare their catalog via '
-                    'the manifest endpoint, then roles can be composed here.',
-                    style: TextStyle(color: Colors.black54, fontSize: 13),
-                  )
-                else
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 260),
-                    child: SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: catalog
-                            .map((p) => FilterChip(
-                                  label: Text(p, style: const TextStyle(fontSize: 12)),
-                                  selected: selected.contains(p),
-                                  onSelected: (on) => setLocal(() {
-                                    if (on) {
-                                      selected.add(p);
-                                    } else {
-                                      selected.remove(p);
-                                    }
-                                  }),
-                                ))
-                            .toList(),
-                      ),
-                    ),
-                  ),
+                PermissionPicker(
+                  catalog: catalog,
+                  selected: selected,
+                  onChanged: (next) => setLocal(() {
+                    selected
+                      ..clear()
+                      ..addAll(next);
+                  }),
+                ),
               ],
             ),
           ),

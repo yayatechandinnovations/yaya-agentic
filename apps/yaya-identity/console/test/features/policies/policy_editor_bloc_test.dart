@@ -22,6 +22,7 @@ void main() {
         listPolicies: ListPolicies(repo),
         createPolicy: CreatePolicy(repo),
         getPermissionCatalog: GetPermissionCatalog(roleRepo),
+        setPolicyActive: SetPolicyActive(repo),
       );
 
   setUpAll(() => registerFallbackValue(
@@ -72,6 +73,22 @@ void main() {
           .having((s) => s.status, 'status', PolicyEditorStatus.loaded)
           .having((s) => s.policies, 'policies', policies),
     ],
+  );
+
+  blocTest<PolicyEditorBloc, PolicyEditorState>(
+    'PolicyActiveToggled swaps the policy in place without a full reload',
+    setUp: () => when(() => repo.setActive(any(), any(), any())).thenAnswer((_) async =>
+        const Policy(id: 'pol_1', name: 'refund-cap', effect: 'DENY', priority: 100, active: false)),
+    build: build,
+    seed: () => const PolicyEditorState(
+        status: PolicyEditorStatus.loaded, policies: policies, org: 'org_1'),
+    act: (b) => b.add(const PolicyActiveToggled('org_1', 'pol_1', false)),
+    expect: () => [
+      isA<PolicyEditorState>()
+          .having((s) => s.policies.single.active, 'active', false)
+          .having((s) => s.message, 'message', 'Policy deactivated.'),
+    ],
+    verify: (_) => verify(() => repo.setActive('org_1', 'pol_1', false)).called(1),
   );
 
   blocTest<PolicyEditorBloc, PolicyEditorState>(

@@ -55,4 +55,16 @@ public class PolicyService {
     public List<Policy> listPolicies(OrgId org) {
         return policies.findByOrgId(org.value()).stream().map(PolicyEntity::toDomain).toList();
     }
+
+    /** Enable/disable without deleting — the policy and its history stay auditable. */
+    @Transactional
+    public Policy setActive(OrgId org, String policyId, boolean active) {
+        PolicyEntity e = policies.findById(policyId)
+                .filter(p -> p.getOrgId().equals(org.value()))
+                .orElseThrow(() -> new IllegalArgumentException("no such policy: " + policyId));
+        e.setActive(active);
+        outbox.append("policy", policyId, "policy.changed",
+                "{\"org\":\"" + org.value() + "\",\"active\":" + active + "}");
+        return e.toDomain();
+    }
 }
