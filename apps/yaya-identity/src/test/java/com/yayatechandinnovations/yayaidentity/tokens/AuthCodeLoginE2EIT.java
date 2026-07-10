@@ -80,25 +80,8 @@ class AuthCodeLoginE2EIT {
                 .cookieHandler(new CookieManager())
                 .build();
 
-        // 1. GET the login page → CSRF token (+ session cookie captured by the CookieManager).
-        HttpResponse<String> loginPage = http.send(
-                HttpRequest.newBuilder(uri("/login")).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-        Matcher csrfMatch = CSRF.matcher(loginPage.body());
-        assertThat(csrfMatch.find()).as("login page carries a CSRF token").isTrue();
-        String csrf = csrfMatch.group(1);
-
-        // 2. POST credentials → 302 (authenticated).
-        HttpResponse<String> loggedIn = http.send(
-                postForm("/login", Map.of(
-                        "username", "operator@acme.test",
-                        "password", "correct-horse-battery",
-                        "_csrf", csrf)),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(loggedIn.statusCode()).isEqualTo(302);
-        assertThat(loggedIn.headers().firstValue("location").orElse("")).doesNotContain("error");
-
-        // 3. Authorization request (PKCE) → 302 to redirect_uri?code=…
+        // 1. A COLD browser starts at /oauth2/authorize (exactly what the console
+        //    does) and is sent to the login form.
         String verifier = base64Url(randomBytes());
         String challenge = base64Url(sha256(verifier));
         String authorize = "/oauth2/authorize?response_type=code"
@@ -107,8 +90,36 @@ class AuthCodeLoginE2EIT {
                 + "&redirect_uri=" + enc(REDIRECT_URI)
                 + "&code_challenge=" + challenge
                 + "&code_challenge_method=S256";
+        HttpResponse<String> sentToLogin = http.send(
+                HttpRequest.newBuilder(uri(authorize))
+                        .header("Accept", "text/html").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(sentToLogin.statusCode()).isEqualTo(302);
+        assertThat(sentToLogin.headers().firstValue("location").orElse("")).endsWith("/login");
+
+        // 2. GET the login page → CSRF token (+ session cookie captured by the CookieManager).
+        HttpResponse<String> loginPage = http.send(
+                HttpRequest.newBuilder(uri("/login")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        Matcher csrfMatch = CSRF.matcher(loginPage.body());
+        assertThat(csrfMatch.find()).as("login page carries a CSRF token").isTrue();
+        String csrf = csrfMatch.group(1);
+
+        // 3. POST credentials → the SAVED authorize request resumes; a fixed
+        //    "redirect to /" here once stranded the whole OAuth flow.
+        HttpResponse<String> loggedIn = http.send(
+                postForm("/login", Map.of(
+                        "username", "operator@acme.test",
+                        "password", "correct-horse-battery",
+                        "_csrf", csrf)),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(loggedIn.statusCode()).isEqualTo(302);
+        String resumed = loggedIn.headers().firstValue("location").orElse("");
+        assertThat(resumed).contains("/oauth2/authorize");
+
+        // 4. Following the resumed authorize → 302 to redirect_uri?code=…
         HttpResponse<String> authorized = http.send(
-                HttpRequest.newBuilder(uri(authorize)).GET().build(),
+                HttpRequest.newBuilder(URI.create(resumed)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(authorized.statusCode()).isEqualTo(302);
         String location = authorized.headers().firstValue("location").orElseThrow();
@@ -116,7 +127,7 @@ class AuthCodeLoginE2EIT {
         assertThat(codeMatch.find()).as("authorization redirect carries a code: " + location).isTrue();
         String code = URLDecode(codeMatch.group(1));
 
-        // 4. Token exchange (public client → client_id in body, code_verifier for PKCE).
+        // 5. Token exchange (public client → client_id in body, code_verifier for PKCE).
         HttpResponse<String> tokenResp = http.send(
                 postForm("/oauth2/token", Map.of(
                         "grant_type", "authorization_code",
@@ -133,7 +144,7 @@ class AuthCodeLoginE2EIT {
         String accessToken = (String) body.get("access_token");
         assertThat(accessToken).isNotBlank();
 
-        // 5. The token identifies the user (sub) and their org.
+        // 6. The token identifies the user (sub) and their org.
         SignedJWT jwt = SignedJWT.parse(accessToken);
         assertThat(jwt.getJWTClaimsSet().getSubject()).isEqualTo(user.id().value());
         assertThat(jwt.getJWTClaimsSet().getStringClaim("org")).isEqualTo(org.id().value());

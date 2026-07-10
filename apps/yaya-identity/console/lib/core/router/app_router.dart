@@ -40,7 +40,14 @@ class AppRouter {
       redirect: (context, state) {
         final authed = authBloc.state.isAuthenticated;
         final loc = state.matchedLocation;
-        if (loc == '/callback') return null;             // callback exchanges the code
+        if (loc == '/callback') {
+          // The callback page only exchanges the code; once the bloc lands on a
+          // terminal state, MOVE — success to the app, failure to sign-in
+          // (which renders the error). Returning null forever = eternal spinner.
+          if (authed) return '/orgs';
+          if (authBloc.state.status == AuthStatus.failure) return '/signin';
+          return null;
+        }
         // Public onboarding pages — reachable without a session by design.
         const public = {'/signin', '/signup', '/accept-invite'};
         if (!authed && !public.contains(loc)) return '/signin';

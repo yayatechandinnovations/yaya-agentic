@@ -100,16 +100,37 @@ public class AuthorizationServerConfig {
                         .requestMatchers("/login", "/error").permitAll()
                         .anyRequest().authenticated())
                 .formLogin(form -> form
+                        .loginPage("/login")   // branded page — LoginPageController
+                        // Success must RESUME THE SAVED REQUEST (the pending
+                        // /oauth2/authorize) — a fixed redirect to "/" strands the
+                        // OAuth flow on the console's sign-in page.
+                        .successHandler(new AttemptResettingSuccessHandler(attempts))
                         // Track failures per submitted username for brute-force lockout (§11).
-                        .successHandler((req, res, auth) -> {
-                            attempts.reset(req.getParameter("username"));
-                            res.sendRedirect(req.getContextPath() + "/");
-                        })
                         .failureHandler((req, res, ex) -> {
                             attempts.recordFailure(req.getParameter("username"));
                             res.sendRedirect(req.getContextPath() + "/login?error");
                         }));
         return http.build();
+    }
+
+    static class AttemptResettingSuccessHandler
+            extends org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler {
+
+        private final com.yayatechandinnovations.yayaidentity.credentials.LoginAttemptService attempts;
+
+        AttemptResettingSuccessHandler(
+                com.yayatechandinnovations.yayaidentity.credentials.LoginAttemptService attempts) {
+            this.attempts = attempts;
+        }
+
+        @Override
+        public void onAuthenticationSuccess(jakarta.servlet.http.HttpServletRequest request,
+                                            jakarta.servlet.http.HttpServletResponse response,
+                                            org.springframework.security.core.Authentication authentication)
+                throws jakarta.servlet.ServletException, java.io.IOException {
+            attempts.reset(request.getParameter("username"));
+            super.onAuthenticationSuccess(request, response, authentication);
+        }
     }
 
     /** SAS signs and publishes JWKS from the platform KeyRing (rotation-aware). */
