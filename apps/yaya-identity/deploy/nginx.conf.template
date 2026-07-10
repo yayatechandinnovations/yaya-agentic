@@ -34,8 +34,11 @@ server {
     location ${IDENTITY_BASE_PATH}/.well-known/ { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/pdp/         { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/v1/          { proxy_pass http://identity_backend; }
-    # Public onboarding API. Exactly /signup (no slash) is the SPA page and
-    # falls through to the SPA block; /signup/register|verify|... is backend.
+    # Public onboarding API: /signup/register|verify|resend|invitations/accept.
+    # Exactly /signup (no slash) is the SPA page — it needs the explicit
+    # exact-match below because a proxied prefix location ending in "/" makes
+    # nginx 301 the slash-less URI into the proxy (straight to a backend 404).
+    location = ${IDENTITY_BASE_PATH}/signup     { try_files ${IDENTITY_BASE_PATH}/index.html =404; }
     location ${IDENTITY_BASE_PATH}/signup/      { proxy_pass http://identity_backend; }
     location ${IDENTITY_BASE_PATH}/actuator/    { proxy_pass http://identity_backend; }
 
