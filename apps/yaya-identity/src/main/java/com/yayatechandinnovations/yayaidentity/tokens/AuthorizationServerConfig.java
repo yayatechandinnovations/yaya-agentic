@@ -43,6 +43,14 @@ public class AuthorizationServerConfig {
                 // the same-origin identity console is unaffected.
                 .cors(cors -> cors.configurationSource(corsSource(corsAllowedOrigins)))
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                // A browser arriving unauthenticated at /oauth2/authorize must be
+                // SENT TO THE LOGIN FORM. Without this, the resource-server entry
+                // point below wins and answers 401 — dead end for humans.
+                .exceptionHandling(ex -> ex.defaultAuthenticationEntryPointFor(
+                        new org.springframework.security.web.authentication
+                                .LoginUrlAuthenticationEntryPoint("/login"),
+                        new org.springframework.security.web.util.matcher
+                                .MediaTypeRequestMatcher(org.springframework.http.MediaType.TEXT_HTML)))
                 // Tokens are verified as a resource server too (introspection/self-calls).
                 .oauth2ResourceServer(rs -> rs.jwt(Customizer.withDefaults()));
         return http.build();

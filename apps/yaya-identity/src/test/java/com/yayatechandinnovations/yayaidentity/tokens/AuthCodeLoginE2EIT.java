@@ -139,6 +139,35 @@ class AuthCodeLoginE2EIT {
         assertThat(jwt.getJWTClaimsSet().getStringClaim("org")).isEqualTo(org.id().value());
     }
 
+    /**
+     * The cold-start path a real browser takes: no session, straight to
+     * /oauth2/authorize. It must be SENT TO THE LOGIN FORM — the SAS chain's
+     * resource-server 401 entry point once won here and dead-ended humans.
+     */
+    @Test
+    void unauthenticatedBrowserAtAuthorizeIsRedirectedToLogin() throws Exception {
+        HttpClient http = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .cookieHandler(new CookieManager())
+                .build();
+
+        String authorize = "/oauth2/authorize?response_type=code"
+                + "&client_id=yaya-console"
+                + "&scope=" + enc("openid profile")
+                + "&redirect_uri=" + enc(REDIRECT_URI)
+                + "&code_challenge=" + base64Url(sha256(base64Url(randomBytes())))
+                + "&code_challenge_method=S256";
+        HttpResponse<String> response = http.send(
+                HttpRequest.newBuilder(uri(authorize))
+                        .header("Accept", "text/html,application/xhtml+xml")
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(302);
+        assertThat(response.headers().firstValue("location").orElse(""))
+                .endsWith("/login");
+    }
+
     // --- helpers ---
 
     private URI uri(String path) {
