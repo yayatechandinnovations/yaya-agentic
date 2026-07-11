@@ -2,6 +2,10 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../catalog/domain/entities/catalog_entities.dart';
+import '../../../catalog/domain/usecases/catalog_usecases.dart';
+import '../../../stores/domain/entities/store_entities.dart';
+import '../../../stores/domain/usecases/store_usecases.dart';
 import '../../domain/entities/purchasing_entities.dart';
 import '../../domain/usecases/purchasing_usecases.dart';
 
@@ -21,6 +25,9 @@ class PurchasingBloc extends Bloc<PurchasingEvent, PurchasingState> {
     required PlacePurchaseOrder placePo,
     required CancelPurchaseOrder cancelPo,
     required ReceivePurchaseOrder receivePo,
+    required ListLocations listLocations,
+    required ListCatalogs listCatalogs,
+    required ListProducts listProducts,
   })  : _listSuppliers = listSuppliers,
         _createSupplier = createSupplier,
         _updateSupplier = updateSupplier,
@@ -30,6 +37,9 @@ class PurchasingBloc extends Bloc<PurchasingEvent, PurchasingState> {
         _placePo = placePo,
         _cancelPo = cancelPo,
         _receivePo = receivePo,
+        _listLocations = listLocations,
+        _listCatalogs = listCatalogs,
+        _listProducts = listProducts,
         super(const PurchasingState()) {
     on<PurchasingRequested>(_onRequested);
     on<SupplierSaveRequested>(_onSupplierSave);
@@ -49,21 +59,43 @@ class PurchasingBloc extends Bloc<PurchasingEvent, PurchasingState> {
   final PlacePurchaseOrder _placePo;
   final CancelPurchaseOrder _cancelPo;
   final ReceivePurchaseOrder _receivePo;
+  final ListLocations _listLocations;
+  final ListCatalogs _listCatalogs;
+  final ListProducts _listProducts;
 
   Future<void> _onRequested(
       PurchasingRequested event, Emitter<PurchasingState> emit) async {
     emit(state.copyWith(status: PurchasingStatus.loading, statusFilter: event.statusFilter));
     try {
-      final results = await Future.wait<Object>(
-          [_listSuppliers(), _listPos(status: event.statusFilter)]);
+      final results = await Future.wait<Object>([
+        _listSuppliers(),
+        _listPos(status: event.statusFilter),
+        _listLocations(),
+        _loadSkuOptions(),
+      ]);
       emit(state.copyWith(
         status: PurchasingStatus.loaded,
         suppliers: results[0] as List<Supplier>,
         purchaseOrders: results[1] as List<PurchaseOrder>,
+        locations: results[2] as List<StoreLocation>,
+        skuOptions: results[3] as List<Variant>,
       ));
     } on Failure catch (f) {
       emit(state.copyWith(status: PurchasingStatus.failure, error: f.message));
     }
+  }
+
+  /// Flattens every catalog's product variants into the SKU picker options.
+  Future<List<Variant>> _loadSkuOptions() async {
+    final catalogs = await _listCatalogs();
+    final variants = <Variant>[];
+    for (final catalog in catalogs) {
+      final products = await _listProducts(catalog.id);
+      for (final product in products) {
+        variants.addAll(product.variants);
+      }
+    }
+    return variants;
   }
 
   Future<void> _onSupplierSave(

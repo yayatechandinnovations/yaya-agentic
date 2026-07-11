@@ -11,6 +11,7 @@ public record CatalogView(
         int version,
         String displayName,
         Status status,
+        String coverUrl,
         Instant createdAt) {
 
     public enum Status { DRAFT, PUBLISHED, DEPRECATED }

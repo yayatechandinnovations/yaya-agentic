@@ -6,6 +6,7 @@ Catalog catalogFromJson(Map<String, dynamic> json) => Catalog(
       version: intOf(json['version']),
       displayName: '${json['displayName'] ?? ''}',
       status: '${json['status'] ?? 'DRAFT'}',
+      coverUrl: json['coverUrl'] as String?,
     );
 
 Variant variantFromJson(Map<String, dynamic> json) => Variant(

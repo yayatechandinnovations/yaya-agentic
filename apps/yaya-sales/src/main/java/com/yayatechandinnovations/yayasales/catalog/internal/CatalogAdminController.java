@@ -59,6 +59,11 @@ public class CatalogAdminController {
                 .orElseThrow(() -> new ApiErrors.NotFoundException("catalog", id));
     }
 
+    @PutMapping("/catalogs/{id}")
+    public CatalogView updateCatalog(@PathVariable String id, @RequestBody UpdateCatalog body) {
+        return service.updateCatalog(new CatalogId(id), body.displayName(), body.coverUrl());
+    }
+
     @PostMapping("/catalogs/{id}/publish")
     public CatalogView publish(@PathVariable String id) {
         return service.publish(new CatalogId(id));
@@ -109,4 +114,6 @@ public class CatalogAdminController {
     }
 
     public record CreateCatalog(@NotBlank String displayName) {}
+
+    public record UpdateCatalog(String displayName, String coverUrl) {}
 }

@@ -6,11 +6,17 @@ import 'package:yaya_sales_console/features/inventory/domain/entities/inventory_
 import 'package:yaya_sales_console/features/inventory/domain/repositories/inventory_repository.dart';
 import 'package:yaya_sales_console/features/inventory/domain/usecases/inventory_usecases.dart';
 import 'package:yaya_sales_console/features/inventory/presentation/bloc/inventory_bloc.dart';
+import 'package:yaya_sales_console/features/stores/domain/entities/store_entities.dart';
+import 'package:yaya_sales_console/features/stores/domain/repositories/store_repository.dart';
+import 'package:yaya_sales_console/features/stores/domain/usecases/store_usecases.dart';
 
 class MockInventoryRepository extends Mock implements InventoryRepository {}
 
+class MockStoreRepository extends Mock implements StoreRepository {}
+
 void main() {
   late MockInventoryRepository repo;
+  late MockStoreRepository stores;
 
   InventoryBloc build() => InventoryBloc(
         listLevels: ListLevels(repo),
@@ -20,9 +26,14 @@ void main() {
         transferStock: TransferStock(repo),
         setReorder: SetReorderPolicy(repo),
         setBackorder: SetBackorderPolicy(repo),
+        listLocations: ListLocations(stores),
       );
 
-  setUp(() => repo = MockInventoryRepository());
+  setUp(() {
+    repo = MockInventoryRepository();
+    stores = MockStoreRepository();
+    when(() => stores.locations()).thenAnswer((_) async => []);
+  });
 
   const levels = [
     StockLevel(
@@ -48,6 +59,29 @@ void main() {
         const InventoryState(status: InventoryStatus.loaded, levels: levels),
       ],
       verify: (b) => expect(b.state.levels.first.available, 7),
+    );
+
+    blocTest<InventoryBloc, InventoryState>(
+      'LevelsRequested loads the location picker options alongside the levels',
+      setUp: () {
+        when(() => repo.levels(location: null, lowOnly: false))
+            .thenAnswer((_) async => levels);
+        when(() => stores.locations()).thenAnswer((_) async => const [
+              StoreLocation(id: 'loc_1', label: 'Main', kind: 'WAREHOUSE', sellable: true),
+            ]);
+      },
+      build: build,
+      act: (b) => b.add(const LevelsRequested()),
+      expect: () => [
+        const InventoryState(status: InventoryStatus.loading),
+        const InventoryState(
+          status: InventoryStatus.loaded,
+          levels: levels,
+          locations: [
+            StoreLocation(id: 'loc_1', label: 'Main', kind: 'WAREHOUSE', sellable: true),
+          ],
+        ),
+      ],
     );
 
     blocTest<InventoryBloc, InventoryState>(

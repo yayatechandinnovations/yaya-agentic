@@ -26,14 +26,29 @@ class PoliciesSaveRequested extends StoreSettingsEvent {
 }
 
 class LocationAddRequested extends StoreSettingsEvent {
-  const LocationAddRequested(this.label, this.kind, this.sellable);
+  const LocationAddRequested(this.label, this.kind, this.sellable, {this.address});
 
   final String label;
   final String kind;
   final bool sellable;
+  final Map<String, dynamic>? address;
 
   @override
-  List<Object?> get props => [label, kind, sellable];
+  List<Object?> get props => [label, kind, sellable, address];
+}
+
+class LocationUpdateRequested extends StoreSettingsEvent {
+  const LocationUpdateRequested(this.id,
+      {this.label, this.kind, this.sellable, this.address});
+
+  final String id;
+  final String? label;
+  final String? kind;
+  final bool? sellable;
+  final Map<String, dynamic>? address;
+
+  @override
+  List<Object?> get props => [id, label, kind, sellable, address];
 }
 
 class ChannelAddRequested extends StoreSettingsEvent {

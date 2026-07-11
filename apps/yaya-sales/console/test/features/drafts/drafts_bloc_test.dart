@@ -4,6 +4,8 @@ import 'package:mocktail/mocktail.dart';
 import 'package:yaya_sales_console/core/error/failure.dart';
 import 'package:yaya_sales_console/features/catalog/domain/repositories/catalog_repository.dart';
 import 'package:yaya_sales_console/features/catalog/domain/usecases/catalog_usecases.dart';
+import 'package:yaya_sales_console/features/customers/domain/repositories/customer_repository.dart';
+import 'package:yaya_sales_console/features/customers/domain/usecases/customer_usecases.dart';
 import 'package:yaya_sales_console/features/drafts/domain/entities/draft_entities.dart';
 import 'package:yaya_sales_console/features/drafts/domain/repositories/draft_repository.dart';
 import 'package:yaya_sales_console/features/drafts/domain/usecases/draft_usecases.dart';
@@ -11,6 +13,8 @@ import 'package:yaya_sales_console/features/drafts/presentation/bloc/drafts_bloc
 import 'package:yaya_sales_console/features/orders/domain/entities/order_entities.dart';
 import 'package:yaya_sales_console/features/orders/domain/repositories/order_repository.dart';
 import 'package:yaya_sales_console/features/orders/domain/usecases/order_usecases.dart';
+import 'package:yaya_sales_console/features/stores/domain/repositories/store_repository.dart';
+import 'package:yaya_sales_console/features/stores/domain/usecases/store_usecases.dart';
 
 class MockDraftRepository extends Mock implements DraftRepository {}
 
@@ -18,10 +22,16 @@ class MockOrderRepository extends Mock implements OrderRepository {}
 
 class MockCatalogRepository extends Mock implements CatalogRepository {}
 
+class MockStoreRepository extends Mock implements StoreRepository {}
+
+class MockCustomerRepository extends Mock implements CustomerRepository {}
+
 void main() {
   late MockDraftRepository drafts;
   late MockOrderRepository orders;
   late MockCatalogRepository catalog;
+  late MockStoreRepository stores;
+  late MockCustomerRepository customers;
 
   DraftsBloc build() => DraftsBloc(
         listOrders: ListOrders(orders),
@@ -31,12 +41,18 @@ void main() {
         cancelOrder: CancelOrder(orders),
         listCatalogs: ListCatalogs(catalog),
         listProducts: ListProducts(catalog),
+        listRegions: ListRegions(stores),
+        searchCustomers: SearchCustomers(customers),
       );
 
   setUp(() {
     drafts = MockDraftRepository();
     orders = MockOrderRepository();
     catalog = MockCatalogRepository();
+    stores = MockStoreRepository();
+    customers = MockCustomerRepository();
+    when(() => stores.regions()).thenAnswer((_) async => []);
+    when(() => customers.search(any())).thenAnswer((_) async => []);
   });
 
   const draft = Order(

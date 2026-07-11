@@ -2,6 +2,8 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../stores/domain/entities/store_entities.dart';
+import '../../../stores/domain/usecases/store_usecases.dart';
 import '../../domain/entities/inventory_entities.dart';
 import '../../domain/usecases/inventory_usecases.dart';
 
@@ -20,6 +22,7 @@ class InventoryBloc extends Bloc<InventoryEvent, InventoryState> {
     required TransferStock transferStock,
     required SetReorderPolicy setReorder,
     required SetBackorderPolicy setBackorder,
+    required ListLocations listLocations,
   })  : _listLevels = listLevels,
         _readLedger = readLedger,
         _receiveStock = receiveStock,
@@ -27,6 +30,7 @@ class InventoryBloc extends Bloc<InventoryEvent, InventoryState> {
         _transferStock = transferStock,
         _setReorder = setReorder,
         _setBackorder = setBackorder,
+        _listLocations = listLocations,
         super(const InventoryState()) {
     on<LevelsRequested>(_onLevelsRequested);
     on<LedgerRequested>(_onLedgerRequested);
@@ -45,6 +49,7 @@ class InventoryBloc extends Bloc<InventoryEvent, InventoryState> {
   final TransferStock _transferStock;
   final SetReorderPolicy _setReorder;
   final SetBackorderPolicy _setBackorder;
+  final ListLocations _listLocations;
 
   Future<void> _onLevelsRequested(
       LevelsRequested event, Emitter<InventoryState> emit) async {
@@ -54,8 +59,15 @@ class InventoryBloc extends Bloc<InventoryEvent, InventoryState> {
       lowOnly: event.lowOnly,
     ));
     try {
-      final levels = await _listLevels(location: event.location, lowOnly: event.lowOnly);
-      emit(state.copyWith(status: InventoryStatus.loaded, levels: levels));
+      final results = await Future.wait<Object>([
+        _listLevels(location: event.location, lowOnly: event.lowOnly),
+        _listLocations(),
+      ]);
+      emit(state.copyWith(
+        status: InventoryStatus.loaded,
+        levels: results[0] as List<StockLevel>,
+        locations: results[1] as List<StoreLocation>,
+      ));
     } on Failure catch (f) {
       emit(state.copyWith(status: InventoryStatus.failure, error: f.message));
     }

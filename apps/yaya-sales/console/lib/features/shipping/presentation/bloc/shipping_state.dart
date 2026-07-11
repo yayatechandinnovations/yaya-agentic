@@ -9,6 +9,7 @@ class ShippingState extends Equatable {
     this.methods = const [],
     this.carriers = const [],
     this.rates = const [],
+    this.locations = const [],
     this.createdSlots = const [],
     this.error,
   });
@@ -18,6 +19,7 @@ class ShippingState extends Equatable {
   final List<DeliveryMethod> methods;
   final List<Carrier> carriers;
   final List<ShippingRate> rates;
+  final List<StoreLocation> locations;
   final List<DeliverySlot> createdSlots;
   final String? error;
 
@@ -27,6 +29,7 @@ class ShippingState extends Equatable {
     List<DeliveryMethod>? methods,
     List<Carrier>? carriers,
     List<ShippingRate>? rates,
+    List<StoreLocation>? locations,
     List<DeliverySlot>? createdSlots,
     String? error,
   }) =>
@@ -36,10 +39,12 @@ class ShippingState extends Equatable {
         methods: methods ?? this.methods,
         carriers: carriers ?? this.carriers,
         rates: rates ?? this.rates,
+        locations: locations ?? this.locations,
         createdSlots: createdSlots ?? this.createdSlots,
         error: error,
       );
 
   @override
-  List<Object?> get props => [status, zones, methods, carriers, rates, createdSlots, error];
+  List<Object?> get props =>
+      [status, zones, methods, carriers, rates, locations, createdSlots, error];
 }

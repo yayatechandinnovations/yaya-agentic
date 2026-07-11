@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayasales.stores;
 
+import com.yayatechandinnovations.yayasales.platform.Address;
 import com.yayatechandinnovations.yayasales.platform.Ids.LocationId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 
@@ -9,7 +10,8 @@ public record LocationView(
         String label,
         Kind kind,
         boolean sellable,
-        int sortOrder) {
+        int sortOrder,
+        Address address) {
 
     public enum Kind { WAREHOUSE, SHOP, VIRTUAL }
 }

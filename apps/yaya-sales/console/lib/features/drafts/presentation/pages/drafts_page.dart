@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/domain/money.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../../catalog/domain/entities/catalog_entities.dart';
+import '../../../customers/domain/entities/customer_entities.dart';
 import '../../../orders/domain/entities/order_entities.dart';
 import '../../domain/entities/draft_entities.dart';
 import '../bloc/drafts_bloc.dart';
@@ -100,8 +101,9 @@ class DraftsPage extends StatelessWidget {
   Future<void> _promptEditor(BuildContext context, Order? existing) async {
     final bloc = context.read<DraftsBloc>();
     bloc.add(const DraftSkusRequested());
-    final customer = TextEditingController(text: existing?.customerRef ?? '');
-    final region = TextEditingController();
+    String? customerSel;
+    final customerOther = TextEditingController();
+    String? regionId;
     final note = TextEditingController();
     final rows = <_LineRow>[
       if (existing == null)
@@ -124,16 +126,23 @@ class DraftsPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (existing == null) ...[
-                        TextField(
-                          controller: customer,
-                          decoration:
-                              const InputDecoration(labelText: 'Customer ref (optional)'),
+                        _CustomerRefField(
+                          customers: state.customers,
+                          selected: customerSel,
+                          freeText: customerOther,
+                          onChanged: (v) => setState(() => customerSel = v),
                         ),
                         const SizedBox(height: 8),
-                        TextField(
-                          controller: region,
+                        DropdownButtonFormField<String?>(
+                          initialValue: regionId,
                           decoration:
-                              const InputDecoration(labelText: 'Region id (optional)'),
+                              const InputDecoration(labelText: 'Region (optional)'),
+                          items: [
+                            const DropdownMenuItem<String?>(child: Text('Default')),
+                            ...state.regions.map((r) => DropdownMenuItem<String?>(
+                                value: r.id, child: Text(r.name))),
+                          ],
+                          onChanged: (v) => setState(() => regionId = v),
                         ),
                         const SizedBox(height: 8),
                         TextField(
@@ -210,9 +219,8 @@ class DraftsPage extends StatelessWidget {
                   if (lines.isEmpty) return;
                   if (existing == null) {
                     bloc.add(DraftCreateRequested(
-                      customerRef:
-                          customer.text.trim().isEmpty ? null : customer.text.trim(),
-                      regionId: region.text.trim().isEmpty ? null : region.text.trim(),
+                      customerRef: _customerRefOf(customerSel, customerOther),
+                      regionId: regionId,
                       note: note.text.trim().isEmpty ? null : note.text.trim(),
                       lines: lines,
                     ));
@@ -276,49 +284,65 @@ class DraftsPage extends StatelessWidget {
 
   Future<void> _promptSend(BuildContext context, Order draft) async {
     final bloc = context.read<DraftsBloc>();
+    bloc.add(const DraftSkusRequested());
     String? tender;
     var applyStoreCredit = false;
-    final customer = TextEditingController(text: draft.customerRef ?? '');
+    // The draft's ref may predate the directory — fall back to free text then.
+    final inDirectory =
+        bloc.state.customers.any((c) => c.customerRef == draft.customerRef);
+    String? customerSel =
+        draft.customerRef == null ? null : (inDirectory ? draft.customerRef : _kOtherCustomer);
+    final customerOther =
+        TextEditingController(text: inDirectory ? '' : (draft.customerRef ?? ''));
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: Text('Send draft ${draft.id}'),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String?>(
-                  initialValue: tender,
-                  decoration: const InputDecoration(
-                    labelText: 'Tender',
-                    helperText: 'Empty = region default',
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(child: Text('Default')),
-                    ...Tender.kinds
-                        .map((k) => DropdownMenuItem<String?>(value: k, child: Text(k))),
+      builder: (ctx) => BlocProvider.value(
+        value: bloc,
+        child: StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: Text('Send draft ${draft.id}'),
+            content: SizedBox(
+              width: 380,
+              child: BlocBuilder<DraftsBloc, DraftsState>(
+                builder: (ctx, state) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      initialValue: tender,
+                      decoration: const InputDecoration(
+                        labelText: 'Tender',
+                        helperText: 'Empty = region default',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(child: Text('Default')),
+                        ...Tender.kinds
+                            .map((k) => DropdownMenuItem<String?>(value: k, child: Text(k))),
+                      ],
+                      onChanged: (v) => setState(() => tender = v),
+                    ),
+                    const SizedBox(height: 8),
+                    _CustomerRefField(
+                      customers: state.customers,
+                      selected: customerSel,
+                      freeText: customerOther,
+                      onChanged: (v) => setState(() => customerSel = v),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Apply store credit'),
+                      value: applyStoreCredit,
+                      onChanged: (v) => setState(() => applyStoreCredit = v),
+                    ),
                   ],
-                  onChanged: (v) => setState(() => tender = v),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: customer,
-                  decoration: const InputDecoration(labelText: 'Customer ref (optional)'),
-                ),
-                SwitchListTile(
-                  title: const Text('Apply store credit'),
-                  value: applyStoreCredit,
-                  onChanged: (v) => setState(() => applyStoreCredit = v),
-                ),
-              ],
+              ),
             ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true), child: const Text('Send')),
+            ],
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Send')),
-          ],
         ),
       ),
     );
@@ -328,7 +352,7 @@ class DraftsPage extends StatelessWidget {
         tender: tender,
         applyStoreCredit: applyStoreCredit,
         returnUrl: '${Uri.base.origin}/orders',
-        customerRef: customer.text.trim().isEmpty ? null : customer.text.trim(),
+        customerRef: _customerRefOf(customerSel, customerOther),
       ));
     }
   }
@@ -378,4 +402,56 @@ class _LineRow {
   final TextEditingController skuCtrl;
   final TextEditingController qtyCtrl;
   final TextEditingController priceCtrl;
+}
+
+/// Sentinel dropdown value that reveals the free-text field — customer refs
+/// are opaque strings, so an ad-hoc ref must stay possible.
+const _kOtherCustomer = '__other__';
+
+String? _customerRefOf(String? selected, TextEditingController freeText) =>
+    selected == _kOtherCustomer
+        ? (freeText.text.trim().isEmpty ? null : freeText.text.trim())
+        : selected;
+
+class _CustomerRefField extends StatelessWidget {
+  const _CustomerRefField({
+    required this.customers,
+    required this.selected,
+    required this.freeText,
+    required this.onChanged,
+  });
+
+  final List<Customer> customers;
+  final String? selected;
+  final TextEditingController freeText;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButtonFormField<String?>(
+          initialValue: selected,
+          decoration: const InputDecoration(labelText: 'Customer (optional)'),
+          items: [
+            const DropdownMenuItem<String?>(child: Text('None')),
+            ...customers.where((c) => c.customerRef != null).map(
+                (c) => DropdownMenuItem<String?>(
+                    value: c.customerRef, child: Text(c.displayName))),
+            const DropdownMenuItem<String?>(
+                value: _kOtherCustomer, child: Text('Other…')),
+          ],
+          onChanged: onChanged,
+        ),
+        if (selected == _kOtherCustomer) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: freeText,
+            decoration: const InputDecoration(labelText: 'Customer ref'),
+          ),
+        ],
+      ],
+    );
+  }
 }

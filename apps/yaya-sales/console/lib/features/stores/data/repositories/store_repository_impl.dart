@@ -40,8 +40,20 @@ class StoreRepositoryImpl implements StoreRepository {
       _guard(() async => (await _remote.locations()).map(locationFromJson).toList());
 
   @override
-  Future<StoreLocation> addLocation(String label, String kind, bool sellable) =>
-      _guard(() async => locationFromJson(await _remote.addLocation(label, kind, sellable)));
+  Future<StoreLocation> addLocation(String label, String kind, bool sellable,
+          {Map<String, dynamic>? address}) =>
+      _guard(() async =>
+          locationFromJson(await _remote.addLocation(label, kind, sellable, address)));
+
+  @override
+  Future<StoreLocation> updateLocation(String id,
+          {String? label, String? kind, bool? sellable, Map<String, dynamic>? address}) =>
+      _guard(() async => locationFromJson(await _remote.updateLocation(id, {
+            if (label != null) 'label': label,
+            if (kind != null) 'kind': kind,
+            if (sellable != null) 'sellable': sellable,
+            if (address != null) 'address': address,
+          })));
 
   @override
   Future<List<Channel>> channels() =>

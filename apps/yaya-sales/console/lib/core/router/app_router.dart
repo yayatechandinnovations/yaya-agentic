@@ -9,6 +9,8 @@ import '../../features/catalog/presentation/bloc/catalogs_bloc.dart';
 import '../../features/catalog/presentation/bloc/products_bloc.dart';
 import '../../features/catalog/presentation/pages/catalog_products_page.dart';
 import '../../features/catalog/presentation/pages/catalogs_page.dart';
+import '../../features/customers/presentation/bloc/customers_bloc.dart';
+import '../../features/customers/presentation/pages/customers_page.dart';
 import '../../features/drafts/presentation/bloc/drafts_bloc.dart';
 import '../../features/drafts/presentation/pages/drafts_page.dart';
 import '../../features/fleet/presentation/bloc/fleet_bloc.dart';
@@ -159,9 +161,16 @@ class AppRouter {
               ),
             ),
             GoRoute(
+              path: '/customers',
+              builder: (_, __) => BlocProvider(
+                create: (_) => sl<CustomersBloc>()..add(const CustomersRequested()),
+                child: const CustomersPage(),
+              ),
+            ),
+            GoRoute(
               path: '/store-credit',
               builder: (_, __) => BlocProvider(
-                create: (_) => sl<StoreCreditBloc>(),
+                create: (_) => sl<StoreCreditBloc>()..add(const StoreCreditContextRequested()),
                 child: const StoreCreditPage(),
               ),
             ),

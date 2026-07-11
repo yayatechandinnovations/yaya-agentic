@@ -32,6 +32,9 @@ public class CatalogEntity {
     @Column(name = "deprecated_at")
     private Instant deprecatedAt;
 
+    @Column(name = "cover_url")
+    private String coverUrl;
+
     protected CatalogEntity() {}
 
     public CatalogEntity(String id, String storeId, String displayName, Instant createdAt) {
@@ -49,6 +52,10 @@ public class CatalogEntity {
     public String getDisplayName() { return displayName; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getCoverUrl() { return coverUrl; }
+
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public void setCoverUrl(String coverUrl) { this.coverUrl = coverUrl; }
 
     public void publish() {
         if (!"DRAFT".equals(status)) {

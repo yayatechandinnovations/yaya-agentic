@@ -55,6 +55,19 @@ public class DefaultCatalogService implements CatalogService {
 
     @Override
     @Transactional
+    public CatalogView updateCatalog(CatalogId id, String displayName, String coverUrl) {
+        CatalogEntity catalog = requireCatalog(id);
+        if (displayName != null && !displayName.isBlank()) {
+            catalog.setDisplayName(displayName);
+        }
+        if (coverUrl != null) {
+            catalog.setCoverUrl(coverUrl.isBlank() ? null : coverUrl);
+        }
+        return toView(catalog);
+    }
+
+    @Override
+    @Transactional
     public CatalogView publish(CatalogId id) {
         CatalogEntity catalog = requireCatalog(id);
         catalog.publish();
@@ -204,7 +217,7 @@ public class DefaultCatalogService implements CatalogService {
     private static CatalogView toView(CatalogEntity e) {
         return new CatalogView(new CatalogId(e.getId()), new StoreId(e.getStoreId()),
                 e.getVersion(), e.getDisplayName(),
-                CatalogView.Status.valueOf(e.getStatus()), e.getCreatedAt());
+                CatalogView.Status.valueOf(e.getStatus()), e.getCoverUrl(), e.getCreatedAt());
     }
 
     ProductView toView(ProductEntity e) {

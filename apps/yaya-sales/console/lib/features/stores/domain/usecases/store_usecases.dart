@@ -35,8 +35,18 @@ class ListLocations {
 class AddLocation {
   const AddLocation(this._repo);
   final StoreRepository _repo;
-  Future<StoreLocation> call(String label, String kind, bool sellable) =>
-      _repo.addLocation(label, kind, sellable);
+  Future<StoreLocation> call(String label, String kind, bool sellable,
+          {Map<String, dynamic>? address}) =>
+      _repo.addLocation(label, kind, sellable, address: address);
+}
+
+class UpdateLocation {
+  const UpdateLocation(this._repo);
+  final StoreRepository _repo;
+  Future<StoreLocation> call(String id,
+          {String? label, String? kind, bool? sellable, Map<String, dynamic>? address}) =>
+      _repo.updateLocation(id,
+          label: label, kind: kind, sellable: sellable, address: address);
 }
 
 class ListChannels {

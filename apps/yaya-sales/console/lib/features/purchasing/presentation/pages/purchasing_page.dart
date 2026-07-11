@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/di/service_locator.dart';
 import '../../../../core/domain/money.dart';
 import '../../../../core/storage/store_context.dart';
+import '../../../../core/widgets/sku_autocomplete.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../domain/entities/purchasing_entities.dart';
 import '../bloc/purchasing_bloc.dart';
@@ -93,7 +94,7 @@ class PurchasingPage extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               FilledButton.tonalIcon(
-                onPressed: () => _promptCreatePo(context, state.suppliers),
+                onPressed: () => _promptCreatePo(context, state),
                 icon: const Icon(Icons.add),
                 label: const Text('New PO'),
               ),
@@ -212,58 +213,116 @@ class PurchasingPage extends StatelessWidget {
         id: existing?.id, name: name.text.trim(), contact: contactMap));
   }
 
-  Future<void> _promptCreatePo(BuildContext context, List<Supplier> suppliers) async {
+  Future<void> _promptCreatePo(BuildContext context, PurchasingState state) async {
     final bloc = context.read<PurchasingBloc>();
-    if (suppliers.isEmpty) {
+    if (state.suppliers.isEmpty) {
       showErrorSnack(context, 'Add a supplier first');
       return;
     }
-    var supplierId = suppliers.first.id;
-    final location = TextEditingController();
+    if (state.locations.isEmpty) {
+      showErrorSnack(context, 'Add a location first (Store settings)');
+      return;
+    }
+    final skuOptions = state.skuOptions
+        .map((v) => SkuOption(
+              sku: v.sku,
+              label: v.label,
+              detail: v.price == null ? null : formatMoney(v.price),
+            ))
+        .toList();
+    var supplierId = state.suppliers.first.id;
+    var locationId = state.locations.first.id;
     final expected = TextEditingController();
-    final lines = TextEditingController();
+    final rows = [_PoLineDraft()];
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
           title: const Text('New purchase order'),
           content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: supplierId,
-                  decoration: const InputDecoration(labelText: 'Supplier'),
-                  items: suppliers
-                      .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
-                      .toList(),
-                  onChanged: (v) => setState(() => supplierId = v ?? supplierId),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: location,
-                  decoration: const InputDecoration(labelText: 'Receiving location id'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: expected,
-                  decoration: const InputDecoration(
-                    labelText: 'Expected at (ISO-8601, optional)',
-                    hintText: '2026-08-01T00:00:00Z',
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: supplierId,
+                    decoration: const InputDecoration(labelText: 'Supplier'),
+                    items: state.suppliers
+                        .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
+                        .toList(),
+                    onChanged: (v) => setState(() => supplierId = v ?? supplierId),
                   ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: lines,
-                  maxLines: 5,
-                  decoration: const InputDecoration(
-                    labelText: 'Lines — one per line: sku,qty,unitCostMinor',
-                    helperText: 'cost in minor units (1999 = 19.99)',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: locationId,
+                    decoration: const InputDecoration(labelText: 'Receiving location'),
+                    items: state.locations
+                        .map((l) => DropdownMenuItem(value: l.id, child: Text(l.label)))
+                        .toList(),
+                    onChanged: (v) => setState(() => locationId = v ?? locationId),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: expected,
+                    decoration: const InputDecoration(
+                      labelText: 'Expected at (ISO-8601, optional)',
+                      hintText: '2026-08-01T00:00:00Z',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Lines'),
+                  const SizedBox(height: 4),
+                  ...rows.map((row) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: SkuAutocomplete(
+                                options: skuOptions,
+                                controller: row.sku,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 70,
+                              child: TextField(
+                                controller: row.qty,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(labelText: 'Qty'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 120,
+                              child: TextField(
+                                controller: row.cost,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Unit cost (minor)',
+                                  helperText: '1999 = 19.99',
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remove line',
+                              icon: const Icon(Icons.remove_circle_outline, size: 18),
+                              onPressed: rows.length == 1
+                                  ? null
+                                  : () => setState(() => rows.remove(row)),
+                            ),
+                          ],
+                        ),
+                      )),
+                  TextButton.icon(
+                    onPressed: () => setState(() => rows.add(_PoLineDraft())),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add line'),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -273,21 +332,19 @@ class PurchasingPage extends StatelessWidget {
         ),
       ),
     );
-    if (ok != true || location.text.trim().isEmpty) return;
-    final parsed = <PoLine>[];
-    for (final line in lines.text.split('\n')) {
-      final parts = line.split(',');
-      if (parts.isEmpty || parts.first.trim().isEmpty) continue;
-      parsed.add(PoLine(
-        sku: parts[0].trim(),
-        qty: parts.length > 1 ? int.tryParse(parts[1].trim()) ?? 0 : 0,
-        unitCostMinor: parts.length > 2 ? int.tryParse(parts[2].trim()) ?? 0 : 0,
-      ));
-    }
+    if (ok != true) return;
+    final parsed = rows
+        .where((row) => row.sku.text.trim().isNotEmpty)
+        .map((row) => PoLine(
+              sku: row.sku.text.trim(),
+              qty: int.tryParse(row.qty.text) ?? 0,
+              unitCostMinor: int.tryParse(row.cost.text) ?? 0,
+            ))
+        .toList();
     if (parsed.isEmpty) return;
     bloc.add(PoCreateRequested(
       supplierId: supplierId,
-      locationId: location.text.trim(),
+      locationId: locationId,
       lines: parsed,
       expectedAt: DateTime.tryParse(expected.text.trim()),
     ));
@@ -365,4 +422,11 @@ class PurchasingPage extends StatelessWidget {
     if (lines.isEmpty) return;
     bloc.add(PoReceiveRequested(po.id, lines));
   }
+}
+
+/// One editable PO line in the create dialog.
+class _PoLineDraft {
+  final sku = TextEditingController();
+  final qty = TextEditingController(text: '1');
+  final cost = TextEditingController();
 }

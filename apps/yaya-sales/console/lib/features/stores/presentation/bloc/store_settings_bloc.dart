@@ -15,6 +15,7 @@ class StoreSettingsBloc extends Bloc<StoreSettingsEvent, StoreSettingsState> {
     required UpdateStorePolicies updatePolicies,
     required ListLocations listLocations,
     required AddLocation addLocation,
+    required UpdateLocation updateLocation,
     required ListChannels listChannels,
     required AddChannel addChannel,
     required ListRegions listRegions,
@@ -24,6 +25,7 @@ class StoreSettingsBloc extends Bloc<StoreSettingsEvent, StoreSettingsState> {
         _updatePolicies = updatePolicies,
         _listLocations = listLocations,
         _addLocation = addLocation,
+        _updateLocation = updateLocation,
         _listChannels = listChannels,
         _addChannel = addChannel,
         _listRegions = listRegions,
@@ -33,6 +35,7 @@ class StoreSettingsBloc extends Bloc<StoreSettingsEvent, StoreSettingsState> {
     on<StoreSettingsRequested>(_onRequested);
     on<PoliciesSaveRequested>(_onPoliciesSave);
     on<LocationAddRequested>(_onLocationAdd);
+    on<LocationUpdateRequested>(_onLocationUpdate);
     on<ChannelAddRequested>(_onChannelAdd);
     on<RegionAddRequested>(_onRegionAdd);
     on<RegionUpdateRequested>(_onRegionUpdate);
@@ -42,6 +45,7 @@ class StoreSettingsBloc extends Bloc<StoreSettingsEvent, StoreSettingsState> {
   final UpdateStorePolicies _updatePolicies;
   final ListLocations _listLocations;
   final AddLocation _addLocation;
+  final UpdateLocation _updateLocation;
   final ListChannels _listChannels;
   final AddChannel _addChannel;
   final ListRegions _listRegions;
@@ -82,7 +86,19 @@ class StoreSettingsBloc extends Bloc<StoreSettingsEvent, StoreSettingsState> {
 
   Future<void> _onLocationAdd(
       LocationAddRequested event, Emitter<StoreSettingsState> emit) async {
-    await _mutate(emit, () => _addLocation(event.label, event.kind, event.sellable));
+    await _mutate(emit,
+        () => _addLocation(event.label, event.kind, event.sellable, address: event.address));
+  }
+
+  Future<void> _onLocationUpdate(
+      LocationUpdateRequested event, Emitter<StoreSettingsState> emit) async {
+    await _mutate(
+        emit,
+        () => _updateLocation(event.id,
+            label: event.label,
+            kind: event.kind,
+            sellable: event.sellable,
+            address: event.address));
   }
 
   Future<void> _onChannelAdd(

@@ -541,7 +541,11 @@ class ShippingPage extends StatelessWidget {
 
   Future<void> _promptSlot(BuildContext context, ShippingState state) async {
     final bloc = context.read<ShippingBloc>();
-    final location = TextEditingController();
+    if (state.locations.isEmpty) {
+      showErrorSnack(context, 'Add a location first (Store settings)');
+      return;
+    }
+    var locationId = state.locations.first.id;
     var methodId = state.methods.isEmpty ? null : state.methods.first.id;
     final starts = TextEditingController();
     final ends = TextEditingController();
@@ -556,9 +560,13 @@ class ShippingPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: location,
-                  decoration: const InputDecoration(labelText: 'Location id'),
+                DropdownButtonFormField<String>(
+                  initialValue: locationId,
+                  decoration: const InputDecoration(labelText: 'Location'),
+                  items: state.locations
+                      .map((l) => DropdownMenuItem(value: l.id, child: Text(l.label)))
+                      .toList(),
+                  onChanged: (v) => setState(() => locationId = v ?? locationId),
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
@@ -604,12 +612,12 @@ class ShippingPage extends StatelessWidget {
     if (ok != true || methodId == null) return;
     final startsAt = DateTime.tryParse(starts.text.trim());
     final endsAt = DateTime.tryParse(ends.text.trim());
-    if (startsAt == null || endsAt == null || location.text.trim().isEmpty) {
-      if (context.mounted) showErrorSnack(context, 'Location and valid ISO dates required');
+    if (startsAt == null || endsAt == null) {
+      if (context.mounted) showErrorSnack(context, 'Valid ISO dates required');
       return;
     }
     bloc.add(SlotAddRequested(
-      locationId: location.text.trim(),
+      locationId: locationId,
       methodId: methodId!,
       startsAt: startsAt,
       endsAt: endsAt,

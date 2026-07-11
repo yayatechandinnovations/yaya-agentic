@@ -5,7 +5,12 @@ import '../../../../core/di/service_locator.dart';
 import '../../../../core/domain/money.dart';
 import '../../../../core/storage/store_context.dart';
 import '../../../../core/widgets/widgets.dart';
+import '../../../customers/domain/entities/customer_entities.dart';
 import '../bloc/store_credit_bloc.dart';
+
+/// Sentinel dropdown value that reveals the free-text field — customer refs
+/// are opaque strings, so an ad-hoc ref must stay possible.
+const _kOtherCustomer = '__other__';
 
 class StoreCreditPage extends StatefulWidget {
   const StoreCreditPage({super.key});
@@ -15,21 +20,28 @@ class StoreCreditPage extends StatefulWidget {
 }
 
 class _StoreCreditPageState extends State<StoreCreditPage> {
-  final _customer = TextEditingController();
+  String? _customerSel;
+  final _customerOther = TextEditingController();
   late final TextEditingController _currency =
       TextEditingController(text: sl<StoreContext>().storeCurrency ?? 'USD');
 
   @override
   void dispose() {
-    _customer.dispose();
+    _customerOther.dispose();
     _currency.dispose();
     super.dispose();
   }
 
+  String? get _customerRef => _customerSel == _kOtherCustomer
+      ? (_customerOther.text.trim().isEmpty ? null : _customerOther.text.trim())
+      : _customerSel;
+
   void _lookup() {
-    if (_customer.text.trim().isEmpty) return;
-    context.read<StoreCreditBloc>().add(BalanceLookupRequested(
-        _customer.text.trim(), _currency.text.trim().toUpperCase()));
+    final ref = _customerRef;
+    if (ref == null) return;
+    context
+        .read<StoreCreditBloc>()
+        .add(BalanceLookupRequested(ref, _currency.text.trim().toUpperCase()));
   }
 
   @override
@@ -51,13 +63,15 @@ class _StoreCreditPageState extends State<StoreCreditPage> {
                   Text('Store credit', style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 16),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         flex: 2,
-                        child: TextField(
-                          controller: _customer,
-                          decoration: const InputDecoration(labelText: 'Customer ref'),
-                          onSubmitted: (_) => _lookup(),
+                        child: _CustomerRefField(
+                          customers: state.customers,
+                          selected: _customerSel,
+                          freeText: _customerOther,
+                          onChanged: (v) => setState(() => _customerSel = v),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -68,7 +82,10 @@ class _StoreCreditPageState extends State<StoreCreditPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      FilledButton(onPressed: _lookup, child: const Text('Lookup')),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: FilledButton(onPressed: _lookup, child: const Text('Lookup')),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
@@ -88,7 +105,7 @@ class _StoreCreditPageState extends State<StoreCreditPage> {
                     ),
                   const SizedBox(height: 16),
                   OutlinedButton.icon(
-                    onPressed: () => _promptIssue(context),
+                    onPressed: () => _promptIssue(context, state.customers),
                     icon: const Icon(Icons.add_card),
                     label: const Text('Issue store credit'),
                   ),
@@ -101,53 +118,109 @@ class _StoreCreditPageState extends State<StoreCreditPage> {
     );
   }
 
-  Future<void> _promptIssue(BuildContext context) async {
+  Future<void> _promptIssue(BuildContext context, List<Customer> customers) async {
     final bloc = context.read<StoreCreditBloc>();
-    final customer = TextEditingController(text: _customer.text);
+    String? customerSel = _customerSel;
+    final customerOther = TextEditingController(text: _customerOther.text);
     final amount = TextEditingController();
     final reason = TextEditingController();
     final currency = _currency.text.trim().toUpperCase();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Issue store credit'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: customer,
-              decoration: const InputDecoration(labelText: 'Customer ref'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Issue store credit'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _CustomerRefField(
+                  customers: customers,
+                  selected: customerSel,
+                  freeText: customerOther,
+                  onChanged: (v) => setState(() => customerSel = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: amount,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Amount (minor units, $currency)',
+                    helperText: '1999 = 19.99',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: reason,
+                  decoration: const InputDecoration(labelText: 'Reason (optional)'),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: amount,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: 'Amount (minor units, $currency)',
-                helperText: '1999 = 19.99',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: reason,
-              decoration: const InputDecoration(labelText: 'Reason (optional)'),
-            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Issue')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Issue')),
-        ],
       ),
     );
-    if (ok == true && customer.text.trim().isNotEmpty) {
-      _customer.text = customer.text.trim();
+    final ref = customerSel == _kOtherCustomer
+        ? (customerOther.text.trim().isEmpty ? null : customerOther.text.trim())
+        : customerSel;
+    if (ok == true && ref != null) {
+      setState(() {
+        _customerSel = customerSel;
+        _customerOther.text = customerOther.text;
+      });
       bloc.add(CreditIssueRequested(
-        customer.text.trim(),
+        ref,
         int.tryParse(amount.text) ?? 0,
         currency,
         reason.text.trim().isEmpty ? null : reason.text.trim(),
       ));
     }
+  }
+}
+
+class _CustomerRefField extends StatelessWidget {
+  const _CustomerRefField({
+    required this.customers,
+    required this.selected,
+    required this.freeText,
+    required this.onChanged,
+  });
+
+  final List<Customer> customers;
+  final String? selected;
+  final TextEditingController freeText;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButtonFormField<String?>(
+          initialValue: selected,
+          decoration: const InputDecoration(labelText: 'Customer'),
+          items: [
+            ...customers.where((c) => c.customerRef != null).map(
+                (c) => DropdownMenuItem<String?>(
+                    value: c.customerRef, child: Text(c.displayName))),
+            const DropdownMenuItem<String?>(
+                value: _kOtherCustomer, child: Text('Other…')),
+          ],
+          onChanged: onChanged,
+        ),
+        if (selected == _kOtherCustomer) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: freeText,
+            decoration: const InputDecoration(labelText: 'Customer ref'),
+          ),
+        ],
+      ],
+    );
   }
 }

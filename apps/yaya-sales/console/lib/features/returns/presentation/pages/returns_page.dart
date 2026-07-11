@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/domain/money.dart';
 import '../../../../core/widgets/widgets.dart';
+import '../../../orders/domain/entities/order_entities.dart';
 import '../../domain/entities/rma_entities.dart';
 import '../bloc/rmas_bloc.dart';
 
@@ -105,7 +107,7 @@ class ReturnsPage extends StatelessWidget {
 
   Future<void> _promptCreate(BuildContext context) async {
     final bloc = context.read<RmasBloc>();
-    final orderId = TextEditingController();
+    String? orderId;
     final reason = TextEditingController();
     final qtys = <String, TextEditingController>{};
     await showDialog<void>(
@@ -124,24 +126,38 @@ class ReturnsPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
-                            child: TextField(
-                              controller: orderId,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: orderId,
+                              isExpanded: true,
                               decoration:
-                                  const InputDecoration(labelText: 'Paid order id'),
+                                  const InputDecoration(labelText: 'Paid order'),
+                              items: state.paidOrders
+                                  .map((o) => DropdownMenuItem(
+                                        value: o.id,
+                                        child: Text(_orderLabel(o),
+                                            overflow: TextOverflow.ellipsis),
+                                      ))
+                                  .toList(),
+                              onChanged: (v) => setState(() => orderId = v),
                             ),
                           ),
                           const SizedBox(width: 8),
-                          FilledButton.tonal(
-                            onPressed: () => bloc
-                                .add(RmaOrderLookupRequested(orderId.text.trim())),
-                            child: const Text('Load lines'),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: FilledButton.tonal(
+                              onPressed: orderId == null
+                                  ? null
+                                  : () => bloc.add(RmaOrderLookupRequested(orderId!)),
+                              child: const Text('Load lines'),
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      if (order != null && order.id == orderId.text.trim()) ...[
+                      if (order != null && order.id == orderId) ...[
                         const Align(
                           alignment: Alignment.centerLeft,
                           child: Text('Return quantities'),
@@ -185,9 +201,9 @@ class ReturnsPage extends StatelessWidget {
                           RmaLine(sku: e.key, qty: int.tryParse(e.value.text) ?? 0))
                       .where((l) => l.qty > 0)
                       .toList();
-                  if (orderId.text.trim().isEmpty || lines.isEmpty) return;
+                  if (orderId == null || lines.isEmpty) return;
                   bloc.add(RmaCreateRequested(
-                    orderId.text.trim(),
+                    orderId!,
                     lines,
                     reason.text.trim().isEmpty ? null : reason.text.trim(),
                   ));
@@ -200,5 +216,10 @@ class ReturnsPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _orderLabel(Order o) {
+    final shortId = o.id.length > 12 ? '${o.id.substring(0, 12)}…' : o.id;
+    return '$shortId · ${o.customerRef ?? 'no customer'} · ${formatMoney(o.totals.grand)}';
   }
 }

@@ -13,6 +13,13 @@ class CreateCatalog {
   Future<Catalog> call(String displayName) => _repo.createCatalog(displayName);
 }
 
+class UpdateCatalog {
+  const UpdateCatalog(this._repo);
+  final CatalogRepository _repo;
+  Future<Catalog> call(String catalogId, {String? displayName, String? coverUrl}) =>
+      _repo.updateCatalog(catalogId, displayName: displayName, coverUrl: coverUrl);
+}
+
 class PublishCatalog {
   const PublishCatalog(this._repo);
   final CatalogRepository _repo;

@@ -23,6 +23,7 @@ class RmasBloc extends Bloc<RmasEvent, RmasState> {
     required SetReturnShipment setReturnShipment,
     required ReceiveRma receiveRma,
     required GetOrderDetail getOrderDetail,
+    required ListOrders listOrders,
   })  : _listRmas = listRmas,
         _getRma = getRma,
         _requestRma = requestRma,
@@ -32,6 +33,7 @@ class RmasBloc extends Bloc<RmasEvent, RmasState> {
         _setReturnShipment = setReturnShipment,
         _receiveRma = receiveRma,
         _getOrderDetail = getOrderDetail,
+        _listOrders = listOrders,
         super(const RmasState()) {
     on<RmasRequested>(_onRequested);
     on<RmaDetailRequested>(_onDetail);
@@ -53,12 +55,25 @@ class RmasBloc extends Bloc<RmasEvent, RmasState> {
   final SetReturnShipment _setReturnShipment;
   final ReceiveRma _receiveRma;
   final GetOrderDetail _getOrderDetail;
+  final ListOrders _listOrders;
 
   Future<void> _onRequested(RmasRequested event, Emitter<RmasState> emit) async {
     emit(state.copyWith(status: RmasStatus.loading, statusFilter: event.statusFilter));
     try {
-      final rmas = await _listRmas(status: event.statusFilter);
-      emit(state.copyWith(status: RmasStatus.loaded, rmas: rmas));
+      final results = await Future.wait<Object>([
+        _listRmas(status: event.statusFilter),
+        _listOrders(),
+      ]);
+      // Only settled money can come back — those are the orders an RMA can start from.
+      final paidOrders = (results[1] as List<Order>)
+          .where((o) =>
+              o.paymentState == 'PAID' || o.paymentState == 'PARTIALLY_REFUNDED')
+          .toList();
+      emit(state.copyWith(
+        status: RmasStatus.loaded,
+        rmas: results[0] as List<Rma>,
+        paidOrders: paidOrders,
+      ));
     } on Failure catch (f) {
       emit(state.copyWith(status: RmasStatus.failure, error: f.message));
     }

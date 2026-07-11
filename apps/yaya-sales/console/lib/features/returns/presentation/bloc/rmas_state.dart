@@ -6,6 +6,7 @@ class RmasState extends Equatable {
   const RmasState({
     this.status = RmasStatus.initial,
     this.rmas = const [],
+    this.paidOrders = const [],
     this.statusFilter,
     this.selected,
     this.lookupOrder,
@@ -14,6 +15,7 @@ class RmasState extends Equatable {
 
   final RmasStatus status;
   final List<Rma> rmas;
+  final List<Order> paidOrders;
   final String? statusFilter;
   final Rma? selected;
   final Order? lookupOrder;
@@ -22,6 +24,7 @@ class RmasState extends Equatable {
   RmasState copyWith({
     RmasStatus? status,
     List<Rma>? rmas,
+    List<Order>? paidOrders,
     String? statusFilter,
     Rma? selected,
     Order? lookupOrder,
@@ -30,6 +33,7 @@ class RmasState extends Equatable {
       RmasState(
         status: status ?? this.status,
         rmas: rmas ?? this.rmas,
+        paidOrders: paidOrders ?? this.paidOrders,
         statusFilter: statusFilter ?? this.statusFilter,
         selected: selected ?? this.selected,
         lookupOrder: lookupOrder ?? this.lookupOrder,
@@ -37,5 +41,6 @@ class RmasState extends Equatable {
       );
 
   @override
-  List<Object?> get props => [status, rmas, statusFilter, selected, lookupOrder, error];
+  List<Object?> get props =>
+      [status, rmas, paidOrders, statusFilter, selected, lookupOrder, error];
 }

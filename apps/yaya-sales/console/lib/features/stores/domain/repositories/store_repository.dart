@@ -7,7 +7,10 @@ abstract class StoreRepository {
   Future<Store> updatePolicies(String id, StorePolicies policies);
 
   Future<List<StoreLocation>> locations();
-  Future<StoreLocation> addLocation(String label, String kind, bool sellable);
+  Future<StoreLocation> addLocation(String label, String kind, bool sellable,
+      {Map<String, dynamic>? address});
+  Future<StoreLocation> updateLocation(String id,
+      {String? label, String? kind, bool? sellable, Map<String, dynamic>? address});
 
   Future<List<Channel>> channels();
   Future<Channel> addChannel(String kind, String? label);

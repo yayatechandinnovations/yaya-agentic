@@ -17,18 +17,12 @@ class InventoryPage extends StatefulWidget {
 }
 
 class _InventoryPageState extends State<InventoryPage> {
-  final _location = TextEditingController();
+  String? _locationId;
   bool _lowOnly = false;
-
-  @override
-  void dispose() {
-    _location.dispose();
-    super.dispose();
-  }
 
   void _reload() {
     context.read<InventoryBloc>().add(LevelsRequested(
-          location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+          location: _locationId,
           lowOnly: _lowOnly,
         ));
   }
@@ -49,13 +43,24 @@ class _InventoryPageState extends State<InventoryPage> {
               children: [
                 SizedBox(
                   width: 280,
-                  child: TextField(
-                    controller: _location,
-                    decoration: const InputDecoration(
-                      labelText: 'Location id filter',
-                      isDense: true,
+                  child: BlocBuilder<InventoryBloc, InventoryState>(
+                    buildWhen: (prev, next) => prev.locations != next.locations,
+                    builder: (context, state) => DropdownButtonFormField<String>(
+                      initialValue: _locationId,
+                      decoration: const InputDecoration(
+                        labelText: 'Location filter',
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(child: Text('All locations')),
+                        ...state.locations.map((l) =>
+                            DropdownMenuItem<String>(value: l.id, child: Text(l.label))),
+                      ],
+                      onChanged: (v) {
+                        setState(() => _locationId = v);
+                        _reload();
+                      },
                     ),
-                    onSubmitted: (_) => _reload(),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -234,61 +239,70 @@ class _InventoryPageState extends State<InventoryPage> {
 
   Future<void> _promptReceive(BuildContext context, StockLevel? level) async {
     final bloc = context.read<InventoryBloc>();
+    final locations = bloc.state.locations;
     final sku = TextEditingController(text: level?.sku ?? '');
-    final location = TextEditingController(text: level?.locationId ?? '');
+    String? locationId =
+        level?.locationId ?? (locations.isEmpty ? null : locations.first.id);
     final qty = TextEditingController();
     final cost = TextEditingController();
     final ref = TextEditingController();
     final currency = sl<StoreContext>().storeCurrency ?? 'USD';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Receive stock'),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: sku, decoration: const InputDecoration(labelText: 'SKU')),
-              const SizedBox(height: 8),
-              TextField(
-                  controller: location,
-                  decoration: const InputDecoration(labelText: 'Location id')),
-              const SizedBox(height: 8),
-              TextField(
-                controller: qty,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Quantity'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: cost,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Unit cost (minor units, $currency)',
-                  helperText: '1999 = 19.99',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Receive stock'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: sku, decoration: const InputDecoration(labelText: 'SKU')),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: locationId,
+                  decoration: const InputDecoration(labelText: 'Location'),
+                  items: locations
+                      .map((l) => DropdownMenuItem(value: l.id, child: Text(l.label)))
+                      .toList(),
+                  onChanged: (v) => setState(() => locationId = v),
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: ref,
-                decoration:
-                    const InputDecoration(labelText: 'Purchase order ref (optional)'),
-              ),
-            ],
+                const SizedBox(height: 8),
+                TextField(
+                  controller: qty,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Quantity'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: cost,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Unit cost (minor units, $currency)',
+                    helperText: '1999 = 19.99',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: ref,
+                  decoration:
+                      const InputDecoration(labelText: 'Purchase order ref (optional)'),
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true), child: const Text('Receive')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('Receive')),
-        ],
       ),
     );
-    if (ok == true && sku.text.trim().isNotEmpty && location.text.trim().isNotEmpty) {
+    if (ok == true && sku.text.trim().isNotEmpty && locationId != null) {
       bloc.add(ReceiveRequested(
         sku: sku.text.trim(),
-        location: location.text.trim(),
+        location: locationId!,
         qty: int.tryParse(qty.text) ?? 0,
         unitCostMinor: int.tryParse(cost.text) ?? 0,
         currency: currency,
@@ -341,45 +355,59 @@ class _InventoryPageState extends State<InventoryPage> {
 
   Future<void> _promptTransfer(BuildContext context) async {
     final bloc = context.read<InventoryBloc>();
+    final locations = bloc.state.locations;
     final sku = TextEditingController();
-    final from = TextEditingController();
-    final to = TextEditingController();
+    String? fromId = locations.isEmpty ? null : locations.first.id;
+    String? toId = locations.isEmpty ? null : locations.first.id;
     final qty = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Transfer stock'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: sku, decoration: const InputDecoration(labelText: 'SKU')),
-            const SizedBox(height: 8),
-            TextField(
-                controller: from,
-                decoration: const InputDecoration(labelText: 'From location id')),
-            const SizedBox(height: 8),
-            TextField(
-                controller: to, decoration: const InputDecoration(labelText: 'To location id')),
-            const SizedBox(height: 8),
-            TextField(
-              controller: qty,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Quantity'),
-            ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Transfer stock'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: sku, decoration: const InputDecoration(labelText: 'SKU')),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: fromId,
+                decoration: const InputDecoration(labelText: 'From location'),
+                items: locations
+                    .map((l) => DropdownMenuItem(value: l.id, child: Text(l.label)))
+                    .toList(),
+                onChanged: (v) => setState(() => fromId = v),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: toId,
+                decoration: const InputDecoration(labelText: 'To location'),
+                items: locations
+                    .map((l) => DropdownMenuItem(value: l.id, child: Text(l.label)))
+                    .toList(),
+                onChanged: (v) => setState(() => toId = v),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: qty,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Quantity'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true), child: const Text('Transfer')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('Transfer')),
-        ],
       ),
     );
-    if (ok == true && sku.text.trim().isNotEmpty) {
+    if (ok == true && sku.text.trim().isNotEmpty && fromId != null && toId != null) {
       bloc.add(TransferRequested(
         sku: sku.text.trim(),
-        from: from.text.trim(),
-        to: to.text.trim(),
+        from: fromId!,
+        to: toId!,
         qty: int.tryParse(qty.text) ?? 0,
       ));
     }

@@ -12,18 +12,22 @@ class CatalogsBloc extends Bloc<CatalogsEvent, CatalogsState> {
   CatalogsBloc({
     required ListCatalogs listCatalogs,
     required CreateCatalog createCatalog,
+    required UpdateCatalog updateCatalog,
     required PublishCatalog publishCatalog,
   })  : _listCatalogs = listCatalogs,
         _createCatalog = createCatalog,
+        _updateCatalog = updateCatalog,
         _publishCatalog = publishCatalog,
         super(const CatalogsState()) {
     on<CatalogsRequested>(_onRequested);
     on<CatalogCreateRequested>(_onCreate);
+    on<CatalogUpdateRequested>(_onUpdate);
     on<CatalogPublishRequested>(_onPublish);
   }
 
   final ListCatalogs _listCatalogs;
   final CreateCatalog _createCatalog;
+  final UpdateCatalog _updateCatalog;
   final PublishCatalog _publishCatalog;
 
   Future<void> _onRequested(CatalogsRequested event, Emitter<CatalogsState> emit) async {
@@ -39,6 +43,18 @@ class CatalogsBloc extends Bloc<CatalogsEvent, CatalogsState> {
     try {
       await _createCatalog(event.displayName);
       add(const CatalogsRequested());
+    } on Failure catch (f) {
+      emit(state.copyWith(status: CatalogsStatus.failure, error: f.message));
+    }
+  }
+
+  Future<void> _onUpdate(CatalogUpdateRequested event, Emitter<CatalogsState> emit) async {
+    try {
+      final updated = await _updateCatalog(event.catalogId,
+          displayName: event.displayName, coverUrl: event.coverUrl);
+      emit(state.copyWith(
+          catalogs:
+              state.catalogs.map((c) => c.id == updated.id ? updated : c).toList()));
     } on Failure catch (f) {
       emit(state.copyWith(status: CatalogsStatus.failure, error: f.message));
     }

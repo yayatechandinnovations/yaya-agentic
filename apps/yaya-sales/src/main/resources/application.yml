@@ -1,6 +1,12 @@
 spring:
   application:
     name: yaya-sales
+  servlet:
+    multipart:
+      # Image uploads (product photos, catalog covers). The media service
+      # enforces its own 5MB/type checks; these are transport-layer ceilings.
+      max-file-size: 6MB
+      max-request-size: 8MB
   datasource:
     url: ${SALES_DB_URL:jdbc:postgresql://localhost:5432/yaya_sales}
     username: ${SALES_DB_USER:postgres}

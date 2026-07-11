@@ -67,4 +67,7 @@ public final class Ids {
     // customers
     public record CustomerId(String value) {}
     public record AddressId(String value) {}
+
+    // media (uploaded images)
+    public record MediaId(String value) {}
 }

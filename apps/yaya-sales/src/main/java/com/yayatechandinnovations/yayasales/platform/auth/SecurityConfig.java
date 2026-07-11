@@ -55,6 +55,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v1/sales/webhooks/**").permitAll()
+                // Product photos / catalog covers render in public surfaces
+                // (storefront chat); ids are random 128-bit. Upload stays
+                // operator-only under /v1/sales/admin/media.
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/v1/sales/media/*").permitAll()
                 // §10.4: register/verify are the only public courier endpoints —
                 // gated by the signed invite token and the phone OTP respectively.
                 .requestMatchers("/v1/sales/delivery/agents/register",

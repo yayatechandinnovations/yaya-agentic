@@ -15,6 +15,9 @@ public interface CatalogService {
 
     CatalogView createCatalog(StoreId store, String displayName);
 
+    /** Rename and/or set the cover image URL (blank cover clears it). */
+    CatalogView updateCatalog(CatalogId id, String displayName, String coverUrl);
+
     CatalogView publish(CatalogId id);
 
     List<CatalogView> catalogsOf(StoreId store);

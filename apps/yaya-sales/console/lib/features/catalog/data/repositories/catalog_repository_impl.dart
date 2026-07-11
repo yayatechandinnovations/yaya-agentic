@@ -28,6 +28,13 @@ class CatalogRepositoryImpl implements CatalogRepository {
       _guard(() async => catalogFromJson(await _remote.createCatalog(displayName)));
 
   @override
+  Future<Catalog> updateCatalog(String catalogId, {String? displayName, String? coverUrl}) =>
+      _guard(() async => catalogFromJson(await _remote.updateCatalog(catalogId, {
+            if (displayName != null) 'displayName': displayName,
+            if (coverUrl != null) 'coverUrl': coverUrl,
+          })));
+
+  @override
   Future<Catalog> publish(String catalogId) =>
       _guard(() async => catalogFromJson(await _remote.publish(catalogId)));
 

@@ -41,12 +41,20 @@ class StoreRemoteDataSource {
     return (res.data ?? []).cast<Map<String, dynamic>>();
   }
 
-  Future<Map<String, dynamic>> addLocation(String label, String kind, bool sellable) async {
+  Future<Map<String, dynamic>> addLocation(
+      String label, String kind, bool sellable, Map<String, dynamic>? address) async {
     final res = await _dio.post<Map<String, dynamic>>('/v1/sales/admin/locations', data: {
       'label': label,
       'kind': kind,
       'sellable': sellable,
+      if (address != null) 'address': address,
     });
+    return res.data ?? const {};
+  }
+
+  Future<Map<String, dynamic>> updateLocation(String id, Map<String, dynamic> body) async {
+    final res =
+        await _dio.put<Map<String, dynamic>>('/v1/sales/admin/locations/$id', data: body);
     return res.data ?? const {};
   }
 

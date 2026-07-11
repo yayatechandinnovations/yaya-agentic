@@ -4,7 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/di/service_locator.dart';
 import '../../../../core/domain/money.dart';
+import '../../../../core/media/image_picker.dart';
+import '../../../../core/media/media_service.dart';
 import '../../../../core/storage/store_context.dart';
+import '../../../../core/widgets/image_manager.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../domain/entities/catalog_entities.dart';
 import '../bloc/products_bloc.dart';
@@ -272,8 +275,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
       TextEditingController(text: widget.existing?.category ?? '');
   late final TextEditingController _sortOrder =
       TextEditingController(text: '${widget.existing?.sortOrder ?? 0}');
-  late final TextEditingController _media =
-      TextEditingController(text: (widget.existing?.media ?? []).join('\n'));
+  late List<String> _media = [...widget.existing?.media ?? []];
   late final TextEditingController _attributes = TextEditingController(
       text: (widget.existing?.attributes ?? {})
           .entries
@@ -344,12 +346,13 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                 decoration: const InputDecoration(labelText: 'Description'),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _media,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'Media URLs (one per line)',
-                ),
+              const Text('Photos', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              ImageManager(
+                urls: _media,
+                media: sl<MediaService>(),
+                picker: sl<ImagePicker>(),
+                onChanged: (urls) => setState(() => _media = urls),
               ),
               const SizedBox(height: 12),
               Row(children: [
@@ -484,11 +487,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         status: widget.existing?.status.isNotEmpty == true ? widget.existing!.status : null,
         sortOrder: int.tryParse(_sortOrder.text.trim()) ?? 0,
         attributes: _parsePairs(_attributes.text),
-        media: _media.text
-            .split('\n')
-            .map((l) => l.trim())
-            .where((l) => l.isNotEmpty)
-            .toList(),
+        media: _media,
         metadata: _parsePairs(_metadata.text),
         variants: variants,
       ),

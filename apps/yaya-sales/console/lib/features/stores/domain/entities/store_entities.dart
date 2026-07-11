@@ -43,23 +43,59 @@ class StorePolicies extends Equatable {
       [deductionPoint, backorder, softHoldTtlSeconds, checkoutHoldTtlSeconds];
 }
 
+class AddressInfo extends Equatable {
+  const AddressInfo({
+    this.line1,
+    this.line2,
+    this.city,
+    this.region,
+    this.postalCode,
+    this.country,
+  });
+
+  final String? line1;
+  final String? line2;
+  final String? city;
+  final String? region;
+  final String? postalCode;
+  final String? country;
+
+  String get oneLine => [line1, line2, city, region, postalCode, country]
+      .where((p) => p != null && p.isNotEmpty)
+      .join(', ');
+
+  Map<String, dynamic> toJson() => {
+        'line1': line1,
+        'line2': line2,
+        'city': city,
+        'region': region,
+        'postalCode': postalCode,
+        'country': country,
+      };
+
+  @override
+  List<Object?> get props => [line1, line2, city, region, postalCode, country];
+}
+
 class StoreLocation extends Equatable {
   const StoreLocation({
     required this.id,
     required this.label,
     required this.kind,
     required this.sellable,
+    this.address,
   });
 
   final String id;
   final String label;
   final String kind; // WAREHOUSE | SHOP | VIRTUAL
   final bool sellable;
+  final AddressInfo? address;
 
   static const kinds = ['WAREHOUSE', 'SHOP', 'VIRTUAL'];
 
   @override
-  List<Object?> get props => [id, label, kind, sellable];
+  List<Object?> get props => [id, label, kind, sellable, address];
 }
 
 class Channel extends Equatable {

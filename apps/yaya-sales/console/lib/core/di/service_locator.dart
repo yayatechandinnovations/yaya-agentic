@@ -10,6 +10,11 @@ import '../../features/auth/domain/repositories/auth_repository.dart';
 import '../../features/auth/domain/usecases/auth_usecases.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/catalog/data/datasources/catalog_remote_data_source.dart';
+import '../../features/customers/data/datasources/customer_remote_data_source.dart';
+import '../../features/customers/data/repositories/customer_repository_impl.dart';
+import '../../features/customers/domain/repositories/customer_repository.dart';
+import '../../features/customers/domain/usecases/customer_usecases.dart';
+import '../../features/customers/presentation/bloc/customers_bloc.dart';
 import '../../features/catalog/data/repositories/catalog_repository_impl.dart';
 import '../../features/catalog/domain/repositories/catalog_repository.dart';
 import '../../features/catalog/domain/usecases/catalog_usecases.dart';
@@ -79,6 +84,9 @@ import '../../features/stores/domain/usecases/store_usecases.dart';
 import '../../features/stores/presentation/bloc/store_picker_bloc.dart';
 import '../../features/stores/presentation/bloc/store_settings_bloc.dart';
 import '../config/app_config.dart';
+import '../media/image_picker.dart';
+import '../media/media_service.dart';
+import '../media/web_image_picker.dart';
 import '../network/dio_client.dart';
 import '../storage/store_context.dart';
 import '../storage/token_store.dart';
@@ -98,6 +106,8 @@ Future<void> configureDependencies() async {
       DioClient.sales(config, sl<TokenStore>(), sl<StoreContext>()));
   sl.registerSingleton<Dio>(DioClient.identity(config), instanceName: 'identity');
   sl.registerSingleton<OAuthLauncher>(WebOAuthLauncher());
+  sl.registerSingleton<ImagePicker>(WebImagePicker());
+  sl.registerSingleton<MediaService>(MediaService(sl<Dio>(), config));
 
   // --- auth ---
   sl.registerSingleton(AuthRemoteDataSource(sl<Dio>(instanceName: 'identity'), config));
@@ -126,6 +136,7 @@ Future<void> configureDependencies() async {
         updatePolicies: UpdateStorePolicies(sl()),
         listLocations: ListLocations(sl()),
         addLocation: AddLocation(sl()),
+        updateLocation: UpdateLocation(sl()),
         listChannels: ListChannels(sl()),
         addChannel: AddChannel(sl()),
         listRegions: ListRegions(sl()),
@@ -139,6 +150,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => CatalogsBloc(
         listCatalogs: ListCatalogs(sl()),
         createCatalog: CreateCatalog(sl()),
+        updateCatalog: UpdateCatalog(sl()),
         publishCatalog: PublishCatalog(sl()),
       ));
   sl.registerFactory(() => ProductsBloc(
@@ -162,6 +174,7 @@ Future<void> configureDependencies() async {
         transferStock: TransferStock(sl()),
         setReorder: SetReorderPolicy(sl()),
         setBackorder: SetBackorderPolicy(sl()),
+        listLocations: ListLocations(sl()),
       ));
 
   // --- pricing ---
@@ -174,6 +187,10 @@ Future<void> configureDependencies() async {
         listPromotions: ListPromotions(sl()),
         createPromotion: CreatePromotion(sl()),
         togglePromotion: TogglePromotion(sl()),
+        listRegions: ListRegions(sl()),
+        listChannels: ListChannels(sl()),
+        listCatalogs: ListCatalogs(sl()),
+        listProducts: ListProducts(sl()),
       ));
 
   // --- orders + store credit ---
@@ -190,6 +207,19 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => StoreCreditBloc(
         getBalance: GetStoreCreditBalance(sl()),
         issueCredit: IssueStoreCredit(sl()),
+        searchCustomers: SearchCustomers(sl()),
+      ));
+
+  // --- customers ---
+  sl.registerSingleton(CustomerRemoteDataSource(sl<Dio>()));
+  sl.registerSingleton<CustomerRepository>(CustomerRepositoryImpl(sl()));
+  sl.registerFactory(() => CustomersBloc(
+        searchCustomers: SearchCustomers(sl()),
+        createCustomer: CreateCustomer(sl()),
+        updateCustomer: UpdateCustomer(sl()),
+        deleteCustomer: DeleteCustomer(sl()),
+        addAddress: AddCustomerAddress(sl()),
+        removeAddress: RemoveCustomerAddress(sl()),
       ));
 
   // --- draft orders ---
@@ -203,6 +233,8 @@ Future<void> configureDependencies() async {
         cancelOrder: CancelOrder(sl()),
         listCatalogs: ListCatalogs(sl()),
         listProducts: ListProducts(sl()),
+        listRegions: ListRegions(sl()),
+        searchCustomers: SearchCustomers(sl()),
       ));
 
   // --- shipments (rendered inside order detail) ---
@@ -233,6 +265,7 @@ Future<void> configureDependencies() async {
         listRates: ListRates(sl()),
         addRate: AddRate(sl()),
         addSlot: AddSlot(sl()),
+        listLocations: ListLocations(sl()),
       ));
 
   // --- fleet ---
@@ -261,6 +294,7 @@ Future<void> configureDependencies() async {
         setReturnShipment: SetReturnShipment(sl()),
         receiveRma: ReceiveRma(sl()),
         getOrderDetail: GetOrderDetail(sl()),
+        listOrders: ListOrders(sl()),
       ));
 
   // --- purchasing ---
@@ -276,6 +310,9 @@ Future<void> configureDependencies() async {
         placePo: PlacePurchaseOrder(sl()),
         cancelPo: CancelPurchaseOrder(sl()),
         receivePo: ReceivePurchaseOrder(sl()),
+        listLocations: ListLocations(sl()),
+        listCatalogs: ListCatalogs(sl()),
+        listProducts: ListProducts(sl()),
       ));
 
   // --- psp ---

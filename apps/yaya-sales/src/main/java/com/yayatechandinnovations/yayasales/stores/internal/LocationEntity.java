@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "locations")
@@ -27,6 +29,10 @@ public class LocationEntity {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "address_json")
+    private String addressJson;
+
     protected LocationEntity() {}
 
     public LocationEntity(String id, String storeId, String label, String kind,
@@ -45,4 +51,10 @@ public class LocationEntity {
     public String getKind() { return kind; }
     public boolean isSellable() { return sellable; }
     public int getSortOrder() { return sortOrder; }
+    public String getAddressJson() { return addressJson; }
+
+    public void setLabel(String label) { this.label = label; }
+    public void setKind(String kind) { this.kind = kind; }
+    public void setSellable(boolean sellable) { this.sellable = sellable; }
+    public void setAddressJson(String addressJson) { this.addressJson = addressJson; }
 }

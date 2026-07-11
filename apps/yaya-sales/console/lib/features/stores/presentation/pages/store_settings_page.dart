@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/widgets/address_fields.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../domain/entities/store_entities.dart';
 import '../bloc/store_settings_bloc.dart';
@@ -158,7 +159,7 @@ class _LocationsSection extends StatelessWidget {
       children: [
         SectionHeader('Locations', actions: [
           FilledButton.tonalIcon(
-            onPressed: () => _promptAdd(context),
+            onPressed: () => _promptEdit(context, null),
             icon: const Icon(Icons.add),
             label: const Text('Add location'),
           ),
@@ -171,14 +172,25 @@ class _LocationsSection extends StatelessWidget {
               DataColumn(label: Text('Label')),
               DataColumn(label: Text('Kind')),
               DataColumn(label: Text('Sellable')),
+              DataColumn(label: Text('Address')),
               DataColumn(label: Text('Id')),
+              DataColumn(label: Text('')),
             ],
             rows: locations
                 .map((l) => DataRow(cells: [
                       DataCell(Text(l.label)),
                       DataCell(StatusChip(l.kind)),
                       DataCell(Icon(l.sellable ? Icons.check : Icons.close, size: 18)),
+                      DataCell(Text(
+                          l.address == null || l.address!.oneLine.isEmpty
+                              ? '—'
+                              : l.address!.oneLine)),
                       DataCell(SelectableText(l.id)),
+                      DataCell(IconButton(
+                        tooltip: 'Edit',
+                        icon: const Icon(Icons.edit, size: 18),
+                        onPressed: () => _promptEdit(context, l),
+                      )),
                     ]))
                 .toList(),
           ),
@@ -186,49 +198,69 @@ class _LocationsSection extends StatelessWidget {
     );
   }
 
-  Future<void> _promptAdd(BuildContext context) async {
+  Future<void> _promptEdit(BuildContext context, StoreLocation? existing) async {
     final bloc = context.read<StoreSettingsBloc>();
-    final label = TextEditingController();
-    var kind = StoreLocation.kinds.first;
-    var sellable = true;
+    final label = TextEditingController(text: existing?.label ?? '');
+    var kind = existing?.kind ?? StoreLocation.kinds.first;
+    var sellable = existing?.sellable ?? true;
+    final address = AddressDraft(from: existing?.address?.toJson());
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
-          title: const Text('Add location'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: label,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Label'),
+          title: Text(existing == null ? 'Add location' : 'Edit location'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: label,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Label'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: kind,
+                    decoration: const InputDecoration(labelText: 'Kind'),
+                    items: StoreLocation.kinds
+                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                        .toList(),
+                    onChanged: (v) => setState(() => kind = v ?? kind),
+                  ),
+                  SwitchListTile(
+                    title: const Text('Sellable'),
+                    value: sellable,
+                    onChanged: (v) => setState(() => sellable = v),
+                  ),
+                  const SizedBox(height: 12),
+                  AddressFields(draft: address),
+                ],
               ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: kind,
-                decoration: const InputDecoration(labelText: 'Kind'),
-                items: StoreLocation.kinds
-                    .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                    .toList(),
-                onChanged: (v) => setState(() => kind = v ?? kind),
-              ),
-              SwitchListTile(
-                title: const Text('Sellable'),
-                value: sellable,
-                onChanged: (v) => setState(() => sellable = v),
-              ),
-            ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(existing == null ? 'Add' : 'Save')),
           ],
         ),
       ),
     );
-    if (ok == true && label.text.trim().isNotEmpty) {
-      bloc.add(LocationAddRequested(label.text.trim(), kind, sellable));
+    if (ok != true || label.text.trim().isEmpty) return;
+    final addressJson = address.isEmpty ? null : address.toJson();
+    if (existing == null) {
+      bloc.add(LocationAddRequested(label.text.trim(), kind, sellable, address: addressJson));
+    } else {
+      bloc.add(LocationUpdateRequested(
+        existing.id,
+        label: label.text.trim(),
+        kind: kind,
+        sellable: sellable,
+        address: addressJson,
+      ));
     }
   }
 }

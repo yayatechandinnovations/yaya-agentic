@@ -33,6 +33,19 @@ StoreLocation locationFromJson(Map<String, dynamic> json) {
     label: '${json['label'] ?? ''}',
     kind: '${json['kind'] ?? 'WAREHOUSE'}',
     sellable: json['sellable'] == true,
+    address: json['address'] == null ? null : addressFromJson(mapOf(json['address'])),
+  );
+}
+
+AddressInfo addressFromJson(Map<String, dynamic> json) {
+  String? part(String key) => json[key] == null ? null : '${json[key]}';
+  return AddressInfo(
+    line1: part('line1'),
+    line2: part('line2'),
+    city: part('city'),
+    region: part('region'),
+    postalCode: part('postalCode'),
+    country: part('country'),
   );
 }
 

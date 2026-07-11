@@ -8,15 +8,17 @@ class Catalog extends Equatable {
     required this.version,
     required this.displayName,
     required this.status,
+    this.coverUrl,
   });
 
   final String id;
   final int version;
   final String displayName;
   final String status; // DRAFT | PUBLISHED | DEPRECATED
+  final String? coverUrl;
 
   @override
-  List<Object?> get props => [id, version, displayName, status];
+  List<Object?> get props => [id, version, displayName, status, coverUrl];
 }
 
 class Variant extends Equatable {

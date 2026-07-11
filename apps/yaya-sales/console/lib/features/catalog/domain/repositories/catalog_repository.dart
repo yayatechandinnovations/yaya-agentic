@@ -3,6 +3,7 @@ import '../entities/catalog_entities.dart';
 abstract class CatalogRepository {
   Future<List<Catalog>> catalogs();
   Future<Catalog> createCatalog(String displayName);
+  Future<Catalog> updateCatalog(String catalogId, {String? displayName, String? coverUrl});
   Future<Catalog> publish(String catalogId);
 
   Future<List<Product>> products(String catalogId);

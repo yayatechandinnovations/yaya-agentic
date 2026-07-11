@@ -2,6 +2,8 @@ import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../stores/domain/entities/store_entities.dart';
+import '../../../stores/domain/usecases/store_usecases.dart';
 import '../../domain/entities/shipping_entities.dart';
 import '../../domain/usecases/shipping_usecases.dart';
 
@@ -23,6 +25,7 @@ class ShippingBloc extends Bloc<ShippingEvent, ShippingState> {
     required ListRates listRates,
     required AddRate addRate,
     required AddSlot addSlot,
+    required ListLocations listLocations,
   })  : _listZones = listZones,
         _addZone = addZone,
         _listMethods = listMethods,
@@ -33,6 +36,7 @@ class ShippingBloc extends Bloc<ShippingEvent, ShippingState> {
         _listRates = listRates,
         _addRate = addRate,
         _addSlot = addSlot,
+        _listLocations = listLocations,
         super(const ShippingState()) {
     on<ShippingRequested>(_onRequested);
     on<ZoneAddRequested>(_onZoneAdd);
@@ -53,18 +57,20 @@ class ShippingBloc extends Bloc<ShippingEvent, ShippingState> {
   final ListRates _listRates;
   final AddRate _addRate;
   final AddSlot _addSlot;
+  final ListLocations _listLocations;
 
   Future<void> _onRequested(ShippingRequested event, Emitter<ShippingState> emit) async {
     emit(state.copyWith(status: ShippingStatus.loading));
     try {
       final results = await Future.wait<Object>(
-          [_listZones(), _listMethods(), _listCarriers(), _listRates()]);
+          [_listZones(), _listMethods(), _listCarriers(), _listRates(), _listLocations()]);
       emit(state.copyWith(
         status: ShippingStatus.loaded,
         zones: results[0] as List<ShippingZone>,
         methods: results[1] as List<DeliveryMethod>,
         carriers: results[2] as List<Carrier>,
         rates: results[3] as List<ShippingRate>,
+        locations: results[4] as List<StoreLocation>,
       ));
     } on Failure catch (f) {
       emit(state.copyWith(status: ShippingStatus.failure, error: f.message));

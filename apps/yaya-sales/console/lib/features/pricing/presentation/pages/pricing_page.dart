@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/di/service_locator.dart';
 import '../../../../core/domain/money.dart';
 import '../../../../core/storage/store_context.dart';
+import '../../../../core/widgets/sku_autocomplete.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../domain/entities/pricing_entities.dart';
 import '../bloc/pricing_bloc.dart';
@@ -134,75 +135,138 @@ class PricingPage extends StatelessWidget {
 
   Future<void> _promptPriceList(BuildContext context, PriceList? existing) async {
     final bloc = context.read<PricingBloc>();
-    final region = TextEditingController(text: existing?.regionId ?? '');
-    final channel = TextEditingController(text: existing?.channelId ?? '');
+    final state = bloc.state;
+    final skuOptions = _skuOptions(state);
+    String? regionId = existing?.regionId;
+    String? channelId = existing?.channelId;
     final group = TextEditingController(text: existing?.customerGroup ?? '');
-    final rules = TextEditingController(
-      text: (existing?.rules ?? [])
-          .map((r) => '${r.sku},${r.minQty ?? ''},${r.priceMinor}')
-          .join('\n'),
-    );
+    final rows = <_RuleRowDraft>[
+      if (existing == null || existing.rules.isEmpty)
+        _RuleRowDraft()
+      else
+        ...existing.rules.map(_RuleRowDraft.of),
+    ];
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existing == null ? 'New price list' : 'Edit price list rules'),
-        content: SizedBox(
-          width: 480,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (existing == null) ...[
-                TextField(
-                  controller: region,
-                  decoration: const InputDecoration(labelText: 'Region id (optional)'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: channel,
-                  decoration: const InputDecoration(labelText: 'Channel id (optional)'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: group,
-                  decoration: const InputDecoration(labelText: 'Customer group (optional)'),
-                ),
-                const SizedBox(height: 8),
-              ],
-              TextField(
-                controller: rules,
-                maxLines: 8,
-                decoration: const InputDecoration(
-                  labelText: 'Rules — one per line: sku,minQty,priceMinor',
-                  helperText: 'minQty empty = base price. Price in minor units (1999 = 19.99)',
-                  border: OutlineInputBorder(),
-                ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text(existing == null ? 'New price list' : 'Edit price list rules'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (existing == null) ...[
+                    DropdownButtonFormField<String?>(
+                      initialValue: regionId,
+                      decoration: const InputDecoration(labelText: 'Region (optional)'),
+                      items: [
+                        const DropdownMenuItem<String?>(child: Text('Any region')),
+                        ...state.regions.map((r) =>
+                            DropdownMenuItem<String?>(value: r.id, child: Text(r.name))),
+                      ],
+                      onChanged: (v) => setState(() => regionId = v),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String?>(
+                      initialValue: channelId,
+                      decoration: const InputDecoration(labelText: 'Channel (optional)'),
+                      items: [
+                        const DropdownMenuItem<String?>(child: Text('Any channel')),
+                        ...state.channels.map((c) =>
+                            DropdownMenuItem<String?>(value: c.id, child: Text(c.label))),
+                      ],
+                      onChanged: (v) => setState(() => channelId = v),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: group,
+                      decoration:
+                          const InputDecoration(labelText: 'Customer group (optional)'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  const Text('Rules'),
+                  const SizedBox(height: 4),
+                  ...rows.map((row) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: SkuAutocomplete(
+                                options: skuOptions,
+                                controller: row.sku,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 80,
+                              child: TextField(
+                                controller: row.minQty,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Min qty',
+                                  helperText: 'empty = base',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 120,
+                              child: TextField(
+                                controller: row.price,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Price (minor)',
+                                  helperText: '1999 = 19.99',
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remove rule',
+                              icon: const Icon(Icons.remove_circle_outline, size: 18),
+                              onPressed: rows.length == 1
+                                  ? null
+                                  : () => setState(() => rows.remove(row)),
+                            ),
+                          ],
+                        ),
+                      )),
+                  TextButton.icon(
+                    onPressed: () => setState(() => rows.add(_RuleRowDraft())),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add rule'),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
-        ],
       ),
     );
     if (ok != true) return;
-    final parsed = <PriceRule>[];
-    for (final line in rules.text.split('\n')) {
-      final parts = line.split(',');
-      if (parts.isEmpty || parts.first.trim().isEmpty) continue;
-      parsed.add(PriceRule(
-        sku: parts[0].trim(),
-        minQty: parts.length > 1 && parts[1].trim().isNotEmpty
-            ? int.tryParse(parts[1].trim())
-            : null,
-        priceMinor: parts.length > 2 ? int.tryParse(parts[2].trim()) ?? 0 : 0,
-      ));
-    }
+    final parsed = rows
+        .where((row) => row.sku.text.trim().isNotEmpty)
+        .map((row) => PriceRule(
+              sku: row.sku.text.trim(),
+              minQty: row.minQty.text.trim().isEmpty
+                  ? null
+                  : int.tryParse(row.minQty.text.trim()),
+              priceMinor: int.tryParse(row.price.text.trim()) ?? 0,
+            ))
+        .toList();
     if (existing == null) {
       bloc.add(PriceListCreateRequested(
-        regionId: region.text.trim().isEmpty ? null : region.text.trim(),
-        channelId: channel.text.trim().isEmpty ? null : channel.text.trim(),
+        regionId: regionId,
+        channelId: channelId,
         customerGroup: group.text.trim().isEmpty ? null : group.text.trim(),
         rules: parsed,
       ));
@@ -211,13 +275,23 @@ class PricingPage extends StatelessWidget {
     }
   }
 
+  List<SkuOption> _skuOptions(PricingState state) => state.skuOptions
+      .map((v) => SkuOption(
+            sku: v.sku,
+            label: v.label,
+            detail: v.price == null ? null : formatMoney(v.price),
+          ))
+      .toList();
+
   Future<void> _promptPromotion(BuildContext context) async {
     final bloc = context.read<PricingBloc>();
+    final skuOptions = _skuOptions(bloc.state);
     var kind = Promotion.kinds.first;
     final bps = TextEditingController();
     final amount = TextEditingController();
     final minSubtotal = TextEditingController();
-    final skus = TextEditingController();
+    final skuEntry = TextEditingController();
+    final skus = <String>[];
     final code = TextEditingController();
     final startsAt = TextEditingController();
     final endsAt = TextEditingController();
@@ -268,12 +342,47 @@ class PricingPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  TextField(
-                    controller: skus,
-                    decoration: const InputDecoration(
-                      labelText: 'Eligible SKUs (comma-separated, optional)',
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SkuAutocomplete(
+                          options: skuOptions,
+                          controller: skuEntry,
+                          labelText: 'Eligible SKU (optional)',
+                          helperText: 'empty = any cart',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () {
+                          final sku = skuEntry.text.trim();
+                          if (sku.isEmpty || skus.contains(sku)) return;
+                          setState(() {
+                            skus.add(sku);
+                            skuEntry.clear();
+                          });
+                        },
+                        child: const Text('Add'),
+                      ),
+                    ],
                   ),
+                  if (skus.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: skus
+                            .map((sku) => InputChip(
+                                  label: Text(sku),
+                                  onDeleted: () => setState(() => skus.remove(sku)),
+                                ))
+                            .toList(),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   TextField(
                     controller: code,
@@ -312,14 +421,27 @@ class PricingPage extends StatelessWidget {
       amountMinor: kind == 'AMOUNT_OFF' ? int.tryParse(amount.text) : null,
       minSubtotalMinor:
           minSubtotal.text.trim().isEmpty ? null : int.tryParse(minSubtotal.text.trim()),
-      skus: skus.text
-          .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
-          .toList(),
+      skus: skus,
       code: code.text.trim().isEmpty ? null : code.text.trim(),
       startsAt: DateTime.tryParse(startsAt.text.trim()),
       endsAt: DateTime.tryParse(endsAt.text.trim()),
     ));
   }
+}
+
+/// One editable price rule in the price-list dialog.
+class _RuleRowDraft {
+  _RuleRowDraft()
+      : sku = TextEditingController(),
+        minQty = TextEditingController(),
+        price = TextEditingController();
+
+  _RuleRowDraft.of(PriceRule rule)
+      : sku = TextEditingController(text: rule.sku),
+        minQty = TextEditingController(text: rule.minQty == null ? '' : '${rule.minQty}'),
+        price = TextEditingController(text: '${rule.priceMinor}');
+
+  final TextEditingController sku;
+  final TextEditingController minQty;
+  final TextEditingController price;
 }

@@ -17,6 +17,7 @@ class ConsoleShell extends StatelessWidget {
   static const _destinations = [
     ('/orders', Icons.receipt_long, 'Orders'),
     ('/draft-orders', Icons.edit_note, 'Draft orders'),
+    ('/customers', Icons.people_alt_outlined, 'Customers'),
     ('/catalog', Icons.menu_book, 'Catalog'),
     ('/inventory', Icons.inventory_2, 'Inventory'),
     ('/pricing', Icons.price_change, 'Pricing'),

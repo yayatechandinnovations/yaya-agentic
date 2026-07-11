@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayasales.stores.internal;
 
+import com.yayatechandinnovations.yayasales.platform.Address;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 import com.yayatechandinnovations.yayasales.platform.Ids.TenantRef;
 import com.yayatechandinnovations.yayasales.platform.web.ApiErrors;
@@ -83,7 +84,20 @@ public class StoreAdminController {
     public LocationView addLocation(@RequestHeader(STORE_HEADER) String storeId,
                                     @Valid @RequestBody CreateLocation body) {
         return service.addLocation(new StoreId(storeId), body.label(),
-                body.kind(), body.sellable() == null || body.sellable());
+                body.kind(), body.sellable() == null || body.sellable(), body.address());
+    }
+
+    @PutMapping("/locations/{id}")
+    public LocationView updateLocation(@RequestHeader(STORE_HEADER) String storeId,
+                                       @PathVariable String id,
+                                       @RequestBody UpdateLocation body) {
+        // Another store's location is answered as absent — existence is not leaked.
+        directory.location(new com.yayatechandinnovations.yayasales.platform.Ids.LocationId(id))
+                .filter(l -> l.store().value().equals(storeId))
+                .orElseThrow(() -> new ApiErrors.NotFoundException("location", id));
+        return service.updateLocation(
+                new com.yayatechandinnovations.yayasales.platform.Ids.LocationId(id),
+                body.label(), body.kind(), body.sellable(), body.address());
     }
 
     public record CreateStore(@NotBlank String tenantId,
@@ -93,5 +107,11 @@ public class StoreAdminController {
 
     public record CreateLocation(@NotBlank String label,
                                  LocationView.Kind kind,
-                                 Boolean sellable) {}
+                                 Boolean sellable,
+                                 Address address) {}
+
+    public record UpdateLocation(String label,
+                                 LocationView.Kind kind,
+                                 Boolean sellable,
+                                 Address address) {}
 }

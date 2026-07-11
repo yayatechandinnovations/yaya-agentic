@@ -124,7 +124,7 @@ class InventoryLedgerIT {
     @Test
     void transferMovesStockAndCostBetweenLocations() {
         VariantId sku = sku();
-        LocationId second = storeService.addLocation(store, "Shop", LocationView.Kind.SHOP, true).id();
+        LocationId second = storeService.addLocation(store, "Shop", LocationView.Kind.SHOP, true, null).id();
         ledger.receive(sku, location, 10, Money.of(400, "USD"), null);
 
         List<MovementId> ids = ledger.transfer(sku, location, second, 4);

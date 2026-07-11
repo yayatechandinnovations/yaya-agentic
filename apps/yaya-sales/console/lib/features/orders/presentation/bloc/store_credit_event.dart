@@ -7,6 +7,11 @@ sealed class StoreCreditEvent extends Equatable {
   List<Object?> get props => [];
 }
 
+/// Loads the customer directory the pickers offer.
+class StoreCreditContextRequested extends StoreCreditEvent {
+  const StoreCreditContextRequested();
+}
+
 class BalanceLookupRequested extends StoreCreditEvent {
   const BalanceLookupRequested(this.customerRef, this.currency);
 

@@ -18,6 +18,12 @@ class CatalogRemoteDataSource {
     return res.data ?? const {};
   }
 
+  Future<Map<String, dynamic>> updateCatalog(String id, Map<String, dynamic> body) async {
+    final res =
+        await _dio.put<Map<String, dynamic>>('/v1/sales/admin/catalogs/$id', data: body);
+    return res.data ?? const {};
+  }
+
   Future<Map<String, dynamic>> publish(String id) async {
     final res = await _dio.post<Map<String, dynamic>>('/v1/sales/admin/catalogs/$id/publish');
     return res.data ?? const {};

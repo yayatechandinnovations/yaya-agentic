@@ -6,6 +6,7 @@ class InventoryState extends Equatable {
   const InventoryState({
     this.status = InventoryStatus.initial,
     this.levels = const [],
+    this.locations = const [],
     this.locationFilter,
     this.lowOnly = false,
     this.ledgerSku,
@@ -15,6 +16,7 @@ class InventoryState extends Equatable {
 
   final InventoryStatus status;
   final List<StockLevel> levels;
+  final List<StoreLocation> locations;
   final String? locationFilter;
   final bool lowOnly;
   final String? ledgerSku;
@@ -24,6 +26,7 @@ class InventoryState extends Equatable {
   InventoryState copyWith({
     InventoryStatus? status,
     List<StockLevel>? levels,
+    List<StoreLocation>? locations,
     String? locationFilter,
     bool? lowOnly,
     String? ledgerSku,
@@ -34,6 +37,7 @@ class InventoryState extends Equatable {
       InventoryState(
         status: status ?? this.status,
         levels: levels ?? this.levels,
+        locations: locations ?? this.locations,
         locationFilter: locationFilter ?? this.locationFilter,
         lowOnly: lowOnly ?? this.lowOnly,
         ledgerSku: clearLedger ? null : (ledgerSku ?? this.ledgerSku),
@@ -43,5 +47,5 @@ class InventoryState extends Equatable {
 
   @override
   List<Object?> get props =>
-      [status, levels, locationFilter, lowOnly, ledgerSku, ledger, error];
+      [status, levels, locations, locationFilter, lowOnly, ledgerSku, ledger, error];
 }

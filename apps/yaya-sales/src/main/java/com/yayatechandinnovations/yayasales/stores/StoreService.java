@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayasales.stores;
 
+import com.yayatechandinnovations.yayasales.platform.Address;
 import com.yayatechandinnovations.yayasales.platform.Ids.LocationId;
 import com.yayatechandinnovations.yayasales.platform.Ids.StoreId;
 import com.yayatechandinnovations.yayasales.platform.Ids.TenantRef;
@@ -15,5 +16,9 @@ public interface StoreService {
 
     StoreView updatePolicies(StoreId id, StorePolicies policies);
 
-    LocationView addLocation(StoreId store, String label, LocationView.Kind kind, boolean sellable);
+    LocationView addLocation(StoreId store, String label, LocationView.Kind kind,
+                             boolean sellable, Address address);
+
+    LocationView updateLocation(LocationId id, String label, LocationView.Kind kind,
+                                Boolean sellable, Address address);
 }

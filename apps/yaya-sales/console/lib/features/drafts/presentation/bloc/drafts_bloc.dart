@@ -4,8 +4,12 @@ import 'package:equatable/equatable.dart';
 import '../../../../core/error/failure.dart';
 import '../../../catalog/domain/entities/catalog_entities.dart';
 import '../../../catalog/domain/usecases/catalog_usecases.dart';
+import '../../../customers/domain/entities/customer_entities.dart';
+import '../../../customers/domain/usecases/customer_usecases.dart';
 import '../../../orders/domain/entities/order_entities.dart';
 import '../../../orders/domain/usecases/order_usecases.dart';
+import '../../../stores/domain/entities/store_entities.dart';
+import '../../../stores/domain/usecases/store_usecases.dart';
 import '../../domain/entities/draft_entities.dart';
 import '../../domain/usecases/draft_usecases.dart';
 
@@ -23,6 +27,8 @@ class DraftsBloc extends Bloc<DraftsEvent, DraftsState> {
     required CancelOrder cancelOrder,
     required ListCatalogs listCatalogs,
     required ListProducts listProducts,
+    required ListRegions listRegions,
+    required SearchCustomers searchCustomers,
   })  : _listOrders = listOrders,
         _createDraft = createDraft,
         _updateDraft = updateDraft,
@@ -30,6 +36,8 @@ class DraftsBloc extends Bloc<DraftsEvent, DraftsState> {
         _cancelOrder = cancelOrder,
         _listCatalogs = listCatalogs,
         _listProducts = listProducts,
+        _listRegions = listRegions,
+        _searchCustomers = searchCustomers,
         super(const DraftsState()) {
     on<DraftsRequested>(_onRequested);
     on<DraftSkusRequested>(_onSkusRequested);
@@ -47,6 +55,8 @@ class DraftsBloc extends Bloc<DraftsEvent, DraftsState> {
   final CancelOrder _cancelOrder;
   final ListCatalogs _listCatalogs;
   final ListProducts _listProducts;
+  final ListRegions _listRegions;
+  final SearchCustomers _searchCustomers;
 
   Future<void> _onRequested(DraftsRequested event, Emitter<DraftsState> emit) async {
     emit(state.copyWith(status: DraftsStatus.loading));
@@ -58,21 +68,35 @@ class DraftsBloc extends Bloc<DraftsEvent, DraftsState> {
     }
   }
 
-  /// Flattens every catalog's product variants into the SKU picker options.
+  /// Everything the editor dialogs pick from: SKUs, regions, directory customers.
   Future<void> _onSkusRequested(DraftSkusRequested event, Emitter<DraftsState> emit) async {
     try {
-      final catalogs = await _listCatalogs();
-      final variants = <Variant>[];
-      for (final catalog in catalogs) {
-        final products = await _listProducts(catalog.id);
-        for (final product in products) {
-          variants.addAll(product.variants);
-        }
-      }
-      emit(state.copyWith(skuOptions: variants));
+      final results = await Future.wait<Object>([
+        _loadSkuOptions(),
+        _listRegions(),
+        _searchCustomers(),
+      ]);
+      emit(state.copyWith(
+        skuOptions: results[0] as List<Variant>,
+        regions: results[1] as List<Region>,
+        customers: results[2] as List<Customer>,
+      ));
     } on Failure catch (f) {
       emit(state.copyWith(status: DraftsStatus.failure, error: f.message));
     }
+  }
+
+  /// Flattens every catalog's product variants into the SKU picker options.
+  Future<List<Variant>> _loadSkuOptions() async {
+    final catalogs = await _listCatalogs();
+    final variants = <Variant>[];
+    for (final catalog in catalogs) {
+      final products = await _listProducts(catalog.id);
+      for (final product in products) {
+        variants.addAll(product.variants);
+      }
+    }
+    return variants;
   }
 
   Future<void> _onCreate(DraftCreateRequested event, Emitter<DraftsState> emit) async {
