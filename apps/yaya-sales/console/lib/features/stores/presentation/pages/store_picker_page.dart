@@ -3,7 +3,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/di/service_locator.dart';
+import '../../../../core/storage/jwt_claims.dart';
 import '../../../../core/storage/store_context.dart';
+import '../../../../core/storage/token_store.dart';
 import '../../../../core/widgets/widgets.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../bloc/store_picker_bloc.dart';
@@ -27,6 +29,21 @@ class _StorePickerPageState extends State<StorePickerPage> {
     _tenant = TextEditingController(text: remembered);
     if (remembered.isNotEmpty) {
       context.read<StorePickerBloc>().add(StorePickerTenantSubmitted(remembered));
+    } else {
+      _prefillFromToken();
+    }
+  }
+
+  /// The operator's JWT already names their tenant (the `org` claim) — prefill
+  /// and load instead of asking them to type an id.
+  Future<void> _prefillFromToken() async {
+    final token = await sl<TokenStore>().readToken();
+    final org = token == null ? null : orgClaimOf(token);
+    if (org == null || org.isEmpty || !mounted || _tenant.text.isNotEmpty) return;
+    _tenant.text = org;
+    await sl<StoreContext>().rememberTenant(org);
+    if (mounted) {
+      context.read<StorePickerBloc>().add(StorePickerTenantSubmitted(org));
     }
   }
 
@@ -71,7 +88,8 @@ class _StorePickerPageState extends State<StorePickerPage> {
                         controller: _tenant,
                         decoration: const InputDecoration(
                           labelText: 'Tenant id',
-                          helperText: 'The agent-side tenant that owns your stores',
+                          helperText:
+                              'Prefilled from your sign-in (org). Edit only for a different tenant.',
                         ),
                         onSubmitted: (_) => _loadTenant(),
                       ),
