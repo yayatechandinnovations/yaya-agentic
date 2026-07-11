@@ -102,8 +102,13 @@ Future<void> configureDependencies() async {
   sl.registerSingleton<AppConfig>(config);
   sl.registerSingleton<TokenStore>(SharedPrefsTokenStore(prefs));
   sl.registerSingleton<StoreContext>(StoreContext(prefs));
-  sl.registerSingleton<Dio>(
-      DioClient.sales(config, sl<TokenStore>(), sl<StoreContext>()));
+  sl.registerSingleton<Dio>(DioClient.sales(
+    config,
+    sl<TokenStore>(),
+    sl<StoreContext>(),
+    // Resolved lazily at call time — AuthBloc registers a few lines below.
+    onUnauthorized: () => sl<AuthBloc>().add(const AuthSessionExpired()),
+  ));
   sl.registerSingleton<Dio>(DioClient.identity(config), instanceName: 'identity');
   sl.registerSingleton<OAuthLauncher>(WebOAuthLauncher());
   sl.registerSingleton<ImagePicker>(WebImagePicker());

@@ -24,6 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthLoginRequested>(_onLoginRequested);
     on<AuthCodeReceived>(_onCodeReceived);
     on<AuthLogoutRequested>(_onLogoutRequested);
+    on<AuthSessionExpired>(_onSessionExpired);
   }
 
   final LoadSession _loadSession;
@@ -55,6 +56,13 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   Future<void> _onLogoutRequested(AuthLogoutRequested event, Emitter<AuthState> emit) async {
     await _logout();
-    emit(state.copyWith(status: AuthStatus.unauthenticated));
+    emit(const AuthState(status: AuthStatus.unauthenticated, signedOut: true));
+  }
+
+  /// Parallel requests can all 401 at once — only the first transition acts.
+  Future<void> _onSessionExpired(AuthSessionExpired event, Emitter<AuthState> emit) async {
+    if (state.status != AuthStatus.authenticated) return;
+    await _logout();
+    emit(const AuthState(status: AuthStatus.unauthenticated));
   }
 }

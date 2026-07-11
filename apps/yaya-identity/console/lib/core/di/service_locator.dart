@@ -80,7 +80,12 @@ Future<void> configureDependencies() async {
 
   sl.registerSingleton<AppConfig>(config);
   sl.registerSingleton<TokenStore>(SharedPrefsTokenStore(prefs));
-  sl.registerSingleton<Dio>(DioClient.build(config, sl<TokenStore>()));
+  sl.registerSingleton<Dio>(DioClient.build(
+    config,
+    sl<TokenStore>(),
+    // Resolved lazily at call time — AuthBloc registers below.
+    onUnauthorized: () => sl<AuthBloc>().add(const AuthSessionExpired()),
+  ));
   sl.registerSingleton<OAuthLauncher>(WebOAuthLauncher());
 
   // --- auth ---

@@ -24,6 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthLoginRequested>(_onLoginRequested);
     on<AuthCodeReceived>(_onCodeReceived);
     on<AuthLogoutRequested>(_onLogoutRequested);
+    on<AuthSessionExpired>(_onSessionExpired);
   }
 
   final LoadSession _loadSession;
@@ -56,5 +57,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   Future<void> _onLogoutRequested(AuthLogoutRequested event, Emitter<AuthState> emit) async {
     await _logout();
     emit(state.copyWith(status: AuthStatus.unauthenticated));
+  }
+
+  /// A 401 mid-session: the token is stale. Clear it — the router takes the
+  /// operator to /signin. Parallel 401s must not stampede: only the first
+  /// authenticated→expired transition acts.
+  Future<void> _onSessionExpired(AuthSessionExpired event, Emitter<AuthState> emit) async {
+    if (state.status != AuthStatus.authenticated) return;
+    await _logout();
+    emit(const AuthState(
+        status: AuthStatus.unauthenticated,
+        error: 'Your session expired — sign in again.'));
   }
 }

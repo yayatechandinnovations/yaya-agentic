@@ -11,7 +11,8 @@ import 'store_interceptor.dart';
 /// store header) and one for the yaya-identity token endpoint (no auth — the
 /// PKCE verifier authenticates the exchange).
 class DioClient {
-  static Dio sales(AppConfig config, TokenStore tokens, StoreContext stores) {
+  static Dio sales(AppConfig config, TokenStore tokens, StoreContext stores,
+      {void Function()? onUnauthorized}) {
     final dio = Dio(
       BaseOptions(
         baseUrl: config.salesOrigin,
@@ -21,7 +22,7 @@ class DioClient {
       ),
     );
     dio.interceptors.add(BasePathInterceptor(config.salesBasePath));
-    dio.interceptors.add(AuthInterceptor(tokens));
+    dio.interceptors.add(AuthInterceptor(tokens, onUnauthorized: onUnauthorized));
     dio.interceptors.add(StoreInterceptor(stores));
     return dio;
   }

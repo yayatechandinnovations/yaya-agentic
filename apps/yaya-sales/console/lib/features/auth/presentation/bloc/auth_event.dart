@@ -30,3 +30,9 @@ class AuthCodeReceived extends AuthEvent {
 class AuthLogoutRequested extends AuthEvent {
   const AuthLogoutRequested();
 }
+
+/// The API answered 401 mid-session — the token is stale. Clear it and let the
+/// router take the operator back through sign-in.
+class AuthSessionExpired extends AuthEvent {
+  const AuthSessionExpired();
+}

@@ -39,7 +39,8 @@ class LoginPage extends StatelessWidget {
                         const SizedBox(height: 16),
                         const Text('Admin console', style: TextStyle(color: Colors.black54)),
                         const SizedBox(height: 24),
-                        if (state.status == AuthStatus.failure && state.error != null) ...[
+                        // Failure or an expired session — both carry a message.
+                        if (state.error != null) ...[
                           Semantics(
                             liveRegion: true,
                             child: Text(state.error!, style: const TextStyle(color: Colors.red)),

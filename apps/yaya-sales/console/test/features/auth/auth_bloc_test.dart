@@ -74,12 +74,34 @@ void main() {
     );
 
     blocTest<AuthBloc, AuthState>(
-      'AuthLogoutRequested clears the session',
+      'AuthLogoutRequested clears the session and marks the EXPLICIT sign-out',
       setUp: () => when(repo.logout).thenAnswer((_) async {}),
       build: build,
       act: (b) => b.add(const AuthLogoutRequested()),
+      expect: () =>
+          [const AuthState(status: AuthStatus.unauthenticated, signedOut: true)],
+      verify: (_) => verify(repo.logout).called(1),
+    );
+
+    blocTest<AuthBloc, AuthState>(
+      'AuthSessionExpired tears down an authenticated session (not signedOut '
+      '→ the sign-in page auto-restarts OAuth)',
+      setUp: () => when(repo.logout).thenAnswer((_) async {}),
+      build: build,
+      seed: () => const AuthState(status: AuthStatus.authenticated),
+      act: (b) => b.add(const AuthSessionExpired()),
       expect: () => [const AuthState(status: AuthStatus.unauthenticated)],
       verify: (_) => verify(repo.logout).called(1),
+    );
+
+    blocTest<AuthBloc, AuthState>(
+      'AuthSessionExpired is a no-op when not authenticated — parallel 401s '
+      'must not stampede',
+      build: build,
+      seed: () => const AuthState(status: AuthStatus.unauthenticated),
+      act: (b) => b.add(const AuthSessionExpired()),
+      expect: () => const <AuthState>[],
+      verify: (_) => verifyNever(repo.logout),
     );
   });
 }

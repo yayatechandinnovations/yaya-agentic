@@ -3,8 +3,36 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../bloc/auth_bloc.dart';
 
-class LoginPage extends StatelessWidget {
+/// yaya-identity is the ONLY sign-in method, so an unauthenticated arrival is
+/// taken straight into the OAuth flow — no button to click. The button only
+/// appears when auto-redirecting would be wrong: after an explicit logout
+/// (the IdP's SSO cookie would silently sign the operator back in) or after a
+/// failed exchange (auto-retry would loop).
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  bool _kicked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeAutoSignIn(context.read<AuthBloc>().state);
+    });
+  }
+
+  void _maybeAutoSignIn(AuthState state) {
+    if (_kicked) return;
+    if (state.status == AuthStatus.unauthenticated && !state.signedOut) {
+      _kicked = true;
+      context.read<AuthBloc>().add(const AuthLoginRequested());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -15,8 +43,12 @@ class LoginPage extends StatelessWidget {
           child: Card(
             child: Padding(
               padding: const EdgeInsets.all(32),
-              child: BlocBuilder<AuthBloc, AuthState>(
+              child: BlocConsumer<AuthBloc, AuthState>(
+                listener: (context, state) => _maybeAutoSignIn(state),
                 builder: (context, state) {
+                  final redirecting = state.status == AuthStatus.authenticating ||
+                      (state.status == AuthStatus.unknown) ||
+                      (_kicked && state.status == AuthStatus.unauthenticated);
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -29,21 +61,28 @@ class LoginPage extends StatelessWidget {
                       if (state.status == AuthStatus.failure && state.error != null) ...[
                         Semantics(
                           liveRegion: true,
-                          child: Text(state.error!, style: const TextStyle(color: Colors.red)),
+                          child: Text(state.error!,
+                              style: const TextStyle(color: Colors.red)),
                         ),
                         const SizedBox(height: 16),
-                      ],
-                      FilledButton.icon(
-                        onPressed: state.status == AuthStatus.authenticating
-                            ? null
-                            : () => context.read<AuthBloc>().add(const AuthLoginRequested()),
-                        icon: const Icon(Icons.login),
-                        label: const Text('Sign in with yaya-identity'),
-                      ),
-                      if (state.status == AuthStatus.authenticating) ...[
+                      ] else if (state.signedOut) ...[
+                        const Text("You're signed out.",
+                            style: TextStyle(color: Colors.black54)),
                         const SizedBox(height: 16),
-                        const CircularProgressIndicator(),
                       ],
+                      if (redirecting) ...[
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        const Text('Taking you to sign-in…',
+                            style: TextStyle(color: Colors.black54, fontSize: 13)),
+                      ] else
+                        FilledButton.icon(
+                          onPressed: () => context
+                              .read<AuthBloc>()
+                              .add(const AuthLoginRequested()),
+                          icon: const Icon(Icons.login),
+                          label: const Text('Sign in with yaya-identity'),
+                        ),
                     ],
                   );
                 },

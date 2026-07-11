@@ -72,5 +72,28 @@ void main() {
       expect: () => [const AuthState(status: AuthStatus.authenticating)],
       verify: (_) => verify(repo.beginLogin).called(1),
     );
+
+    blocTest<AuthBloc, AuthState>(
+      'AuthSessionExpired tears down the session with a message for /signin',
+      setUp: () => when(repo.logout).thenAnswer((_) async {}),
+      build: build,
+      seed: () => const AuthState(status: AuthStatus.authenticated),
+      act: (b) => b.add(const AuthSessionExpired()),
+      expect: () => [
+        const AuthState(
+            status: AuthStatus.unauthenticated,
+            error: 'Your session expired — sign in again.'),
+      ],
+      verify: (_) => verify(repo.logout).called(1),
+    );
+
+    blocTest<AuthBloc, AuthState>(
+      'AuthSessionExpired is a no-op when not authenticated',
+      build: build,
+      seed: () => const AuthState(status: AuthStatus.unauthenticated),
+      act: (b) => b.add(const AuthSessionExpired()),
+      expect: () => const <AuthState>[],
+      verify: (_) => verifyNever(repo.logout),
+    );
   });
 }
