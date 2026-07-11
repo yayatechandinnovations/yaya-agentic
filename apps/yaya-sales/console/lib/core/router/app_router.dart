@@ -56,7 +56,14 @@ class AppRouter {
       redirect: (context, state) {
         final authed = authBloc.state.isAuthenticated;
         final loc = state.matchedLocation;
-        if (loc == '/callback') return null; // callback exchanges the code
+        if (loc == '/callback') {
+          // The callback page only exchanges the code; once the bloc lands on a
+          // terminal state, MOVE — success to the app, failure to sign-in
+          // (which renders the error). Returning null forever = eternal spinner.
+          if (authed) return stores.hasStore ? '/orders' : '/stores';
+          if (authBloc.state.status == AuthStatus.failure) return '/signin';
+          return null;
+        }
         if (!authed && loc != '/signin') return '/signin';
         if (authed && loc == '/signin') return stores.hasStore ? '/orders' : '/stores';
         if (authed && !stores.hasStore && loc != '/stores') return '/stores';
