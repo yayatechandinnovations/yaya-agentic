@@ -38,6 +38,12 @@ services:
       - path: ./.env.local
         required: false
     environment:
+      # Subpath deploys (e.g. https://host/sales): the backend serves under the
+      # same prefix the console nginx proxies, so URLs are consistent everywhere.
+      SERVER_SERVLET_CONTEXT_PATH: ${SALES_BASE_PATH:-}
+      # Behind a TLS-terminating proxy the app must honor X-Forwarded-* when
+      # building absolute URLs (PSP return/webhook URLs).
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
       SALES_DB_URL: jdbc:postgresql://postgres:5432/${SALES_DB_NAME:-yaya_sales}
       SALES_DB_USER: ${SALES_DB_USER:-sales}
       SALES_DB_PASSWORD: ${SALES_DB_PASSWORD:?set SALES_DB_PASSWORD in .env}
@@ -73,7 +79,7 @@ services:
       SALES_DELIVERY_OTP_TTL_MINUTES: ${SALES_DELIVERY_OTP_TTL_MINUTES:-10}
       SALES_DELIVERY_INVITE_TTL_HOURS: ${SALES_DELIVERY_INVITE_TTL_HOURS:-72}
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8092/actuator/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8092${SALES_BASE_PATH:-}/actuator/health >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -81,10 +87,12 @@ services:
     ports:
       - "${SALES_PORT:-8092}:8092"
 
-  # The merchant admin console (SPA, nginx-served). It calls the sales API and
-  # the yaya-identity token endpoint cross-origin -- list its public origin in
-  # YAYA_SALES_CORS_ALLOWED_ORIGINS (this stack) and
-  # YAYA_IDENTITY_CORS_ALLOWED_ORIGINS (the identity stack).
+  # The merchant admin console (SPA + same-origin API proxy, nginx-served).
+  # Root deploy (SALES_BASE_PATH empty): the console origin calls the sales API
+  # cross-origin — list it in YAYA_SALES_CORS_ALLOWED_ORIGINS. Subpath deploy
+  # (SALES_BASE_PATH=/sales behind a host proxy): SPA + API share one origin, no
+  # sales CORS needed. Identity CORS (YAYA_IDENTITY_CORS_ALLOWED_ORIGINS) is
+  # needed unless identity is served from the same host too.
   console:
     build:
       context: ..
@@ -94,6 +102,11 @@ services:
         SALES_API_BASE_URL: ${SALES_PUBLIC_URL:-http://localhost:8092}
         CONSOLE_CLIENT_ID: ${CONSOLE_CLIENT_ID:-yaya-console}
         CONSOLE_REDIRECT_URI: ${CONSOLE_PUBLIC_URL:-http://localhost:8093}/callback
+        SALES_BASE_PATH: ${SALES_BASE_PATH:-}
+    environment:
+      # envsubst input for nginx.conf.template — must match the build arg.
+      SALES_BASE_PATH: ${SALES_BASE_PATH:-}
+      NGINX_ENVSUBST_FILTER: SALES_BASE_PATH
     depends_on:
       sales:
         condition: service_healthy

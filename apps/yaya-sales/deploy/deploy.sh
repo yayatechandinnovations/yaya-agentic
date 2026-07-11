@@ -80,16 +80,17 @@ generate_secrets() {
 }
 
 print_credentials() {
-  local port tenant secret issuer
+  local port tenant secret issuer base
   port="$(get_env SALES_PORT)"; port="${port:-8092}"
   tenant="$(get_env SALES_TENANT_ID)"; tenant="${tenant:-default}"
   secret="$(get_env SALES_SERVICE_TOKEN_SECRET)"
   issuer="$(get_env YAYA_SALES_AUTH_ISSUER_URI)"
+  base="$(get_env SALES_BASE_PATH)"
   cat <<EOF
 
 ${C_G}────────────────────────────────────────────────────────────${C_RESET}
-  API:            http://localhost:${port}   (health: /actuator/health)
-  Tool manifest:  GET /v1/sales/agent/manifest
+  API:            http://localhost:${port}${base}   (health: ${base}/actuator/health)
+  Tool manifest:  GET ${base}/v1/sales/agent/manifest
   Tenant:         ${tenant}
   OIDC issuer:    ${issuer:-<unset — admin API locked, see .env>}
 
@@ -130,8 +131,9 @@ case "${1:-up}" in
     docker compose ps
     echo
     port="$(get_env SALES_PORT)"; port="${port:-8092}"
-    if curl -fsS --max-time 5 "http://localhost:${port}/actuator/health" >/dev/null 2>&1; then
-      ok "backend healthy (http://localhost:${port}/actuator/health)"
+    base="$(get_env SALES_BASE_PATH)"
+    if curl -fsS --max-time 5 "http://localhost:${port}${base}/actuator/health" >/dev/null 2>&1; then
+      ok "backend healthy (http://localhost:${port}${base}/actuator/health)"
     else
       warn "backend not healthy yet."
     fi

@@ -232,6 +232,44 @@ class AdminConsoleSupportIT {
         assertThat(post("/pdp/decide", decideBody, h).get("decision")).isEqualTo("PERMIT");
     }
 
+    @Test
+    void redirectUrisAreAddOnlySoNewConsoleAppsCanRegisterTheirCallback() {
+        HttpHeaders h = bearer();
+
+        // The bootstrap console client exists with its original callback; a second
+        // app (e.g. the sales console) adds its own without touching the first.
+        Map<String, Object> updated = rest.exchange(
+                "/v1/identity/admin/clients/yaya-console/redirect-uris", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("add", List.of("https://shop.example/sales/callback")), h),
+                Map.class).getBody();
+        List<String> uris = (List<String>) updated.get("redirectUris");
+        assertThat(uris).contains("https://shop.example/sales/callback");
+        assertThat(uris.size()).isGreaterThanOrEqualTo(2); // original bootstrap URI kept
+
+        // Idempotent, and visible in the client listing.
+        List<String> again = (List<String>) rest.exchange(
+                "/v1/identity/admin/clients/yaya-console/redirect-uris", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("add", List.of("https://shop.example/sales/callback")), h),
+                Map.class).getBody().get("redirectUris");
+        assertThat(again).containsExactlyElementsOf(uris);
+
+        List<Map<String, Object>> clientList = rest.exchange("/v1/identity/admin/clients",
+                HttpMethod.GET, new HttpEntity<>(h), List.class).getBody();
+        assertThat(clientList).anySatisfy(c -> {
+            assertThat(c.get("clientId")).isEqualTo("yaya-console");
+            assertThat((List<String>) c.get("redirectUris"))
+                    .contains("https://shop.example/sales/callback");
+        });
+
+        // Guardrails: relative URIs are rejected, unknown clients are a 404.
+        assertThat(rest.exchange("/v1/identity/admin/clients/yaya-console/redirect-uris",
+                HttpMethod.PUT, new HttpEntity<>(Map.of("add", List.of("/callback")), h), Map.class)
+                .getStatusCode().value()).isEqualTo(400);
+        assertThat(rest.exchange("/v1/identity/admin/clients/no-such-client/redirect-uris",
+                HttpMethod.PUT, new HttpEntity<>(Map.of("add", List.of("https://x.example/cb")), h),
+                Map.class).getStatusCode().value()).isEqualTo(404);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> post(String path, Object body, HttpHeaders h) {
         return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(body, h), Map.class).getBody();

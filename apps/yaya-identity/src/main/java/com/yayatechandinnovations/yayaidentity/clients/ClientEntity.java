@@ -95,4 +95,5 @@ public class ClientEntity {
     public boolean isRequirePkce() { return requirePkce; }
 
     public void setSecretHash(String secretHash) { this.secretHash = secretHash; }
+    public void setRedirectUris(List<String> redirectUris) { this.redirectUris = redirectUris; }
 }

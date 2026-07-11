@@ -294,11 +294,30 @@ public class AdminController {
         return Map.of("clientId", clientId, "status", "rotated");
     }
 
+    public record RedirectUrisDto(List<String> add) {}
+
+    /** Add-only — every console app that reuses a public client registers its callback here. */
+    @PutMapping("/clients/{clientId}/redirect-uris")
+    public Map<String, Object> addRedirectUris(@PathVariable String clientId,
+                                               @RequestBody RedirectUrisDto body) {
+        if (body.add() == null || body.add().isEmpty()
+                || body.add().stream().anyMatch(u -> u == null || !u.matches("https?://\\S+"))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "add: one or more absolute http(s) redirect URIs");
+        }
+        try {
+            Client c = clients.addRedirectUris(clientId, body.add());
+            return Map.of("clientId", c.clientId(), "redirectUris", c.redirectUris());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+        }
+    }
+
     @GetMapping("/clients")
     public List<Map<String, Object>> listClients() {
         return clients.list().stream()
                 .map(c -> Map.<String, Object>of("clientId", c.clientId(), "type", c.type().name(),
-                        "audiences", c.audiences()))
+                        "audiences", c.audiences(), "redirectUris", c.redirectUris()))
                 .toList();
     }
 }

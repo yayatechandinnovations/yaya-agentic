@@ -48,6 +48,19 @@ public class ClientService {
                 List.of(), scopes, audiences, false);
     }
 
+    /** Add-only: existing URIs stay valid so live deployments never break. */
+    @Transactional
+    public Client addRedirectUris(String clientId, List<String> uris) {
+        ClientEntity e = clients.findByClientId(clientId)
+                .orElseThrow(() -> new IllegalArgumentException("no such client: " + clientId));
+        var merged = new java.util.LinkedHashSet<>(e.getRedirectUris());
+        merged.addAll(uris);
+        e.setRedirectUris(List.copyOf(merged));
+        outbox.append("client", clientId, "client.redirect_uris_changed",
+                "{\"clientId\":\"" + clientId + "\"}");
+        return e.toDomain();
+    }
+
     @Transactional
     public Client rotateSecret(String clientId, String newRawSecret) {
         ClientEntity e = clients.findByClientId(clientId)

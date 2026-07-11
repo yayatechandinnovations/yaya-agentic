@@ -1,0 +1,39 @@
+# Rendered by the nginx image at start (envsubst) using $SALES_BASE_PATH,
+# restricted to just that var via NGINX_ENVSUBST_FILTER so nginx's own
+# $host/$uri/... are left untouched.
+#
+# Same-origin front for the merchant console: serves the SPA and proxies the
+# sales API under the same prefix (the backend runs with servlet
+# context-path = $SALES_BASE_PATH), so a subpath deploy (e.g. …/sales) needs
+# no CORS between the console and the API.
+
+map $http_x_forwarded_proto $fwd_proto {
+    default   $scheme;
+    "~."      $http_x_forwarded_proto;
+}
+
+upstream sales_backend {
+    server sales:8092;
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $fwd_proto;
+    proxy_http_version 1.1;
+
+    # --- backend paths (prefix preserved; backend context-path matches) ---
+    location ${SALES_BASE_PATH}/v1/       { proxy_pass http://sales_backend; }
+    location ${SALES_BASE_PATH}/actuator/ { proxy_pass http://sales_backend; }
+
+    # --- SPA (static files live under html${SALES_BASE_PATH}) ---
+    location ${SALES_BASE_PATH}/ {
+        try_files $uri $uri/ ${SALES_BASE_PATH}/index.html;
+    }
+}
