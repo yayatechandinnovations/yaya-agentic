@@ -60,6 +60,24 @@ Edit `deploy/.env` before first start:
   issuer (binds `yaya.sales.auth.issuer-uri`). Leave blank and the admin API is
   reachable only with service tokens — set it now.
 
+Subpath production deploy (one host, one cert, no CORS — how
+`yayaagentic.smartlottery.do/sales` runs): also set
+
+```bash
+SALES_BASE_PATH=/sales
+SALES_PUBLIC_URL=https://example.com/sales
+CONSOLE_PUBLIC_URL=https://example.com/sales
+IDENTITY_BASE_URL=https://example.com/identity
+```
+
+then add one host-nginx location (`location ^~ /sales/ →
+127.0.0.1:$CONSOLE_PORT`) — the console container's nginx serves the SPA and
+proxies `/sales/v1/` + `/sales/actuator/` to the backend, which runs with
+`server.servlet.context-path=$SALES_BASE_PATH`. Register the console callback
+on the identity `yaya-console` client:
+`PUT /v1/identity/admin/clients/yaya-console/redirect-uris
+{"add":["https://example.com/sales/callback"]}`.
+
 Then:
 
 ```bash
