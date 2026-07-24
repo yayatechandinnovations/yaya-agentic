@@ -81,7 +81,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _language =
           _languageOptions.containsKey(p.language) ? p.language : 'en';
       _defaultStartFlowId = p.defaultStartFlowId;
-      _loadCommerce(p.commerce);
+      _loadCommerce(_storeExtension(p.extensions));
       _cloningFromVersion = p.version;
     });
     showSnack(context,
@@ -103,9 +103,20 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     });
   }
 
-  /// Populates the commerce controls from a profile's `commerce` block, whose
-  /// shape mirrors the backend CommerceBinding {storeId, cartEnabled,
-  /// checkoutTool}. Tolerates the legacy {value} wrapper on checkoutTool.
+  /// The store binding rides under the yaya-sales-owned `sales.store` kind in a
+  /// profile's domain-neutral `extensions` map (S7). The framework stores it
+  /// opaquely; this admin is the app-side editor for that payload.
+  static const String _storeKind = 'sales.store';
+
+  /// Pulls the `sales.store` payload out of a profile's extensions map, or null.
+  Map<String, dynamic>? _storeExtension(Map<String, dynamic>? extensions) {
+    final store = extensions?[_storeKind];
+    return store is Map ? Map<String, dynamic>.from(store) : null;
+  }
+
+  /// Populates the store controls from a `sales.store` payload, whose shape is
+  /// {storeId, cartEnabled, checkoutTool}. Tolerates the legacy {value} wrapper
+  /// on checkoutTool.
   void _loadCommerce(Map<String, dynamic>? commerce) {
     if (commerce == null) {
       _commerceEnabled = false;
@@ -134,16 +145,19 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     super.dispose();
   }
 
-  /// Builds the commerce block in CommerceBinding JSON shape, or null when
-  /// the store toggle is off.
-  Map<String, dynamic>? _buildCommerce() {
+  /// Builds the profile's `extensions` map, or null when the store toggle is
+  /// off. The store payload is nested under the `sales.store` kind; the backend
+  /// stores/echoes the map opaquely.
+  Map<String, dynamic>? _buildExtensions() {
     if (!_commerceEnabled) return null;
     final storeId = _commerceStoreIdCtrl.text.trim();
     final checkoutTool = _commerceCheckoutToolCtrl.text.trim();
     return {
-      'storeId': storeId.isEmpty ? null : storeId,
-      'checkoutTool': checkoutTool.isEmpty ? 'checkout' : checkoutTool,
-      'cartEnabled': _commerceCartEnabled,
+      _storeKind: {
+        'storeId': storeId.isEmpty ? null : storeId,
+        'checkoutTool': checkoutTool.isEmpty ? 'checkout' : checkoutTool,
+        'cartEnabled': _commerceCartEnabled,
+      },
     };
   }
 
@@ -170,7 +184,7 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         authBindingId: _authBinding,
         language: _language,
         defaultStartFlowId: _defaultStartFlowId,
-        commerce: _buildCommerce(),
+        extensions: _buildExtensions(),
       ));
       ref.invalidate(profilesProvider);
       if (!mounted) return;

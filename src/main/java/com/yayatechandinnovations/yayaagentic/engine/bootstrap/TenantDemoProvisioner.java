@@ -19,9 +19,8 @@ import java.util.function.Consumer;
  * Seeds the full demo set into a tenant, so every account (not just the built-in
  * {@code default} tenant) gets the demos out of the box. It reuses the same
  * {@code seedInto(tenant)} the startup bootstraps use — hello-world profile +
- * Yaya-FAQ knowledge and the welcome-back Session Start Flow. (The demo
- * storefronts moved out of the core with the commerce subsystem — stores are
- * provisioned in yaya-sales now.)
+ * Yaya-FAQ knowledge and the welcome-back Session Start Flow. (Store demos moved
+ * out of the core with the sales domain — stores are provisioned in yaya-sales.)
  *
  * <p>Two triggers, both gated by {@code yaya.agentic.demo.provision-per-workspace}
  * (default on):

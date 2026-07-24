@@ -181,15 +181,19 @@ class ChatApi {
         options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
       );
       final j = Map<String, dynamic>.from(r.data as Map);
-      final commerce = j['commerce'];
+      // The store trait now arrives inside the generic `traits` map keyed by the
+      // yaya-sales-owned `sales.store` kind (framework is domain-neutral, S7).
+      // Fall back to the pre-S7 top-level `commerce` field for older servers.
+      final traits = j['traits'];
+      final store = (traits is Map ? traits['sales.store'] : null) ?? j['commerce'];
       return StartResult(
         sessionId: j['sessionId'] as String,
         greeting: (j['greeting'] as String?) ?? '',
         quickReplies:
             (j['quickReplies'] as List?)?.map((e) => e.toString()).toList() ?? const [],
         entryPoint: EntryPointCard.fromJson(Map<String, dynamic>.from(j['entryPoint'] as Map)),
-        commerce: commerce is Map
-            ? CommerceConfig.fromJson(Map<String, dynamic>.from(commerce))
+        commerce: store is Map
+            ? CommerceConfig.fromJson(Map<String, dynamic>.from(store))
             : null,
       );
     } on DioException catch (e) {

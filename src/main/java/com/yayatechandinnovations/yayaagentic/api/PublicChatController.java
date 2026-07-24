@@ -177,21 +177,21 @@ public class PublicChatController {
                     result.greeting(),
                     result.quickReplies(),
                     PublicChatDtos.EntryPointCard.of(ep),
-                    PublicChatDtos.CommerceInfo.of(result.commerce()));
+                    result.clientTraits());
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /* ---------------------------- action (tap) ---------------------------- */
 
     /**
-     * The client-initiated action channel (ecommerce-chat-design.md §9): a tap on
-     * a product/cart/checkout runs ONE whitelisted, {@code clientInvocable} tool
+     * The client-initiated action channel (chat-channel-design.md): a tap on a
+     * rendered affordance runs ONE whitelisted, {@code clientInvocable} tool
      * through the exact same {@code ToolExecutor} + Authorizer as a chat message,
-     * streaming back the same SSE shape (ToolResult + {@code cart}/{@code
-     * checkout_result} UiHints). "Two doors, one lock" — a tap is an untrusted
-     * proposal, not a shortcut. A refused action (tool not in profile / not
-     * clientInvocable) collapses to a bare 403; the tool's existence is never
-     * leaked. Mirrors the abuse gate + auth resolution of {@link #sendMessage}.
+     * streaming back the same SSE shape (ToolResult + any UiHint the tool emits).
+     * "Two doors, one lock" — a tap is an untrusted proposal, not a shortcut. A
+     * refused action (tool not in profile / not clientInvocable) collapses to a
+     * bare 403; the tool's existence is never leaked. Mirrors the abuse gate +
+     * auth resolution of {@link #sendMessage}.
      */
     @PostMapping(value = "/sessions/{id}/actions", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<Object>> action(@PathVariable("id") String id,

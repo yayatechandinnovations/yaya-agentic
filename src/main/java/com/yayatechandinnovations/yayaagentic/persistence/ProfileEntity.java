@@ -46,12 +46,13 @@ public class ProfileEntity {
     @Column(name = "metadata_json", columnDefinition = "jsonb", nullable = false)
     private String metadataJson = "{}";
 
-    // Nullable: null == not a store. Carries the profile's CommerceBinding
-    // (legacy rows may still hold the retired CommerceConfig shape; reads are
-    // lenient, writes always emit the binding).
+    // Nullable app-specific traits: a map of namespaced kind → opaque payload
+    // (e.g. {"sales.store": {...}}). The framework stores/echoes it but never
+    // interprets it. Renamed from the retired commerce_json column (V74), which
+    // migrated legacy CommerceConfig/CommerceBinding rows into this shape.
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "commerce_json", columnDefinition = "jsonb")
-    private String commerceJson;
+    @Column(name = "extensions_json", columnDefinition = "jsonb")
+    private String extensionsJson;
 
     @Column(nullable = false, length = 16)
     private String status = "ACTIVE";
@@ -89,7 +90,7 @@ public class ProfileEntity {
     public String getAuthBindingId() { return authBindingId; }
     public String getDefaultStartFlowId() { return defaultStartFlowId; }
     public String getMetadataJson() { return metadataJson; }
-    public String getCommerceJson() { return commerceJson; }
+    public String getExtensionsJson() { return extensionsJson; }
     public String getStatus() { return status; }
     public String getLanguage() { return language; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
@@ -102,7 +103,7 @@ public class ProfileEntity {
     public void setAuthBindingId(String v) { this.authBindingId = v; }
     public void setDefaultStartFlowId(String v) { this.defaultStartFlowId = v; }
     public void setMetadataJson(String v) { this.metadataJson = v; }
-    public void setCommerceJson(String v) { this.commerceJson = v; }
+    public void setExtensionsJson(String v) { this.extensionsJson = v; }
     public void setStatus(String v) { this.status = v; }
     public void setLanguage(String v) { this.language = (v == null || v.isBlank()) ? "en" : v; }
 

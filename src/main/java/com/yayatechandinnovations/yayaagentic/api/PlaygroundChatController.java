@@ -292,14 +292,14 @@ public class PlaygroundChatController {
                                 String greeting,
                                 List<String> quickReplies,
                                 PublicChatDtos.EntryPointCard entryPoint,
-                                PublicChatDtos.CommerceInfo commerce) {
+                                Map<String, Object> traits) {
 
         static StartResponse ok(String sessionId, StartSessionResult result, ChatEntryPoint ep) {
             return new StartResponse(sessionId, false, null, null,
                     result.profile().value(), result.profile().version(),
                     result.greeting(), result.quickReplies(),
                     PublicChatDtos.EntryPointCard.of(ep),
-                    PublicChatDtos.CommerceInfo.of(result.commerce()));
+                    result.clientTraits());
         }
 
         static StartResponse failed(String sessionId, String code, String message, ChatEntryPoint ep) {

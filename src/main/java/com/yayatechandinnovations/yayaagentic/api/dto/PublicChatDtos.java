@@ -2,7 +2,6 @@ package com.yayatechandinnovations.yayaagentic.api.dto;
 
 import com.yayatechandinnovations.yayaagentic.channel.chat.AuthConfig;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
-import com.yayatechandinnovations.yayaagentic.profile.CommerceBinding;
 
 import java.util.List;
 import java.util.Map;
@@ -74,28 +73,16 @@ public final class PublicChatDtos {
             String greeting,
             List<String> quickReplies,
             EntryPointCard entryPoint,
-            CommerceInfo commerce   // non-null only when the profile is a store (§3)
+            Map<String, Object> traits   // the profile's client traits (may be empty)
     ) {}
-
-    /** The commerce trait the client reads at session start to render cart chrome
-     *  the moment a store chat opens. Carries only what the renderer needs — the
-     *  yaya-sales store id, whether the cart affordance shows, and the checkout
-     *  tool id a "Checkout" tap invokes. Catalog data (products, currency, prices)
-     *  arrives via {@code sales.*} tool results, not here. Null = not a store. */
-    public record CommerceInfo(String storeId, boolean cartEnabled, String checkoutTool) {
-        public static CommerceInfo of(CommerceBinding c) {
-            if (c == null) return null;
-            String checkoutTool = c.checkoutTool() == null ? null : c.checkoutTool().value();
-            return new CommerceInfo(c.storeId(), c.cartEnabled(), checkoutTool);
-        }
-    }
 
     public record MessageRequest(String text) {}
 
-    /** Body for {@code POST /v1/chat/sessions/{id}/actions} — a client tap
-     *  ("Add", "Remove", "Checkout") that runs one whitelisted, clientInvocable
-     *  commerce tool through the same executor + Authorizer as a chat message
-     *  (the "two doors, one lock" channel, ecommerce-chat-design.md §9). */
+    /** Body for {@code POST /v1/chat/sessions/{id}/actions} — a client tap that
+     *  runs one whitelisted, {@code clientInvocable} tool through the same
+     *  executor + Authorizer as a chat message (the "two doors, one lock"
+     *  channel, chat-channel-design.md). An app (e.g. yaya-sales) whitelists its
+     *  own tap tools; the framework treats the tool + args opaquely. */
     public record ActionRequest(String tool, Map<String, Object> args) {}
 
     /** Returned by {@code GET /v1/chat/sessions/{id}} so a restarted app can

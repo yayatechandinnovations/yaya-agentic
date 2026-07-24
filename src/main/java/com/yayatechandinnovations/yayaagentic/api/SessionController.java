@@ -94,11 +94,11 @@ public class SessionController {
     }
 
     /**
-     * Client-initiated action (a tap on the cart, "Load more", "Checkout"): runs
-     * one whitelisted tool through the same executor + Authorizer as a chat
-     * message, streaming back the same SSE shape (ToolResult + cart UiHint). A
+     * Client-initiated action (a tap on a rendered affordance, e.g. "Load more"):
+     * runs one whitelisted tool through the same executor + Authorizer as a chat
+     * message, streaming back the same SSE shape (ToolResult + any UiHint). A
      * refused action (tool not in profile / not clientInvocable) maps to 403 with
-     * no body — the tool's existence is never leaked. See ecommerce-chat-design §9.
+     * no body — the tool's existence is never leaked. See chat-channel-design.md.
      */
     @PostMapping(value = "/{id}/actions", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<Object>> action(@PathVariable("id") String id,

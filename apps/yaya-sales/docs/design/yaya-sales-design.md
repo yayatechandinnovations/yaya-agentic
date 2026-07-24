@@ -819,14 +819,27 @@ The current `commerce/*` subsystem (catalog, cart, checkout, PSP, onboarding, `V
 
 The current `products`/`product_catalogs`/carts/orders migrate one-shot per tenant. **New in yaya-sales:** the ledger has no source rows — seed an opening-balance `ADJUSTMENT` movement per SKU from today's on-hand so history starts clean and on-hand matches reality on day one.
 
-### 12.3 `Profile.commerce` shrinks to a pointer
+### 12.3 `Profile.commerce` → a domain-neutral extension (revised, S7)
+
+**Superseded by S7** (`docs/milestones/S7-decouple-store.md`). The interim plan
+kept a typed `CommerceBinding` on the core `Profile`. That still put a business
+domain *inside* the framework, which the CLAUDE.md non-negotiable forbids ("a way
+to build agents → core; a domain → app"). S7 removed it: the core `Profile` now
+carries a domain-neutral `extensions` map (namespaced *kind* → opaque payload),
+and the store binding rides under the yaya-sales-owned `sales.store` kind.
 
 ```java
-public record CommerceBinding(StoreRef store, Ids.ToolId checkoutTool, boolean cartEnabled) {}
-// StoreRef = (hostBaseUrlRef, storeId); catalogs/currency/PSP/policies now live on the yaya-sales Store.
+// core, domain-neutral — the framework never interprets the payload:
+record Profile(..., Map<String,Object> extensions, ...) {}
+// the payload under the "sales.store" kind (defined & read by yaya-sales + its clients):
+//   { "storeId": "...", "checkoutTool": "...", "cartEnabled": true }
 ```
 
-Additive introduce → dual-read S2–S4 → drop old `CommerceConfig` fields at S4 (open decision, §14 Q1).
+The engine surfaces `extensions` verbatim at session start as
+`StartSessionResult.clientTraits` (wire: `StartResponse.traits`), so a client
+lights up store chrome with no new transport. Persistence: `profiles.commerce_json`
+→ `profiles.extensions_json` with legacy rows wrapped under `sales.store`
+(`V74__profile_extensions.sql`), lenient dual-read for older shapes.
 
 ### 12.4 Milestones
 
@@ -900,7 +913,7 @@ The platform non-negotiables (design §12) get a cleaner home, not a weaker one:
 
 All 14 open questions are **resolved** (owner sign-off 2026-07). Recorded here as decisions; a couple keep a small follow-up.
 
-1. **Profile-shape change (§12.3) — YES.** Shrink `CommerceConfig` → `CommerceBinding` additively; dual-read through S2–S4; drop old fields at S4.
+1. **Profile-shape change (§12.3) — YES, and revised by S7.** Original: shrink `CommerceConfig` → `CommerceBinding` additively; dual-read through S2–S4; drop old fields at S4. **S7 went further** (`docs/milestones/S7-decouple-store.md`): the typed `CommerceBinding` was itself store vocabulary in the neutral core, so it was replaced with a domain-neutral `Profile.extensions` map (store binding under the `sales.store` kind). `V74` renames the column and wraps legacy rows; the core now builds with zero commerce types (enforced by `CoreDomainNeutralityTest`).
 2. **Deduction point default — `ON_PAYMENT`,** per-store override to `ON_FULFILLMENT`.
 3. **Valuation — moving-average in v1;** FIFO layers later behind the `Valuation` SPI.
 4. **Cart re-render — cache a read-only snapshot** in the agent's working memory; yaya-sales is the source of truth.

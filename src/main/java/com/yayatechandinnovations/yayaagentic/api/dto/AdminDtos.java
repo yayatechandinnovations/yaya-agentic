@@ -28,12 +28,14 @@ public final class AdminDtos {
             String authBindingId,
             String language,
             Map<String, Object> metadata,
-            /** Nullable commerce block (CommerceBinding shape): {storeId, checkoutTool, cartEnabled}. */
-            Map<String, Object> commerce,
+            /** App-specific traits keyed by namespaced kind → opaque payload
+             *  (e.g. a {@code "sales.store"} kind whose payload yaya-sales defines).
+             *  The framework stores/echoes these but never interprets them. */
+            Map<String, Object> extensions,
             /** Nullable id of the Session Start Flow to run by default for this profile. */
             String defaultStartFlowId
     ) {
-        /** Back-compat: a non-commerce profile (commerce == null). */
+        /** Back-compat: a profile with no extensions. */
         public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
                               String systemPromptFragment, List<String> capabilities,
                               String authBindingId, String language, Map<String, Object> metadata) {
@@ -41,13 +43,13 @@ public final class AdminDtos {
                     authBindingId, language, metadata, null, null);
         }
 
-        /** Back-compat: commerce but no default start flow. */
+        /** Back-compat: extensions but no default start flow. */
         public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
                               String systemPromptFragment, List<String> capabilities,
                               String authBindingId, String language, Map<String, Object> metadata,
-                              Map<String, Object> commerce) {
+                              Map<String, Object> extensions) {
             this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
-                    authBindingId, language, metadata, commerce, null);
+                    authBindingId, language, metadata, extensions, null);
         }
     }
 
@@ -57,7 +59,7 @@ public final class AdminDtos {
             List<String> capabilities, String authBindingId,
             String language,
             Map<String, Object> metadata, String status, OffsetDateTime createdAt,
-            Map<String, Object> commerce, String defaultStartFlowId
+            Map<String, Object> extensions, String defaultStartFlowId
     ) {}
 
     // ---- Capabilities ---------------------------------------------------

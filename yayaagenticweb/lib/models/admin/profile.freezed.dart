@@ -30,9 +30,10 @@ mixin _$ProfileRequest {
   String? get authBindingId => throw _privateConstructorUsedError;
   String get language => throw _privateConstructorUsedError;
   Map<String, dynamic> get metadata =>
-      throw _privateConstructorUsedError; // Nullable commerce block: {catalogs:[{value,version}], currency,
-  // checkoutTool:{value}, cartEnabled}. Null = not a store.
-  Map<String, dynamic>? get commerce =>
+      throw _privateConstructorUsedError; // App-specific traits keyed by namespaced kind -> opaque payload. The store
+  // binding rides under the yaya-sales-owned `sales.store` kind; the framework
+  // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
+  Map<String, dynamic>? get extensions =>
       throw _privateConstructorUsedError; // Default Session Start Flow id (null = none).
   String? get defaultStartFlowId => throw _privateConstructorUsedError;
 
@@ -63,7 +64,7 @@ abstract class $ProfileRequestCopyWith<$Res> {
     String? authBindingId,
     String language,
     Map<String, dynamic> metadata,
-    Map<String, dynamic>? commerce,
+    Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
   });
 }
@@ -92,7 +93,7 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
     Object? authBindingId = freezed,
     Object? language = null,
     Object? metadata = null,
-    Object? commerce = freezed,
+    Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
   }) {
     return _then(
@@ -133,9 +134,9 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
                 ? _value.metadata
                 : metadata // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
-            commerce: freezed == commerce
-                ? _value.commerce
-                : commerce // ignore: cast_nullable_to_non_nullable
+            extensions: freezed == extensions
+                ? _value.extensions
+                : extensions // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>?,
             defaultStartFlowId: freezed == defaultStartFlowId
                 ? _value.defaultStartFlowId
@@ -166,7 +167,7 @@ abstract class _$$ProfileRequestImplCopyWith<$Res>
     String? authBindingId,
     String language,
     Map<String, dynamic> metadata,
-    Map<String, dynamic>? commerce,
+    Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
   });
 }
@@ -194,7 +195,7 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
     Object? authBindingId = freezed,
     Object? language = null,
     Object? metadata = null,
-    Object? commerce = freezed,
+    Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
   }) {
     return _then(
@@ -235,9 +236,9 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
             ? _value._metadata
             : metadata // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
-        commerce: freezed == commerce
-            ? _value._commerce
-            : commerce // ignore: cast_nullable_to_non_nullable
+        extensions: freezed == extensions
+            ? _value._extensions
+            : extensions // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>?,
         defaultStartFlowId: freezed == defaultStartFlowId
             ? _value.defaultStartFlowId
@@ -261,11 +262,11 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     this.authBindingId,
     this.language = 'en',
     final Map<String, dynamic> metadata = const <String, dynamic>{},
-    final Map<String, dynamic>? commerce,
+    final Map<String, dynamic>? extensions,
     this.defaultStartFlowId,
   }) : _capabilities = capabilities,
        _metadata = metadata,
-       _commerce = commerce;
+       _extensions = extensions;
 
   factory _$ProfileRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileRequestImplFromJson(json);
@@ -303,16 +304,18 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     return EqualUnmodifiableMapView(_metadata);
   }
 
-  // Nullable commerce block: {catalogs:[{value,version}], currency,
-  // checkoutTool:{value}, cartEnabled}. Null = not a store.
-  final Map<String, dynamic>? _commerce;
-  // Nullable commerce block: {catalogs:[{value,version}], currency,
-  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  // App-specific traits keyed by namespaced kind -> opaque payload. The store
+  // binding rides under the yaya-sales-owned `sales.store` kind; the framework
+  // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
+  final Map<String, dynamic>? _extensions;
+  // App-specific traits keyed by namespaced kind -> opaque payload. The store
+  // binding rides under the yaya-sales-owned `sales.store` kind; the framework
+  // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
   @override
-  Map<String, dynamic>? get commerce {
-    final value = _commerce;
+  Map<String, dynamic>? get extensions {
+    final value = _extensions;
     if (value == null) return null;
-    if (_commerce is EqualUnmodifiableMapView) return _commerce;
+    if (_extensions is EqualUnmodifiableMapView) return _extensions;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableMapView(value);
   }
@@ -323,7 +326,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
 
   @override
   String toString() {
-    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, commerce: $commerce, defaultStartFlowId: $defaultStartFlowId)';
+    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId)';
   }
 
   @override
@@ -348,7 +351,10 @@ class _$ProfileRequestImpl implements _ProfileRequest {
             (identical(other.language, language) ||
                 other.language == language) &&
             const DeepCollectionEquality().equals(other._metadata, _metadata) &&
-            const DeepCollectionEquality().equals(other._commerce, _commerce) &&
+            const DeepCollectionEquality().equals(
+              other._extensions,
+              _extensions,
+            ) &&
             (identical(other.defaultStartFlowId, defaultStartFlowId) ||
                 other.defaultStartFlowId == defaultStartFlowId));
   }
@@ -366,7 +372,7 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     authBindingId,
     language,
     const DeepCollectionEquality().hash(_metadata),
-    const DeepCollectionEquality().hash(_commerce),
+    const DeepCollectionEquality().hash(_extensions),
     defaultStartFlowId,
   );
 
@@ -398,7 +404,7 @@ abstract class _ProfileRequest implements ProfileRequest {
     final String? authBindingId,
     final String language,
     final Map<String, dynamic> metadata,
-    final Map<String, dynamic>? commerce,
+    final Map<String, dynamic>? extensions,
     final String? defaultStartFlowId,
   }) = _$ProfileRequestImpl;
 
@@ -422,10 +428,11 @@ abstract class _ProfileRequest implements ProfileRequest {
   @override
   String get language;
   @override
-  Map<String, dynamic> get metadata; // Nullable commerce block: {catalogs:[{value,version}], currency,
-  // checkoutTool:{value}, cartEnabled}. Null = not a store.
+  Map<String, dynamic> get metadata; // App-specific traits keyed by namespaced kind -> opaque payload. The store
+  // binding rides under the yaya-sales-owned `sales.store` kind; the framework
+  // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
   @override
-  Map<String, dynamic>? get commerce; // Default Session Start Flow id (null = none).
+  Map<String, dynamic>? get extensions; // Default Session Start Flow id (null = none).
   @override
   String? get defaultStartFlowId;
 
@@ -455,7 +462,7 @@ mixin _$ProfileResponse {
   Map<String, dynamic> get metadata => throw _privateConstructorUsedError;
   String? get status => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
-  Map<String, dynamic>? get commerce => throw _privateConstructorUsedError;
+  Map<String, dynamic>? get extensions => throw _privateConstructorUsedError;
   String? get defaultStartFlowId => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileResponse to a JSON map.
@@ -488,7 +495,7 @@ abstract class $ProfileResponseCopyWith<$Res> {
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
-    Map<String, dynamic>? commerce,
+    Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
   });
 }
@@ -520,7 +527,7 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
-    Object? commerce = freezed,
+    Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
   }) {
     return _then(
@@ -573,9 +580,9 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
                 ? _value.createdAt
                 : createdAt // ignore: cast_nullable_to_non_nullable
                       as String?,
-            commerce: freezed == commerce
-                ? _value.commerce
-                : commerce // ignore: cast_nullable_to_non_nullable
+            extensions: freezed == extensions
+                ? _value.extensions
+                : extensions // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>?,
             defaultStartFlowId: freezed == defaultStartFlowId
                 ? _value.defaultStartFlowId
@@ -609,7 +616,7 @@ abstract class _$$ProfileResponseImplCopyWith<$Res>
     Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
-    Map<String, dynamic>? commerce,
+    Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
   });
 }
@@ -640,7 +647,7 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
     Object? metadata = null,
     Object? status = freezed,
     Object? createdAt = freezed,
-    Object? commerce = freezed,
+    Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
   }) {
     return _then(
@@ -693,9 +700,9 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
             ? _value.createdAt
             : createdAt // ignore: cast_nullable_to_non_nullable
                   as String?,
-        commerce: freezed == commerce
-            ? _value._commerce
-            : commerce // ignore: cast_nullable_to_non_nullable
+        extensions: freezed == extensions
+            ? _value._extensions
+            : extensions // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>?,
         defaultStartFlowId: freezed == defaultStartFlowId
             ? _value.defaultStartFlowId
@@ -722,11 +729,11 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     final Map<String, dynamic> metadata = const <String, dynamic>{},
     this.status,
     this.createdAt,
-    final Map<String, dynamic>? commerce,
+    final Map<String, dynamic>? extensions,
     this.defaultStartFlowId,
   }) : _capabilities = capabilities,
        _metadata = metadata,
-       _commerce = commerce;
+       _extensions = extensions;
 
   factory _$ProfileResponseImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileResponseImplFromJson(json);
@@ -770,12 +777,12 @@ class _$ProfileResponseImpl implements _ProfileResponse {
   final String? status;
   @override
   final String? createdAt;
-  final Map<String, dynamic>? _commerce;
+  final Map<String, dynamic>? _extensions;
   @override
-  Map<String, dynamic>? get commerce {
-    final value = _commerce;
+  Map<String, dynamic>? get extensions {
+    final value = _extensions;
     if (value == null) return null;
-    if (_commerce is EqualUnmodifiableMapView) return _commerce;
+    if (_extensions is EqualUnmodifiableMapView) return _extensions;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableMapView(value);
   }
@@ -785,7 +792,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
 
   @override
   String toString() {
-    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, commerce: $commerce, defaultStartFlowId: $defaultStartFlowId)';
+    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId)';
   }
 
   @override
@@ -814,7 +821,10 @@ class _$ProfileResponseImpl implements _ProfileResponse {
             (identical(other.status, status) || other.status == status) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
-            const DeepCollectionEquality().equals(other._commerce, _commerce) &&
+            const DeepCollectionEquality().equals(
+              other._extensions,
+              _extensions,
+            ) &&
             (identical(other.defaultStartFlowId, defaultStartFlowId) ||
                 other.defaultStartFlowId == defaultStartFlowId));
   }
@@ -835,7 +845,7 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     const DeepCollectionEquality().hash(_metadata),
     status,
     createdAt,
-    const DeepCollectionEquality().hash(_commerce),
+    const DeepCollectionEquality().hash(_extensions),
     defaultStartFlowId,
   );
 
@@ -870,7 +880,7 @@ abstract class _ProfileResponse implements ProfileResponse {
     final Map<String, dynamic> metadata,
     final String? status,
     final String? createdAt,
-    final Map<String, dynamic>? commerce,
+    final Map<String, dynamic>? extensions,
     final String? defaultStartFlowId,
   }) = _$ProfileResponseImpl;
 
@@ -902,7 +912,7 @@ abstract class _ProfileResponse implements ProfileResponse {
   @override
   String? get createdAt;
   @override
-  Map<String, dynamic>? get commerce;
+  Map<String, dynamic>? get extensions;
   @override
   String? get defaultStartFlowId;
 

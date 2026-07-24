@@ -25,9 +25,8 @@ public interface ConversationEngine {
      * executor + Authorizer path as a chat message (two doors, one lock). The
      * tool must be in the session profile's capabilities AND
      * {@code clientInvocable}; otherwise {@link ActionNotPermittedException}.
-     * Confirmable tools (e.g. checkout) still pause for the confirm UiHint — a
-     * tap starts the flow, it does not skip the guardrail. See
-     * {@code ecommerce-chat-design.md} §9.
+     * Confirmable tools still pause for the confirm UiHint — a tap starts the
+     * flow, it does not skip the guardrail. See {@code chat-channel-design.md}.
      */
     Flux<TurnEvent> dispatchAction(Ids.SessionId sessionId, Ids.ToolId tool,
                                    java.util.Map<String, Object> args, AuthContext auth);

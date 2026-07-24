@@ -230,7 +230,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                     session.id().value(), e);
         }
 
-        return new StartSessionResult(session, profileId, greeting, quickReplies, profile.commerce());
+        return new StartSessionResult(session, profileId, greeting, quickReplies, profile.extensions());
     }
 
     @Override
@@ -487,10 +487,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                     principal, sessionId, turnId, UUID.randomUUID().toString(), execAttrs(auth));
 
             // Same executor + Authorizer as a chat tool call. skipConfirm=false so
-            // a tapped checkout still raises the confirm UiHint (tap starts it, it
-            // doesn't skip the guardrail). llmDriven=true streams ToolCall +
-            // ToolResult + the drained cart UiHint with no spoken narration and no
-            // extra LLM round — the tap just wants the fresh cart back.
+            // a tapped confirmable tool still raises the confirm UiHint (the tap
+            // starts it, it doesn't skip the guardrail). llmDriven=true streams
+            // ToolCall + ToolResult + any drained UiHint with no spoken narration
+            // and no extra LLM round — the tap just wants the fresh state back.
             Flux<TurnEvent> body = runToolDispatch(tool, args == null ? Map.of() : args,
                     profile, personality, session, exec, recorder, turnId,
                     new UserMessage("", Map.of()),
@@ -723,7 +723,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         for (Turn t : turns) {
             switch (t.role()) {
                 case USER -> {
-                    // Skip text-less user turns (e.g. a commerce action tap): replaying
+                    // Skip text-less user turns (e.g. a client action tap): replaying
                     // them yields an empty text content block the LLM APIs reject. Mirrors
                     // the assistant guard below; tool results carry the action's signal.
                     String text = t.content() == null ? "" : t.content();
@@ -1520,8 +1520,9 @@ public class DefaultConversationEngine implements ConversationEngine {
             events.add(captureOutcome.conflictUiHint());
         }
 
-        // Flush any UiHints a tool enqueued (e.g. sales.* tools surface
-        // product_catalog / cart here instead of narrating them in text, #8).
+        // Flush any UiHints a tool enqueued (a trusted HTTP tool response can
+        // carry a _uiHint frame the engine surfaces here instead of letting the
+        // model narrate rich chrome in text, #8).
         if (recordedResult.status() == Turn.ToolResult.Status.OK) {
             events.addAll(pendingUiHints.drain(session.id()));
         }

@@ -15,9 +15,10 @@ class ProfileRequest with _$ProfileRequest {
     String? authBindingId,
     @Default('en') String language,
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
-    // Nullable CommerceBinding block: {storeId, checkoutTool, cartEnabled}.
-    // Null = not a store. Catalogs/pricing/PSP live in yaya-sales.
-    Map<String, dynamic>? commerce,
+    // App-specific traits keyed by namespaced kind -> opaque payload. The store
+    // binding rides under the yaya-sales-owned `sales.store` kind; the framework
+    // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
+    Map<String, dynamic>? extensions,
     // Default Session Start Flow id (null = none).
     String? defaultStartFlowId,
   }) = _ProfileRequest;
@@ -41,7 +42,7 @@ class ProfileResponse with _$ProfileResponse {
     @Default(<String, dynamic>{}) Map<String, dynamic> metadata,
     String? status,
     String? createdAt,
-    Map<String, dynamic>? commerce,
+    Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
   }) = _ProfileResponse;
 
