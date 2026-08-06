@@ -13,6 +13,7 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountSer
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatDeviceService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatPhoneChangeService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatPinService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.PhoneVerifier;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
@@ -49,12 +50,9 @@ public class ChatAccountController {
     private static final Duration HOUR = Duration.ofHours(1);
     private static final Duration DAY = Duration.ofHours(24);
 
-    // §20.4 ceilings for the delete-confirmation OTP (this route sends an SMS).
-    private static final int START_PER_IP_PER_HOUR = 5;
-    private static final int START_PER_PHONE_PER_DAY = 5;
-    private static final int START_GLOBAL_PER_DAY = 5000;
-    private static final int CHECK_PER_PHONE_PER_HOUR = 10;
-
+    // §20.4 ceilings for the delete-confirmation OTP (this route sends an SMS);
+    // shared, env-tunable settings with the verify surface.
+    private final ChatVerifyLimitsProperties limits;
     private final DevicePassService devicePasses;
     private final ChatAccountService accounts;
     private final ChatPhoneChangeService phoneChanges;
@@ -81,7 +79,9 @@ public class ChatAccountController {
                                  ChatDeviceService devices,
                                  ChatPinService pins,
                                  ChatAttachmentService chatAttachments,
-                                 ChatReceiptService chatReceipts) {
+                                 ChatReceiptService chatReceipts,
+                                 ChatVerifyLimitsProperties limits) {
+        this.limits = limits;
         this.devicePasses = devicePasses;
         this.accounts = accounts;
         this.phoneChanges = phoneChanges;
@@ -278,9 +278,9 @@ public class ChatAccountController {
     public Mono<ChatAccountDtos.StateResponse> deleteStart(ServerWebExchange exchange) {
         return async(() -> {
             ChatAccountEntity a = require(exchange).account();
-            requireWithinLimit(rateLimiter.hit("verify-global", "all", START_GLOBAL_PER_DAY, DAY));
-            requireWithinLimit(rateLimiter.hit("verify-start-ip", clientIp(exchange), START_PER_IP_PER_HOUR, HOUR));
-            requireWithinLimit(rateLimiter.hit("verify-start-phone", a.getPhoneE164(), START_PER_PHONE_PER_DAY, DAY));
+            requireWithinLimit(rateLimiter.hit("verify-global", "all", limits.getGlobalDailyStarts(), DAY));
+            requireWithinLimit(rateLimiter.hit("verify-start-ip", clientIp(exchange), limits.getStartPerIpPerHour(), HOUR));
+            requireWithinLimit(rateLimiter.hit("verify-start-phone", a.getPhoneE164(), limits.getStartPerPhonePerDay(), DAY));
             if (!verifier.start(a.getPhoneE164()).ok()) {
                 throw new ChatApiException(HttpStatus.BAD_GATEWAY, "verify_failed",
                         "could not send a verification code", 0);
@@ -297,7 +297,7 @@ public class ChatAccountController {
             if (body == null || body.code() == null || body.code().isBlank()) {
                 throw new ChatApiException(HttpStatus.BAD_REQUEST, "bad_request", "code required", 0);
             }
-            requireWithinLimit(rateLimiter.hit("verify-check-phone", a.getPhoneE164(), CHECK_PER_PHONE_PER_HOUR, HOUR));
+            requireWithinLimit(rateLimiter.hit("verify-check-phone", a.getPhoneE164(), limits.getCheckPerPhonePerHour(), HOUR));
             if (!verifier.check(a.getPhoneE164(), body.code().trim()).approved()) {
                 throw new ChatApiException(HttpStatus.UNAUTHORIZED, "verify_denied",
                         "that code is invalid or expired", 0);

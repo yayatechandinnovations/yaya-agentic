@@ -142,6 +142,18 @@ yaya:
       device-pass-ttl-days: ${YAYA_CHAT_DEVICE_PASS_TTL_DAYS:30}
       device-pass-pin-ttl-hours: ${YAYA_CHAT_DEVICE_PASS_PIN_TTL_HOURS:24}
       verify:
+        # Toll-fraud ceilings for the OTP + PIN-unlock surface (chat §20.4).
+        # Defaults are the tight production values — start gates real money
+        # (Twilio SMS + LLM). Raise in dev/staging for testing; keep tight in
+        # prod. A single tester trips starts-per-phone-per-day first.
+        limits:
+          start-per-ip-per-hour:      ${YAYA_CHAT_VERIFY_START_PER_IP_PER_HOUR:5}
+          start-per-phone-per-day:    ${YAYA_CHAT_VERIFY_START_PER_PHONE_PER_DAY:5}
+          global-daily-starts:        ${YAYA_CHAT_VERIFY_GLOBAL_DAILY_STARTS:5000}
+          check-per-phone-per-hour:   ${YAYA_CHAT_VERIFY_CHECK_PER_PHONE_PER_HOUR:10}
+          lookup-per-ip-per-hour:     ${YAYA_CHAT_VERIFY_LOOKUP_PER_IP_PER_HOUR:30}
+          unlock-per-ip-per-hour:     ${YAYA_CHAT_VERIFY_UNLOCK_PER_IP_PER_HOUR:60}
+          unlock-per-device-per-hour: ${YAYA_CHAT_VERIFY_UNLOCK_PER_DEVICE_PER_HOUR:20}
         # Twilio Verify API base. Override only when stubbing Twilio in tests.
         base-url: ${TWILIO_VERIFY_BASE_URL:https://verify.twilio.com}
         # NOTE: twilio-service-sid (VA…) is deliberately NOT defaulted here. It

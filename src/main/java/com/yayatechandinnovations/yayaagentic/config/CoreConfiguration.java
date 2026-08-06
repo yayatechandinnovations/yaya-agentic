@@ -26,7 +26,8 @@ import java.time.Clock;
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
         EmbeddedSignupProperties.class,
         ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
-        IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class})
+        IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class,
+        com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 

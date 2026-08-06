@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.ChatRateLimiter;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatDeviceService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatPinService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.PhoneVerifier;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
@@ -36,20 +37,9 @@ public class ChatVerifyController {
     private static final Duration HOUR = Duration.ofHours(1);
     private static final Duration DAY = Duration.ofHours(24);
 
-    // §20.4 ceilings — deliberately tight; these gate real money (Twilio + LLM).
-    private static final int START_PER_IP_PER_HOUR = 5;
-    private static final int START_PER_PHONE_PER_DAY = 5;
-    private static final int START_GLOBAL_PER_DAY = 5000;
-    private static final int CHECK_PER_PHONE_PER_HOUR = 10;
-    // Lookup sends no SMS, so it can be looser than start — but it *does* reveal
-    // account existence, so it's still capped per IP to blunt phone enumeration.
-    private static final int LOOKUP_PER_IP_PER_HOUR = 30;
-
-    // PIN unlock sends no SMS, but it is the online brute-force surface for the
-    // PIN, so it gets its own ceilings on top of the account lockout ladder.
-    private static final int UNLOCK_PER_IP_PER_HOUR = 60;
-    private static final int UNLOCK_PER_DEVICE_PER_HOUR = 20;
-
+    // §20.4 ceilings — env-tunable via yaya.agentic.chat.verify.limits.*;
+    // defaults stay tight because start gates real money (Twilio + LLM).
+    private final ChatVerifyLimitsProperties limits;
     private final PhoneVerifier verifier;
     private final DevicePassService devicePasses;
     private final ChatRateLimiter rateLimiter;
@@ -62,13 +52,15 @@ public class ChatVerifyController {
                                 ChatRateLimiter rateLimiter,
                                 ChatAccountService accounts,
                                 ChatDeviceService devices,
-                                ChatPinService pins) {
+                                ChatPinService pins,
+                                ChatVerifyLimitsProperties limits) {
         this.verifier = verifier;
         this.devicePasses = devicePasses;
         this.rateLimiter = rateLimiter;
         this.accounts = accounts;
         this.devices = devices;
         this.pins = pins;
+        this.limits = limits;
     }
 
     /** Phone-first probe. Reveals only whether a completed registration exists so
@@ -79,7 +71,7 @@ public class ChatVerifyController {
             ServerWebExchange exchange) {
         return Mono.fromSupplier(() -> {
             String phone = requireE164(body == null ? null : body.phoneE164());
-            requireWithinLimit(rateLimiter.hit("verify-lookup-ip", clientIp(exchange), LOOKUP_PER_IP_PER_HOUR, HOUR));
+            requireWithinLimit(rateLimiter.hit("verify-lookup-ip", clientIp(exchange), limits.getLookupPerIpPerHour(), HOUR));
             return new PublicChatDtos.VerifyLookupResponse(accounts.isRegistered(phone));
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -92,9 +84,9 @@ public class ChatVerifyController {
             String phone = requireE164(body == null ? null : body.phoneE164());
 
             // Order matters: cheapest/global guard first, then per-identity.
-            requireWithinLimit(rateLimiter.hit("verify-global", "all", START_GLOBAL_PER_DAY, DAY));
-            requireWithinLimit(rateLimiter.hit("verify-start-ip", clientIp(exchange), START_PER_IP_PER_HOUR, HOUR));
-            requireWithinLimit(rateLimiter.hit("verify-start-phone", phone, START_PER_PHONE_PER_DAY, DAY));
+            requireWithinLimit(rateLimiter.hit("verify-global", "all", limits.getGlobalDailyStarts(), DAY));
+            requireWithinLimit(rateLimiter.hit("verify-start-ip", clientIp(exchange), limits.getStartPerIpPerHour(), HOUR));
+            requireWithinLimit(rateLimiter.hit("verify-start-phone", phone, limits.getStartPerPhonePerDay(), DAY));
 
             PhoneVerifier.StartResult result = verifier.start(phone);
             if (!result.ok()) {
@@ -115,7 +107,7 @@ public class ChatVerifyController {
             if (body.code() == null || body.code().isBlank()) throw badRequest("code required");
 
             // Brute-force guard on the code.
-            requireWithinLimit(rateLimiter.hit("verify-check-phone", phone, CHECK_PER_PHONE_PER_HOUR, HOUR));
+            requireWithinLimit(rateLimiter.hit("verify-check-phone", phone, limits.getCheckPerPhonePerHour(), HOUR));
 
             PhoneVerifier.CheckResult result = verifier.check(phone, body.code().trim());
             if (!result.approved()) {
@@ -154,8 +146,8 @@ public class ChatVerifyController {
             ServerWebExchange exchange) {
         return Mono.fromSupplier(() -> {
             if (body == null) throw badRequest("missing body");
-            requireWithinLimit(rateLimiter.hit("pin-unlock-ip", clientIp(exchange), UNLOCK_PER_IP_PER_HOUR, HOUR));
-            requireWithinLimit(rateLimiter.hit("pin-unlock-dev", safe(body.deviceId()), UNLOCK_PER_DEVICE_PER_HOUR, HOUR));
+            requireWithinLimit(rateLimiter.hit("pin-unlock-ip", clientIp(exchange), limits.getUnlockPerIpPerHour(), HOUR));
+            requireWithinLimit(rateLimiter.hit("pin-unlock-dev", safe(body.deviceId()), limits.getUnlockPerDevicePerHour(), HOUR));
 
             var device = devices.resolveBySecret(body.deviceId(), body.deviceSecret())
                     .orElseThrow(ChatVerifyController::unlockDenied);
