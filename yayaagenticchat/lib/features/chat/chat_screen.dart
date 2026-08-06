@@ -19,6 +19,7 @@ import 'commerce/cart_sheet.dart';
 import 'commerce/checkout_handler.dart';
 import 'media_widgets.dart';
 import 'receipts/receipt_bubble.dart';
+import 'receipts/receipt_draft_bar.dart';
 import 'commerce/checkout_result_card.dart';
 import 'commerce/confirm_card.dart';
 import 'commerce/mini_cart_bar.dart';
@@ -203,6 +204,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 onCancel: controller.cancelPending,
               ),
             if (state.isStore) MiniCartBar(handle: widget.handle, accent: accent),
+            ReceiptDraftBar(handle: widget.handle, accent: accent),
             _composer(state, accent),
           ],
         ],

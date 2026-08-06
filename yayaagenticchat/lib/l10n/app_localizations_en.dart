@@ -578,4 +578,14 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get confirmTitle => 'Do you want to continue?';
+
+  @override
+  String get view => 'View';
+
+  @override
+  String get receiptDraftTitle => 'Ticket in progress';
+
+  @override
+  String get receiptDraftHint =>
+      'Tap to see it — keep adding to build your ticket';
 }

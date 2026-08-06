@@ -1146,6 +1146,24 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Do you want to continue?'**
   String get confirmTitle;
+
+  /// No description provided for @view.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get view;
+
+  /// No description provided for @receiptDraftTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ticket in progress'**
+  String get receiptDraftTitle;
+
+  /// No description provided for @receiptDraftHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to see it — keep adding to build your ticket'**
+  String get receiptDraftHint;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

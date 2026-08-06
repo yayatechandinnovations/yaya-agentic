@@ -308,7 +308,18 @@ A lottery ticket, a pharmacy receipt, and a parking stub are all reachable with 
 
 The receipt widget is the design centerpiece: a **white paper card** on the app's dark surface, `72–80 mm` proportions, bundled monospace face (JetBrains Mono), zigzag torn edges top/bottom (a `CustomClipper`), subtle paper-grain tint, slightly-faded "thermal ink" text color, real Code-128/QR via `barcode_widget`, dashed dividers, and the tenant's logo dithered to 1-bit for authenticity. Interactions: inline bubble (compressed) → tap → full-screen sheet (the cart-sheet pattern) with pinch-zoom, **Share/Save as image** (`RepaintBoundary` → PNG), and the hint's `actions` as buttons. `CoreDomainNeutralityTest` gains a check that the template vocabulary and DTOs stay domain-free.
 
-### 7.7 Seams noted, not built
+### 7.8 Live drafts — the ticket you watch being built
+
+A receipt hint is not a one-shot event; it is a frame a tool may emit **every turn** with the current state — the same shape the cart uses. That makes "watch my lottery ticket take shape as I add plays" free on the emitting side: the tool returns a `receipt` hint after each play, its `data` carrying the draft so far (rows, running total, `statusStamp: "BORRADOR"`, no serial/payment code yet — unbound fields simply don't print, so **the template needs zero changes**).
+
+One flag makes the UX right: `"draft": true` on the payload.
+
+- **App:** a draft does not append a bubble per turn (that would stack stale tickets up the log). It renders as a **live pinned preview above the composer** — the `MiniCartBar` pattern — replaced *in place* each turn; tap expands the full paper. When the final (non-draft) receipt arrives, the pinned draft clears and the issued ticket drops into the conversation.
+- **Backend:** `ChatReceiptService.maybePersist` skips drafts — `chat_receipts` holds issued documents, not works-in-progress. Only the final ticket enters the wallet.
+
+Selection, actions, and wallet capture are otherwise unchanged; a draft is an ordinary receipt hint the two sides agree not to persist or bubble. Editing a draft stays conversational by default ("quita el palé"); per-row remove buttons are available for free through the existing `actions` mechanism if a tenant wants them.
+
+### 7.9 Seams noted, not built
 
 - **ESC/POS export** for physical printers — the element vocabulary maps 1:1 to thermal primitives *by construction*: it was derived from a renderer that already targets ESC/POS text, ESC/POS raster, and PDF from one plan (`smartlotterysales`'s `escpos_text_encoder` / `ticket_pdf_renderer`), so a future print path is a renderer, not a redesign.
 - **Style importer** — a one-shot converter from `smartlotterysales`'s `TicketStyleConfig` + layout variant into a `receipt_templates` row, so smart-lottery tenants onboard with their existing ticket look.

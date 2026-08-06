@@ -195,5 +195,8 @@
   "forumReported": "Gracias — el equipo lo revisará.",
   "forumEdited": "editado",
   "forumJustNow": "ahora",
-  "confirmTitle": "¿Deseas continuar?"
+  "confirmTitle": "¿Deseas continuar?",
+  "view": "Ver",
+  "receiptDraftTitle": "Boleto en progreso",
+  "receiptDraftHint": "Toca para verlo — sigue agregando para armar tu boleto"
 }

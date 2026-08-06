@@ -68,11 +68,15 @@ class ReceiptTemplate {
   }
 }
 
-/// One issued document: `receipt` UiHint payload or a wallet row.
+/// One document: a `receipt` UiHint payload or a wallet row. A `draft` receipt
+/// is a work-in-progress (a ticket being built play-by-play, §7.8): it renders
+/// as a live pinned preview that updates in place and is never collected into
+/// the wallet; the final (non-draft) receipt is the issued document.
 class ReceiptInstance {
   final String? receiptId;
   final String? templateId;
   final Map<String, dynamic> data;
+  final bool draft;
 
   /// Optional action buttons; each routes through /actions like a cart tap.
   final List<ReceiptAction> actions;
@@ -87,6 +91,7 @@ class ReceiptInstance {
     this.receiptId,
     this.templateId,
     this.data = const {},
+    this.draft = false,
     this.actions = const [],
     this.snapshot,
     this.createdAt,
@@ -97,6 +102,7 @@ class ReceiptInstance {
         receiptId: j['receiptId'] as String?,
         templateId: j['templateId'] as String?,
         data: j['data'] is Map ? Map<String, dynamic>.from(j['data'] as Map) : const {},
+        draft: (j['draft'] ?? false) as bool,
         actions: [
           for (final a in (j['actions'] as List? ?? const []))
             ReceiptAction.fromJson(Map<String, dynamic>.from(a as Map)),

@@ -86,6 +86,16 @@ class ChatReceiptServiceTest {
     }
 
     @Test
+    void draftReceiptsAreRenderedButNeverCollected() {
+        // A ticket in progress (§7.8): rendered live, never in the wallet.
+        TurnEvent draft = new TurnEvent.UiHint("receipt", Map.of(
+                "templateId", "rt_1", "draft", true,
+                "data", Map.of("serial", "DRAFT")));
+        svc.maybePersist(draft, tenant, "s1", "e_h", UUID.randomUUID());
+        verify(repo, never()).save(any());
+    }
+
+    @Test
     void hintWithoutDataIsIgnored() {
         svc.maybePersist(new TurnEvent.UiHint("receipt", Map.of("templateId", "rt_1")),
                 tenant, "s1", "e_h", UUID.randomUUID());

@@ -46,8 +46,12 @@ public class ChatReceiptService {
                              String handle, UUID accountId) {
         if (accountId == null) return;
         if (!(event instanceof TurnEvent.UiHint hint) || !"receipt".equals(hint.kind())) return;
+        // A draft is a ticket being built (chat-experience-design.md §7.8) —
+        // rendered live but never collected; only the issued document persists.
+        Map<String, Object> payload = hint.payload();
+        if (payload != null && Boolean.TRUE.equals(payload.get("draft"))) return;
         try {
-            persist(tenant, sessionId, handle, accountId, hint.payload());
+            persist(tenant, sessionId, handle, accountId, payload);
         } catch (Exception e) {
             log.warn("could not persist receipt for session {}: {}", sessionId, e.toString());
         }

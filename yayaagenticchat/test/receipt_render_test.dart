@@ -126,6 +126,22 @@ void main() {
     expect(bindReceiptText('{{a | exec}}', {'a': 'rm -rf'}), 'rm -rf');
   });
 
+  test('draft flag round-trips from the hint (default false)', () {
+    final finalReceipt = ReceiptInstance.fromHint({
+      'templateId': 'rt_1',
+      'data': {'serial': 'T-1'},
+    });
+    expect(finalReceipt.draft, isFalse);
+
+    final draft = ReceiptInstance.fromHint({
+      'templateId': 'rt_1',
+      'draft': true,
+      'data': {'serial': 'DRAFT'},
+    });
+    expect(draft.draft, isTrue);
+    expect(draft.data['serial'], 'DRAFT');
+  });
+
   test('unknown element types are skipped, not fatal', () {
     final t = ReceiptTemplate.fromJson({
       'id': 'x',

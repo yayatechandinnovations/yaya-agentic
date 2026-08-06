@@ -67,6 +67,11 @@ class ChatState {
   /// Receipt templates delivered at session start (chat-experience §7.3).
   final ReceiptsConfig? receipts;
 
+  /// A ticket/receipt being built play-by-play (§7.8): rendered as a live
+  /// pinned preview above the composer, replaced in place each turn, cleared
+  /// when the final receipt is issued. Never a message bubble, never persisted.
+  final ReceiptInstance? draftReceipt;
+
   /// One-shot side-effect trigger: a fresh checkout hand-off the UI layer must
   /// act on (open the hosted page / mount the PSP sheet / show the receipt),
   /// then clear. Kept off the message list so the effect fires exactly once.
@@ -92,6 +97,7 @@ class ChatState {
     this.cart,
     this.pendingConfirm,
     this.receipts,
+    this.draftReceipt,
     this.pendingCheckout,
     this.resumeAvailable = false,
     this.resumeSessionId,
@@ -126,6 +132,8 @@ class ChatState {
     Cart? cart,
     ConfirmPrompt? pendingConfirm,
     ReceiptsConfig? receipts,
+    ReceiptInstance? draftReceipt,
+    bool clearDraftReceipt = false,
     bool clearConfirm = false,
     CheckoutResult? pendingCheckout,
     bool clearCheckout = false,
@@ -146,6 +154,7 @@ class ChatState {
         cart: cart ?? this.cart,
         pendingConfirm: clearConfirm ? null : (pendingConfirm ?? this.pendingConfirm),
         receipts: receipts ?? this.receipts,
+        draftReceipt: clearDraftReceipt ? null : (draftReceipt ?? this.draftReceipt),
         pendingCheckout: clearCheckout ? null : (pendingCheckout ?? this.pendingCheckout),
         resumeAvailable: clearResume ? false : (resumeAvailable ?? this.resumeAvailable),
         resumeSessionId: clearResume ? null : (resumeSessionId ?? this.resumeSessionId),
@@ -638,10 +647,19 @@ class ChatController extends StateNotifier<ChatState> {
         // is looked up at render time from the session's `chat.receipts` trait
         // (hint's templateId, else the per-tool bindings fallback).
         final receipt = ReceiptInstance.fromHint(payload);
-        if (hasAssistantBubble) {
-          _replaceLast(state.messages.last.copyWith(receipt: receipt));
+        if (receipt.draft) {
+          // A ticket being built (§7.8): live pinned preview, updated in place —
+          // never a stack of stale bubbles, never a message.
+          state = state.copyWith(draftReceipt: receipt);
         } else {
-          _appendAssistant(ChatMessage(role: 'assistant', text: '', receipt: receipt));
+          // The issued document: the draft (if any) resolved into it; drop the
+          // pinned preview and drop it into the conversation.
+          state = state.copyWith(clearDraftReceipt: true);
+          if (hasAssistantBubble) {
+            _replaceLast(state.messages.last.copyWith(receipt: receipt));
+          } else {
+            _appendAssistant(ChatMessage(role: 'assistant', text: '', receipt: receipt));
+          }
         }
         break;
       default:

@@ -581,4 +581,14 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get confirmTitle => '¿Deseas continuar?';
+
+  @override
+  String get view => 'Ver';
+
+  @override
+  String get receiptDraftTitle => 'Boleto en progreso';
+
+  @override
+  String get receiptDraftHint =>
+      'Toca para verlo — sigue agregando para armar tu boleto';
 }

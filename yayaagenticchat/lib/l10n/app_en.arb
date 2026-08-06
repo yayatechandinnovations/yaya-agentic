@@ -197,5 +197,8 @@
   "forumReported": "Thanks — the team will review it.",
   "forumEdited": "edited",
   "forumJustNow": "now",
-  "confirmTitle": "Do you want to continue?"
+  "confirmTitle": "Do you want to continue?",
+  "view": "View",
+  "receiptDraftTitle": "Ticket in progress",
+  "receiptDraftHint": "Tap to see it — keep adding to build your ticket"
 }
