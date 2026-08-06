@@ -5,54 +5,64 @@ import 'package:flutter/material.dart';
 /// receipt shows — labels included — arrives in the hint's `data`, so the
 /// sample carries labels too. Covers both starter templates.
 const Map<String, dynamic> kReceiptSampleData = <String, dynamic>{
+  // Sale-receipt starter fields.
   'store': {
     'name': 'DEMO STORE #12',
     'legal': 'Demo Retail Group SRL',
   },
-  'statusStamp': 'REPRINT',
-  'issuedAt': '2026-08-06 14:32',
-  'serial': '000123456789',
-  'docTitle': 'SALE RECEIPT',
-  'drawLabel': 'Valid for',
-  'drawDate': 'Aug 06 · 8:55 PM',
   'lines': [
     {'label': 'Item alpha', 'qty': '2', 'amount': 150},
     {'label': 'Item beta', 'qty': '1', 'amount': 425.5},
     {'label': 'Item gamma', 'qty': '3', 'amount': 75},
   ],
+  'docTitle': 'SALE RECEIPT',
+  // Numbered-ticket starter fields (mirror the real counter ticket).
+  'org': {'name': 'SMART LOTTERY'},
+  'station': {'name': 'Sucursal Centro'},
+  'ticketRef': '100234-7788',
+  'statusStamp': 'REPRINT',
+  'issuedAt': '2026-08-06 14:32',
+  'serial': '000123456789',
   'sections': [
     {
       'title': 'EVENING DRAW',
-      'subtitle': 'Aug 06 · 8:55 PM',
+      'forDraws': 'For draws: 8:55 PM',
       'rows': [
-        {'label': '12-34', 'qty': '2', 'amount': 100},
-        {'label': '05-23', 'qty': '1', 'amount': 50},
+        {'play': 'P3-STR 123', 'amount': 10},
+        {'play': 'P3-COMB 123 - 6 x \$10', 'amount': 60},
       ],
     },
     {
       'title': 'NIGHT DRAW',
-      'subtitle': 'Aug 06 · 10:55 PM',
+      'forDraws': 'For draws: 10:55 PM',
       'rows': [
-        {'label': '44-08', 'qty': '4', 'amount': 200},
+        {'play': 'P4-BOX 4408', 'amount': 200},
       ],
     },
   ],
-  'picks': [
-    {'value': '05'},
-    {'value': '12'},
-    {'value': '23'},
-    {'value': '34'},
-    {'value': '44'},
-  ],
-  'totalLabel': 'TOTAL',
-  'totalAmount': 650.5,
-  'codeLabel': 'PAYMENT CODE',
-  'paymentCode': '482913650274',
-  'verifyUrl': 'https://example.com/v/000123456789',
-  'customerLabel': 'Customer',
-  'customer': {'phone': '18095551234'},
-  'disclaimer1': 'Keep this receipt to claim.',
-  'disclaimer2': 'Valid for 30 days from issue.',
+  'count': 3,
+  'total': 270,
+  'payment': {'points': 20, 'wallet': 50, 'cashDue': 200},
+  'paymentCode': '482913',
+  'verifyUrl': 'https://example.com/v/100234-7788',
+  'customer': {'name': 'Ana', 'phone': '18095551234'},
+  'ticketHash': 'a1b2c3d4e5f6',
+  'disclaimer': 'If this is not your number, return the ticket.',
+  'labels': {
+    'date': 'Date',
+    'ticket': 'Ticket',
+    'count': 'Count',
+    'total': 'TOTAL',
+    'points': 'Points',
+    'balance': 'Balance',
+    'cashDue': 'CASH TO PAY',
+    'paymentCode': 'PAYMENT CODE',
+    'customer': 'Customer',
+    'checkTicket': 'Please check your ticket.',
+    'thanks': 'Thank you!',
+    'printed': 'Printed',
+  },
+  'printedAt': '2026-08-06 14:32:07',
 };
 
 /// Lightweight console-side renderer for the §7.4 receipt vocabulary:
@@ -283,15 +293,21 @@ class ReceiptPreview extends StatelessWidget {
     );
   }
 
-  Widget _text(Map<String, dynamic> el, Map<String, dynamic> scope) {
+  Widget? _text(Map<String, dynamic> el, Map<String, dynamic> scope) {
+    final text = _bind(el['text'], scope);
+    if (text.isEmpty) return null; // unbound text prints nothing
     return Text(
-      _bind(el['text'], scope),
+      text,
       textAlign: _align(el['align'], fallback: TextAlign.left),
       style: _styled(el, base: const TextStyle(fontSize: 12)),
     );
   }
 
-  Widget _kv(Map<String, dynamic> el, Map<String, dynamic> scope) {
+  Widget? _kv(Map<String, dynamic> el, Map<String, dynamic> scope) {
+    final value = _bind(el['value'], scope);
+    // A key/value line whose value is unbound prints nothing — the label
+    // never leaks alone (matches the printer omitting the whole line).
+    if (value.isEmpty) return null;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,7 +315,7 @@ class ReceiptPreview extends StatelessWidget {
         Flexible(child: Text(_bind(el['label'], scope))),
         const SizedBox(width: 8),
         Flexible(
-            child: Text(_bind(el['value'], scope),
+            child: Text(value,
                 textAlign: TextAlign.right,
                 style: _styled(el, base: const TextStyle(fontSize: 12)))),
       ],
@@ -597,20 +613,31 @@ class ReceiptPreview extends StatelessWidget {
     return v?.toString() ?? '';
   }
 
+  // Mirrors the chat app + smartlotterysales formatTicketMoney: comma
+  // thousands, no decimals when whole, one decimal for x.x0, both otherwise.
+  // Symbol-less by design — "$"/"RD$" comes from data or a label.
   String _money(dynamic v) {
     final n = v is num ? v : num.tryParse(v.toString());
     if (n == null) return v.toString();
-    final fixed = n.toStringAsFixed(2);
-    final dot = fixed.indexOf('.');
-    final intPart = fixed.substring(0, dot);
+    final negative = n < 0;
+    final cents = (n.abs() * 100).round();
+    final whole = cents ~/ 100;
+    final frac = cents % 100;
+    final digits = whole.toString();
     final buf = StringBuffer();
-    final negative = intPart.startsWith('-');
-    final digits = negative ? intPart.substring(1) : intPart;
     for (var i = 0; i < digits.length; i++) {
       if (i > 0 && (digits.length - i) % 3 == 0) buf.write(',');
       buf.write(digits[i]);
     }
-    return '${negative ? '-' : ''}$buf${fixed.substring(dot)}';
+    final String fracStr;
+    if (frac == 0) {
+      fracStr = '';
+    } else if (frac % 10 == 0) {
+      fracStr = '.${frac ~/ 10}';
+    } else {
+      fracStr = '.${frac.toString().padLeft(2, '0')}';
+    }
+    return '${negative ? '-' : ''}$buf$fracStr';
   }
 
   String _maskTail(String s, int keep) {

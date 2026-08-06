@@ -495,42 +495,45 @@ const List<Map<String, dynamic>> _genericSaleStarter = [
   {'type': 'footer', 'lines': ['{{disclaimer1}}', '{{disclaimer2}}']},
 ];
 
+// Faithful replica of a real counter-printed ticket (the shipped thermal
+// `detailed` layout): header -> meta -> draw sections -> Count|Total ->
+// payment split -> grouped-by-two payment code -> customer -> QR -> hash ->
+// footer + disclaimer -> printed-at. Kept in sync with the backend seed
+// (ReceiptTemplateDefaults.numberedTicket) — every domain word is data.
 const List<Map<String, dynamic>> _numberedTicketStarter = [
-  {'type': 'header', 'logo': true, 'title': '{{store.name}}', 'subtitle': '{{store.legal}}'},
+  {'type': 'header', 'logo': true, 'title': '{{org.name}}', 'subtitle': '{{station.name}}'},
   {'type': 'status', 'text': '{{statusStamp}}'},
-  {'type': 'meta', 'left': '{{issuedAt}}', 'right': 'N° {{serial}}'},
+  {'type': 'kv', 'label': '{{labels.date}}', 'value': '{{issuedAt}}'},
+  {'type': 'kv', 'label': '{{labels.ticket}}', 'value': '{{ticketRef}}'},
   {'type': 'divider', 'style': 'dashed'},
-  {'type': 'title', 'text': '{{docTitle}}', 'align': 'center'},
-  {'type': 'kv', 'label': '{{drawLabel}}', 'value': '{{drawDate}}'},
   {
     'type': 'section',
     'repeat': 'sections',
     'title': '{{title}}',
-    'subtitle': '{{subtitle}}',
+    'subtitle': '{{forDraws}}',
     'elements': [
       {
         'type': 'table',
         'repeat': 'rows',
-        'span': 'full',
         'cols': [
-          {'bind': 'label', 'align': 'left'},
-          {'bind': 'qty', 'align': 'center'},
+          {'bind': 'play', 'align': 'left'},
           {'bind': 'amount', 'align': 'right', 'format': 'money'},
         ],
       },
     ],
   },
   {'type': 'divider', 'style': 'dashed'},
-  {'type': 'cells', 'repeat': 'picks', 'bind': 'value', 'emphasis': true},
-  {'type': 'total', 'label': '{{totalLabel}}', 'value': '{{totalAmount | money}}'},
-  {'type': 'code', 'label': '{{codeLabel}}', 'value': '{{paymentCode | group:3}}'},
+  {'type': 'meta', 'left': '{{labels.count}}: {{count}}', 'right': '{{labels.total}}: {{total | money}}'},
+  {'type': 'kv', 'label': '{{labels.points}}', 'value': '{{payment.points | money}}'},
+  {'type': 'kv', 'label': '{{labels.balance}}', 'value': '{{payment.wallet | money}}'},
+  {'type': 'kv', 'label': '{{labels.cashDue}}', 'value': '{{payment.cashDue | money}}'},
+  {'type': 'code', 'label': '{{labels.paymentCode}}', 'value': '{{paymentCode | group:2}}'},
+  {'type': 'kv', 'label': '{{labels.customer}}', 'value': '{{customer.name}} {{customer.phone | maskTail:4}}'},
   {'type': 'qr', 'value': '{{verifyUrl}}'},
+  {'type': 'text', 'text': '{{ticketHash}}', 'align': 'center'},
   {
     'type': 'footer',
-    'lines': [
-      '{{customerLabel}} {{customer.phone | maskTail:4}}',
-      '{{disclaimer1}}',
-      '{{disclaimer2}}',
-    ],
+    'lines': ['{{disclaimer}}', '{{labels.checkTicket}}', '{{labels.thanks}}'],
   },
+  {'type': 'text', 'text': '{{labels.printed}}: {{printedAt}}', 'align': 'center'},
 ];

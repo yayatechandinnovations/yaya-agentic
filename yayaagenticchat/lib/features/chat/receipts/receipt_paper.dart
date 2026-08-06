@@ -121,8 +121,14 @@ class ReceiptPaper extends StatelessWidget {
           ),
         ];
       case 'text':
-        return [Text(bindReceiptText(el['text'] as String?, scope))];
+        final text = bindReceiptText(el['text'] as String?, scope);
+        // Unbound text (a hash on a plain sale, an optional note) prints nothing.
+        return text.isEmpty ? const [] : [Text(text)];
       case 'kv':
+        final value = bindReceiptText(el['value'] as String?, scope);
+        // A key/value line whose value is unbound prints nothing — the label
+        // never leaks on its own (matches the printer omitting the whole line).
+        if (value.isEmpty) return const [];
         return [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -130,7 +136,7 @@ class ReceiptPaper extends StatelessWidget {
               Text(bindReceiptText(el['label'] as String?, scope),
                   style: const TextStyle(color: _faded)),
               Flexible(
-                  child: Text(bindReceiptText(el['value'] as String?, scope),
+                  child: Text(value,
                       textAlign: TextAlign.right,
                       style: const TextStyle(fontWeight: FontWeight.w600))),
             ],
@@ -294,12 +300,11 @@ class ReceiptPaper extends StatelessWidget {
 
   static String _cellText(Map<String, dynamic> col, Map<String, dynamic> row) {
     final bind = col['bind'];
-    final raw = bind == null ? '' : (row[bind] ?? '').toString();
-    if (col['format'] == 'money') {
-      final n = num.tryParse(raw);
-      if (n != null) return n.toStringAsFixed(2);
-    }
-    return raw;
+    if (bind == null) return '';
+    final value = row[bind];
+    // Reuse the shared formatter so a table 'money' column trims trailing
+    // zeros identically to a {{x | money}} binding (matches formatTicketMoney).
+    return applyReceiptFormat(value, col['format'] as String?);
   }
 }
 

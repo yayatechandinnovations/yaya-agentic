@@ -3,106 +3,141 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yayaagenticchat/features/chat/receipts/receipt_paper.dart';
 import 'package:yayaagenticchat/models/receipts.dart';
 
-/// CX-3 exit criterion (chat-experience-design.md §11): a template built from
-/// the generic vocabulary reproduces the classic numbered-ticket anatomy —
-/// header, meta, draw sections with play rows, boxed picks, total, emphasized
-/// payment code, QR — from pure sample DATA. No domain word exists in the
-/// template schema itself.
+/// CX-3 exit criterion (chat-experience-design.md §11): the seeded "Numbered
+/// ticket" template reproduces the real smartlotterysales printed ticket
+/// (its `detailed` layout) field-for-field. The template mirrors
+/// ReceiptTemplateDefaults.numberedTicket(); the sample data mirrors
+/// smartlotterysales' own detailed_layout_render_test fixture (ticket
+/// 100234-7788, SMART LOTTERY, a straight P3-STR and a P3-COMB expansion,
+/// total 80), and the assertions are the strings the real ESC/POS encoder
+/// prints. No domain word lives in the schema — only in data.
 void main() {
-  final classicTicket = ReceiptTemplate.fromJson({
-    'id': 'rt_classic',
+  // Element-for-element replica of ReceiptTemplateDefaults.numberedTicket().
+  final numberedTicket = ReceiptTemplate.fromJson({
+    'id': 'rt_numbered',
     'name': 'Numbered ticket',
     'paper': {'cols': 32, 'profile': '58mm'},
     'elements': [
       {'type': 'header', 'title': '{{org.name}}', 'subtitle': '{{station.name}}'},
       {'type': 'status', 'text': '{{statusStamp}}'},
-      {'type': 'meta', 'left': '{{issuedAt}}', 'right': 'N° {{serial}}'},
+      {'type': 'kv', 'label': '{{labels.date}}', 'value': '{{issuedAt}}'},
+      {'type': 'kv', 'label': '{{labels.ticket}}', 'value': '{{ticketRef}}'},
       {'type': 'divider'},
       {
         'type': 'section',
         'repeat': 'sections',
         'title': '{{title}}',
-        'subtitle': '{{subtitle}}',
+        'subtitle': '{{forDraws}}',
         'elements': [
           {
             'type': 'table',
             'repeat': 'rows',
             'cols': [
-              {'bind': 'numbers', 'align': 'left'},
-              {'bind': 'game', 'align': 'center'},
+              {'bind': 'play', 'align': 'left'},
               {'bind': 'amount', 'align': 'right', 'format': 'money'},
             ],
           },
         ],
       },
-      {'type': 'cells', 'repeat': 'picks', 'bind': 'value'},
-      {'type': 'total', 'label': '{{labels.total}}', 'value': '{{total | money}}'},
-      {'type': 'code', 'label': '{{labels.paymentCode}}', 'value': '{{paymentCode | group:3}}'},
-      {'type': 'kv', 'label': '{{labels.phone}}', 'value': '{{customer.phone | maskTail:4}}'},
+      {'type': 'divider'},
+      {
+        'type': 'meta',
+        'left': '{{labels.count}}: {{count}}',
+        'right': '{{labels.total}}: {{total | money}}',
+      },
+      {'type': 'kv', 'label': '{{labels.cashDue}}', 'value': '{{payment.cashDue | money}}'},
+      {'type': 'code', 'label': '{{labels.paymentCode}}', 'value': '{{paymentCode | group:2}}'},
       {'type': 'qr', 'value': '{{verifyUrl}}'},
-      {'type': 'footer', 'lines': ['{{labels.checkTicket}}', '{{labels.thanks}}']},
+      {'type': 'text', 'text': '{{ticketHash}}', 'align': 'center'},
+      {'type': 'footer', 'lines': ['{{disclaimer}}', '{{labels.checkTicket}}', '{{labels.thanks}}']},
+      {'type': 'text', 'text': '{{labels.printed}}: {{printedAt}}', 'align': 'center'},
     ],
   });
 
-  final sampleData = <String, dynamic>{
-    'org': {'name': 'BANCA EL SOL'},
+  // Mirrors smartlotterysales/test/.../detailed_layout_render_test.dart, with
+  // the play descriptions the `detailed` layout composes (combo expansion).
+  final ticketData = <String, dynamic>{
+    'org': {'name': 'SMART LOTTERY'},
     'station': {'name': 'Sucursal Centro'},
-    'issuedAt': '2026-08-06 14:22',
-    'serial': 'T-000123',
+    'issuedAt': '07/13/2026 02:24',
+    'ticketRef': '100234-7788',
     'sections': [
       {
-        'title': 'SORTEO NOCHE',
-        'subtitle': 'Válido para: 06/08 21:00',
+        'title': 'SMART LOTTERY',
+        'forDraws': 'For draws: 10:00 AM',
         'rows': [
-          {'numbers': '23-45', 'game': 'PALE', 'amount': '50'},
-          {'numbers': '07', 'game': 'QUINIELA', 'amount': '100'},
+          {'play': 'P3-STR 123', 'amount': 10},
+          {'play': 'P3-COMB 123 - 6 x \$10', 'amount': 60},
+          {'play': 'P3-BOX 123', 'amount': 10},
         ],
       },
     ],
-    'picks': [
-      {'value': '23'},
-      {'value': '45'},
-      {'value': '07'},
-    ],
-    'total': '150',
+    'count': 3,
+    'total': 80,
     'paymentCode': '482913',
-    'customer': {'phone': '+18095551234'},
-    'verifyUrl': 'https://x/verify/T-000123',
+    'verifyUrl': 'https://x/verify/100234-7788',
     'labels': {
+      'date': 'Date',
+      'ticket': 'Ticket',
+      'count': 'Count',
       'total': 'Total',
-      'paymentCode': 'Código de pago',
-      'phone': 'WhatsApp',
-      'checkTicket': 'Verifique su ticket.',
-      'thanks': '¡Gracias!',
+      'cashDue': 'Cash to pay',
+      'paymentCode': 'Payment code',
+      'printed': 'Printed',
+      'checkTicket': 'Please check your ticket.',
+      'thanks': 'Thank you!',
     },
   };
 
-  testWidgets('classic ticket renders faithfully from sample data', (tester) async {
+  testWidgets('numbered ticket replicates the real smartlotterysales ticket',
+      (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
-          child: ReceiptPaper(template: classicTicket, data: sampleData),
+          child: ReceiptPaper(template: numberedTicket, data: ticketData),
         ),
       ),
     ));
 
-    expect(find.text('BANCA EL SOL'), findsOneWidget);
-    expect(find.text('SORTEO NOCHE'), findsOneWidget);
-    expect(find.text('Válido para: 06/08 21:00'), findsOneWidget);
-    expect(find.text('23-45'), findsOneWidget);
-    expect(find.text('QUINIELA'), findsOneWidget);
-    expect(find.textContaining('N° T-000123'), findsOneWidget);
-    // Formatters: money, grouped payment code, masked phone tail.
-    expect(find.text('150.00'), findsOneWidget);
-    expect(find.text('482 913'), findsOneWidget);
-    expect(find.text('*** *** 1234'), findsOneWidget);
-    // Boxed picks grid.
-    expect(find.text('23'), findsOneWidget);
-    expect(find.text('45'), findsOneWidget);
-    // Footer courtesy lines.
-    expect(find.text('¡Gracias!'), findsOneWidget);
-    // The unbound status stamp renders nothing (a sale, not a reprint).
+    // Header + meta.
+    expect(find.text('SMART LOTTERY'), findsWidgets); // org + section title
+    expect(find.text('100234-7788'), findsOneWidget); // ticketNumber-reference
+    expect(find.text('For draws: 10:00 AM'), findsOneWidget);
+    // Play rows incl. the detailed combo expansion.
+    expect(find.text('P3-COMB 123 - 6 x \$10'), findsOneWidget);
+    // Count | Total line, money TRIMMED like the real formatter ($80, not $80.00).
+    expect(find.text('Count: 3'), findsOneWidget);
+    expect(find.text('Total: 80'), findsOneWidget);
+    // Play amounts trimmed too.
+    expect(find.text('60'), findsWidgets);
+    // Payment code grouped by TWO (real: "48 29 13", not "482 913").
+    expect(find.text('48 29 13'), findsOneWidget);
+    // Unbound fields (status, cash-due, hash) print nothing on a plain sale.
     expect(find.textContaining('REPRINT'), findsNothing);
+    expect(find.textContaining('Cash to pay'), findsNothing);
+  });
+
+  testWidgets('money formatter trims trailing zeros like formatTicketMoney',
+      (tester) async {
+    final tpl = ReceiptTemplate.fromJson({
+      'id': 't', 'name': 't', 'paper': {'cols': 32, 'profile': '58mm'},
+      'elements': [
+        {'type': 'kv', 'label': 'a', 'value': '{{a | money}}'},
+        {'type': 'kv', 'label': 'b', 'value': '{{b | money}}'},
+        {'type': 'kv', 'label': 'c', 'value': '{{c | money}}'},
+        {'type': 'kv', 'label': 'd', 'value': '{{d | money}}'},
+      ],
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+          body: ReceiptPaper(
+              template: tpl,
+              data: {'a': 1000, 'b': 1.5, 'c': 1.75, 'd': 1250.5})),
+    ));
+    expect(find.text('1,000'), findsOneWidget); // whole -> comma thousands, no decimals
+    expect(find.text('1.5'), findsOneWidget); // x.x0 -> one decimal
+    expect(find.text('1.75'), findsOneWidget); // else two
+    expect(find.text('1,250.5'), findsOneWidget);
   });
 
   testWidgets('status stamp appears on a re-issued copy', (tester) async {
@@ -110,8 +145,8 @@ void main() {
       home: Scaffold(
         body: SingleChildScrollView(
           child: ReceiptPaper(
-              template: classicTicket,
-              data: {...sampleData, 'statusStamp': 'Reimpresión'}),
+              template: numberedTicket,
+              data: {...ticketData, 'statusStamp': 'Reimpresión'}),
         ),
       ),
     ));

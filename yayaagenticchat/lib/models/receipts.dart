@@ -144,7 +144,7 @@ String bindReceiptText(String? template, Map<String, dynamic> data) {
   final pattern = RegExp(r'\{\{\s*([^}|]+?)\s*(?:\|\s*([^}]+?)\s*)?\}\}');
   return template.replaceAllMapped(pattern, (m) {
     final value = _lookup(data, m.group(1)!.trim());
-    final formatted = _format(value, m.group(2)?.trim());
+    final formatted = applyReceiptFormat(value, m.group(2)?.trim());
     return formatted;
   });
 }
@@ -187,7 +187,9 @@ List<String> bindReceiptScalars(String? repeatPath, String? bind, Map<String, dy
   ];
 }
 
-String _format(Object? value, String? formatter) {
+/// Apply a lookup-only receipt formatter (`money`, `maskTail:n`, `group:n`,
+/// `chunk:n`) to a value. Shared by `{{x | fmt}}` bindings and table columns.
+String applyReceiptFormat(Object? value, String? formatter) {
   if (value == null) return '';
   final s = value.toString();
   if (formatter == null || formatter.isEmpty) return s;
@@ -196,8 +198,12 @@ String _format(Object? value, String? formatter) {
   final arg = parts.length > 1 ? int.tryParse(parts[1].trim()) : null;
   switch (name) {
     case 'money':
+      // Mirrors smartlotterysales' formatTicketMoney: comma thousands, no
+      // decimals when whole (1000 -> "1,000"), one decimal for x.x0
+      // (1.50 -> "1.5"), both otherwise (1.75 -> "1.75"). Symbol-less by
+      // design — "$"/"RD$" is domain vocabulary carried by data or a label.
       final n = value is num ? value : num.tryParse(s);
-      return n == null ? s : n.toStringAsFixed(2);
+      return n == null ? s : _money(n);
     case 'maskTail':
       final keep = arg ?? 4;
       final digits = s.replaceAll(RegExp(r'[^0-9]'), '');
@@ -224,4 +230,22 @@ String _format(Object? value, String? formatter) {
     default:
       return s;
   }
+}
+
+String _money(num value) {
+  final negative = value < 0;
+  final cents = (value.abs() * 100).round();
+  final whole = cents ~/ 100;
+  final frac = cents % 100;
+  final wholeStr = whole.toString().replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
+  final String fracStr;
+  if (frac == 0) {
+    fracStr = '';
+  } else if (frac % 10 == 0) {
+    fracStr = '.${frac ~/ 10}';
+  } else {
+    fracStr = '.${frac.toString().padLeft(2, '0')}';
+  }
+  return '${negative ? '-' : ''}$wholeStr$fracStr';
 }
