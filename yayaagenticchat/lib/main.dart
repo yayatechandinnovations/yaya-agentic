@@ -15,8 +15,15 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   // Secrets live in secure storage (chat-experience-design.md §5.5); load once
   // before the first frame so the lock/onboarding decision is synchronous.
+  // Nothing at startup may white-screen the app: the store itself degrades to
+  // prefs, and this belt-and-braces catch covers anything unforeseen.
   final credentialStore = CredentialStore();
-  final credentials = await credentialStore.load(prefs);
+  Credentials credentials;
+  try {
+    credentials = await credentialStore.load(prefs);
+  } catch (_) {
+    credentials = Credentials.empty;
+  }
   runApp(
     ProviderScope(
       overrides: [

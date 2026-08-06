@@ -16,38 +16,86 @@ class Credentials {
   static const empty = Credentials();
 }
 
+/// Wraps secure storage with a SharedPreferences fallback: if the platform
+/// channel is unavailable (e.g. a web build whose plugin registrant went
+/// stale, or an exotic embedder), the app must DEGRADE — the design already
+/// accepts prefs-grade storage on web because the pass TTL is short and the
+/// PIN is server-verified — never white-screen at startup.
 class CredentialStore {
   static const _passKey = 'yaya.chat.devicePass';
   static const _secretKey = 'yaya.chat.deviceSecret';
 
   final FlutterSecureStorage _storage;
+  SharedPreferences? _prefs;
+  bool _secureAvailable = true;
+
   CredentialStore([FlutterSecureStorage? storage])
       : _storage = storage ?? const FlutterSecureStorage();
 
   /// Load both credentials, migrating a pre-CX pass out of SharedPreferences
-  /// on first run (the old plaintext copy is removed once secured).
+  /// on first run. The plaintext prefs copy is removed only once the value
+  /// provably lives in working secure storage — a failed migration must never
+  /// sign the user out.
   Future<Credentials> load(SharedPreferences prefs) async {
-    var pass = await _storage.read(key: _passKey);
-    final legacy = prefs.getString(_passKey);
-    if ((pass == null || pass.isEmpty) && legacy != null && legacy.isNotEmpty) {
-      await _storage.write(key: _passKey, value: legacy);
-      pass = legacy;
+    _prefs = prefs;
+    String? pass;
+    String? secret;
+    try {
+      pass = await _storage.read(key: _passKey);
+      final legacy = prefs.getString(_passKey);
+      if ((pass == null || pass.isEmpty) && legacy != null && legacy.isNotEmpty) {
+        await _storage.write(key: _passKey, value: legacy);
+        pass = legacy;
+      }
+      if (legacy != null) await prefs.remove(_passKey);
+      secret = await _storage.read(key: _secretKey);
+    } catch (_) {
+      // Secure storage is unusable here — run on prefs for this install.
+      _secureAvailable = false;
+      pass = prefs.getString(_passKey);
+      secret = prefs.getString(_secretKey);
     }
-    if (legacy != null) await prefs.remove(_passKey);
-    final secret = await _storage.read(key: _secretKey);
     return Credentials(devicePass: pass, deviceSecret: secret);
   }
 
-  Future<void> savePass(String pass) => _storage.write(key: _passKey, value: pass);
+  Future<void> savePass(String pass) =>
+      _write(_passKey, pass);
 
-  Future<void> saveSecret(String secret) => _storage.write(key: _secretKey, value: secret);
+  Future<void> saveSecret(String secret) =>
+      _write(_secretKey, secret);
 
   Future<void> clear() async {
-    await _storage.delete(key: _passKey);
-    await _storage.delete(key: _secretKey);
+    await _delete(_passKey);
+    await _delete(_secretKey);
   }
 
-  Future<void> clearPassOnly() => _storage.delete(key: _passKey);
+  Future<void> clearPassOnly() => _delete(_passKey);
+
+  Future<void> _write(String key, String value) async {
+    if (_secureAvailable) {
+      try {
+        await _storage.write(key: key, value: value);
+        return;
+      } catch (_) {
+        _secureAvailable = false;
+      }
+    }
+    await _prefs?.setString(key, value);
+  }
+
+  Future<void> _delete(String key) async {
+    if (_secureAvailable) {
+      try {
+        await _storage.delete(key: key);
+        // Also drop any prefs copy a fallback period may have left behind.
+        await _prefs?.remove(key);
+        return;
+      } catch (_) {
+        _secureAvailable = false;
+      }
+    }
+    await _prefs?.remove(key);
+  }
 }
 
 /// Is this JWT expired (or malformed)? Client-side convenience only — the
