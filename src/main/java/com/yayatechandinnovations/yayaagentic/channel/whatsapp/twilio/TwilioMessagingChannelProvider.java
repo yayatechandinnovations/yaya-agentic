@@ -97,9 +97,18 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sender_id", "whatsapp:" + req.phoneE164());
-        body.put("configuration", Map.of(
-                "profile", profileFromPayload(req)
-        ));
+        Map<String, Object> configuration = new LinkedHashMap<>();
+        // Tech Provider / Embedded Signup path: the WABA captured by Meta's
+        // popup links the sender to the customer's WhatsApp Business Account.
+        // Ownership was already verified inside Embedded Signup, so no
+        // verification method/code is submitted here. Legacy (no WABA)
+        // registrations keep the self-hosted-profile shape unchanged.
+        Object wabaId = req.providerPayload().get("wabaId");
+        if (wabaId instanceof String w && !w.isBlank()) {
+            configuration.put("waba_id", w);
+        }
+        configuration.put("profile", profileFromPayload(req));
+        body.put("configuration", configuration);
         body.put("webhook", Map.of(
                 "callback_url", req.webhookUrl(),
                 "callback_method", "POST",
@@ -192,7 +201,12 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
     @Override
     public InboundValidation validateInbound(RawInboundRequest req,
                                              SenderTrustMaterial trust) {
-        if (props.authToken() == null || props.authToken().isBlank()) {
+        // Subaccount-owned senders are signed with their subaccount's auth
+        // token; platform-singleton senders with the platform token.
+        String signingToken = trust.signingAuthToken() != null && !trust.signingAuthToken().isBlank()
+                ? trust.signingAuthToken()
+                : props.authToken();
+        if (signingToken == null || signingToken.isBlank()) {
             return new InboundValidation.Invalid(
                     "auth_token_unset",
                     "yaya.agentic.channels.twilio.auth-token is unset — Twilio webhooks cannot be verified");
@@ -216,7 +230,7 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
                     "yaya.agentic.channels.twilio.webhook-base-url is unset — cannot reconstruct canonical URL");
         }
         boolean ok = TwilioSignatureVerifier.verify(
-                url, req.formParams(), props.authToken(), presentedSig);
+                url, req.formParams(), signingToken, presentedSig);
         if (!ok) {
             return new InboundValidation.Invalid(
                     "signature_mismatch",
@@ -353,8 +367,7 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
                                        org.springframework.util.LinkedMultiValueMap<String, String> form) {
         String url = props.effectiveApiBaseUrl()
                 + "/2010-04-01/Accounts/" + tc.accountSid() + "/Messages.json";
-        String basicAuth = "Basic " + Base64.getEncoder().encodeToString(
-                (tc.apiKeySid() + ":" + tc.apiKeySecret()).getBytes(StandardCharsets.UTF_8));
+        String basicAuth = tc.basicAuthHeader();
         try {
             JsonNode resp = webClientBuilder.clone().build().post()
                     .uri(url)
@@ -469,8 +482,7 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
             throw new IllegalArgumentException(
                     "expected TwilioCreds but got " + creds.getClass().getSimpleName());
         }
-        String basicAuth = "Basic " + Base64.getEncoder().encodeToString(
-                (tc.apiKeySid() + ":" + tc.apiKeySecret()).getBytes(StandardCharsets.UTF_8));
+        String basicAuth = tc.basicAuthHeader();
         return webClientBuilder
                 .clone()
                 .defaultHeader(HttpHeaders.AUTHORIZATION, basicAuth)

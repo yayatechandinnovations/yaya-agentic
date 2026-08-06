@@ -14,6 +14,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.InboundDispatchWo
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.WhatsAppMessagingAccountService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
@@ -57,6 +58,7 @@ public class WhatsAppTwilioWebhookController {
     private static final Logger log = LoggerFactory.getLogger(WhatsAppTwilioWebhookController.class);
 
     private final WhatsAppSenderService senders;
+    private final WhatsAppMessagingAccountService messagingAccounts;
     private final TwilioMessagingChannelProvider provider;
     private final InboundMessageRepository inbound;
     private final OutboundMessageRepository outbound;
@@ -67,6 +69,7 @@ public class WhatsAppTwilioWebhookController {
     private final ObjectMapper json;
 
     public WhatsAppTwilioWebhookController(WhatsAppSenderService senders,
+                                           WhatsAppMessagingAccountService messagingAccounts,
                                            TwilioMessagingChannelProvider provider,
                                            InboundMessageRepository inbound,
                                            OutboundMessageRepository outbound,
@@ -76,6 +79,7 @@ public class WhatsAppTwilioWebhookController {
                                            ChannelTracing tracing,
                                            ObjectMapper json) {
         this.senders = senders;
+        this.messagingAccounts = messagingAccounts;
         this.provider = provider;
         this.inbound = inbound;
         this.outbound = outbound;
@@ -133,12 +137,15 @@ public class WhatsAppTwilioWebhookController {
         }
 
         RawInboundRequest req = buildRawRequest(exchange, form);
-        SenderTrustMaterial trust = new SenderTrustMaterial(
-                new SenderRef(ProviderId.TWILIO,
-                        sender.onboarding().twilioSenderSid() == null
-                                ? sender.id().value()
-                                : sender.onboarding().twilioSenderSid()),
-                sender.webhookSecret() == null ? "unused" : sender.webhookSecret());
+        SenderTrustMaterial trust = trustFor(sender);
+        if (trust == null) {
+            // The sender's subaccount signing token couldn't be resolved —
+            // fail closed rather than falling back to the platform token.
+            metrics.signatureFailure(sender.tenant().value(), sender.id().value());
+            metrics.inbound(sender.tenant().value(), sender.id().value(),
+                    "whatsapp", "signature_rejected");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         InboundValidation validation = provider.validateInbound(req, trust);
         if (validation instanceof InboundValidation.Invalid bad) {
@@ -213,12 +220,10 @@ public class WhatsAppTwilioWebhookController {
             return ResponseEntity.notFound().build();
         }
         RawInboundRequest req = buildRawRequest(exchange, form);
-        SenderTrustMaterial trust = new SenderTrustMaterial(
-                new SenderRef(ProviderId.TWILIO,
-                        sender.onboarding().twilioSenderSid() == null
-                                ? sender.id().value()
-                                : sender.onboarding().twilioSenderSid()),
-                sender.webhookSecret() == null ? "unused" : sender.webhookSecret());
+        SenderTrustMaterial trust = trustFor(sender);
+        if (trust == null) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         InboundValidation validation = provider.validateInbound(req, trust);
         if (validation instanceof InboundValidation.Invalid bad) {
             log.warn("WhatsApp status-callback signature rejection sender={} code={} ({})",
@@ -264,6 +269,34 @@ public class WhatsAppTwilioWebhookController {
     }
 
     /* ---------------------------- helpers --------------------------------- */
+
+    /**
+     * Trust material for the sender's signing account. Subaccount-owned
+     * senders (Embedded Signup) verify with their subaccount auth token;
+     * legacy senders fall back to the platform token inside
+     * {@code validateInbound}. Returns null (→ 403, fail closed) when the
+     * subaccount token exists but cannot be unwrapped.
+     */
+    private SenderTrustMaterial trustFor(WhatsAppSender sender) {
+        String signingToken = null;
+        if (sender.messagingAccountId() != null) {
+            try {
+                signingToken = messagingAccounts.decryptAuthToken(sender.messagingAccountId());
+            } catch (RuntimeException e) {
+                log.warn("[SECURITY-ADJACENT] could not resolve subaccount signing token "
+                        + "for sender {} (account {}): {}",
+                        sender.id().value(), sender.messagingAccountId(), e.getMessage());
+                return null;
+            }
+        }
+        return new SenderTrustMaterial(
+                new SenderRef(ProviderId.TWILIO,
+                        sender.onboarding().twilioSenderSid() == null
+                                ? sender.id().value()
+                                : sender.onboarding().twilioSenderSid()),
+                sender.webhookSecret() == null ? "unused" : sender.webhookSecret(),
+                signingToken);
+    }
 
     private Ids.TenantId tenantOf(String senderIdSegment) {
         // Look up via the WhatsApp sender service — it scopes by tenant

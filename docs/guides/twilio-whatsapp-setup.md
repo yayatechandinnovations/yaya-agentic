@@ -311,27 +311,22 @@ processing inbound:
 
 ---
 
-## 6. BYO Twilio for a tenant (the §7.3 escape hatch)
+## 6. Per-tenant subaccounts (the §7.3 seam — now shipped)
 
-The platform-singleton design has one escape hatch: a future
-`HybridTwilioCredsResolver` that prefers per-tenant credentials when
-present and falls back to the platform-singleton otherwise. v1 does NOT
-ship this resolver — re-read `docs/design/whatsapp-channel-design.md`
-§7.3 before enabling it. The seam is:
+The §7.3 escape hatch has landed as the **Meta Embedded Signup +
+Tech Provider** path: each customer business/WABA gets a dedicated Twilio
+subaccount under this parent account, provisioned automatically when a
+tenant connects their own WhatsApp number through the admin console's
+"Connect WhatsApp" wizard. The resolver swap the design reserved is
+`TenantSubaccountTwilioCredsResolver` (`@Primary`): subaccount-owned
+senders use their subaccount's credentials, legacy senders keep resolving
+the platform singleton configured above.
 
-1. New table `tenant_twilio_credentials` (mirror of `tenant_jwt_secrets`
-   schema; per-tenant `AC…` + `SK…` + secret encrypted via
-   `JwtSecretCipher` or its sibling).
-2. New `HybridTwilioCredsResolver` extends/replaces
-   `PlatformSingletonTwilioCredsResolver` and consults the table first.
-3. New admin endpoint `/v1/admin/tenants/{id}/twilio-credentials` (CRUD
-   on the table; mirrors the JWT-secret CRUD pattern exactly).
-4. Flutter wizard adds a feature-flagged "Bring your own Twilio account"
-   step in the WhatsApp sender wizard.
-
-This is intentionally not implemented in v1 — until a paying tenant
-asks for it, the simpler platform-singleton is the right product
-decision.
+Setup, configuration (`WHATSAPP_ONBOARDING_ENABLED`, `META_APP_ID`, …),
+data model, and troubleshooting live in
+**`docs/guides/whatsapp-embedded-signup-setup.md`**. Tenants still never
+see, hold, or configure Twilio credentials — a true BYO-Twilio-account
+model (tenant-owned account + billing) remains unimplemented.
 
 ---
 

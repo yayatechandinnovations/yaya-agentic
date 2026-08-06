@@ -30,6 +30,14 @@ import java.util.Map;
  * @param metadata              operator-set tags + per-sender feature
  *                              flags (e.g. {@code transcribeInboundAudio};
  *                              see §9.5 privacy note)
+ * @param wabaId                Meta WhatsApp Business Account id captured by
+ *                              Embedded Signup; null for legacy
+ *                              platform-singleton senders
+ * @param metaPhoneNumberId     Meta phone-number id from Embedded Signup,
+ *                              when Meta returned one
+ * @param messagingAccountId    the tenant's WhatsApp messaging account (=
+ *                              dedicated Twilio subaccount) this sender is
+ *                              registered under; null → platform credential
  */
 public record WhatsAppSender(
         SenderId           id,
@@ -46,7 +54,10 @@ public record WhatsAppSender(
         Instant            createdAt,
         Instant            updatedAt,
         Instant            lastSyncAt,
-        String             startFlowId
+        String             startFlowId,
+        String             wabaId,
+        String             metaPhoneNumberId,
+        String             messagingAccountId
 ) {
 
     public WhatsAppSender {
@@ -79,7 +90,19 @@ public record WhatsAppSender(
                           OnboardingState onboarding, String webhookSecret, String defaultLocale,
                           Map<String, Object> metadata, Instant createdAt, Instant updatedAt, Instant lastSyncAt) {
         this(id, tenant, phoneE164, displayName, approvedDisplayName, business, status, onboarding,
-                webhookSecret, defaultLocale, metadata, createdAt, updatedAt, lastSyncAt, null);
+                webhookSecret, defaultLocale, metadata, createdAt, updatedAt, lastSyncAt, null,
+                null, null, null);
+    }
+
+    /** Back-compat: a sender with no embedded-signup provenance. */
+    public WhatsAppSender(SenderId id, Ids.TenantId tenant, String phoneE164, String displayName,
+                          String approvedDisplayName, BusinessProfile business, SenderStatus status,
+                          OnboardingState onboarding, String webhookSecret, String defaultLocale,
+                          Map<String, Object> metadata, Instant createdAt, Instant updatedAt,
+                          Instant lastSyncAt, String startFlowId) {
+        this(id, tenant, phoneE164, displayName, approvedDisplayName, business, status, onboarding,
+                webhookSecret, defaultLocale, metadata, createdAt, updatedAt, lastSyncAt, startFlowId,
+                null, null, null);
     }
 
     /** Convenience: whether an operator can edit this sender's mutable fields. */

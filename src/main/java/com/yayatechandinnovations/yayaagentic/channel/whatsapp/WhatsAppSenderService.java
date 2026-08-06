@@ -161,6 +161,53 @@ public class WhatsAppSenderService {
         }
     }
 
+    /**
+     * Create a DRAFT carrying Embedded Signup provenance (WABA, Meta phone
+     * number id, owning messaging account). The registration payload then
+     * includes {@code waba_id} and the creds resolver speaks with the
+     * messaging account's dedicated subaccount.
+     */
+    @Transactional
+    public WhatsAppSender createEmbeddedDraft(Ids.TenantId tenant,
+                                              String phoneE164,
+                                              String displayName,
+                                              BusinessProfile business,
+                                              Optional<String> defaultLocale,
+                                              String wabaId,
+                                              String metaPhoneNumberId,
+                                              String messagingAccountId) {
+        WhatsAppSender created = createDraft(tenant, phoneE164, displayName, business,
+                defaultLocale, Optional.empty());
+        return linkEmbeddedSignup(tenant, created.id(), wabaId, metaPhoneNumberId, messagingAccountId);
+    }
+
+    /** Stamp Embedded Signup provenance on an existing editable sender (a
+     *  retried onboarding reuses the earlier DRAFT/FAILED row). */
+    @Transactional
+    public WhatsAppSender linkEmbeddedSignup(Ids.TenantId tenant, SenderId id,
+                                             String wabaId, String metaPhoneNumberId,
+                                             String messagingAccountId) {
+        WhatsAppSenderEntity entity = loadEntity(tenant, id);
+        entity.setWabaId(wabaId);
+        entity.setMetaPhoneNumberId(metaPhoneNumberId);
+        entity.setMessagingAccountId(messagingAccountId);
+        entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return toDomain(repo.save(entity));
+    }
+
+    /** Tenant-scoped lookup by phone — backs the embedded-signup idempotent
+     *  reuse of an existing draft for the same number. */
+    public Optional<WhatsAppSender> findByPhoneInTenant(Ids.TenantId tenant, String phoneE164) {
+        return repo.findByPhoneE164(phoneE164)
+                .filter(e -> e.getTenantId().equals(tenant.value()))
+                .map(this::toDomain);
+    }
+
+    /** Cross-tenant existence check for phone-conflict validation. */
+    public Optional<Ids.TenantId> findTenantForPhone(String phoneE164) {
+        return repo.findByPhoneE164(phoneE164).map(e -> new Ids.TenantId(e.getTenantId()));
+    }
+
     /* ---------------------------- edit DRAFT/FAILED ----------------------- */
 
     @Transactional
@@ -410,6 +457,10 @@ public class WhatsAppSenderService {
         payload.put("vertical", b.vertical());
         payload.put("about", b.about() == null ? "" : b.about());
 
+        if (sender.wabaId() != null && !sender.wabaId().isBlank()) {
+            payload.put("wabaId", sender.wabaId());
+        }
+
         String hostBase = twilioProps.webhookBaseUrl() == null || twilioProps.webhookBaseUrl().isBlank()
                 ? yayaProps.publicBaseUrl()
                 : twilioProps.webhookBaseUrl();
@@ -440,9 +491,16 @@ public class WhatsAppSenderService {
             return current;                                        // transient → no transition
         }
         return switch (raw) {
-            case "ONLINE", "ACTIVE", "VERIFIED"          -> SenderStatus.ACTIVE;
+            case "ONLINE", "ONLINE:UPDATING", "ACTIVE", "VERIFIED" -> SenderStatus.ACTIVE;
             case "OFFLINE", "SUSPENDED"                   -> SenderStatus.SUSPENDED;
             case "FAILED", "REJECTED"                     -> SenderStatus.FAILED;
+            // In-flight Senders v2 states (Meta / Twilio still working) — a
+            // just-registered sender lands in PENDING_REVIEW; an already
+            // reviewed one holds its state.
+            case "CREATING", "PENDING", "PENDING_VERIFICATION", "VERIFYING", "TWILIO_REVIEW" ->
+                    current == SenderStatus.SUBMITTING ? SenderStatus.PENDING_REVIEW : current;
+            // Unknown / future Twilio statuses: hold the current state; the
+            // raw value is still persisted verbatim in OnboardingState.
             default                                       -> current;
         };
     }
@@ -561,7 +619,10 @@ public class WhatsAppSenderService {
                 toInstant(entity.getCreatedAt()),
                 toInstant(entity.getUpdatedAt()),
                 toInstant(entity.getLastSyncAt()),
-                entity.getStartFlowId()
+                entity.getStartFlowId(),
+                entity.getWabaId(),
+                entity.getMetaPhoneNumberId(),
+                entity.getMessagingAccountId()
         );
     }
 

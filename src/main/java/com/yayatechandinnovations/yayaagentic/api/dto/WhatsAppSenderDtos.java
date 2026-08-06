@@ -63,7 +63,9 @@ public final class WhatsAppSenderDtos {
             Instant                createdAt,
             Instant                updatedAt,
             Instant                lastSyncAt,
-            String                 startFlowId
+            String                 startFlowId,
+            String                 wabaId,
+            String                 messagingAccountId
     ) {
 
         public static SenderResponse of(WhatsAppSender s) {
@@ -86,7 +88,9 @@ public final class WhatsAppSenderDtos {
                     s.createdAt(),
                     s.updatedAt(),
                     s.lastSyncAt(),
-                    s.startFlowId()
+                    s.startFlowId(),
+                    s.wabaId(),
+                    s.messagingAccountId()
             );
         }
     }

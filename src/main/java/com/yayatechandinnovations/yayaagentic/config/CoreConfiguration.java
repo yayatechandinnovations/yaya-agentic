@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.config;
 
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.EmbeddedSignupProperties;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.BlobGcProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.ClamAvProperties;
@@ -23,6 +24,7 @@ import java.time.Clock;
 
 @Configuration
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
+        EmbeddedSignupProperties.class,
         ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
         IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class})
 @EnableScheduling

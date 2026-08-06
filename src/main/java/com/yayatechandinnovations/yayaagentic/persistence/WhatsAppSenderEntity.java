@@ -75,6 +75,17 @@ public class WhatsAppSenderEntity {
     @Column(name = "start_flow_id", length = 128)
     private String startFlowId;
 
+    // Embedded-signup provenance (V75). NULL for legacy platform-singleton
+    // senders — the creds resolver falls back to the platform credential.
+    @Column(name = "waba_id", length = 64)
+    private String wabaId;
+
+    @Column(name = "meta_phone_number_id", length = 64)
+    private String metaPhoneNumberId;
+
+    @Column(name = "messaging_account_id", length = 64)
+    private String messagingAccountId;
+
     protected WhatsAppSenderEntity() {}
 
     public WhatsAppSenderEntity(String id, String tenantId, String phoneE164,
@@ -107,6 +118,12 @@ public class WhatsAppSenderEntity {
     public OffsetDateTime getLastSyncAt() { return lastSyncAt; }
     public String getStartFlowId() { return startFlowId; }
     public void setStartFlowId(String v) { this.startFlowId = v; }
+    public String getWabaId() { return wabaId; }
+    public void setWabaId(String v) { this.wabaId = v; }
+    public String getMetaPhoneNumberId() { return metaPhoneNumberId; }
+    public void setMetaPhoneNumberId(String v) { this.metaPhoneNumberId = v; }
+    public String getMessagingAccountId() { return messagingAccountId; }
+    public void setMessagingAccountId(String v) { this.messagingAccountId = v; }
 
     public void setPhoneE164(String v) { this.phoneE164 = v; }
     public void setDisplayName(String v) { this.displayName = v; }

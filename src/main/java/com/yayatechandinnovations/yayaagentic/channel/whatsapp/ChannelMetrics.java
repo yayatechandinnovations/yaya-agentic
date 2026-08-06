@@ -44,6 +44,17 @@ public class ChannelMetrics {
                 .increment();
     }
 
+    /* ------------------------------ onboarding --------------------------- */
+
+    /** Embedded-signup onboarding outcomes: started | completed | failed |
+     *  conflict | subaccount_created | subaccount_reused. */
+    public void embeddedSignup(String tenant, String outcome) {
+        Counter.builder("channel_embedded_signup_total")
+                .tags(Tags.of("tenant", safe(tenant), "outcome", safe(outcome)))
+                .register(registry)
+                .increment();
+    }
+
     /* ------------------------------ dispatch ----------------------------- */
 
     public void dispatchLatency(String tenant, String senderId, String completionPolicy,

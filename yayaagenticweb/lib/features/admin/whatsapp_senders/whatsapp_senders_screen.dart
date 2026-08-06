@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
+import '../../../models/admin/whatsapp_embedded_signup.dart';
 import '../../../models/admin/whatsapp_sender.dart';
 import '../channel_bindings/sender_routes_section.dart';
 import '../shared/admin_shared.dart';
+import 'whatsapp_connect_wizard.dart';
 import 'whatsapp_sender_wizard.dart';
 
 /// Refetched on every write to keep status chips fresh.
@@ -25,6 +27,15 @@ final whatsAppSubmitEnabledProvider =
     FutureProvider.family<bool, String>((ref, tenantId) async {
   final api = await ref.watch(adminApiProvider.future);
   return api.isWhatsAppSubmitEnabled(tenantId);
+});
+
+/// Meta Embedded Signup availability + browser-safe ids. Gates the
+/// self-service "Connect WhatsApp" wizard — same probe pattern as
+/// [whatsAppSubmitEnabledProvider].
+final whatsAppEmbeddedSignupConfigProvider =
+    FutureProvider.family<EmbeddedSignupConfig, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  return api.getWhatsAppEmbeddedSignupConfig(tenantId);
 });
 
 /// Tenants register WhatsApp senders here. The list is the canonical view;
@@ -50,6 +61,12 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
   void _newSender() {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => const WhatsAppSenderWizard(),
+    ));
+  }
+
+  void _connectWhatsApp(EmbeddedSignupConfig config) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => WhatsAppConnectWizard(config: config),
     ));
   }
 
@@ -198,20 +215,50 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
         ],
       ),
       form: SingleChildScrollView(
-        child: FormCard(
-          title: 'Add a WhatsApp sender',
-          actions: [
-            FilledButton.icon(
-              onPressed: _newSender,
-              icon: const Icon(Icons.add),
-              label: const Text('Start sender registration'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Builder(builder: (context) {
+              final signupConfig = ref
+                  .watch(whatsAppEmbeddedSignupConfigProvider(tenant))
+                  .maybeWhen(data: (c) => c, orElse: EmbeddedSignupConfig.disabled);
+              if (!signupConfig.enabled) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: FormCard(
+                  title: 'Connect WhatsApp (self-service)',
+                  actions: [
+                    FilledButton.icon(
+                      onPressed: () => _connectWhatsApp(signupConfig),
+                      icon: const Icon(Icons.link),
+                      label: const Text('Connect WhatsApp'),
+                    ),
+                  ],
+                  child: const Text(
+                    'Connect your own WhatsApp Business number in minutes: enter your '
+                    'business details and phone number, then authorize through the Meta '
+                    'popup. Everything else happens automatically — no external accounts '
+                    'or consoles needed.',
+                  ),
+                ),
+              );
+            }),
+            FormCard(
+              title: 'Add a WhatsApp sender',
+              actions: [
+                FilledButton.icon(
+                  onPressed: _newSender,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Start sender registration'),
+                ),
+              ],
+              child: const Text(
+                'Register a phone number so your customers can message your business on '
+                'WhatsApp. The wizard guides you through your business profile, the phone '
+                'number, and the public display name, then submits for WhatsApp review.',
+              ),
             ),
           ],
-          child: const Text(
-            'Register a phone number so your customers can message your business on '
-            'WhatsApp. The wizard guides you through your business profile, the phone '
-            'number, and the public display name, then submits for WhatsApp review.',
-          ),
         ),
       ),
     );
