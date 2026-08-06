@@ -1466,7 +1466,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                                         Ids.TurnId turnId,
                                         UserMessage message) {
         String callId = UUID.randomUUID().toString();
-        String summary = "Run " + toolDescriptor.id().value() + " with " + args + "?";
+        // User-facing copy: the operator-authored question when the tool has
+        // one, else a neutral fallback. Tool ids and raw args are plumbing —
+        // they ride the payload for the client's dispatch, never the copy.
+        String authored = toolDescriptor.policy() == null
+                ? null : toolDescriptor.policy().confirmPrompt();
+        String summary = authored == null || authored.isBlank()
+                ? "Do you want to continue?" : authored.trim();
         Map<String, Object> hintPayload = Map.of(
                 "toolId", toolDescriptor.id().value(),
                 "callId", callId,
@@ -1478,6 +1484,8 @@ public class DefaultConversationEngine implements ConversationEngine {
                 "args", args,
                 "callId", callId)));
 
+        // Text channels (WhatsApp/SMS) have no confirm card — the spoken line
+        // IS the confirm UX there, so it keeps the reply instruction.
         String spoken = summary + " (reply yes or no)";
         return Flux.<TurnEvent>just(
                         new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),

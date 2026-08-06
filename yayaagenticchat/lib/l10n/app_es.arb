@@ -194,5 +194,6 @@
   "forumReportTitle": "Reportar esta publicación",
   "forumReported": "Gracias — el equipo lo revisará.",
   "forumEdited": "editado",
-  "forumJustNow": "ahora"
+  "forumJustNow": "ahora",
+  "confirmTitle": "¿Deseas continuar?"
 }

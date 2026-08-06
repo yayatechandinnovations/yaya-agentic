@@ -47,6 +47,10 @@ dependencies:
   # QR marks on the thermal-paper widget. Pure Dart, web-safe.
   barcode_widget: ^2.0.4
 
+  # Browser-native fetch for reading recorded blob: URLs (Firefox blocks XHR
+  # on blob:, so Dio/XHR reads come back empty there).
+  web: ^1.1.0
+
   # Commerce checkout: mount the PSP drop-in for the payment_intent mode
   # (clientSecret + publishableKey arrive in the checkout_result payload).
   # flutter_stripe_web supplies the web implementation.

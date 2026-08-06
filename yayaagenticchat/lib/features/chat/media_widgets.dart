@@ -223,7 +223,11 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
     if (!send || path == null) return;
     try {
       final bytes = await readRecordedBytes(path);
-      if (bytes.isEmpty) return;
+      // A recording that produced (almost) nothing is a failure the user must
+      // see — a header-only file would upload "fine" and be unplayable.
+      if (bytes.length < 200) {
+        throw StateError('empty recording (${bytes.length} bytes)');
+      }
       await ref.read(chatControllerProvider(widget.handle).notifier).attach(
           bytes, 'voice-note.${kIsWeb ? 'webm' : 'm4a'}',
           isVoice: true);

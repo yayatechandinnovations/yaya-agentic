@@ -1140,6 +1140,12 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'now'**
   String get forumJustNow;
+
+  /// No description provided for @confirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Do you want to continue?'**
+  String get confirmTitle;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

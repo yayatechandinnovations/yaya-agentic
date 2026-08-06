@@ -196,5 +196,6 @@
   "forumReportTitle": "Report this post",
   "forumReported": "Thanks — the team will review it.",
   "forumEdited": "edited",
-  "forumJustNow": "now"
+  "forumJustNow": "now",
+  "confirmTitle": "Do you want to continue?"
 }

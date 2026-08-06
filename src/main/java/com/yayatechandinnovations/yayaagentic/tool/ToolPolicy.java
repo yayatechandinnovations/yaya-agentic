@@ -18,14 +18,28 @@ public record ToolPolicy(
         int maxRetries,
         boolean idempotent,
         boolean confirmable,
-        boolean clientInvocable
+        boolean clientInvocable,
+        /**
+         * Operator-authored question shown when a confirmable tool pauses for
+         * approval ("¿Deseas confirmar este boleto?"). In the tenant's own
+         * language — it reaches the user verbatim. Null/blank → a neutral
+         * "Do you want to continue?"; the tool id and raw args are NEVER
+         * user-facing confirmation copy.
+         */
+        String confirmPrompt
 ) {
+    /** Back-compat: no operator confirmation copy. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, null);
+    }
+
     /** Back-compat: a model-path-only tool ({@code clientInvocable == false}). */
     public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent, boolean confirmable) {
-        this(timeout, maxRetries, idempotent, confirmable, false);
+        this(timeout, maxRetries, idempotent, confirmable, false, null);
     }
 
     public static ToolPolicy defaults() {
-        return new ToolPolicy(Duration.ofSeconds(10), 0, true, false, false);
+        return new ToolPolicy(Duration.ofSeconds(10), 0, true, false, false, null);
     }
 }

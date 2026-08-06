@@ -95,7 +95,11 @@ public class CatalogMapper {
         boolean idempotent = toBool(raw.get("idempotent"), true);
         boolean confirmable = toBool(raw.get("confirmable"), false);
         boolean clientInvocable = toBool(raw.get("clientInvocable"), false);
-        return new ToolPolicy(timeout, maxRetries, idempotent, confirmable, clientInvocable);
+        Object prompt = raw.get("confirmPrompt");
+        String confirmPrompt = prompt == null || String.valueOf(prompt).isBlank()
+                ? null : String.valueOf(prompt).trim();
+        return new ToolPolicy(timeout, maxRetries, idempotent, confirmable, clientInvocable,
+                confirmPrompt);
     }
 
     private <T> T readJson(String raw, TypeReference<T> type, T fallback) {

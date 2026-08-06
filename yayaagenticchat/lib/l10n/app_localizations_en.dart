@@ -575,4 +575,7 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get forumJustNow => 'now';
+
+  @override
+  String get confirmTitle => 'Do you want to continue?';
 }
