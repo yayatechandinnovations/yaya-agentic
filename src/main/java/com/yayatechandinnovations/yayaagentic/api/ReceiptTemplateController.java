@@ -56,7 +56,9 @@ public class ReceiptTemplateController {
                                        ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.MEMBER);
         tenantGuard.requireExists(tenantId);
-        return templates.list(tenantId).stream().map(TemplateResponse::of).toList();
+        // First visit seeds the starter set (design §7.7) — operators begin
+        // from working templates, never a blank editor.
+        return templates.ensureDefaults(tenantId).stream().map(TemplateResponse::of).toList();
     }
 
     @GetMapping("/{id}")

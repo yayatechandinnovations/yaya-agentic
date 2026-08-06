@@ -95,4 +95,31 @@ class ReceiptTemplateServiceTest {
     void malformedExtensionResolvesToNull() {
         assertThat(svc.resolveTrait(new Ids.TenantId("t1"), "not-a-map")).isNull();
     }
+
+    @Test
+    void defaultsSeedOnceForAnEmptyTenant() {
+        List<ReceiptTemplateEntity> created = new java.util.ArrayList<>();
+        when(repo.findByTenantIdOrderByCreatedAtDesc("t1")).thenAnswer(i -> List.copyOf(created));
+        when(repo.save(any())).thenAnswer(i -> {
+            created.add(i.getArgument(0));
+            return i.getArgument(0);
+        });
+
+        List<ReceiptTemplateEntity> seeded = svc.ensureDefaults("t1");
+        assertThat(seeded).hasSize(3);
+        assertThat(seeded).extracting(ReceiptTemplateEntity::getName)
+                .containsExactlyInAnyOrder("Sale receipt", "Numbered ticket", "Confirmation slip");
+
+        // Second visit: no duplicates.
+        assertThat(svc.ensureDefaults("t1")).hasSize(3);
+    }
+
+    @Test
+    void everyDefaultPassesItsOwnValidation() {
+        // Seeding runs through create(); a vocabulary drift in the defaults
+        // must fail here, not on a tenant's first console visit.
+        when(repo.findByTenantIdOrderByCreatedAtDesc("t1")).thenReturn(List.of());
+        when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+        svc.ensureDefaults("t1"); // throws InvalidTemplateException on drift
+    }
 }

@@ -53,6 +53,24 @@ public class ReceiptTemplateService {
         return templates.findByTenantIdOrderByCreatedAtDesc(tenantId);
     }
 
+    /**
+     * Seed the starter set for a tenant that has no templates yet (§7.7), so
+     * the console opens on "tweak this" instead of an empty JSON editor.
+     * No-op once any template exists — including after an operator edits or
+     * replaces the starters; only a tenant that deletes ALL templates gets a
+     * fresh set on the next console visit.
+     */
+    @Transactional
+    public List<ReceiptTemplateEntity> ensureDefaults(String tenantId) {
+        List<ReceiptTemplateEntity> existing = templates.findByTenantIdOrderByCreatedAtDesc(tenantId);
+        if (!existing.isEmpty()) return existing;
+        for (ReceiptTemplateDefaults.Seed seed : ReceiptTemplateDefaults.all()) {
+            create(tenantId, seed.name(), seed.kindLabel(),
+                    seed.paperCols(), seed.paperProfile(), seed.elements(), null);
+        }
+        return templates.findByTenantIdOrderByCreatedAtDesc(tenantId);
+    }
+
     @Transactional(readOnly = true)
     public Optional<ReceiptTemplateEntity> find(String tenantId, String id) {
         return templates.findByTenantIdAndId(tenantId, id);
