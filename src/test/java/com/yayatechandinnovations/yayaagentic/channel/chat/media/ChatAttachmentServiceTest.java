@@ -69,6 +69,16 @@ class ChatAttachmentServiceTest {
     }
 
     @Test
+    void webmVoiceNoteClassifiesAsAudio() {
+        // Browser recordings are Opus in a WebM (EBML) container; Tika sniffs
+        // the container as video/webm — it must still land as AUDIO.
+        byte[] webm = {(byte) 0x1A, (byte) 0x45, (byte) 0xDF, (byte) 0xA3,
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+        var att = service().upload(tenant, "s1", UUID.randomUUID(), "voice-note.webm", webm);
+        assertThat(att.kind()).isEqualTo("AUDIO");
+    }
+
+    @Test
     void unsupportedTypeIsRejected() {
         byte[] exe = {'M', 'Z', 0, 0, 1, 2, 3};
         assertThatThrownBy(() -> service().upload(tenant, "s1", UUID.randomUUID(), "x.exe", exe))

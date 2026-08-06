@@ -47,7 +47,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _send(String text) {
-    if (text.trim().isEmpty) return;
+    // A voice note or attachment is a complete message on its own — text is
+    // only required when nothing is attached (chat-experience-design.md §6.4).
+    final hasAttachments = ref
+        .read(chatControllerProvider(widget.handle))
+        .pendingAttachments
+        .any((p) => p.uploaded != null);
+    if (text.trim().isEmpty && !hasAttachments) return;
     _input.clear();
     ref.read(chatControllerProvider(widget.handle).notifier).send(text);
     _scrollToBottom();

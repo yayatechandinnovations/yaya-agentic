@@ -117,7 +117,13 @@ class ChatAttachment {
   });
 
   bool get isImage => contentType.startsWith('image/');
-  bool get isAudio => contentType.startsWith('audio/') || contentType == 'application/ogg';
+
+  /// WebM voice notes sniff as video/webm server-side; in chat, webm can only
+  /// be a voice note (videos aren't uploadable), so it renders as audio.
+  bool get isAudio =>
+      contentType.startsWith('audio/') ||
+      contentType == 'application/ogg' ||
+      contentType == 'video/webm';
 
   factory ChatAttachment.fromJson(Map<String, dynamic> json) => ChatAttachment(
         // Outbound chat uploads say `id`; inbox system messages say `assetId`.

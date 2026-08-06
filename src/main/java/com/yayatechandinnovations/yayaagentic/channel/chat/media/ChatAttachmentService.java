@@ -56,9 +56,15 @@ public class ChatAttachmentService {
 
     private static final Set<String> IMAGE_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif");
+    // Browser voice notes arrive as Opus in a WebM container, and Tika sniffs
+    // the WebM EBML header as video/webm even for audio-only files — so
+    // video/webm classifies as AUDIO here. WebM is not otherwise accepted, the
+    // audio size cap applies, and a video smuggled through just plays its
+    // audio track and fails transcription gracefully.
     private static final Set<String> AUDIO_TYPES = Set.of(
             "audio/mp4", "audio/x-m4a", "audio/mpeg", "audio/ogg", "application/ogg",
-            "audio/webm", "audio/vorbis", "audio/opus", "audio/wav", "audio/x-wav");
+            "audio/webm", "video/webm", "audio/vorbis", "audio/opus",
+            "audio/x-opus+ogg", "audio/wav", "audio/x-wav");
     private static final Set<String> DOCUMENT_TYPES = Set.of("application/pdf");
 
     private final ChatAttachmentRepository attachments;
@@ -296,8 +302,11 @@ public class ChatAttachmentService {
 
     private void transcribe(Ids.TenantId tenant, ChatAttachmentEntity e,
                             String contentType, long sizeBytes) {
+        // A WebM voice note sniffs as video/webm (see AUDIO_TYPES); the
+        // transcribers advertise audio/* — normalize before matching.
+        String audioType = contentType.startsWith("video/webm") ? "audio/webm" : contentType;
         MediaTranscriber transcriber = transcribers.stream()
-                .filter(t -> t.supportedContentTypes().contains(contentType))
+                .filter(t -> t.supportedContentTypes().contains(audioType))
                 .findFirst().orElse(null);
         if (transcriber == null) return; // graceful: bubble still plays audio
         try {
@@ -305,7 +314,7 @@ public class ChatAttachmentService {
             // the same signed grant a client would use.
             URI url = URI.create(signedUrl(tenant, e.getId()));
             MediaTranscriber.TranscriptionResult result = transcriber.transcribe(
-                    new MediaTranscriber.InboundMediaRef(url, contentType, sizeBytes),
+                    new MediaTranscriber.InboundMediaRef(url, audioType, sizeBytes),
                     new MediaTranscriber.TranscriptionContext(
                             tenant.value(), "chat", e.getId(),
                             Duration.ofMinutes(2), AUDIO_MAX_BYTES, null));
