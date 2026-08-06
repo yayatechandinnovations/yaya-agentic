@@ -45,16 +45,25 @@ Future<void> showAttachPicker(
   );
   if (choice == null) return;
 
-  final result = await FilePicker.platform.pickFiles(
-    type: choice == 'photo' ? FileType.image : FileType.custom,
-    allowedExtensions: choice == 'photo' ? null : ['pdf'],
-    withData: true,
-  );
-  final file = result?.files.firstOrNull;
-  if (file == null || file.bytes == null) return;
-  await ref
-      .read(chatControllerProvider(handle).notifier)
-      .attach(file.bytes!, file.name);
+  try {
+    final result = await FilePicker.platform.pickFiles(
+      type: choice == 'photo' ? FileType.image : FileType.custom,
+      allowedExtensions: choice == 'photo' ? null : ['pdf'],
+      withData: true,
+    );
+    final file = result?.files.firstOrNull;
+    if (file == null || file.bytes == null) return;
+    await ref
+        .read(chatControllerProvider(handle).notifier)
+        .attach(file.bytes!, file.name);
+  } catch (_) {
+    // A broken/unregistered picker plugin (e.g. a stale web build) must
+    // degrade to a message, never an uncaught error.
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(t.attachFailed)));
+    }
+  }
 }
 
 /* ---------------------------- pending tray -------------------------------- */
@@ -171,16 +180,23 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
   Future<void> _start() async {
     final t = AppL10n.of(context);
     final messenger = ScaffoldMessenger.of(context);
-    if (!await _recorder.hasPermission()) {
-      messenger.showSnackBar(SnackBar(content: Text(t.voiceMicDenied)));
+    try {
+      if (!await _recorder.hasPermission()) {
+        messenger.showSnackBar(SnackBar(content: Text(t.voiceMicDenied)));
+        return;
+      }
+      // Opus/webm on web (aac unsupported there); AAC/m4a everywhere else —
+      // both are on the server allowlist.
+      final config = RecordConfig(
+          encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc);
+      final dir = kIsWeb ? '' : (await _tempPath());
+      await _recorder.start(config,
+          path: '$dir/voice-note.${kIsWeb ? 'webm' : 'm4a'}');
+    } catch (_) {
+      // Unregistered/broken recorder plugin: message, never an uncaught error.
+      messenger.showSnackBar(SnackBar(content: Text(t.attachFailed)));
       return;
     }
-    // Opus/webm on web (aac unsupported there); AAC/m4a everywhere else —
-    // both are on the server allowlist.
-    final config = RecordConfig(
-        encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc);
-    final dir = kIsWeb ? '' : (await _tempPath());
-    await _recorder.start(config, path: '$dir/voice-note.${kIsWeb ? 'webm' : 'm4a'}');
     setState(() {
       _recording = true;
       _seconds = 0;
@@ -196,7 +212,12 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
 
   Future<void> _stop({required bool send}) async {
     _ticker?.cancel();
-    final path = await _recorder.stop();
+    String? path;
+    try {
+      path = await _recorder.stop();
+    } catch (_) {
+      path = null;
+    }
     if (!mounted) return;
     setState(() => _recording = false);
     if (!send || path == null) return;
@@ -281,17 +302,26 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   }
 
   Future<void> _toggle() async {
-    if (!_loaded) {
-      await _player.setUrl(AppConfig.resolveUrl(widget.attachment.url));
-      _loaded = true;
-    }
-    if (_player.playing) {
-      await _player.pause();
-    } else {
-      if (_player.processingState == ProcessingState.completed) {
-        await _player.seek(Duration.zero);
+    try {
+      if (!_loaded) {
+        await _player.setUrl(AppConfig.resolveUrl(widget.attachment.url));
+        _loaded = true;
       }
-      unawaited(_player.play());
+      if (_player.playing) {
+        await _player.pause();
+      } else {
+        if (_player.processingState == ProcessingState.completed) {
+          await _player.seek(Duration.zero);
+        }
+        unawaited(_player.play());
+      }
+    } catch (_) {
+      // Expired signed URL or a broken audio plugin: the transcript is still
+      // there; playback failure must never take the screen down.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(AppL10n.of(context).attachFailed)));
+      }
     }
   }
 
