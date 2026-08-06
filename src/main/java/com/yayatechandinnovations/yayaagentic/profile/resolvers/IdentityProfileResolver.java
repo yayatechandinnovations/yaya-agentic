@@ -16,8 +16,8 @@ import java.util.Optional;
 /**
  * Maps a verified principal's JWT claims onto a profile via per-tenant
  * config rows in {@code identity_profile_mappings}. HTTP consumers can
- * keep their client code domain-neutral: the lottery app (or any other
- * caller) just sends the JWT; the table answers "for tenant T, a principal
+ * keep their client code domain-neutral: the tenant's app (whatever its
+ * domain) just sends the JWT; the table answers "for tenant T, a principal
  * whose {@code role} claim is {@code PLAYER} gets the {@code retail-player}
  * profile."
  *

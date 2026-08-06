@@ -351,4 +351,228 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get startNewChat => 'Start new';
+
+  @override
+  String get ok => 'OK';
+
+  @override
+  String get navChats => 'Chats';
+
+  @override
+  String get navDiscover => 'Discover';
+
+  @override
+  String get navAccount => 'Account';
+
+  @override
+  String get lockTitle => 'Welcome back';
+
+  @override
+  String lockTitleNamed(String name) {
+    return 'Welcome back, $name';
+  }
+
+  @override
+  String get lockBlurb => 'Enter your PIN to unlock';
+
+  @override
+  String get lockUnlock => 'Unlock';
+
+  @override
+  String get lockForgotPin => 'Forgot PIN? Verify by SMS';
+
+  @override
+  String get pinTooShort => 'The PIN must be 4–6 digits';
+
+  @override
+  String get pinMismatch => 'The PINs don\'t match';
+
+  @override
+  String get pinSetupTitle => 'Protect your account with a PIN';
+
+  @override
+  String get pinSetupBlurb =>
+      'Next time you open the app you\'ll just enter this PIN — no more SMS codes. You can change it anytime in Account → Security.';
+
+  @override
+  String get pinSetupNewLabel => 'New PIN';
+
+  @override
+  String get pinSetupConfirmLabel => 'Confirm PIN';
+
+  @override
+  String get pinSetupSave => 'Set PIN';
+
+  @override
+  String get pinSetupSkip => 'Not now';
+
+  @override
+  String get securitySection => 'Security';
+
+  @override
+  String get securityPin => 'App PIN';
+
+  @override
+  String get securityPinOn => 'On — asked when the app opens';
+
+  @override
+  String get securityPinOff => 'Off — set one to skip SMS codes';
+
+  @override
+  String get securityPinSetTitle => 'Set your PIN';
+
+  @override
+  String get securityPinChange => 'Change PIN';
+
+  @override
+  String get securityPinSaved => 'PIN saved';
+
+  @override
+  String get securityPinRemove => 'Remove PIN';
+
+  @override
+  String get securityPinRemoveBlurb =>
+      'Without a PIN this device stays signed in for longer, but anyone holding it can open your chats.';
+
+  @override
+  String get securityPinRemoved => 'PIN removed';
+
+  @override
+  String get securityPinWrong => 'That PIN is not right';
+
+  @override
+  String get securityPinCurrentLabel => 'Current PIN';
+
+  @override
+  String get securityDevices => 'Devices';
+
+  @override
+  String get securityDevicesEmpty => 'No devices yet';
+
+  @override
+  String get securityDeviceThis => 'This device';
+
+  @override
+  String get securityDeviceUnnamed => 'Unnamed device';
+
+  @override
+  String securityDeviceLastSeen(String date) {
+    return 'Last active $date';
+  }
+
+  @override
+  String get securityDeviceAskPin => 'Ask for PIN';
+
+  @override
+  String get securityDeviceRevoke => 'Sign out this device';
+
+  @override
+  String get securityDeviceRevoked => 'Device signed out';
+
+  @override
+  String get securityDeviceTrustTitle => 'Turn off the PIN here?';
+
+  @override
+  String get securityDeviceTrustBlurb =>
+      'Enter your PIN to stop asking for it on this device. You can turn it back on anytime.';
+
+  @override
+  String get securityLogoutDevice => 'Log out on this device';
+
+  @override
+  String get securityLogoutDeviceBlurb =>
+      'Your chats stay on your account — verify your number again to come back.';
+
+  @override
+  String get attachTooltip => 'Attach';
+
+  @override
+  String get attachPhoto => 'Photo';
+
+  @override
+  String get attachDocument => 'Document (PDF)';
+
+  @override
+  String get attachFailed => 'Could not upload';
+
+  @override
+  String get voiceRecord => 'Record a voice note';
+
+  @override
+  String get voiceStop => 'Send voice note';
+
+  @override
+  String get voiceDiscard => 'Discard recording';
+
+  @override
+  String get voiceMicDenied =>
+      'Microphone access is needed to record voice notes';
+
+  @override
+  String get voiceShowTranscript => 'View transcript';
+
+  @override
+  String get voiceHideTranscript => 'Hide transcript';
+
+  @override
+  String get receiptsTitle => 'Receipts';
+
+  @override
+  String get receiptsEmpty =>
+      'Tickets and receipts you receive in chats will appear here.';
+
+  @override
+  String get receiptsFallbackTitle => 'Receipt';
+
+  @override
+  String get navForum => 'Forum';
+
+  @override
+  String get forumTitle => 'Forum';
+
+  @override
+  String get forumNoChats =>
+      'Add a chat first — its community will show up here.';
+
+  @override
+  String get forumDisabled => 'This chat doesn\'t have a community space yet.';
+
+  @override
+  String get forumEmpty => 'No posts yet. Be the first to say something!';
+
+  @override
+  String get forumComposerHint => 'Share something…';
+
+  @override
+  String get forumReply => 'Reply';
+
+  @override
+  String get forumReplyHint => 'Write a reply…';
+
+  @override
+  String get forumNoReplies => 'No replies yet.';
+
+  @override
+  String get forumEdit => 'Edit';
+
+  @override
+  String get forumEditTitle => 'Edit post';
+
+  @override
+  String get forumDelete => 'Delete';
+
+  @override
+  String get forumReport => 'Report';
+
+  @override
+  String get forumReportTitle => 'Report this post';
+
+  @override
+  String get forumReported => 'Thanks — the team will review it.';
+
+  @override
+  String get forumEdited => 'edited';
+
+  @override
+  String get forumJustNow => 'now';
 }

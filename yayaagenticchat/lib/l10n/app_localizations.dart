@@ -714,6 +714,432 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Start new'**
   String get startNewChat;
+
+  /// No description provided for @ok.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get ok;
+
+  /// No description provided for @navChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get navChats;
+
+  /// No description provided for @navDiscover.
+  ///
+  /// In en, this message translates to:
+  /// **'Discover'**
+  String get navDiscover;
+
+  /// No description provided for @navAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get navAccount;
+
+  /// No description provided for @lockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome back'**
+  String get lockTitle;
+
+  /// No description provided for @lockTitleNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome back, {name}'**
+  String lockTitleNamed(String name);
+
+  /// No description provided for @lockBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your PIN to unlock'**
+  String get lockBlurb;
+
+  /// No description provided for @lockUnlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock'**
+  String get lockUnlock;
+
+  /// No description provided for @lockForgotPin.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot PIN? Verify by SMS'**
+  String get lockForgotPin;
+
+  /// No description provided for @pinTooShort.
+  ///
+  /// In en, this message translates to:
+  /// **'The PIN must be 4–6 digits'**
+  String get pinTooShort;
+
+  /// No description provided for @pinMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'The PINs don\'t match'**
+  String get pinMismatch;
+
+  /// No description provided for @pinSetupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Protect your account with a PIN'**
+  String get pinSetupTitle;
+
+  /// No description provided for @pinSetupBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Next time you open the app you\'ll just enter this PIN — no more SMS codes. You can change it anytime in Account → Security.'**
+  String get pinSetupBlurb;
+
+  /// No description provided for @pinSetupNewLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'New PIN'**
+  String get pinSetupNewLabel;
+
+  /// No description provided for @pinSetupConfirmLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm PIN'**
+  String get pinSetupConfirmLabel;
+
+  /// No description provided for @pinSetupSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Set PIN'**
+  String get pinSetupSave;
+
+  /// No description provided for @pinSetupSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get pinSetupSkip;
+
+  /// No description provided for @securitySection.
+  ///
+  /// In en, this message translates to:
+  /// **'Security'**
+  String get securitySection;
+
+  /// No description provided for @securityPin.
+  ///
+  /// In en, this message translates to:
+  /// **'App PIN'**
+  String get securityPin;
+
+  /// No description provided for @securityPinOn.
+  ///
+  /// In en, this message translates to:
+  /// **'On — asked when the app opens'**
+  String get securityPinOn;
+
+  /// No description provided for @securityPinOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off — set one to skip SMS codes'**
+  String get securityPinOff;
+
+  /// No description provided for @securityPinSetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set your PIN'**
+  String get securityPinSetTitle;
+
+  /// No description provided for @securityPinChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change PIN'**
+  String get securityPinChange;
+
+  /// No description provided for @securityPinSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'PIN saved'**
+  String get securityPinSaved;
+
+  /// No description provided for @securityPinRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove PIN'**
+  String get securityPinRemove;
+
+  /// No description provided for @securityPinRemoveBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Without a PIN this device stays signed in for longer, but anyone holding it can open your chats.'**
+  String get securityPinRemoveBlurb;
+
+  /// No description provided for @securityPinRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'PIN removed'**
+  String get securityPinRemoved;
+
+  /// No description provided for @securityPinWrong.
+  ///
+  /// In en, this message translates to:
+  /// **'That PIN is not right'**
+  String get securityPinWrong;
+
+  /// No description provided for @securityPinCurrentLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Current PIN'**
+  String get securityPinCurrentLabel;
+
+  /// No description provided for @securityDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices'**
+  String get securityDevices;
+
+  /// No description provided for @securityDevicesEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No devices yet'**
+  String get securityDevicesEmpty;
+
+  /// No description provided for @securityDeviceThis.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get securityDeviceThis;
+
+  /// No description provided for @securityDeviceUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unnamed device'**
+  String get securityDeviceUnnamed;
+
+  /// No description provided for @securityDeviceLastSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Last active {date}'**
+  String securityDeviceLastSeen(String date);
+
+  /// No description provided for @securityDeviceAskPin.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for PIN'**
+  String get securityDeviceAskPin;
+
+  /// No description provided for @securityDeviceRevoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out this device'**
+  String get securityDeviceRevoke;
+
+  /// No description provided for @securityDeviceRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'Device signed out'**
+  String get securityDeviceRevoked;
+
+  /// No description provided for @securityDeviceTrustTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off the PIN here?'**
+  String get securityDeviceTrustTitle;
+
+  /// No description provided for @securityDeviceTrustBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter your PIN to stop asking for it on this device. You can turn it back on anytime.'**
+  String get securityDeviceTrustBlurb;
+
+  /// No description provided for @securityLogoutDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Log out on this device'**
+  String get securityLogoutDevice;
+
+  /// No description provided for @securityLogoutDeviceBlurb.
+  ///
+  /// In en, this message translates to:
+  /// **'Your chats stay on your account — verify your number again to come back.'**
+  String get securityLogoutDeviceBlurb;
+
+  /// No description provided for @attachTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Attach'**
+  String get attachTooltip;
+
+  /// No description provided for @attachPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo'**
+  String get attachPhoto;
+
+  /// No description provided for @attachDocument.
+  ///
+  /// In en, this message translates to:
+  /// **'Document (PDF)'**
+  String get attachDocument;
+
+  /// No description provided for @attachFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not upload'**
+  String get attachFailed;
+
+  /// No description provided for @voiceRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Record a voice note'**
+  String get voiceRecord;
+
+  /// No description provided for @voiceStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Send voice note'**
+  String get voiceStop;
+
+  /// No description provided for @voiceDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard recording'**
+  String get voiceDiscard;
+
+  /// No description provided for @voiceMicDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is needed to record voice notes'**
+  String get voiceMicDenied;
+
+  /// No description provided for @voiceShowTranscript.
+  ///
+  /// In en, this message translates to:
+  /// **'View transcript'**
+  String get voiceShowTranscript;
+
+  /// No description provided for @voiceHideTranscript.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide transcript'**
+  String get voiceHideTranscript;
+
+  /// No description provided for @receiptsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Receipts'**
+  String get receiptsTitle;
+
+  /// No description provided for @receiptsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Tickets and receipts you receive in chats will appear here.'**
+  String get receiptsEmpty;
+
+  /// No description provided for @receiptsFallbackTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Receipt'**
+  String get receiptsFallbackTitle;
+
+  /// No description provided for @navForum.
+  ///
+  /// In en, this message translates to:
+  /// **'Forum'**
+  String get navForum;
+
+  /// No description provided for @forumTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Forum'**
+  String get forumTitle;
+
+  /// No description provided for @forumNoChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a chat first — its community will show up here.'**
+  String get forumNoChats;
+
+  /// No description provided for @forumDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat doesn\'t have a community space yet.'**
+  String get forumDisabled;
+
+  /// No description provided for @forumEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No posts yet. Be the first to say something!'**
+  String get forumEmpty;
+
+  /// No description provided for @forumComposerHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Share something…'**
+  String get forumComposerHint;
+
+  /// No description provided for @forumReply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get forumReply;
+
+  /// No description provided for @forumReplyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Write a reply…'**
+  String get forumReplyHint;
+
+  /// No description provided for @forumNoReplies.
+  ///
+  /// In en, this message translates to:
+  /// **'No replies yet.'**
+  String get forumNoReplies;
+
+  /// No description provided for @forumEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get forumEdit;
+
+  /// No description provided for @forumEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit post'**
+  String get forumEditTitle;
+
+  /// No description provided for @forumDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get forumDelete;
+
+  /// No description provided for @forumReport.
+  ///
+  /// In en, this message translates to:
+  /// **'Report'**
+  String get forumReport;
+
+  /// No description provided for @forumReportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Report this post'**
+  String get forumReportTitle;
+
+  /// No description provided for @forumReported.
+  ///
+  /// In en, this message translates to:
+  /// **'Thanks — the team will review it.'**
+  String get forumReported;
+
+  /// No description provided for @forumEdited.
+  ///
+  /// In en, this message translates to:
+  /// **'edited'**
+  String get forumEdited;
+
+  /// No description provided for @forumJustNow.
+  ///
+  /// In en, this message translates to:
+  /// **'now'**
+  String get forumJustNow;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

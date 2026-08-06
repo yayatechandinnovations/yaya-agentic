@@ -40,8 +40,22 @@ public interface LlmClient {
                                           HistoryEntry.Assistant,
                                           HistoryEntry.ToolResults {
 
-        /** Plain user message. */
-        record User(String content) implements HistoryEntry {}
+        /** User message: text plus zero-or-more inline vision images
+         *  ({@code chat-experience-design.md} §6.3). Images ride only the
+         *  CURRENT turn — history reconstruction stays text-only so old
+         *  bytes are never re-sent. */
+        record User(String content, List<ImagePart> images) implements HistoryEntry {
+            public User(String content) {
+                this(content, List.of());
+            }
+
+            public User {
+                images = images == null ? List.of() : List.copyOf(images);
+            }
+        }
+
+        /** One inline image for a vision-capable model. */
+        record ImagePart(String contentType, String base64Data) {}
 
         /** Assistant turn: optional reasoning text + zero-or-more proposed
          *  tool calls. Empty {@code toolCalls} = the assistant finished

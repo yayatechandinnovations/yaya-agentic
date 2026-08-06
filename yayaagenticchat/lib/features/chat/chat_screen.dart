@@ -17,6 +17,8 @@ import 'commerce/cart_header_button.dart';
 import 'commerce/storefront_card.dart';
 import 'commerce/cart_sheet.dart';
 import 'commerce/checkout_handler.dart';
+import 'media_widgets.dart';
+import 'receipts/receipt_bubble.dart';
 import 'commerce/checkout_result_card.dart';
 import 'commerce/confirm_card.dart';
 import 'commerce/mini_cart_bar.dart';
@@ -245,38 +247,56 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _composer(ChatState state, Color accent) {
     final enabled = state.sessionId != null && !state.sending;
+    final uploadsSettled = !state.pendingAttachments.any((p) => p.uploading);
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _input,
-                enabled: enabled,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: enabled ? _send : null,
-                decoration: InputDecoration(
-                  hintText: AppL10n.of(context).messageHint,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AttachmentTray(handle: widget.handle),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: AppL10n.of(context).attachTooltip,
+                  onPressed:
+                      enabled ? () => showAttachPicker(context, ref, widget.handle) : null,
                 ),
-              ),
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    enabled: enabled,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: enabled ? _send : null,
+                    decoration: InputDecoration(
+                      hintText: AppL10n.of(context).messageHint,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    ),
+                  ),
+                ),
+                VoiceRecorderButton(
+                    handle: widget.handle, accent: accent, enabled: enabled),
+                const SizedBox(width: 4),
+                IconButton.filled(
+                  style: IconButton.styleFrom(backgroundColor: accent),
+                  onPressed: enabled && uploadsSettled ? () => _send(_input.text) : null,
+                  icon: state.sending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.send),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              style: IconButton.styleFrom(backgroundColor: accent),
-              onPressed: enabled ? () => _send(_input.text) : null,
-              icon: state.sending
-                  ? const SizedBox(
-                      width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.send),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -404,7 +424,11 @@ class _Bubble extends ConsumerWidget {
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: message.attachments.map((a) => _AttachmentView(attachment: a)).toList(),
+              children: message.attachments
+                  .map((a) => a.isAudio
+                      ? VoiceNoteBubble(attachment: a, accent: accent)
+                      : _AttachmentView(attachment: a))
+                  .toList(),
             ),
           ),
 
@@ -435,6 +459,17 @@ class _Bubble extends ConsumerWidget {
             handle: handle,
             accent: accent,
           ),
+        if (message.receipt != null)
+          Consumer(builder: (context, ref, _) {
+            final template = ref
+                .read(chatControllerProvider(handle).notifier)
+                .templateFor(message.receipt!);
+            return ReceiptBubble(
+                instance: message.receipt!,
+                template: template,
+                accent: accent,
+                handle: handle);
+          }),
         if (message.cartSnapshot != null && message.checkoutResult == null)
           _CartHintChip(handle: handle, accent: accent, itemCount: message.cartSnapshot!.itemCount),
 

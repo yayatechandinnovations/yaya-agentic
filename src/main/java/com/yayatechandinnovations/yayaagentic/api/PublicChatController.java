@@ -13,6 +13,10 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.ChatRateLimiter;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionLinkService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatAttachmentService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatMessageComposer;
+import com.yayatechandinnovations.yayaagentic.channel.chat.receipts.ChatReceiptService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.receipts.ReceiptTemplateService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
@@ -72,6 +76,9 @@ public class PublicChatController {
     private final SessionAuthTokenStore authTokenStore;
     private final ChatSessionLinkService sessionLinks;
     private final ConversationRecorder recorder;
+    private final ChatAttachmentService chatAttachments;
+    private final ReceiptTemplateService receiptTemplates;
+    private final ChatReceiptService chatReceipts;
 
     public PublicChatController(ConversationEngine engine,
                                 ChatEntryPointService entryPoints,
@@ -84,7 +91,10 @@ public class PublicChatController {
                                 ChatAuthService chatAuth,
                                 SessionAuthTokenStore authTokenStore,
                                 ChatSessionLinkService sessionLinks,
-                                ConversationRecorder recorder) {
+                                ConversationRecorder recorder,
+                                ChatAttachmentService chatAttachments,
+                                ReceiptTemplateService receiptTemplates,
+                                ChatReceiptService chatReceipts) {
         this.engine = engine;
         this.entryPoints = entryPoints;
         this.registry = registry;
@@ -97,6 +107,9 @@ public class PublicChatController {
         this.authTokenStore = authTokenStore;
         this.sessionLinks = sessionLinks;
         this.recorder = recorder;
+        this.chatAttachments = chatAttachments;
+        this.receiptTemplates = receiptTemplates;
+        this.chatReceipts = chatReceipts;
     }
 
     /* -------------------------- handle resolution ------------------------- */
@@ -177,8 +190,28 @@ public class PublicChatController {
                     result.greeting(),
                     result.quickReplies(),
                     PublicChatDtos.EntryPointCard.of(ep),
-                    result.clientTraits());
+                    resolveTraits(ep, result.clientTraits()));
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * Traits flow verbatim from {@code Profile.extensions} — except
+     * {@code chat.receipts} (chat-experience-design.md §7.3), whose template
+     * ids are resolved into full layout payloads here so the client has every
+     * layout at session start. The framework still interprets nothing inside
+     * the templates; it just joins ids to rows.
+     */
+    private Map<String, Object> resolveTraits(ChatEntryPoint ep, Map<String, Object> traits) {
+        if (traits == null || !traits.containsKey(ReceiptTemplateService.TRAIT_KIND)) return traits;
+        Map<String, Object> out = new HashMap<>(traits);
+        Map<String, Object> resolved = receiptTemplates.resolveTrait(
+                ep.tenant(), traits.get(ReceiptTemplateService.TRAIT_KIND));
+        if (resolved == null) {
+            out.remove(ReceiptTemplateService.TRAIT_KIND);
+        } else {
+            out.put(ReceiptTemplateService.TRAIT_KIND, resolved);
+        }
+        return out;
     }
 
     /* ---------------------------- action (tap) ---------------------------- */
@@ -217,8 +250,14 @@ public class PublicChatController {
 
             AuthContext auth = authForExisting(ctx, ep, exchange, sessionId);
             registry.touch(sessionId, ep.sessionPolicy().idleTimeout());
+            // Wallet capture (§7.5): action-emitted receipts persist too — a
+            // "Buy ticket" tap is the most common issuance path.
+            final java.util.UUID walletAccount =
+                    sessionLinks.accountOf(java.util.UUID.fromString(id)).orElse(null);
             return engine.dispatchAction(sessionId, new Ids.ToolId(body.tool()),
                             body.args() == null ? Map.of() : body.args(), auth)
+                    .doOnNext(evt -> chatReceipts.maybePersist(
+                            evt, ep.tenant(), id, ctx.handle(), walletAccount))
                     .map(chatAdapter::toSse);
         }).subscribeOn(Schedulers.boundedElastic())
           .onErrorMap(ActionNotPermittedException.class,
@@ -250,9 +289,132 @@ public class PublicChatController {
 
             AuthContext auth = authForExisting(ctx, ep, exchange, sessionId);
             registry.touch(sessionId, ep.sessionPolicy().idleTimeout());
-            return engine.send(sessionId, new UserMessage(body.text(), Map.of()), auth)
-                    .map(chatAdapter::toSse);
+
+            // Attachments (chat-experience-design.md §6.3): resolve the referenced
+            // uploads (session-scoped, single-use) and compose the engine-facing
+            // message — transcripts as speech, doc text delimited as data,
+            // images as vision parts.
+            UserMessage um;
+            List<String> attachmentIds = List.of();
+            if (body.attachmentIds() != null && !body.attachmentIds().isEmpty()) {
+                try {
+                    var atts = chatAttachments.resolveForSend(ep.tenant(), id, body.attachmentIds());
+                    attachmentIds = atts.stream()
+                            .map(ChatAttachmentService.ChatAttachment::id).toList();
+                    um = ChatMessageComposer.compose(body.text(), atts,
+                            aid -> chatAttachments.readBytes(ep.tenant(), aid).orElse(null));
+                } catch (ChatAttachmentService.RejectedException e) {
+                    throw toApi(e);
+                }
+            } else {
+                um = new UserMessage(body.text(), Map.of());
+            }
+            final List<String> sentIds = attachmentIds;
+            // Wallet capture (§7.5): receipt hints on a verified session persist.
+            final java.util.UUID walletAccount =
+                    sessionLinks.accountOf(java.util.UUID.fromString(id)).orElse(null);
+            return engine.send(sessionId, um, auth)
+                    .doOnNext(evt -> chatReceipts.maybePersist(
+                            evt, ep.tenant(), id, ctx.handle(), walletAccount))
+                    .map(chatAdapter::toSse)
+                    // Single-use: once the turn streamed to completion the
+                    // attachments belong to it; an errored send leaves them
+                    // unreferenced for the orphan sweep.
+                    .doOnComplete(() -> {
+                        if (!sentIds.isEmpty()) chatAttachments.markReferenced(sentIds, "sent");
+                    });
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /* --------------------------- attachments (§6) -------------------------- */
+
+    // §6.2 ceilings — counts here, byte budgets + size caps in the service.
+    private static final int UPLOADS_PER_SESSION_PER_HOUR = 20;
+    private static final int UPLOADS_PER_ACCOUNT_PER_DAY = 40;
+    /** Hard multipart read bound: the largest per-kind cap, plus form overhead. */
+    private static final int MAX_UPLOAD_READ_BYTES = 16 * 1024 * 1024;
+
+    @PostMapping(value = "/sessions/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<PublicChatDtos.AttachmentResponse> uploadAttachment(
+            @PathVariable("id") String id,
+            @RequestPart("file") Mono<org.springframework.http.codec.multipart.FilePart> file,
+            ServerWebExchange exchange) {
+        return file.flatMap(part ->
+                org.springframework.core.io.buffer.DataBufferUtils.join(part.content(), MAX_UPLOAD_READ_BYTES)
+                        .map(buf -> {
+                            byte[] bytes = new byte[buf.readableByteCount()];
+                            buf.read(bytes);
+                            org.springframework.core.io.buffer.DataBufferUtils.release(buf);
+                            return bytes;
+                        })
+                        .publishOn(Schedulers.boundedElastic())
+                        .map(bytes -> {
+                            ChatSessionRegistry.Context ctx = registry.get(new Ids.SessionId(id))
+                                    .orElseThrow(ChatApiException::sessionNotFound);
+                            ChatEntryPoint ep = entryPoints.findByHandle(ctx.handle())
+                                    .orElseThrow(ChatApiException::sessionNotFound);
+
+                            // L1 floor (§6.2): media needs a verified, account-linked
+                            // caller — identity is the abuse brake — and the session
+                            // must be the caller's own.
+                            VerifiedDevice device = caller(exchange).device()
+                                    .filter(d -> d.accountId() != null)
+                                    .orElseThrow(() -> new ChatApiException(
+                                            org.springframework.http.HttpStatus.FORBIDDEN,
+                                            "verification_required",
+                                            "verify your phone number to send media", 0));
+                            java.util.UUID account = java.util.UUID.fromString(device.accountId());
+                            java.util.UUID owner = sessionLinks
+                                    .accountOf(java.util.UUID.fromString(id)).orElse(null);
+                            if (owner == null || !owner.equals(account)) {
+                                throw ChatApiException.sessionNotFound();
+                            }
+
+                            requireWithinLimit(rateLimiter.hit("att-sess", id,
+                                    UPLOADS_PER_SESSION_PER_HOUR, HOUR));
+                            requireWithinLimit(rateLimiter.hit("att-acct-day", account.toString(),
+                                    UPLOADS_PER_ACCOUNT_PER_DAY, DAY));
+
+                            try {
+                                var att = chatAttachments.upload(ep.tenant(), id, account,
+                                        part.filename(), bytes);
+                                return new PublicChatDtos.AttachmentResponse(att.id(), att.kind(),
+                                        att.contentType(), att.filename(), att.sizeBytes(),
+                                        att.signedUrl(), att.transcript());
+                            } catch (ChatAttachmentService.RejectedException e) {
+                                throw toApi(e);
+                            }
+                        }))
+                .onErrorMap(org.springframework.core.io.buffer.DataBufferLimitException.class,
+                        e -> new ChatApiException(org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE,
+                                "too_large", "this file is too large", 0));
+    }
+
+    /** Streams attachment bytes behind a verified signed token — the chat
+     *  mirror of {@code GET /v1/media/{token}}. */
+    @GetMapping("/media/{token}")
+    public Mono<org.springframework.http.ResponseEntity<org.springframework.core.io.Resource>> media(
+            @PathVariable("token") String token) {
+        return Mono.fromSupplier(() -> chatAttachments.openSigned(token)
+                        .map(s -> org.springframework.http.ResponseEntity.ok()
+                                .header(org.springframework.http.HttpHeaders.CONTENT_TYPE, s.contentType())
+                                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                                        "inline; filename=\"" + s.filename().replace("\"", "") + "\"")
+                                .contentLength(s.sizeBytes())
+                                .<org.springframework.core.io.Resource>body(
+                                        new org.springframework.core.io.InputStreamResource(s.stream())))
+                        .orElseGet(() -> org.springframework.http.ResponseEntity.notFound().build()))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private static ChatApiException toApi(ChatAttachmentService.RejectedException e) {
+        org.springframework.http.HttpStatus status = switch (e.code()) {
+            case "too_large" -> org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE;
+            case "quota_exceeded" -> org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
+            case "not_found" -> org.springframework.http.HttpStatus.NOT_FOUND;
+            default -> org.springframework.http.HttpStatus.BAD_REQUEST;
+        };
+        return new ChatApiException(status, e.code(), e.getMessage(), 0);
     }
 
     /* --------------------------- resume / end ----------------------------- */
@@ -267,7 +429,7 @@ public class PublicChatController {
                     .orElseThrow(ChatApiException::sessionNotFound);
             ChatEntryPoint ep = entryPoints.findByHandle(ctx.handle())
                     .orElseThrow(ChatApiException::sessionNotFound);
-            List<PublicChatDtos.HistoryTurn> turns = history ? hydrate(sessionId, exchange) : null;
+            List<PublicChatDtos.HistoryTurn> turns = history ? hydrate(sessionId, ep, exchange) : null;
             return new PublicChatDtos.ResumeResponse(id, true, PublicChatDtos.EntryPointCard.of(ep), turns);
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -306,7 +468,8 @@ public class PublicChatController {
      *  ownership: an account-linked session may be read only by its owner (§7.2) —
      *  a mismatch is 404, never leaking existence. Anonymous (unlinked) sessions
      *  stay capability-scoped by their unguessable id, as before. */
-    private List<PublicChatDtos.HistoryTurn> hydrate(Ids.SessionId sessionId, ServerWebExchange exchange) {
+    private List<PublicChatDtos.HistoryTurn> hydrate(Ids.SessionId sessionId, ChatEntryPoint ep,
+                                                     ServerWebExchange exchange) {
         java.util.UUID sid = java.util.UUID.fromString(sessionId.value());
         java.util.UUID owner = sessionLinks.accountOf(sid).orElse(null);
         if (owner != null) {
@@ -317,7 +480,25 @@ public class PublicChatController {
         }
         return recorder.loadTurns(sessionId, TurnRange.all()).stream()
                 .filter(t -> t.role() == Turn.Role.USER || t.role() == Turn.Role.ASSISTANT)
-                .map(t -> new PublicChatDtos.HistoryTurn(t.role().name().toLowerCase(), t.content()))
+                .map(t -> new PublicChatDtos.HistoryTurn(t.role().name().toLowerCase(), t.content(),
+                        attachmentViews(t, ep)))
+                .toList();
+    }
+
+    /** Re-render media bubbles from the turn's recorded attachment metadata
+     *  (§6.4) with freshly signed URLs — the old grants have long expired. */
+    private List<PublicChatDtos.AttachmentView> attachmentViews(Turn t, ChatEntryPoint ep) {
+        Object raw = t.metadata() == null ? null : t.metadata().get("attachments");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) return List.of();
+        return list.stream()
+                .filter(o -> o instanceof Map<?, ?>)
+                .map(o -> (Map<?, ?>) o)
+                .map(m -> new PublicChatDtos.AttachmentView(
+                        String.valueOf(m.get("id")),
+                        String.valueOf(m.get("kind")),
+                        String.valueOf(m.get("contentType")),
+                        String.valueOf(m.get("filename")),
+                        chatAttachments.signedUrl(ep.tenant(), String.valueOf(m.get("id")))))
                 .toList();
     }
 

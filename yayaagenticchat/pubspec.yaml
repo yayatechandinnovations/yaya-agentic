@@ -27,11 +27,25 @@ dependencies:
   # Persistence (on-device directory of added tiles + per-tile sessionId)
   shared_preferences: ^2.5.5
 
+  # Secret credentials (device pass + device secret) live in platform secure
+  # storage, never plain prefs (chat-experience-design.md §5.5).
+  flutter_secure_storage: ^9.2.2
+
   # QR add-a-tile on-ramp
   mobile_scanner: ^5.2.3
 
   # Commerce checkout: open the PSP hosted-checkout page (hosted_url mode).
   url_launcher: ^6.3.1
+
+  # Chat media (chat-experience-design.md §6): pick photos/documents, record
+  # voice notes, and play them back. All three support web.
+  file_picker: ^8.1.2
+  record: ^5.1.2
+  just_audio: ^0.9.40
+
+  # Receipt/ticket previews (chat-experience-design.md §7): real Code-128 and
+  # QR marks on the thermal-paper widget. Pure Dart, web-safe.
+  barcode_widget: ^2.0.4
 
   # Commerce checkout: mount the PSP drop-in for the payment_intent mode
   # (clientSecret + publishableKey arrive in the checkout_result payload).

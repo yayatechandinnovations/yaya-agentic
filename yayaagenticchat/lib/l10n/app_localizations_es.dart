@@ -352,4 +352,230 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get startNewChat => 'Empezar de nuevo';
+
+  @override
+  String get ok => 'Aceptar';
+
+  @override
+  String get navChats => 'Chats';
+
+  @override
+  String get navDiscover => 'Descubrir';
+
+  @override
+  String get navAccount => 'Cuenta';
+
+  @override
+  String get lockTitle => 'Bienvenido de nuevo';
+
+  @override
+  String lockTitleNamed(String name) {
+    return 'Bienvenido de nuevo, $name';
+  }
+
+  @override
+  String get lockBlurb => 'Ingresa tu PIN para desbloquear';
+
+  @override
+  String get lockUnlock => 'Desbloquear';
+
+  @override
+  String get lockForgotPin => '¿Olvidaste tu PIN? Verifica por SMS';
+
+  @override
+  String get pinTooShort => 'El PIN debe tener de 4 a 6 dígitos';
+
+  @override
+  String get pinMismatch => 'Los PIN no coinciden';
+
+  @override
+  String get pinSetupTitle => 'Protege tu cuenta con un PIN';
+
+  @override
+  String get pinSetupBlurb =>
+      'La próxima vez que abras la app solo ingresarás este PIN — sin más códigos SMS. Puedes cambiarlo cuando quieras en Cuenta → Seguridad.';
+
+  @override
+  String get pinSetupNewLabel => 'Nuevo PIN';
+
+  @override
+  String get pinSetupConfirmLabel => 'Confirmar PIN';
+
+  @override
+  String get pinSetupSave => 'Establecer PIN';
+
+  @override
+  String get pinSetupSkip => 'Ahora no';
+
+  @override
+  String get securitySection => 'Seguridad';
+
+  @override
+  String get securityPin => 'PIN de la app';
+
+  @override
+  String get securityPinOn => 'Activado — se pide al abrir la app';
+
+  @override
+  String get securityPinOff =>
+      'Desactivado — configúralo para evitar códigos SMS';
+
+  @override
+  String get securityPinSetTitle => 'Configura tu PIN';
+
+  @override
+  String get securityPinChange => 'Cambiar PIN';
+
+  @override
+  String get securityPinSaved => 'PIN guardado';
+
+  @override
+  String get securityPinRemove => 'Quitar PIN';
+
+  @override
+  String get securityPinRemoveBlurb =>
+      'Sin PIN este dispositivo permanece conectado más tiempo, pero cualquiera que lo tenga puede abrir tus chats.';
+
+  @override
+  String get securityPinRemoved => 'PIN eliminado';
+
+  @override
+  String get securityPinWrong => 'Ese PIN no es correcto';
+
+  @override
+  String get securityPinCurrentLabel => 'PIN actual';
+
+  @override
+  String get securityDevices => 'Dispositivos';
+
+  @override
+  String get securityDevicesEmpty => 'Aún no hay dispositivos';
+
+  @override
+  String get securityDeviceThis => 'Este dispositivo';
+
+  @override
+  String get securityDeviceUnnamed => 'Dispositivo sin nombre';
+
+  @override
+  String securityDeviceLastSeen(String date) {
+    return 'Última actividad $date';
+  }
+
+  @override
+  String get securityDeviceAskPin => 'Pedir PIN';
+
+  @override
+  String get securityDeviceRevoke => 'Cerrar sesión en este dispositivo';
+
+  @override
+  String get securityDeviceRevoked => 'Sesión cerrada en el dispositivo';
+
+  @override
+  String get securityDeviceTrustTitle => '¿Desactivar el PIN aquí?';
+
+  @override
+  String get securityDeviceTrustBlurb =>
+      'Ingresa tu PIN para dejar de pedirlo en este dispositivo. Puedes reactivarlo cuando quieras.';
+
+  @override
+  String get securityLogoutDevice => 'Cerrar sesión en este dispositivo';
+
+  @override
+  String get securityLogoutDeviceBlurb =>
+      'Tus chats permanecen en tu cuenta — verifica tu número de nuevo para volver.';
+
+  @override
+  String get attachTooltip => 'Adjuntar';
+
+  @override
+  String get attachPhoto => 'Foto';
+
+  @override
+  String get attachDocument => 'Documento (PDF)';
+
+  @override
+  String get attachFailed => 'No se pudo subir';
+
+  @override
+  String get voiceRecord => 'Grabar una nota de voz';
+
+  @override
+  String get voiceStop => 'Enviar nota de voz';
+
+  @override
+  String get voiceDiscard => 'Descartar grabación';
+
+  @override
+  String get voiceMicDenied =>
+      'Se necesita acceso al micrófono para grabar notas de voz';
+
+  @override
+  String get voiceShowTranscript => 'Ver transcripción';
+
+  @override
+  String get voiceHideTranscript => 'Ocultar transcripción';
+
+  @override
+  String get receiptsTitle => 'Recibos';
+
+  @override
+  String get receiptsEmpty =>
+      'Los boletos y recibos que recibas en tus chats aparecerán aquí.';
+
+  @override
+  String get receiptsFallbackTitle => 'Recibo';
+
+  @override
+  String get navForum => 'Foro';
+
+  @override
+  String get forumTitle => 'Foro';
+
+  @override
+  String get forumNoChats =>
+      'Agrega un chat primero — su comunidad aparecerá aquí.';
+
+  @override
+  String get forumDisabled => 'Este chat aún no tiene un espacio de comunidad.';
+
+  @override
+  String get forumEmpty =>
+      'Aún no hay publicaciones. ¡Sé el primero en decir algo!';
+
+  @override
+  String get forumComposerHint => 'Comparte algo…';
+
+  @override
+  String get forumReply => 'Responder';
+
+  @override
+  String get forumReplyHint => 'Escribe una respuesta…';
+
+  @override
+  String get forumNoReplies => 'Aún no hay respuestas.';
+
+  @override
+  String get forumEdit => 'Editar';
+
+  @override
+  String get forumEditTitle => 'Editar publicación';
+
+  @override
+  String get forumDelete => 'Eliminar';
+
+  @override
+  String get forumReport => 'Reportar';
+
+  @override
+  String get forumReportTitle => 'Reportar esta publicación';
+
+  @override
+  String get forumReported => 'Gracias — el equipo lo revisará.';
+
+  @override
+  String get forumEdited => 'editado';
+
+  @override
+  String get forumJustNow => 'ahora';
 }

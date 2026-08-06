@@ -47,6 +47,13 @@ public interface KnowledgeBlobRepository
                     WHERE s.tenant_id = b.tenant_id
                       AND s.location_kind = 'UPLOADED'
                       AND f->>'blobId' = b.blob_id)
+               AND NOT EXISTS (
+                   -- Chat media (chat-experience-design.md §6) shares the blob
+                   -- store; a blob referenced by a chat attachment is not an
+                   -- orphan even if no knowledge source knows it.
+                   SELECT 1 FROM chat_attachments ca
+                    WHERE ca.tenant_id = b.tenant_id
+                      AND ca.blob_id = b.blob_id)
             """, nativeQuery = true)
     int deleteOrphans(@Param("graceHours") int graceHours);
 }

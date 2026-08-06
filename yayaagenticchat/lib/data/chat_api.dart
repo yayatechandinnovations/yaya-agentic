@@ -7,6 +7,8 @@ import 'package:dio/dio.dart';
 import '../config.dart';
 import '../models/chat_message.dart';
 import '../models/commerce/commerce_config.dart';
+import '../models/forum.dart';
+import '../models/receipts.dart';
 import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
 
@@ -27,12 +29,17 @@ class StartResult {
   /// chrome from session start without a new transport (ecommerce-chat §3).
   final CommerceConfig? commerce;
 
+  /// Non-null when the profile carries receipt templates
+  /// (chat-experience-design.md §7.3, trait `chat.receipts`).
+  final ReceiptsConfig? receipts;
+
   const StartResult({
     required this.sessionId,
     required this.greeting,
     required this.quickReplies,
     required this.entryPoint,
     this.commerce,
+    this.receipts,
   });
 }
 
@@ -41,12 +48,40 @@ class Account {
   final String phoneE164;
   final String name;
   final String? createdAt;
-  const Account({required this.phoneE164, required this.name, this.createdAt});
+  final bool pinSet;
+  const Account(
+      {required this.phoneE164, required this.name, this.createdAt, this.pinSet = false});
 
   factory Account.fromJson(Map<String, dynamic> j) => Account(
         phoneE164: (j['phoneE164'] ?? '') as String,
         name: (j['name'] ?? '') as String,
         createdAt: j['createdAt'] as String?,
+        pinSet: (j['pinSet'] ?? false) as bool,
+      );
+}
+
+/// One activated device of the account (chat-experience-design.md §5.5).
+class AccountDevice {
+  final String deviceId;
+  final String? label;
+  final bool pinRequired;
+  final bool current;
+  final String? lastSeenAt;
+
+  const AccountDevice({
+    required this.deviceId,
+    this.label,
+    required this.pinRequired,
+    required this.current,
+    this.lastSeenAt,
+  });
+
+  factory AccountDevice.fromJson(Map<String, dynamic> j) => AccountDevice(
+        deviceId: (j['deviceId'] ?? '') as String,
+        label: j['label'] as String?,
+        pinRequired: (j['pinRequired'] ?? true) as bool,
+        current: (j['current'] ?? false) as bool,
+        lastSeenAt: j['lastSeenAt'] as String?,
       );
 }
 
@@ -130,14 +165,120 @@ class ChatApi {
   }
 
   /// Check the OTP; on success returns the device pass to store plus the account's
-  /// name (for a returning phone this is the stored name, even if none was typed).
-  Future<({String devicePass, String? name})> verifyCheck(
+  /// name (for a returning phone this is the stored name, even if none was typed),
+  /// the once-only device secret for PIN unlock, and whether a PIN already
+  /// guards the account (chat-experience-design.md §5.4).
+  Future<({String devicePass, String? name, String? deviceSecret, bool pinSet})> verifyCheck(
       String phoneE164, String code, String deviceId, String? name) async {
     try {
       final r = await _dio.post('/v1/chat/verify/check',
           data: {'phoneE164': phoneE164, 'code': code, 'deviceId': deviceId, 'name': name});
       final j = Map<String, dynamic>.from(r.data as Map);
-      return (devicePass: (j['devicePass'] ?? '') as String, name: j['name'] as String?);
+      return (
+        devicePass: (j['devicePass'] ?? '') as String,
+        name: j['name'] as String?,
+        deviceSecret: j['deviceSecret'] as String?,
+        pinSet: (j['pinSet'] ?? false) as bool,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// The everyday login (chat-experience-design.md §5.4): device secret + PIN
+  /// (omitted when this device's PIN gate is off) → a fresh session pass.
+  /// Every failure mode is a uniform 401; `otp_required` is the one exception,
+  /// meaning the lockout ladder is exhausted and only SMS re-verify recovers.
+  Future<({String devicePass, String? phone, String? name, bool pinRequired})> pinUnlock(
+      String deviceId, String deviceSecret, String? pin) async {
+    try {
+      final r = await _dio.post('/v1/chat/verify/pin-unlock',
+          data: {'deviceId': deviceId, 'deviceSecret': deviceSecret, 'pin': pin});
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (
+        devicePass: (j['devicePass'] ?? '') as String,
+        phone: j['phoneE164'] as String?,
+        name: j['name'] as String?,
+        pinRequired: (j['pinRequired'] ?? false) as bool,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Set or change the account PIN. `currentPin` is required only for a change.
+  /// Returns the re-minted (short-TTL) pass to adopt.
+  Future<String> setPin({String? currentPin, required String pin}) async {
+    try {
+      final r = await _dio.post('/v1/chat/account/pin',
+          data: {'currentPin': currentPin, 'pin': pin},
+          options: Options(headers: _deviceHeader));
+      return (Map<String, dynamic>.from(r.data as Map)['devicePass'] ?? '') as String;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Remove the PIN (requires knowing it). Returns the re-minted long-TTL pass.
+  Future<String> removePin(String currentPin) async {
+    try {
+      final r = await _dio.delete('/v1/chat/account/pin',
+          data: {'currentPin': currentPin}, options: Options(headers: _deviceHeader));
+      return (Map<String, dynamic>.from(r.data as Map)['devicePass'] ?? '') as String;
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<List<AccountDevice>> listDevices() async {
+    try {
+      final r = await _dio.get('/v1/chat/account/devices',
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return [
+        for (final d in (j['devices'] as List? ?? const []))
+          AccountDevice.fromJson(Map<String, dynamic>.from(d as Map)),
+      ];
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Lazy migration for installs predating device enrollment: trade the valid
+  /// pass for this device's secret — no SMS spent.
+  Future<({String deviceSecret, bool pinRequired, bool pinSet})> enrollDevice() async {
+    try {
+      final r = await _dio.post('/v1/chat/account/devices/enroll',
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (
+        deviceSecret: (j['deviceSecret'] ?? '') as String,
+        pinRequired: (j['pinRequired'] ?? true) as bool,
+        pinSet: (j['pinSet'] ?? false) as bool,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Toggle the per-device PIN gate. Turning it OFF is a step-up: the current
+  /// PIN must ride along when the account has one.
+  Future<void> updateDevice(String deviceId,
+      {required bool pinRequired, String? currentPin}) async {
+    try {
+      await _dio.put('/v1/chat/account/devices/$deviceId',
+          data: {'pinRequired': pinRequired, 'currentPin': currentPin},
+          options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Single-device sign-out; revoking the current device is plain "log out".
+  Future<void> revokeDevice(String deviceId) async {
+    try {
+      await _dio.post('/v1/chat/account/devices/$deviceId/revoke',
+          options: Options(headers: _deviceHeader));
     } on DioException catch (e) {
       throw _map(e);
     }
@@ -186,6 +327,7 @@ class ChatApi {
       // Fall back to the pre-S7 top-level `commerce` field for older servers.
       final traits = j['traits'];
       final store = (traits is Map ? traits['sales.store'] : null) ?? j['commerce'];
+      final receipts = traits is Map ? traits['chat.receipts'] : null;
       return StartResult(
         sessionId: j['sessionId'] as String,
         greeting: (j['greeting'] as String?) ?? '',
@@ -195,6 +337,31 @@ class ChatApi {
         commerce: store is Map
             ? CommerceConfig.fromJson(Map<String, dynamic>.from(store))
             : null,
+        receipts: receipts is Map
+            ? ReceiptsConfig.fromJson(Map<String, dynamic>.from(receipts))
+            : null,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// The account's receipt wallet (chat-experience-design.md §7.5): every
+  /// ticket/receipt issued to this verified account, template snapshotted at
+  /// issuance. Keyset-paged, newest first.
+  Future<({List<ReceiptInstance> receipts, String? nextCursor})> accountReceipts(
+      {String? cursor}) async {
+    try {
+      final r = await _dio.get('/v1/chat/account/receipts',
+          queryParameters: {'cursor': ?cursor},
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (
+        receipts: [
+          for (final e in (j['receipts'] as List? ?? const []))
+            ReceiptInstance.fromWallet(Map<String, dynamic>.from(e as Map)),
+        ],
+        nextCursor: j['nextCursor'] as String?,
       );
     } on DioException catch (e) {
       throw _map(e);
@@ -202,9 +369,35 @@ class ChatApi {
   }
 
   /// Stream the assistant's turn. Each yielded [SseEvent] is one `event:/data:`
-  /// frame from the SSE response.
-  Stream<SseEvent> sendMessage(String sessionId, String text, {String? bearer}) =>
-      _streamSse('/v1/chat/sessions/$sessionId/messages', {'text': text}, bearer: bearer);
+  /// frame from the SSE response. [attachmentIds] reference prior uploads to
+  /// this session (chat-experience-design.md §6.1 — upload first, then send).
+  Stream<SseEvent> sendMessage(String sessionId, String text,
+          {String? bearer, List<String> attachmentIds = const []}) =>
+      _streamSse(
+          '/v1/chat/sessions/$sessionId/messages',
+          {
+            'text': text,
+            if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+          },
+          bearer: bearer);
+
+  /// Upload one attachment into a session (chat-experience-design.md §6.1): the
+  /// bytes run the server gauntlet (type sniff → malware scan → store) and the
+  /// returned attachment carries a short-lived signed URL — plus, for voice
+  /// notes, the transcript when transcription succeeded.
+  Future<ChatAttachment> uploadAttachment(
+      String sessionId, Uint8List bytes, String filename) async {
+    try {
+      final form = FormData.fromMap({
+        'file': MultipartFile.fromBytes(bytes, filename: filename),
+      });
+      final r = await _dio.post('/v1/chat/sessions/$sessionId/attachments',
+          data: form, options: Options(headers: _deviceHeader));
+      return ChatAttachment.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
 
   /// The client-initiated action channel (ecommerce-chat-design.md §9): invoke
   /// one whitelisted, `clientInvocable` commerce tool (a tap on Add / Remove /
@@ -453,8 +646,104 @@ class ChatApi {
         return ChatMessage(
           role: (m['role'] ?? 'assistant') as String,
           text: (m['text'] ?? '') as String,
+          attachments: [
+            for (final a in (m['attachments'] as List? ?? const []))
+              ChatAttachment.fromJson(Map<String, dynamic>.from(a as Map)),
+          ],
         );
       }).toList();
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /* ---- Community forum (chat-experience-design.md §8) ---- */
+
+  /// The forum feed for a handle. `enabled=false` means the tenant hasn't
+  /// switched the forum on — render the zero state, not an error.
+  Future<({bool enabled, List<ForumPost> posts, String? nextCursor})> forumFeed(
+      String handle, {String? cursor}) async {
+    try {
+      final r = await _dio.get('/v1/chat/e/$handle/forum/posts',
+          queryParameters: {'cursor': ?cursor},
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (
+        enabled: (j['enabled'] ?? false) as bool,
+        posts: [
+          for (final p in (j['posts'] as List? ?? const []))
+            ForumPost.fromJson(Map<String, dynamic>.from(p as Map)),
+        ],
+        nextCursor: j['nextCursor'] as String?,
+      );
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<List<ForumPost>> forumReplies(String handle, String postId) async {
+    try {
+      final r = await _dio.get('/v1/chat/e/$handle/forum/posts/$postId/replies',
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return [
+        for (final p in (j['replies'] as List? ?? const []))
+          ForumPost.fromJson(Map<String, dynamic>.from(p as Map)),
+      ];
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<ForumPost> forumCreate(String handle, String body, {String? replyTo}) async {
+    try {
+      final r = await _dio.post('/v1/chat/e/$handle/forum/posts',
+          data: {'body': body, 'replyTo': replyTo},
+          options: Options(headers: _deviceHeader));
+      return ForumPost.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<ForumPost> forumEdit(String handle, String postId, String body) async {
+    try {
+      final r = await _dio.patch('/v1/chat/e/$handle/forum/posts/$postId',
+          data: {'body': body}, options: Options(headers: _deviceHeader));
+      return ForumPost.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> forumDelete(String handle, String postId) async {
+    try {
+      await _dio.delete('/v1/chat/e/$handle/forum/posts/$postId',
+          options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// Toggle a reaction; returns the refreshed post.
+  Future<ForumPost> forumReact(String handle, String postId, String emoji,
+      {required bool add}) async {
+    try {
+      final path =
+          '/v1/chat/e/$handle/forum/posts/$postId/reactions/${Uri.encodeComponent(emoji)}';
+      final r = add
+          ? await _dio.put(path, options: Options(headers: _deviceHeader))
+          : await _dio.delete(path, options: Options(headers: _deviceHeader));
+      return ForumPost.fromJson(Map<String, dynamic>.from(r.data as Map));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> forumReport(String handle, String postId, String? reason) async {
+    try {
+      await _dio.post('/v1/chat/e/$handle/forum/posts/$postId/report',
+          data: {'reason': reason}, options: Options(headers: _deviceHeader));
     } on DioException catch (e) {
       throw _map(e);
     }

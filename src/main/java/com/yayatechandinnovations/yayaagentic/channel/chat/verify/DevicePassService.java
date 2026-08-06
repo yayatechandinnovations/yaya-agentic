@@ -40,23 +40,40 @@ public class DevicePassService {
 
     private final byte[] key;
     private final Duration ttl;
+    private final Duration pinTtl;
 
     public DevicePassService(
             @Value("${yaya.agentic.chat.device-pass-secret:}") String secret,
-            @Value("${yaya.agentic.chat.device-pass-ttl-days:30}") int ttlDays) {
+            @Value("${yaya.agentic.chat.device-pass-ttl-days:30}") int ttlDays,
+            @Value("${yaya.agentic.chat.device-pass-pin-ttl-hours:24}") int pinTtlHours) {
         this.key = deriveKey(secret);
         this.ttl = Duration.ofDays(ttlDays <= 0 ? 30 : ttlDays);
+        this.pinTtl = Duration.ofHours(pinTtlHours <= 0 ? 24 : pinTtlHours);
     }
 
     /** Mint a device pass for a freshly verified device. */
     public String issue(VerifiedDevice device) {
+        return issue(device, ttl);
+    }
+
+    /**
+     * Mint a pass sized to the account's PIN posture ({@code
+     * chat-experience-design.md} §5.2): a PIN-holding account gets the short
+     * TTL — cheap re-auth is the PIN's whole value — while a PIN-less account
+     * keeps the long-lived pass (today's behaviour, undegraded).
+     */
+    public String issueFor(VerifiedDevice device, boolean pinProtected) {
+        return issue(device, pinProtected ? pinTtl : ttl);
+    }
+
+    private String issue(VerifiedDevice device, Duration lifetime) {
         try {
             Instant now = Instant.now();
             JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
                     .subject("chat:" + device.phoneE164())
                     .issuer(ISSUER)
                     .issueTime(Date.from(now))
-                    .expirationTime(Date.from(now.plus(ttl)))
+                    .expirationTime(Date.from(now.plus(lifetime)))
                     .claim("typ", TYPE)
                     .claim("phone", device.phoneE164())
                     .claim("name", device.name())

@@ -39,19 +39,48 @@ Color colorFromHex(String? hex, {Color fallback = Brand.violet}) {
   return value == null ? fallback : Color(value);
 }
 
+/// Light theme (chat-experience-design.md §9): receipts and forums are daytime
+/// surfaces, so the app follows the system. The neon wordmark + per-tile
+/// accents keep the brand identity in both modes.
 ThemeData buildBrandTheme() {
+  final scheme = ColorScheme.fromSeed(
+    seedColor: Brand.violet,
+    brightness: Brightness.light,
+  );
+  return _base(scheme).copyWith(
+    scaffoldBackgroundColor: scheme.surface,
+    appBarTheme: AppBarTheme(
+      backgroundColor: scheme.surface,
+      elevation: 0,
+      centerTitle: true,
+    ),
+  );
+}
+
+ThemeData buildBrandThemeDark() {
   final scheme = ColorScheme.fromSeed(
     seedColor: Brand.violet,
     brightness: Brightness.dark,
   ).copyWith(surface: Brand.surface);
-  return ThemeData(
-    colorScheme: scheme,
+  return _base(scheme).copyWith(
     scaffoldBackgroundColor: Brand.surface,
-    useMaterial3: true,
     appBarTheme: const AppBarTheme(
       backgroundColor: Brand.surface,
       elevation: 0,
       centerTitle: true,
     ),
+  );
+}
+
+ThemeData _base(ColorScheme scheme) {
+  return ThemeData(
+    colorScheme: scheme,
+    useMaterial3: true,
+    navigationBarTheme: NavigationBarThemeData(
+      height: 64,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      indicatorColor: scheme.primaryContainer,
+    ),
+    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );
 }

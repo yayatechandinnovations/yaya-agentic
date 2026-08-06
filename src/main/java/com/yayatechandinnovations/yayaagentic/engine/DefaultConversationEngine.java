@@ -862,7 +862,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                 return Flux.<TurnEvent>empty();
             }
             List<LlmClient.HistoryEntry> history = new java.util.ArrayList<>(prior.historyEntries);
-            history.add(new LlmClient.HistoryEntry.User(message.text()));
+            history.add(currentUserEntry(message));
             history.add(new LlmClient.HistoryEntry.Assistant("",
                     List.of(new LlmClient.ToolCallSpec(callIdHint, toolId.value(), args))));
             history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
@@ -1038,7 +1038,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                                           String earlierSummary) {
         List<LlmClient.HistoryEntry> initial = new java.util.ArrayList<>(priorHistory.size() + 1);
         initial.addAll(priorHistory);
-        initial.add(new LlmClient.HistoryEntry.User(message.text()));
+        initial.add(currentUserEntry(message));
         java.util.concurrent.atomic.AtomicBoolean anyDispatch = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         // M2.5 — retrieve once at the top of the turn (always-on gating).
@@ -1699,7 +1699,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
             // Either way, let the LLM continuation explain what happened.
             List<LlmClient.HistoryEntry> history = new java.util.ArrayList<>(prior.historyEntries);
-            history.add(new LlmClient.HistoryEntry.User(message.text()));
+            history.add(currentUserEntry(message));
             history.add(new LlmClient.HistoryEntry.Assistant("",
                     List.of(new LlmClient.ToolCallSpec(callIdHint, rollbackToolId.value(), Map.of()))));
             history.add(new LlmClient.HistoryEntry.ToolResults(List.of(
@@ -1977,6 +1977,35 @@ public class DefaultConversationEngine implements ConversationEngine {
                         List.of(recordedCall), List.of(recordedResult)));
     }
 
+    /**
+     * The CURRENT turn's user entry: text plus any inline vision images the
+     * channel composed ({@code chat-experience-design.md} §6.3). History
+     * reconstruction elsewhere stays text-only by design — image bytes ride a
+     * model round exactly once.
+     */
+    private static LlmClient.HistoryEntry.User currentUserEntry(UserMessage message) {
+        Object raw = message.attachments() == null ? null : message.attachments().get("chat.images");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return new LlmClient.HistoryEntry.User(message.text());
+        }
+        List<LlmClient.HistoryEntry.ImagePart> images = list.stream()
+                .filter(o -> o instanceof Map<?, ?>)
+                .map(o -> (Map<?, ?>) o)
+                .map(m -> new LlmClient.HistoryEntry.ImagePart(
+                        String.valueOf(m.get("contentType")), String.valueOf(m.get("base64"))))
+                .toList();
+        return new LlmClient.HistoryEntry.User(message.text(), images);
+    }
+
+    /** Attachment display metadata stamped on the recorded user turn so a
+     *  resumed transcript can re-render media bubbles (§6.4). Never the bytes. */
+    private static Map<String, Object> userTurnMetadata(UserMessage userMessage) {
+        Object meta = userMessage.attachments() == null
+                ? null : userMessage.attachments().get("chat.attachments");
+        return (meta instanceof List<?> l && !l.isEmpty())
+                ? Map.of("attachments", l) : Map.of();
+    }
+
     private void recordTurns(ConversationRecorder recorder, Session session, ExecutionContext exec,
                              Ids.TurnId turnId, UserMessage userMessage, String assistantText,
                              List<Turn.ToolCall> calls, List<Turn.ToolResult> results) {
@@ -1991,7 +2020,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         recorder.onTurnRecorded(session.id(),
                 new Turn(new Ids.TurnId(UUID.randomUUID().toString()), session.id(), userIdx,
                         Turn.Role.USER, userMessage.text(), List.of(), List.of(), List.of(),
-                        null, Map.of(), now),
+                        null, userTurnMetadata(userMessage), now),
                 rc);
         recorder.onTurnRecorded(session.id(),
                 new Turn(turnId, session.id(), assistantIdx,

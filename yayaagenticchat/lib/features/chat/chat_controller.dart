@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/chat_api.dart';
+import '../../data/credential_store.dart';
 import '../../data/providers.dart';
 import '../../models/chat_message.dart';
 import '../../models/commerce/cart.dart';
@@ -12,6 +14,41 @@ import '../../models/commerce/commerce_config.dart';
 import '../../models/commerce/confirm_prompt.dart';
 import '../../models/commerce/product.dart';
 import '../../models/entry_point_card.dart';
+import '../../models/receipts.dart';
+
+/// One attachment staged in the composer tray (chat-experience-design.md §6):
+/// uploading → uploaded (server attachment with signed URL + transcript) or
+/// failed (retryable — the bytes are kept until sent or removed).
+class PendingAttachment {
+  final String localId;
+  final String filename;
+  final Uint8List bytes;
+  final bool isVoice;
+  final ChatAttachment? uploaded;
+  final String? error;
+
+  const PendingAttachment({
+    required this.localId,
+    required this.filename,
+    required this.bytes,
+    this.isVoice = false,
+    this.uploaded,
+    this.error,
+  });
+
+  bool get uploading => uploaded == null && error == null;
+  bool get failed => error != null;
+
+  PendingAttachment copyWith({ChatAttachment? uploaded, String? error, bool clearError = false}) =>
+      PendingAttachment(
+        localId: localId,
+        filename: filename,
+        bytes: bytes,
+        isVoice: isVoice,
+        uploaded: uploaded ?? this.uploaded,
+        error: clearError ? null : (error ?? this.error),
+      );
+}
 
 class ChatState {
   final EntryPointCard? card;
@@ -27,6 +64,9 @@ class ChatState {
   final Cart? cart;
   final ConfirmPrompt? pendingConfirm;
 
+  /// Receipt templates delivered at session start (chat-experience §7.3).
+  final ReceiptsConfig? receipts;
+
   /// One-shot side-effect trigger: a fresh checkout hand-off the UI layer must
   /// act on (open the hosted page / mount the PSP sheet / show the receipt),
   /// then clear. Kept off the message list so the effect fires exactly once.
@@ -36,6 +76,9 @@ class ChatState {
   /// instead of auto-starting. [resumeSessionId] is the session to hydrate.
   final bool resumeAvailable;
   final String? resumeSessionId;
+
+  /// Attachments staged in the composer tray, not yet sent (§6).
+  final List<PendingAttachment> pendingAttachments;
 
   const ChatState({
     this.card,
@@ -48,9 +91,11 @@ class ChatState {
     this.commerce,
     this.cart,
     this.pendingConfirm,
+    this.receipts,
     this.pendingCheckout,
     this.resumeAvailable = false,
     this.resumeSessionId,
+    this.pendingAttachments = const [],
   });
 
   bool get authenticated => bearer != null && bearer!.isNotEmpty;
@@ -80,12 +125,14 @@ class ChatState {
     CommerceConfig? commerce,
     Cart? cart,
     ConfirmPrompt? pendingConfirm,
+    ReceiptsConfig? receipts,
     bool clearConfirm = false,
     CheckoutResult? pendingCheckout,
     bool clearCheckout = false,
     bool? resumeAvailable,
     String? resumeSessionId,
     bool clearResume = false,
+    List<PendingAttachment>? pendingAttachments,
   }) =>
       ChatState(
         card: card ?? this.card,
@@ -98,9 +145,11 @@ class ChatState {
         commerce: commerce ?? this.commerce,
         cart: cart ?? this.cart,
         pendingConfirm: clearConfirm ? null : (pendingConfirm ?? this.pendingConfirm),
+        receipts: receipts ?? this.receipts,
         pendingCheckout: clearCheckout ? null : (pendingCheckout ?? this.pendingCheckout),
         resumeAvailable: clearResume ? false : (resumeAvailable ?? this.resumeAvailable),
         resumeSessionId: clearResume ? null : (resumeSessionId ?? this.resumeSessionId),
+        pendingAttachments: pendingAttachments ?? this.pendingAttachments,
       );
 }
 
@@ -204,6 +253,7 @@ class ChatController extends StateNotifier<ChatState> {
       clearResume: true,
       clearError: true,
       commerce: result.commerce,
+      receipts: result.receipts,
     );
     // Hydrate the cart badge for a returning shopper (durable cart projection,
     // §14). Best-effort — a fresh session just gets an empty cart.
@@ -300,25 +350,99 @@ class ChatController extends StateNotifier<ChatState> {
     }
   }
 
+  /* --------------------------- attachments (§6) -------------------------- */
+
+  static int _attachSeq = 0;
+
+  /// Stage + upload one attachment into the composer tray. The tray entry
+  /// shows progress and becomes sendable once the server accepts it.
+  Future<void> attach(Uint8List bytes, String filename, {bool isVoice = false}) async {
+    final sid = state.sessionId;
+    if (sid == null) return;
+    final localId = 'p${_attachSeq++}';
+    final pending = PendingAttachment(
+        localId: localId, filename: filename, bytes: bytes, isVoice: isVoice);
+    state = state.copyWith(pendingAttachments: [...state.pendingAttachments, pending]);
+    await _upload(sid, localId);
+  }
+
+  Future<void> retryAttachment(String localId) async {
+    final sid = state.sessionId;
+    if (sid == null) return;
+    _patchPending(localId, (p) => p.copyWith(clearError: true));
+    await _upload(sid, localId);
+  }
+
+  void removeAttachment(String localId) {
+    state = state.copyWith(
+        pendingAttachments:
+            state.pendingAttachments.where((p) => p.localId != localId).toList());
+  }
+
+  Future<void> _upload(String sid, String localId) async {
+    final p = state.pendingAttachments.where((x) => x.localId == localId).firstOrNull;
+    if (p == null) return;
+    try {
+      final uploaded = await _api.uploadAttachment(sid, p.bytes, p.filename);
+      _patchPending(localId, (x) => x.copyWith(uploaded: uploaded));
+    } on ChatApiException catch (e) {
+      _patchPending(localId, (x) => x.copyWith(error: _friendly(e)));
+    }
+  }
+
+  void _patchPending(String localId, PendingAttachment Function(PendingAttachment) fn) {
+    state = state.copyWith(pendingAttachments: [
+      for (final p in state.pendingAttachments) p.localId == localId ? fn(p) : p
+    ]);
+  }
+
+  /// Resolve the template a receipt renders with: the hint's explicit
+  /// templateId wins; otherwise fall back to the first configured template
+  /// (selection is declarative, never inferred — chat-experience §7.2).
+  ReceiptTemplate? templateFor(ReceiptInstance receipt) {
+    final config = state.receipts;
+    if (config == null || config.isEmpty) return receipt.snapshot;
+    return config.byId(receipt.templateId) ??
+        receipt.snapshot ??
+        config.templates.first;
+  }
+
+  /// A tap on a receipt action button — the same authz-gated /actions door as
+  /// every cart tap ("two doors, one lock").
+  Future<void> invokeReceiptAction(ReceiptAction action) =>
+      invokeAction(action.tool, action.args);
+
   /* ------------------------------ chat send ----------------------------- */
 
   Future<void> send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || state.sending || state.sessionId == null) return;
+    final ready = state.pendingAttachments.where((p) => p.uploaded != null).toList();
+    if ((trimmed.isEmpty && ready.isEmpty) || state.sending || state.sessionId == null) {
+      return;
+    }
+    if (state.pendingAttachments.any((p) => p.uploading)) return; // wait for uploads
+
+    final attachmentIds = [for (final p in ready) p.uploaded!.assetId];
+    final sentAttachments = [for (final p in ready) p.uploaded!];
 
     // Any new user turn resolves or pivots away from a pending confirm — the
     // engine drops its own pending_confirm; mirror that on the client.
-    final withUser = [...state.messages, ChatMessage(role: 'user', text: trimmed)];
+    final withUser = [
+      ...state.messages,
+      ChatMessage(role: 'user', text: trimmed, attachments: sentAttachments),
+    ];
     final assistant = const ChatMessage(role: 'assistant', text: '', streaming: true);
     state = state.copyWith(
         messages: [...withUser, assistant],
         sending: true,
         clearError: true,
-        clearConfirm: true);
+        clearConfirm: true,
+        pendingAttachments: const []);
 
     final buf = _TurnBuffers();
     try {
-      await for (final evt in _api.sendMessage(state.sessionId!, trimmed, bearer: state.bearer)) {
+      await for (final evt in _api.sendMessage(state.sessionId!, trimmed,
+          bearer: state.bearer, attachmentIds: attachmentIds)) {
         _applyEvent(evt, buf, hasAssistantBubble: true);
       }
       _finishAssistant();
@@ -509,6 +633,17 @@ class ChatController extends StateNotifier<ChatState> {
         }
         _onCheckout(result);
         break;
+      case 'receipt':
+        // Printed-paper preview (chat-experience-design.md §7.3). The template
+        // is looked up at render time from the session's `chat.receipts` trait
+        // (hint's templateId, else the per-tool bindings fallback).
+        final receipt = ReceiptInstance.fromHint(payload);
+        if (hasAssistantBubble) {
+          _replaceLast(state.messages.last.copyWith(receipt: receipt));
+        } else {
+          _appendAssistant(ChatMessage(role: 'assistant', text: '', receipt: receipt));
+        }
+        break;
       default:
         break; // entity_conflict and any future kind: ignore, don't crash.
     }
@@ -540,6 +675,7 @@ class ChatController extends StateNotifier<ChatState> {
   }
 
   String _friendly(ChatApiException e) {
+    _maybeLock(e);
     switch (e.code) {
       case 'rate_limited':
         return 'Too many requests — please try again shortly.';
@@ -557,6 +693,18 @@ class ChatController extends StateNotifier<ChatState> {
         return "That action isn't available right now.";
       default:
         return e.message;
+    }
+  }
+
+  /// A 401 while we hold an EXPIRED device pass means the short-TTL pass aged
+  /// out mid-session (chat-experience-design.md §5.5) — hand off to the lock
+  /// screen (or silent unlock). A 401 with a still-valid pass is a tenant
+  /// sign-in requirement, not a lock condition.
+  void _maybeLock(ChatApiException e) {
+    if (e.status != 401) return;
+    final v = _ref.read(verificationProvider);
+    if (v.verified && isJwtExpired(v.devicePass)) {
+      unawaited(_ref.read(verificationProvider.notifier).onAuthRejected());
     }
   }
 }

@@ -1,12 +1,15 @@
 import 'package:go_router/go_router.dart';
 
 import '../features/account/account_screen.dart';
+import '../features/account/receipts_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/courier/courier_screen.dart';
 import '../features/directory/directory_screen.dart';
 import '../features/discover/discover_screen.dart';
 import '../features/entry/entry_screen.dart';
+import '../features/forum/forum_screen.dart';
 import '../features/scan/scan_screen.dart';
+import 'shell.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/',
@@ -21,10 +24,38 @@ final appRouter = GoRouter(
     return null;
   },
   routes: [
-    GoRoute(path: '/', builder: (context, state) => const DirectoryScreen()),
-    GoRoute(path: '/account', builder: (context, state) => const AccountScreen()),
+    // Tabbed shell (chat-experience-design.md §9): each branch keeps its own
+    // navigation stack, so switching tabs never loses scroll/search state.
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) =>
+          AppShell(navigationShell: navigationShell),
+      branches: [
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/', builder: (context, state) => const DirectoryScreen()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(
+              path: '/forum', builder: (context, state) => const ForumScreen()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(
+              path: '/discover',
+              builder: (context, state) => const DiscoverScreen()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(
+              path: '/account',
+              builder: (context, state) => const AccountScreen(),
+              routes: [
+                GoRoute(
+                    path: 'receipts',
+                    builder: (context, state) => const ReceiptsScreen()),
+              ]),
+        ]),
+      ],
+    ),
+    // Full-screen surfaces — no bottom nav.
     GoRoute(path: '/scan', builder: (context, state) => const ScanScreen()),
-    GoRoute(path: '/discover', builder: (context, state) => const DiscoverScreen()),
     // Courier mode (yaya-sales-design.md §11.5): the fleet's screen inside the
     // shopper app. Deep link /courier?invite=… pre-fills the registration form.
     GoRoute(

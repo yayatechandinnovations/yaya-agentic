@@ -7,6 +7,7 @@ import '../models/directory_card.dart';
 import '../models/entry_point_card.dart';
 import '../models/tile.dart';
 import 'chat_api.dart';
+import 'credential_store.dart';
 import 'directory_store.dart';
 
 /// Overridden in main() once SharedPreferences has loaded.
@@ -14,14 +15,23 @@ final sharedPrefsProvider = Provider<SharedPreferences>(
   (ref) => throw UnimplementedError('sharedPrefsProvider must be overridden in main()'),
 );
 
+/// Overridden in main() once secure storage has been read (and any legacy
+/// plaintext pass migrated into it).
+final initialCredentialsProvider = Provider<Credentials>(
+  (ref) => throw UnimplementedError('initialCredentialsProvider must be overridden in main()'),
+);
+
+final credentialStoreProvider = Provider<CredentialStore>((ref) => CredentialStore());
+
 final directoryStoreProvider = Provider<DirectoryStore>(
   (ref) => DirectoryStore(ref.watch(sharedPrefsProvider)),
 );
 
 /// Carries the verified-device pass (§20) so every chat call is identified as a
-/// phone-verified human. Rebuilt (via invalidate) after verification completes.
+/// phone-verified human. Watches the verification state, so an unlock or pass
+/// rotation rebuilds it with the fresh pass automatically.
 final chatApiProvider = Provider<ChatApi>(
-  (ref) => ChatApi(devicePass: ref.watch(directoryStoreProvider).devicePass()),
+  (ref) => ChatApi(devicePass: ref.watch(verificationProvider.select((s) => s.devicePass))),
 );
 
 final deviceIdProvider = Provider<String>(
@@ -37,53 +47,178 @@ enum VerifyStep { phone, name, code }
 
 class VerificationState {
   final String? devicePass;
+  final String? deviceSecret;
   final String? phone;
   final String? name;
   final VerifyStep step;
   final bool busy;
   final String? error;
 
+  /// The pass is stale/absent but the device is enrolled — show the lock
+  /// screen (or silently unlock when [pinRequired] is off).
+  final bool locked;
+
+  /// Does THIS device gate unlock behind the PIN?
+  final bool pinRequired;
+
+  /// Account-level: is a PIN set at all?
+  final bool pinSet;
+
+  /// One-shot nudge after first OTP on an account with no PIN.
+  final bool pendingPinSetup;
+
   const VerificationState({
     this.devicePass,
+    this.deviceSecret,
     this.phone,
     this.name,
     this.step = VerifyStep.phone,
     this.busy = false,
     this.error,
+    this.locked = false,
+    this.pinRequired = true,
+    this.pinSet = false,
+    this.pendingPinSetup = false,
   });
 
   bool get verified => devicePass != null && devicePass!.isNotEmpty;
 
   VerificationState copyWith({
     String? devicePass,
+    String? deviceSecret,
     String? phone,
     String? name,
     VerifyStep? step,
     bool? busy,
     String? error,
     bool clearError = false,
+    bool clearPass = false,
+    bool? locked,
+    bool? pinRequired,
+    bool? pinSet,
+    bool? pendingPinSetup,
   }) =>
       VerificationState(
-        devicePass: devicePass ?? this.devicePass,
+        devicePass: clearPass ? null : (devicePass ?? this.devicePass),
+        deviceSecret: deviceSecret ?? this.deviceSecret,
         phone: phone ?? this.phone,
         name: name ?? this.name,
         step: step ?? this.step,
         busy: busy ?? this.busy,
         error: clearError ? null : (error ?? this.error),
+        locked: locked ?? this.locked,
+        pinRequired: pinRequired ?? this.pinRequired,
+        pinSet: pinSet ?? this.pinSet,
+        pendingPinSetup: pendingPinSetup ?? this.pendingPinSetup,
       );
 }
 
 class VerificationNotifier extends StateNotifier<VerificationState> {
-  VerificationNotifier(this._ref)
-      : super(VerificationState(
-          devicePass: _ref.read(directoryStoreProvider).devicePass(),
-          phone: _ref.read(directoryStoreProvider).phone(),
-          name: _ref.read(directoryStoreProvider).name(),
-        ));
+  VerificationNotifier(this._ref) : super(_initialState(_ref)) {
+    _onStartup();
+  }
+
+  /// Startup decision (chat-experience-design.md §5.5): a valid pass proceeds;
+  /// a stale pass with an enrolled device locks; anything else is onboarding.
+  static VerificationState _initialState(Ref ref) {
+    final store = ref.read(directoryStoreProvider);
+    final creds = ref.read(initialCredentialsProvider);
+    final passValid = !isJwtExpired(creds.devicePass);
+    final enrolled = creds.deviceSecret != null && creds.deviceSecret!.isNotEmpty;
+    return VerificationState(
+      devicePass: passValid ? creds.devicePass : null,
+      deviceSecret: creds.deviceSecret,
+      phone: store.phone(),
+      name: store.name(),
+      locked: !passValid && enrolled,
+      pinRequired: store.pinRequired(),
+    );
+  }
 
   final Ref _ref;
   // Verify endpoints don't need (and predate) a device pass.
   final ChatApi _api = ChatApi();
+
+  CredentialStore get _creds => _ref.read(credentialStoreProvider);
+  DirectoryStore get _store => _ref.read(directoryStoreProvider);
+
+  Future<void> _onStartup() async {
+    if (state.locked && !state.pinRequired) {
+      // Trusted device ("don't ask on this phone"): unlock silently.
+      await unlock(null);
+    } else if (state.verified &&
+        (state.deviceSecret == null || state.deviceSecret!.isEmpty)) {
+      // Pre-CX install holding a long pass: trade it for a device secret once,
+      // no SMS spent (lazy migration, §5.4).
+      try {
+        final e = await ChatApi(devicePass: state.devicePass).enrollDevice();
+        await _creds.saveSecret(e.deviceSecret);
+        await _store.savePinRequired(e.pinRequired);
+        state = state.copyWith(
+            deviceSecret: e.deviceSecret, pinRequired: e.pinRequired, pinSet: e.pinSet);
+      } catch (_) {
+        // Best-effort; the long pass keeps working until natural expiry.
+      }
+    }
+  }
+
+  /// PIN unlock (or silent unlock on a trusted device). Null [pin] is valid
+  /// only when the device's PIN gate is off.
+  Future<void> unlock(String? pin) async {
+    final secret = state.deviceSecret;
+    if (secret == null || secret.isEmpty) return;
+    state = state.copyWith(busy: true, clearError: true);
+    try {
+      final deviceId = _ref.read(deviceIdProvider);
+      final r = await _api.pinUnlock(deviceId, secret, pin);
+      await _creds.savePass(r.devicePass);
+      await _store.savePinRequired(r.pinRequired);
+      if (r.phone != null) await _store.saveIdentity(r.phone!, r.name);
+      state = state.copyWith(
+        devicePass: r.devicePass,
+        phone: r.phone ?? state.phone,
+        name: r.name ?? state.name,
+        locked: false,
+        busy: false,
+        pinRequired: r.pinRequired,
+        pinSet: r.pinRequired ? true : state.pinSet,
+      );
+    } on ChatApiException catch (e) {
+      if (e.code == 'otp_required') {
+        // Ladder exhausted — only SMS re-verify recovers (§5.4).
+        await reverifyBySms();
+        return;
+      }
+      state = state.copyWith(busy: false, error: e.message);
+    }
+  }
+
+  /// "Forgot PIN? Verify by SMS": drop the stale pass, keep the identity and
+  /// tiles, and land onboarding on the phone step (prefilled). A successful
+  /// OTP re-enrolls the device and resets the lockout ladder server-side.
+  Future<void> reverifyBySms() async {
+    await _creds.clearPassOnly();
+    state = VerificationState(
+      deviceSecret: state.deviceSecret,
+      phone: state.phone,
+      name: state.name,
+      pinRequired: state.pinRequired,
+      locked: false,
+    );
+  }
+
+  /// Called when a chat call 401s mid-session: the pass expired or was revoked
+  /// remotely. Enrolled devices lock; others fall back to onboarding.
+  Future<void> onAuthRejected() async {
+    await _creds.clearPassOnly();
+    final enrolled = state.deviceSecret != null && state.deviceSecret!.isNotEmpty;
+    if (enrolled) {
+      state = state.copyWith(clearPass: true, locked: true);
+      if (!state.pinRequired) await unlock(null);
+    } else {
+      state = VerificationState(phone: state.phone, name: state.name);
+    }
+  }
 
   /// Step 1 — the entered phone. A known number sends the OTP immediately and
   /// jumps to the code step; an unknown one stops to collect a name first.
@@ -114,8 +249,9 @@ class VerificationNotifier extends StateNotifier<VerificationState> {
     }
   }
 
-  /// Step 3 — verify the OTP and store the device pass. The backend echoes the
-  /// account's name (the stored one for a returning phone), so keep that.
+  /// Step 3 — verify the OTP, store the pass + device secret, and (for an
+  /// account without a PIN) queue the one-shot PIN-setup nudge. The backend
+  /// echoes the account's name (the stored one for a returning phone).
   Future<void> check(String code) async {
     if (state.phone == null) return;
     state = state.copyWith(busy: true, clearError: true);
@@ -123,30 +259,57 @@ class VerificationNotifier extends StateNotifier<VerificationState> {
       final deviceId = _ref.read(deviceIdProvider);
       final result = await _api.verifyCheck(state.phone!, code, deviceId, state.name);
       final name = result.name ?? state.name;
-      await _ref.read(directoryStoreProvider).saveVerification(result.devicePass, state.phone!, name);
-      _ref.invalidate(chatApiProvider); // pick up the new device pass
-      state = state.copyWith(busy: false, devicePass: result.devicePass, name: name);
+      await _creds.savePass(result.devicePass);
+      if (result.deviceSecret != null && result.deviceSecret!.isNotEmpty) {
+        await _creds.saveSecret(result.deviceSecret!);
+      }
+      await _store.saveIdentity(state.phone!, name);
+      await _store.savePinRequired(true);
+      state = state.copyWith(
+        busy: false,
+        devicePass: result.devicePass,
+        deviceSecret: result.deviceSecret ?? state.deviceSecret,
+        name: name,
+        locked: false,
+        pinSet: result.pinSet,
+        pendingPinSetup: !result.pinSet,
+      );
     } on ChatApiException catch (e) {
       state = state.copyWith(busy: false, error: e.message);
     }
   }
 
-  /// Adopt a freshly re-minted device pass after a rename (phone unchanged) or a
-  /// phone change (§6.1, §6.2). Persist it, refresh state, and rebuild the api
-  /// provider so subsequent calls carry the new pass — mirrors [check].
-  Future<void> applyRotatedPass(String devicePass, String phone, String name) async {
-    await _ref.read(directoryStoreProvider).saveVerification(devicePass, phone, name);
-    _ref.invalidate(chatApiProvider);
-    state = state.copyWith(devicePass: devicePass, phone: phone, name: name);
+  /// Adopt a freshly re-minted device pass after a rename (phone unchanged), a
+  /// phone change, or a PIN set/remove (§6.1, §6.2, chat-experience §5.4).
+  Future<void> applyRotatedPass(String devicePass, String phone, String name,
+      {bool? pinSet}) async {
+    await _creds.savePass(devicePass);
+    await _store.saveIdentity(phone, name);
+    state = state.copyWith(
+        devicePass: devicePass, phone: phone, name: name, pinSet: pinSet ?? state.pinSet);
+  }
+
+  /// The PIN-setup nudge was completed or skipped.
+  void dismissPinSetup({bool pinSet = false}) {
+    state = state.copyWith(pendingPinSetup: false, pinSet: pinSet || state.pinSet);
   }
 
   /// Sign out locally after a delete or sign-out-everywhere (§6.3). The device
   /// pass is already revoked server-side; drop all local state so the app shell
   /// (which gates on [VerificationState.verified]) returns to onboarding.
   Future<void> signOut() async {
-    await _ref.read(directoryStoreProvider).clearAll();
-    _ref.invalidate(chatApiProvider);
+    await _store.clearAll();
+    await _creds.clear();
     state = const VerificationState();
+  }
+
+  /// Log out of THIS device only (chat-experience §5.4): the server row is
+  /// already revoked; drop the credentials but keep the identity hints so the
+  /// phone field comes prefilled next time. Tiles stay — they are local.
+  Future<void> signOutThisDevice() async {
+    await _creds.clear();
+    await _store.savePinRequired(true);
+    state = VerificationState(phone: state.phone, name: state.name);
   }
 
   /// Back to the phone step (from either the name or code step).

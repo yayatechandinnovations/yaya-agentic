@@ -20,7 +20,7 @@ import java.util.List;
 /**
  * Admin CRUD for the per-tenant claim → profile mapping consumed by
  * {@code IdentityProfileResolver}. Lets an operator point yaya-agentic at
- * the right profile based on a JWT claim — "for tenant lottery-dr, role=PLAYER
+ * the right profile based on a JWT claim — "for tenant acme-dr, role=PLAYER
  * → retail-player@1" — without forking the backend.
  *
  * <p>Mapping rows are scoped to a single tenant. Path is nested under the

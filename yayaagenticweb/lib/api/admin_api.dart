@@ -10,10 +10,12 @@ import '../models/admin/channel_opt_out.dart';
 import '../models/admin/chat_entry_point.dart';
 import '../models/admin/secondary_comms.dart';
 import '../models/admin/clone.dart';
+import '../models/admin/forum.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
+import '../models/admin/receipt_template.dart';
 import '../models/admin/recording_strategy.dart';
 import '../models/admin/tenant.dart';
 import '../models/admin/tenant_jwt_secret.dart';
@@ -22,6 +24,7 @@ import '../models/admin/start_flow.dart';
 import '../models/admin/system_sender.dart';
 import '../models/admin/tenant_oidc_issuer.dart';
 import '../models/admin/tool.dart';
+import '../models/admin/whatsapp_embedded_signup.dart';
 import '../models/admin/whatsapp_sender.dart';
 import '../models/admin/whatsapp_template.dart';
 import 'api_client.dart';
@@ -486,6 +489,36 @@ class AdminApi {
     return map['submitsEnabled'] == true;
   }
 
+  // ---- WhatsApp embedded signup (self-service onboarding) -------------
+
+  /// Meta Embedded Signup configuration for the "Connect WhatsApp" wizard.
+  /// `enabled == false` when the platform hasn't configured the feature.
+  Future<EmbeddedSignupConfig> getWhatsAppEmbeddedSignupConfig(
+      String tenantId) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/whatsapp/embedded-signup/config');
+    return EmbeddedSignupConfig.fromJson(_asMap(res.data));
+  }
+
+  /// Submit an embedded-signup onboarding. Idempotent server-side — repeats
+  /// resume the same attempt instead of provisioning duplicates.
+  Future<OnboardingResponse> startWhatsAppEmbeddedSignup(
+      String tenantId, OnboardingRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp/embedded-signup',
+        data: body.toJson());
+    return OnboardingResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<List<OnboardingAttemptView>> listWhatsAppOnboardingAttempts(
+      String tenantId) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/whatsapp/embedded-signup/attempts');
+    return (res.data as List)
+        .map((e) => OnboardingAttemptView.fromJson(_asMap(e)))
+        .toList();
+  }
+
   // ---- SMS A2P 10DLC: brand ------------------------------------------
 
   /// The tenant's SMS brand, or null if none has been created yet (404).
@@ -846,6 +879,92 @@ class AdminApi {
   Future<StartFlowResponse> publishStartFlow(String tenantId, String id) async {
     final res = await _dio.post('/v1/admin/tenants/$tenantId/start-flows/$id/publish');
     return StartFlowResponse.fromJson(_asMap(res.data));
+  }
+
+  // ---- Receipt templates (chat-experience-design.md §7.4) --------------
+
+  Future<List<ReceiptTemplateResponse>> listReceiptTemplates(
+      String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/receipt-templates');
+    return (res.data as List)
+        .map((e) => ReceiptTemplateResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<ReceiptTemplateResponse> getReceiptTemplate(
+      String tenantId, String id) async {
+    final res =
+        await _dio.get('/v1/admin/tenants/$tenantId/receipt-templates/$id');
+    return ReceiptTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ReceiptTemplateResponse> createReceiptTemplate(
+      String tenantId, ReceiptTemplateRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/receipt-templates',
+        data: body.toJson());
+    return ReceiptTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ReceiptTemplateResponse> updateReceiptTemplate(
+      String tenantId, String id, ReceiptTemplateRequest body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/receipt-templates/$id',
+        data: body.toJson());
+    return ReceiptTemplateResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteReceiptTemplate(String tenantId, String id) async {
+    await _dio.delete('/v1/admin/tenants/$tenantId/receipt-templates/$id');
+  }
+
+  // ---- Forum (entry-point community feed) ------------------------------
+
+  Future<ForumSettingsResponse> getForumSettings(
+      String tenantId, String entryPointId) async {
+    final res = await _dio.get(
+        '/v1/admin/tenants/$tenantId/forum/entry-points/$entryPointId/settings');
+    return ForumSettingsResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<ForumSettingsResponse> updateForumSettings(
+      String tenantId, String entryPointId,
+      {required bool enabled}) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/forum/entry-points/$entryPointId/settings',
+        data: {'enabled': enabled});
+    return ForumSettingsResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<List<AdminForumPostView>> listForumPosts(
+      String tenantId, String entryPointId) async {
+    final res = await _dio.get(
+        '/v1/admin/tenants/$tenantId/forum/entry-points/$entryPointId/posts');
+    return (res.data as List)
+        .map((e) => AdminForumPostView.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<AdminForumPostView> createForumPost(
+      String tenantId, String entryPointId, AdminForumPostRequest body) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/forum/entry-points/$entryPointId/posts',
+        data: body.toJson());
+    return AdminForumPostView.fromJson(_asMap(res.data));
+  }
+
+  /// Moderate a post: hide/unhide (resolves its open reports server-side),
+  /// pin/unpin, or soft-delete.
+  Future<void> moderateForumPost(
+      String tenantId, String postId, ForumModerationRequest body) async {
+    await _dio.patch('/v1/admin/tenants/$tenantId/forum/posts/$postId',
+        data: body.toJson());
+  }
+
+  Future<List<ForumReportView>> listForumReports(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/forum/reports');
+    final list = (_asMap(res.data)['reports'] as List? ?? const []);
+    return list.map((e) => ForumReportView.fromJson(_asMap(e))).toList();
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) => Map<String, dynamic>.from(raw);

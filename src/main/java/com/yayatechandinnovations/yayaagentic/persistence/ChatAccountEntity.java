@@ -49,6 +49,21 @@ public class ChatAccountEntity {
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
+    // PIN quick-unlock (chat-experience-design.md §5): Argon2id hash of the
+    // account-level PIN, plus the server-side lockout counters. Null pinHash =
+    // no PIN set; passes keep the long TTL.
+    @Column(name = "pin_hash")
+    private String pinHash;
+
+    @Column(name = "pin_set_at")
+    private OffsetDateTime pinSetAt;
+
+    @Column(name = "pin_failed_attempts", nullable = false)
+    private int pinFailedAttempts;
+
+    @Column(name = "pin_locked_until")
+    private OffsetDateTime pinLockedUntil;
+
     protected ChatAccountEntity() {}
 
     public ChatAccountEntity(UUID id, String phoneE164, String name) {
@@ -72,6 +87,27 @@ public class ChatAccountEntity {
     public OffsetDateTime getDeletedAt() { return deletedAt; }
 
     public boolean isActive() { return STATUS_ACTIVE.equals(status); }
+
+    public String getPinHash() { return pinHash; }
+    public OffsetDateTime getPinSetAt() { return pinSetAt; }
+    public int getPinFailedAttempts() { return pinFailedAttempts; }
+    public OffsetDateTime getPinLockedUntil() { return pinLockedUntil; }
+
+    public boolean hasPin() { return pinHash != null; }
+
+    public void setPin(String pinHash) {
+        this.pinHash = pinHash;
+        this.pinSetAt = pinHash == null ? null : OffsetDateTime.now();
+        resetPinCounters();
+    }
+
+    public void setPinFailedAttempts(int pinFailedAttempts) { this.pinFailedAttempts = pinFailedAttempts; }
+    public void setPinLockedUntil(OffsetDateTime pinLockedUntil) { this.pinLockedUntil = pinLockedUntil; }
+
+    public void resetPinCounters() {
+        this.pinFailedAttempts = 0;
+        this.pinLockedUntil = null;
+    }
 
     public void setName(String name) { this.name = name; }
     public void setPhoneE164(String phoneE164) { this.phoneE164 = phoneE164; }

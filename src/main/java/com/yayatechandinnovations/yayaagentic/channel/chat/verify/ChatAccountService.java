@@ -20,9 +20,11 @@ import java.util.UUID;
 public class ChatAccountService {
 
     private final ChatAccountRepository accounts;
+    private final ChatDeviceService devices;
 
-    public ChatAccountService(ChatAccountRepository accounts) {
+    public ChatAccountService(ChatAccountRepository accounts, ChatDeviceService devices) {
         this.accounts = accounts;
+        this.devices = devices;
     }
 
     /** The verified identity to stamp on a freshly-minted device pass. */
@@ -58,6 +60,10 @@ public class ChatAccountService {
         }
         UUID id = parseId(device.accountId());
         if (id == null) return Optional.empty();
+        // Per-device revocation (chat-experience-design.md §5.4): a single-device
+        // sign-out kills this pass even though the account generation still
+        // matches. Devices with no registry row are grandfathered.
+        if (devices.isRevoked(id, device.deviceId())) return Optional.empty();
         return accounts.findById(id)
                 .filter(ChatAccountEntity::isActive)
                 .filter(a -> a.getPassGen() == device.passGen());
@@ -67,6 +73,16 @@ public class ChatAccountService {
     @Transactional(readOnly = true)
     public boolean isLive(VerifiedDevice device) {
         return liveAccountFor(device).isPresent();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ChatAccountEntity> liveById(UUID accountId) {
+        return accounts.findById(accountId).filter(ChatAccountEntity::isActive);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasPin(UUID accountId) {
+        return liveById(accountId).map(ChatAccountEntity::hasPin).orElse(false);
     }
 
     /* --------------------------- verification ----------------------------- */
@@ -87,8 +103,11 @@ public class ChatAccountService {
         }
         if (clean != null && !clean.equals(account.getName())) {
             account.setName(clean);
-            account = accounts.save(account);
         }
+        // A fresh OTP is the PIN-recovery path (chat-experience-design.md §5.4):
+        // proving phone control resets the lockout ladder.
+        account.resetPinCounters();
+        account = accounts.save(account);
         return VerifiedAccount.of(account);
     }
 
@@ -126,6 +145,7 @@ public class ChatAccountService {
         a.setDeletedAt(OffsetDateTime.now());
         a.bumpPassGen();
         accounts.save(a);
+        devices.revokeAll(accountId);
     }
 
     /** Sign out of every device: bump the generation, revoking all outstanding
@@ -134,7 +154,11 @@ public class ChatAccountService {
     public VerifiedAccount signOutEverywhere(UUID accountId) {
         ChatAccountEntity a = requireActive(accountId);
         a.bumpPassGen();
-        return VerifiedAccount.of(accounts.save(a));
+        VerifiedAccount out = VerifiedAccount.of(accounts.save(a));
+        // The generation bump already kills every pass; marking the device rows
+        // revoked keeps the device manager truthful and forces re-enrollment.
+        devices.revokeAll(accountId);
+        return out;
     }
 
     /* ------------------------------ helpers ------------------------------- */

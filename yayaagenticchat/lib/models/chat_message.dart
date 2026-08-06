@@ -2,6 +2,7 @@ import 'commerce/cart.dart';
 import 'commerce/catalog_payload.dart';
 import 'commerce/checkout_result.dart';
 import 'commerce/product.dart';
+import 'receipts.dart';
 
 /// One bubble in the conversation. Assistant bubbles accrete streamed tokens and
 /// may carry engine-emitted quick replies + citations (chat-channel-design.md §9.1),
@@ -22,6 +23,10 @@ class ChatMessage {
   final CheckoutResult? checkoutResult;
   final Cart? cartSnapshot;
 
+  // Receipt/ticket preview (chat-experience-design.md §7): the `receipt`
+  // UiHint payload rendered as printed paper.
+  final ReceiptInstance? receipt;
+
   // System-participant messages (system-messaging-design.md §14): an attributed
   // header ("Cash Register #3") + document/image attachments.
   final String? senderDisplayName;
@@ -37,6 +42,7 @@ class ChatMessage {
     this.productCard,
     this.checkoutResult,
     this.cartSnapshot,
+    this.receipt,
     this.senderDisplayName,
     this.attachments = const [],
   });
@@ -62,6 +68,7 @@ class ChatMessage {
     Product? productCard,
     CheckoutResult? checkoutResult,
     Cart? cartSnapshot,
+    ReceiptInstance? receipt,
     String? senderDisplayName,
     List<ChatAttachment>? attachments,
   }) =>
@@ -75,6 +82,7 @@ class ChatMessage {
         productCard: productCard ?? this.productCard,
         checkoutResult: checkoutResult ?? this.checkoutResult,
         cartSnapshot: cartSnapshot ?? this.cartSnapshot,
+        receipt: receipt ?? this.receipt,
         senderDisplayName: senderDisplayName ?? this.senderDisplayName,
         attachments: attachments ?? this.attachments,
       );
@@ -86,14 +94,18 @@ class Citation {
   const Citation({required this.title, this.url});
 }
 
-/// A media attachment on a system message — an image, document, or a/v clip
-/// served from a short-lived signed URL (system-messaging-design.md §10).
+/// A media attachment on a message — an image, voice note, or document served
+/// from a short-lived signed URL. Inbound on system messages
+/// (system-messaging-design.md §10) and outbound on the user's own sends
+/// (chat-experience-design.md §6). `transcript` is present on voice notes the
+/// server transcribed.
 class ChatAttachment {
   final String assetId;
   final String contentType;
   final String? filename;
   final int sizeBytes;
-  final String url; // signed, short-lived /v1/media/{token}
+  final String url; // signed, short-lived
+  final String? transcript;
 
   const ChatAttachment({
     required this.assetId,
@@ -101,16 +113,20 @@ class ChatAttachment {
     this.filename,
     this.sizeBytes = 0,
     required this.url,
+    this.transcript,
   });
 
   bool get isImage => contentType.startsWith('image/');
+  bool get isAudio => contentType.startsWith('audio/') || contentType == 'application/ogg';
 
   factory ChatAttachment.fromJson(Map<String, dynamic> json) => ChatAttachment(
-        assetId: (json['assetId'] ?? '') as String,
+        // Outbound chat uploads say `id`; inbox system messages say `assetId`.
+        assetId: (json['assetId'] ?? json['id'] ?? '') as String,
         contentType: (json['contentType'] ?? 'application/octet-stream') as String,
         filename: json['filename'] as String?,
         sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
         url: (json['url'] ?? '') as String,
+        transcript: json['transcript'] as String?,
       );
 }
 

@@ -76,7 +76,24 @@ public final class PublicChatDtos {
             Map<String, Object> traits   // the profile's client traits (may be empty)
     ) {}
 
-    public record MessageRequest(String text) {}
+    /** {@code attachmentIds} reference prior uploads to this session
+     *  ({@code chat-experience-design.md} §6.1 — upload first, then reference). */
+    public record MessageRequest(String text, List<String> attachmentIds) {
+        public MessageRequest(String text) {
+            this(text, List.of());
+        }
+    }
+
+    /** One uploaded attachment ({@code POST /sessions/{id}/attachments}). The
+     *  {@code url} is a short-lived signed link; {@code transcript} is present
+     *  for voice notes when transcription succeeded. */
+    public record AttachmentResponse(String id, String kind, String contentType,
+                                     String filename, long sizeBytes, String url,
+                                     String transcript) {}
+
+    /** Attachment metadata on a hydrated history turn. */
+    public record AttachmentView(String id, String kind, String contentType,
+                                 String filename, String url) {}
 
     /** Body for {@code POST /v1/chat/sessions/{id}/actions} — a client tap that
      *  runs one whitelisted, {@code clientInvocable} tool through the same
@@ -92,8 +109,13 @@ public final class PublicChatDtos {
     public record ResumeResponse(String sessionId, boolean alive, EntryPointCard entryPoint,
                                  List<HistoryTurn> turns) {}
 
-    /** One display turn of a hydrated transcript — user/assistant text only. */
-    public record HistoryTurn(String role, String text) {}
+    /** One display turn of a hydrated transcript. {@code attachments} re-renders
+     *  media bubbles with freshly signed URLs; empty for text-only turns. */
+    public record HistoryTurn(String role, String text, List<AttachmentView> attachments) {
+        public HistoryTurn(String role, String text) {
+            this(role, text, List.of());
+        }
+    }
 
     /** Returned by {@code GET /v1/chat/e/{handle}/sessions/latest} (§7.2): the
      *  resume candidate for this account at this chat, and how to treat it.
@@ -124,7 +146,22 @@ public final class PublicChatDtos {
     public record VerifyCheckRequest(String phoneE164, String code, String deviceId, String name) {}
 
     /** On success carries the device pass — a platform-signed token the app
-     *  stores and presents as {@code X-Device-Pass} on every chat request. */
+     *  stores and presents as {@code X-Device-Pass} on every chat request —
+     *  plus the per-device secret ({@code chat-experience-design.md} §5): the
+     *  enrollment credential the app keeps in secure storage and presents only
+     *  to {@code /verify/pin-unlock}. Returned once; the server stores a hash.
+     *  {@code pinSet} tells the app whether a PIN already guards this account. */
     public record VerifyCheckResponse(boolean verified, String devicePass,
-                                      String phoneE164, String name) {}
+                                      String phoneE164, String name,
+                                      String deviceSecret, boolean pinSet) {}
+
+    /* ---- PIN unlock (chat-experience-design.md §5.4) ---- */
+
+    /** The everyday login: device secret proves the enrolled device, PIN proves
+     *  the person. {@code pin} may be null only when the device's
+     *  {@code pinRequired} flag is off (or the account has no PIN). */
+    public record PinUnlockRequest(String deviceId, String deviceSecret, String pin) {}
+
+    public record PinUnlockResponse(String devicePass, String phoneE164, String name,
+                                    boolean pinRequired) {}
 }

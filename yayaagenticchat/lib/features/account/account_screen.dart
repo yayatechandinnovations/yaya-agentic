@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/chat_api.dart';
 import '../../data/providers.dart';
 import '../../l10n/app_localizations.dart';
 import 'change_phone_flow.dart';
 import 'delete_account_dialog.dart';
+import 'security_section.dart';
 
 /// The end-user account settings screen (chat-account-self-service-design.md §6,
 /// §10). Shows the phone (read-only) and name (inline-editable), plus the
@@ -112,6 +114,14 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
             _phoneTile(t, acct),
             _nameTile(t, acct),
             const Divider(height: 24),
+            SecuritySection(account: acct),
+            const Divider(height: 24),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: Text(t.receiptsTitle),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.go('/account/receipts'),
+            ),
             ListTile(
               leading: const Icon(Icons.sim_card_outlined),
               title: Text(t.changePhoneNumber),

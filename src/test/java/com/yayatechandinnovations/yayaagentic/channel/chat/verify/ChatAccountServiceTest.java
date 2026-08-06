@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.channel.chat.verify;
 
+import com.yayatechandinnovations.yayaagentic.persistence.ChatAccountDeviceEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ChatAccountDeviceRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatAccountEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatAccountRepository;
 import org.junit.jupiter.api.Test;
@@ -14,13 +16,16 @@ import static org.mockito.Mockito.when;
 
 /**
  * Locks in the device-pass revocation rule ({@code chat-account-self-service-design.md}
- * §5.2): a signature-valid pass is honoured only while its generation matches the
- * account and the account is ACTIVE.
+ * §5.2, extended by {@code chat-experience-design.md} §5.4): a signature-valid
+ * pass is honoured only while its generation matches the account, the account is
+ * ACTIVE, and the device it was minted for has not been individually revoked.
  */
 class ChatAccountServiceTest {
 
     private final ChatAccountRepository repo = mock(ChatAccountRepository.class);
-    private final ChatAccountService svc = new ChatAccountService(repo);
+    private final ChatAccountDeviceRepository deviceRepo = mock(ChatAccountDeviceRepository.class);
+    private final ChatAccountService svc =
+            new ChatAccountService(repo, new ChatDeviceService(deviceRepo));
 
     private static ChatAccountEntity account(UUID id, String phone, int gen, boolean active) {
         ChatAccountEntity a = new ChatAccountEntity(id, phone, "Ada");
@@ -51,6 +56,26 @@ class ChatAccountServiceTest {
         when(repo.findById(id)).thenReturn(Optional.of(account(id, "+18095551234", 2, false)));
         VerifiedDevice pass = new VerifiedDevice("+18095551234", "Ada", "dev", id.toString(), 2L);
         assertThat(svc.isLive(pass)).isFalse();
+    }
+
+    @Test
+    void revokedDeviceIsRejectedEvenWithMatchingGeneration() {
+        UUID id = UUID.randomUUID();
+        when(repo.findById(id)).thenReturn(Optional.of(account(id, "+18095551234", 2, true)));
+        ChatAccountDeviceEntity row = new ChatAccountDeviceEntity(id, "dev", "hash", null);
+        row.revoke();
+        when(deviceRepo.findByAccountIdAndDeviceId(id, "dev")).thenReturn(Optional.of(row));
+        VerifiedDevice pass = new VerifiedDevice("+18095551234", "Ada", "dev", id.toString(), 2L);
+        assertThat(svc.isLive(pass)).isFalse();
+    }
+
+    @Test
+    void unenrolledDeviceIsGrandfathered() {
+        UUID id = UUID.randomUUID();
+        when(repo.findById(id)).thenReturn(Optional.of(account(id, "+18095551234", 2, true)));
+        when(deviceRepo.findByAccountIdAndDeviceId(id, "dev")).thenReturn(Optional.empty());
+        VerifiedDevice pass = new VerifiedDevice("+18095551234", "Ada", "dev", id.toString(), 2L);
+        assertThat(svc.isLive(pass)).isTrue();
     }
 
     @Test

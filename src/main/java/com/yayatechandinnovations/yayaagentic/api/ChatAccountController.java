@@ -7,8 +7,12 @@ import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointService
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatRateLimiter;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatSessionLinkService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatAttachmentService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.receipts.ChatReceiptService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatDeviceService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatPhoneChangeService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatPinService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.PhoneVerifier;
 import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
@@ -60,6 +64,10 @@ public class ChatAccountController {
     private final ChatEntryPointService entryPoints;
     private final ChatSessionLinkService sessionLinks;
     private final ConversationRecorder recorder;
+    private final ChatDeviceService devices;
+    private final ChatPinService pins;
+    private final ChatAttachmentService chatAttachments;
+    private final ChatReceiptService chatReceipts;
 
     public ChatAccountController(DevicePassService devicePasses,
                                  ChatAccountService accounts,
@@ -69,7 +77,11 @@ public class ChatAccountController {
                                  ChatAccountTileRepository tiles,
                                  ChatEntryPointService entryPoints,
                                  ChatSessionLinkService sessionLinks,
-                                 ConversationRecorder recorder) {
+                                 ConversationRecorder recorder,
+                                 ChatDeviceService devices,
+                                 ChatPinService pins,
+                                 ChatAttachmentService chatAttachments,
+                                 ChatReceiptService chatReceipts) {
         this.devicePasses = devicePasses;
         this.accounts = accounts;
         this.phoneChanges = phoneChanges;
@@ -79,6 +91,10 @@ public class ChatAccountController {
         this.entryPoints = entryPoints;
         this.sessionLinks = sessionLinks;
         this.recorder = recorder;
+        this.devices = devices;
+        this.pins = pins;
+        this.chatAttachments = chatAttachments;
+        this.chatReceipts = chatReceipts;
     }
 
     /* ------------------------------ view ---------------------------------- */
@@ -88,7 +104,106 @@ public class ChatAccountController {
         return async(() -> {
             ChatAccountEntity a = require(exchange).account();
             return new ChatAccountDtos.AccountView(a.getPhoneE164(), a.getName(),
-                    a.getCreatedAt() == null ? null : a.getCreatedAt().toString());
+                    a.getCreatedAt() == null ? null : a.getCreatedAt().toString(), a.hasPin());
+        });
+    }
+
+    /* --------------------- PIN (chat-experience-design.md §5.4) ------------ */
+
+    @PostMapping("/pin")
+    public Mono<ChatAccountDtos.PinResponse> setPin(@RequestBody ChatAccountDtos.PinSetRequest body,
+                                                    ServerWebExchange exchange) {
+        return async(() -> {
+            Holder h = require(exchange);
+            if (body == null || !ChatPinService.validFormat(body.pin())) {
+                throw new ChatApiException(HttpStatus.BAD_REQUEST, "bad_request",
+                        "pin must be 4-6 digits", 0);
+            }
+            requirePinOk(pins.setPin(h.account().getId(), body.currentPin(), body.pin()));
+            // The account is now PIN-protected: re-mint on the short TTL so this
+            // device starts the unlock cadence immediately.
+            String pass = devicePasses.issueFor(new VerifiedDevice(
+                    h.account().getPhoneE164(), h.account().getName(), h.device().deviceId(),
+                    h.account().getId().toString(), (long) h.account().getPassGen()), true);
+            return new ChatAccountDtos.PinResponse(pass, true);
+        });
+    }
+
+    @DeleteMapping("/pin")
+    public Mono<ChatAccountDtos.PinResponse> removePin(@RequestBody ChatAccountDtos.PinRemoveRequest body,
+                                                       ServerWebExchange exchange) {
+        return async(() -> {
+            Holder h = require(exchange);
+            requirePinOk(pins.removePin(h.account().getId(),
+                    body == null ? null : body.currentPin()));
+            String pass = devicePasses.issueFor(new VerifiedDevice(
+                    h.account().getPhoneE164(), h.account().getName(), h.device().deviceId(),
+                    h.account().getId().toString(), (long) h.account().getPassGen()), false);
+            return new ChatAccountDtos.PinResponse(pass, false);
+        });
+    }
+
+    /* ------------------- devices (chat-experience-design.md §5.4) ---------- */
+
+    @GetMapping("/devices")
+    public Mono<ChatAccountDtos.DevicesResponse> listDevices(ServerWebExchange exchange) {
+        return async(() -> {
+            Holder h = require(exchange);
+            List<ChatAccountDtos.DeviceView> views = devices.list(h.account().getId()).stream()
+                    .filter(d -> !d.isRevoked())
+                    .map(d -> new ChatAccountDtos.DeviceView(
+                            d.getDeviceId(), d.getLabel(), d.isPinRequired(),
+                            d.getDeviceId().equals(h.device().deviceId()),
+                            d.getCreatedAt() == null ? null : d.getCreatedAt().toString(),
+                            d.getLastSeenAt() == null ? null : d.getLastSeenAt().toString()))
+                    .toList();
+            return new ChatAccountDtos.DevicesResponse(views);
+        });
+    }
+
+    /** Lazy migration for apps holding a pre-registry pass: prove the pass, get
+     *  this device's secret — no SMS spent. */
+    @PostMapping("/devices/enroll")
+    public Mono<ChatAccountDtos.DeviceEnrollResponse> enrollDevice(ServerWebExchange exchange) {
+        return async(() -> {
+            Holder h = require(exchange);
+            ChatDeviceService.Enrollment e = devices.enroll(
+                    h.account().getId(), h.device().deviceId(), userAgent(exchange));
+            return new ChatAccountDtos.DeviceEnrollResponse(
+                    e.deviceSecret(), e.pinRequired(), h.account().hasPin());
+        });
+    }
+
+    @PutMapping("/devices/{deviceId}")
+    public Mono<Void> updateDevice(@PathVariable("deviceId") String deviceId,
+                                   @RequestBody ChatAccountDtos.DeviceUpdateRequest body,
+                                   ServerWebExchange exchange) {
+        return asyncVoid(() -> {
+            Holder h = require(exchange);
+            if (body == null || body.pinRequired() == null) {
+                throw new ChatApiException(HttpStatus.BAD_REQUEST, "bad_request",
+                        "pinRequired is required", 0);
+            }
+            // Turning the PIN gate OFF is a security downgrade: step-up with the
+            // current PIN when the account has one. Turning it ON is always free.
+            if (!body.pinRequired() && h.account().hasPin()) {
+                requirePinOk(pins.verify(h.account().getId(), body.currentPin()));
+            }
+            if (!devices.setPinRequired(h.account().getId(), deviceId, body.pinRequired())) {
+                throw new ChatApiException(HttpStatus.NOT_FOUND, "not_found", "no such device", 0);
+            }
+        });
+    }
+
+    /** Single-device sign-out; revoking the current device is plain "log out". */
+    @PostMapping("/devices/{deviceId}/revoke")
+    public Mono<Void> revokeDevice(@PathVariable("deviceId") String deviceId,
+                                   ServerWebExchange exchange) {
+        return asyncVoid(() -> {
+            Holder h = require(exchange);
+            if (!devices.revoke(h.account().getId(), deviceId)) {
+                throw new ChatApiException(HttpStatus.NOT_FOUND, "not_found", "no such device", 0);
+            }
         });
     }
 
@@ -194,6 +309,10 @@ public class ChatAccountController {
             for (SessionEntity s : sessionLinks.sessionsForAccount(a.getId())) {
                 recorder.deleteSession(new Ids.SessionId(s.getId().toString()), del);
             }
+            // Media the account uploaded and its receipt wallet are erased with
+            // the conversations (chat-experience-design.md §6.3, §7.5).
+            chatAttachments.deleteForAccount(a.getId());
+            chatReceipts.deleteForAccount(a.getId());
             tiles.deleteByAccountId(a.getId());
             accounts.softDelete(a.getId());
         });
@@ -237,6 +356,25 @@ public class ChatAccountController {
         });
     }
 
+    /* --------------------- receipts wallet (chat-experience §7.5) ---------- */
+
+    @GetMapping("/receipts")
+    public Mono<ChatAccountDtos.ReceiptsResponse> receipts(
+            @RequestParam(value = "cursor", required = false) String cursor,
+            ServerWebExchange exchange) {
+        return async(() -> {
+            ChatAccountEntity a = require(exchange).account();
+            ChatReceiptService.WalletPage page = chatReceipts.wallet(a.getId(), cursor);
+            List<ChatAccountDtos.ReceiptView> views = page.receipts().stream()
+                    .map(r -> new ChatAccountDtos.ReceiptView(
+                            r.getId(), r.getHandle(), r.getTemplateId(),
+                            r.getTemplateSnapshot(), r.getData(),
+                            r.getCreatedAt() == null ? null : r.getCreatedAt().toString()))
+                    .toList();
+            return new ChatAccountDtos.ReceiptsResponse(views, page.nextCursor());
+        });
+    }
+
     /* ------------------------------ helpers ------------------------------- */
 
     private record Holder(VerifiedDevice device, ChatAccountEntity account) {}
@@ -252,8 +390,22 @@ public class ChatAccountController {
     }
 
     private String reissue(VerifiedDevice device, ChatAccountService.VerifiedAccount acct) {
-        return devicePasses.issue(new VerifiedDevice(
-                acct.phoneE164(), acct.name(), device.deviceId(), acct.id(), acct.passGen()));
+        return devicePasses.issueFor(new VerifiedDevice(
+                        acct.phoneE164(), acct.name(), device.deviceId(), acct.id(), acct.passGen()),
+                accounts.hasPin(UUID.fromString(acct.id())));
+    }
+
+    private static void requirePinOk(ChatPinService.PinResult result) {
+        if (result instanceof ChatPinService.Denied denied) {
+            throw new ChatApiException(HttpStatus.UNAUTHORIZED,
+                    denied.otpRequired() ? "otp_required" : "pin_denied",
+                    "PIN check failed", 0);
+        }
+    }
+
+    private static String userAgent(ServerWebExchange exchange) {
+        String ua = exchange.getRequest().getHeaders().getFirst("User-Agent");
+        return ua == null || ua.isBlank() ? null : ua;
     }
 
     private ChatEntryPoint requirePublic(String handle) {

@@ -133,6 +133,14 @@ yaya:
       # left at the default. The app's host-agnostic /e/:handle route resolves
       # whatever origin this points at. Trailing slash required.
       deep-link-base: ${YAYA_CHAT_DEEP_LINK_BASE:http://localhost:8080/e/}
+      # Device-pass lifetimes (chat-experience-design.md §5.2). Accounts without
+      # a PIN keep the long-lived pass; once a PIN is set the pass drops to the
+      # short TTL and the app re-mints it via /v1/chat/verify/pin-unlock.
+      # The signing key itself (device-pass-secret) MUST be set in production —
+      # see DevicePassService; an absent key is ephemeral and dev-only.
+      device-pass-secret: ${YAYA_CHAT_DEVICE_PASS_SECRET:}
+      device-pass-ttl-days: ${YAYA_CHAT_DEVICE_PASS_TTL_DAYS:30}
+      device-pass-pin-ttl-hours: ${YAYA_CHAT_DEVICE_PASS_PIN_TTL_HOURS:24}
       verify:
         # Twilio Verify API base. Override only when stubbing Twilio in tests.
         base-url: ${TWILIO_VERIFY_BASE_URL:https://verify.twilio.com}
@@ -164,6 +172,18 @@ yaya:
         a2p:
           customer-profile-bundle-sid: ${TWILIO_A2P_CUSTOMER_PROFILE_BUNDLE_SID:}
           a2p-profile-bundle-sid:      ${TWILIO_A2P_PROFILE_BUNDLE_SID:}
+      whatsapp:
+        # Meta Embedded Signup + Twilio Tech Provider self-service onboarding.
+        # When enabled, every value below plus the parent Twilio account and
+        # YAYA_AGENTIC_SECRETS_ENCRYPTION_KEY must be set — boot fails fast
+        # otherwise (EmbeddedSignupStartupValidator). The Meta ids are public
+        # (they appear in the browser's Facebook SDK calls); the secrets all
+        # stay on the Twilio/platform side.
+        embedded-signup:
+          enabled:               ${WHATSAPP_ONBOARDING_ENABLED:false}
+          meta-app-id:           ${META_APP_ID:}
+          meta-configuration-id: ${META_WHATSAPP_CONFIGURATION_ID:}
+          partner-solution-id:   ${META_TWILIO_PARTNER_SOLUTION_ID:}
     session:
       # Idle TTL for ephemeral session state in Redis. Bumped on every
       # interaction; reaching zero auto-evicts working memory.

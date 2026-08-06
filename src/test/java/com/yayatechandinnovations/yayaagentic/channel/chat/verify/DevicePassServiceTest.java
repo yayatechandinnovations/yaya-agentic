@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DevicePassServiceTest {
 
-    private final DevicePassService svc = new DevicePassService("test-secret-key", 30);
+    private final DevicePassService svc = new DevicePassService("test-secret-key", 30, 24);
 
     @Test
     void issue_then_verify_round_trips_the_device() {
@@ -26,9 +26,21 @@ class DevicePassServiceTest {
 
     @Test
     void a_pass_signed_by_a_different_key_is_rejected() {
-        String pass = new DevicePassService("attacker-key", 30)
+        String pass = new DevicePassService("attacker-key", 30, 24)
                 .issue(new VerifiedDevice("+18095559999", "Mallory", "dev-x"));
         assertThat(svc.verify(pass)).isEmpty();
+    }
+
+    @Test
+    void pin_protected_pass_gets_the_short_ttl() throws Exception {
+        String longPass = svc.issueFor(new VerifiedDevice("+18095551234", "Ada", "d"), false);
+        String shortPass = svc.issueFor(new VerifiedDevice("+18095551234", "Ada", "d"), true);
+        var longExp = com.nimbusds.jwt.SignedJWT.parse(longPass).getJWTClaimsSet().getExpirationTime();
+        var shortExp = com.nimbusds.jwt.SignedJWT.parse(shortPass).getJWTClaimsSet().getExpirationTime();
+        // 24h vs 30d — the short pass must expire well before the long one.
+        assertThat(shortExp).isBefore(longExp);
+        assertThat(shortExp.toInstant())
+                .isBefore(java.time.Instant.now().plus(java.time.Duration.ofHours(25)));
     }
 
     @Test

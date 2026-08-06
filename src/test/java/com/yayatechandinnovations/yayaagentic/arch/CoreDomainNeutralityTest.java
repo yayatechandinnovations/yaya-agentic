@@ -69,6 +69,34 @@ class CoreDomainNeutralityTest {
                 + "docs/milestones/S7-decouple-store.md):\n" + String.join("\n", leaks));
     }
 
+    /**
+     * The receipt-preview subsystem (chat-experience-design.md §7) renders
+     * tenant documents from a GENERIC element vocabulary — a "lottery ticket"
+     * must exist only as tenant data, never as core vocabulary. Guards the
+     * whole chat channel plus the classic core packages.
+     */
+    private static final Pattern GAMING_FORBIDDEN = Pattern.compile(
+            "lottery|jackpot|quiniela|sorteo|gambl|betting|\\bwager\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    @Test
+    void coreHasNoGamingDomainVocabulary() throws IOException {
+        List<String> guarded = new ArrayList<>(GUARDED_PACKAGES);
+        guarded.add("src/main/java/com/yayatechandinnovations/yayaagentic/channel/chat");
+        List<String> leaks = new ArrayList<>();
+        for (String pkg : guarded) {
+            Path root = Path.of(pkg);
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> files = Files.walk(root)) {
+                files.filter(p -> p.toString().endsWith(".java"))
+                     .forEach(p -> scanFor(GAMING_FORBIDDEN, p, leaks));
+            }
+        }
+        assertTrue(leaks.isEmpty(),
+                "Gaming-domain vocabulary leaked into the neutral core (see "
+                + "docs/design/chat-experience-design.md §7.2):\n" + String.join("\n", leaks));
+    }
+
     private static void scan(Path file, List<String> leaks) {
         String rel = file.toString().replace('\\', '/');
         if (KNOWN_VIOLATIONS.contains(rel)) return;
@@ -80,6 +108,21 @@ class CoreDomainNeutralityTest {
         }
         for (int i = 0; i < lines.size(); i++) {
             if (FORBIDDEN.matcher(lines.get(i).toLowerCase(Locale.ROOT)).find()) {
+                leaks.add(rel + ":" + (i + 1) + "  " + lines.get(i).trim());
+            }
+        }
+    }
+
+    private static void scanFor(Pattern forbidden, Path file, List<String> leaks) {
+        String rel = file.toString().replace('\\', '/');
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(file);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        for (int i = 0; i < lines.size(); i++) {
+            if (forbidden.matcher(lines.get(i).toLowerCase(Locale.ROOT)).find()) {
                 leaks.add(rel + ":" + (i + 1) + "  " + lines.get(i).trim());
             }
         }

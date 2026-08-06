@@ -8,12 +8,14 @@ import '../features/admin/auth_bindings/auth_bindings_screen.dart';
 import '../features/admin/auth_resolvers/auth_resolvers_screen.dart';
 import '../features/admin/capabilities/capabilities_screen.dart';
 import '../features/admin/flows/flows_admin_screen.dart';
+import '../features/admin/forum/forum_screen.dart';
 import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
 import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
+import '../features/admin/receipt_templates/receipt_templates_screen.dart';
 import '../features/admin/recording_strategies/recording_strategies_screen.dart';
 import '../features/admin/tenants/tenants_screen.dart';
 import '../features/admin/tools/tools_screen.dart';
@@ -98,8 +100,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/whatsapp-senders', builder: (_, __) => const WhatsAppSendersScreen()),
           GoRoute(path: '/admin/sms', builder: (_, __) => const SmsAdminScreen()),
           GoRoute(path: '/admin/chats', builder: (_, __) => const ChatsAdminScreen()),
+          GoRoute(path: '/admin/forum', builder: (_, _) => const ForumScreen()),
           GoRoute(path: '/admin/system-senders', builder: (_, __) => const SystemSendersScreen()),
           GoRoute(path: '/admin/whatsapp-templates', builder: (_, __) => const WhatsAppTemplatesScreen()),
+          GoRoute(path: '/admin/receipt-templates', builder: (_, _) => const ReceiptTemplatesScreen()),
           GoRoute(path: '/admin/whatsapp-opt-outs', builder: (_, __) => const WhatsAppOptOutsScreen()),
           GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
           GoRoute(path: '/admin/audit', builder: (_, __) => const AuditScreen()),
@@ -276,6 +280,8 @@ const _navItems = <_NavEntry>[
     _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
     _NavItem('SMS (A2P 10DLC)', Icons.sms_outlined, Icons.sms, '/admin/sms'),
     _NavItem('Chats', Icons.chat_bubble_outline, Icons.chat_bubble, '/admin/chats'),
+    _NavItem('Forum', Icons.forum_outlined, Icons.forum, '/admin/forum'),
+    _NavItem('Receipt templates', Icons.receipt_long_outlined, Icons.receipt_long, '/admin/receipt-templates'),
     _NavItem('System inbound', Icons.mail_outline, Icons.mail, '/admin/system-senders'),
     _NavItem('WhatsApp templates', Icons.article_outlined, Icons.article, '/admin/whatsapp-templates'),
     _NavItem('WhatsApp opt-outs', Icons.block_outlined, Icons.block, '/admin/whatsapp-opt-outs'),

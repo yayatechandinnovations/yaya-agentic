@@ -195,7 +195,24 @@ public class AnthropicLlmClient implements LlmClient {
                     // Anthropic rejects empty text content blocks — never send a blank
                     // user message (defensive; the engine already drops text-less turns).
                     String c = u.content();
-                    if (c != null && !c.isBlank()) out.add(new UserMessage(c));
+                    boolean hasImages = u.images() != null && !u.images().isEmpty();
+                    if (hasImages) {
+                        // Vision (chat-experience-design.md §6.3): inline image parts
+                        // ride the user message; text falls back to a marker so the
+                        // content block is never empty.
+                        List<org.springframework.ai.content.Media> media = u.images().stream()
+                                .map(img -> new org.springframework.ai.content.Media(
+                                        org.springframework.util.MimeTypeUtils.parseMimeType(img.contentType()),
+                                        new org.springframework.core.io.ByteArrayResource(
+                                                java.util.Base64.getDecoder().decode(img.base64Data()))))
+                                .toList();
+                        out.add(UserMessage.builder()
+                                .text(c == null || c.isBlank() ? "[image]" : c)
+                                .media(media)
+                                .build());
+                    } else if (c != null && !c.isBlank()) {
+                        out.add(new UserMessage(c));
+                    }
                 }
                 case HistoryEntry.Assistant a -> {
                     List<AssistantMessage.ToolCall> calls = a.toolCalls() == null ? List.of()

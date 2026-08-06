@@ -11,9 +11,9 @@ import '../models/tile.dart';
 class DirectoryStore {
   static const _tilesKey = 'yaya.chat.tiles';
   static const _deviceKey = 'yaya.chat.deviceId';
-  static const _passKey = 'yaya.chat.devicePass';
   static const _phoneKey = 'yaya.chat.phone';
   static const _nameKey = 'yaya.chat.name';
+  static const _pinRequiredKey = 'yaya.chat.pinRequired';
 
   final SharedPreferences _prefs;
   DirectoryStore(this._prefs);
@@ -40,15 +40,19 @@ class DirectoryStore {
     return id;
   }
 
-  /// Verified-phone device pass (§20) + the self-asserted name/phone it was
-  /// issued for. Stored on device; presented as `X-Device-Pass` on every chat
-  /// request.
-  String? devicePass() => _prefs.getString(_passKey);
+  /// Self-asserted identity attributes shown in the UI. The device pass itself
+  /// moved to secure storage (CredentialStore) — only non-secrets live here.
   String? phone() => _prefs.getString(_phoneKey);
   String? name() => _prefs.getString(_nameKey);
 
-  Future<void> saveVerification(String devicePass, String phone, String? name) async {
-    await _prefs.setString(_passKey, devicePass);
+  /// Whether THIS device asks for the PIN on unlock (chat-experience-design.md
+  /// §5.4). Mirrors the server-side flag so startup can auto-unlock silently.
+  bool pinRequired() => _prefs.getBool(_pinRequiredKey) ?? true;
+  Future<void> savePinRequired(bool required) async {
+    await _prefs.setBool(_pinRequiredKey, required);
+  }
+
+  Future<void> saveIdentity(String phone, String? name) async {
     await _prefs.setString(_phoneKey, phone);
     if (name != null && name.isNotEmpty) await _prefs.setString(_nameKey, name);
   }
@@ -61,9 +65,9 @@ class DirectoryStore {
   }
 
   Future<void> clearVerification() async {
-    await _prefs.remove(_passKey);
     await _prefs.remove(_phoneKey);
     await _prefs.remove(_nameKey);
+    await _prefs.remove(_pinRequiredKey);
   }
 
   /// Wipe everything the app knows about this identity — tiles + verification.

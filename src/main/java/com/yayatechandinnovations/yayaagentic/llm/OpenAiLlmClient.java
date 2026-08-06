@@ -124,7 +124,21 @@ public class OpenAiLlmClient implements LlmClient {
                     // Never send a blank user message (defensive; the engine already
                     // drops text-less turns) — keeps parity with the Anthropic client.
                     String c = u.content();
-                    if (c != null && !c.isBlank()) out.add(new UserMessage(c));
+                    boolean hasImages = u.images() != null && !u.images().isEmpty();
+                    if (hasImages) {
+                        List<org.springframework.ai.content.Media> media = u.images().stream()
+                                .map(img -> new org.springframework.ai.content.Media(
+                                        org.springframework.util.MimeTypeUtils.parseMimeType(img.contentType()),
+                                        new org.springframework.core.io.ByteArrayResource(
+                                                java.util.Base64.getDecoder().decode(img.base64Data()))))
+                                .toList();
+                        out.add(UserMessage.builder()
+                                .text(c == null || c.isBlank() ? "[image]" : c)
+                                .media(media)
+                                .build());
+                    } else if (c != null && !c.isBlank()) {
+                        out.add(new UserMessage(c));
+                    }
                 }
                 case HistoryEntry.Assistant a -> {
                     List<AssistantMessage.ToolCall> calls = a.toolCalls() == null ? List.of()
