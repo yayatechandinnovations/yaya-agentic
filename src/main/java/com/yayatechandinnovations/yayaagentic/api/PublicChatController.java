@@ -309,6 +309,21 @@ public class PublicChatController {
             } else {
                 um = new UserMessage(body.text(), Map.of());
             }
+            // Structured selection (network chat design §3.2): rides a
+            // framework-owned "_selection" key in the engine-facing attachments
+            // map so ConversationEngine.send / UserMessage keep their signatures.
+            // The engine reads it BEFORE NL resolution; validation against the
+            // last emitted picker happens server-side.
+            if (body.selection() != null && body.selection().kind() != null) {
+                var sel = body.selection();
+                java.util.Map<String, Object> selMap = new java.util.LinkedHashMap<>();
+                selMap.put("kind", sel.kind());
+                if (sel.code() != null) selMap.put("code", sel.code());
+                if (sel.callId() != null) selMap.put("callId", sel.callId());
+                java.util.Map<String, Object> attrs = new java.util.LinkedHashMap<>(um.attachments());
+                attrs.put("_selection", selMap);
+                um = new UserMessage(um.text(), attrs);
+            }
             final List<String> sentIds = attachmentIds;
             // Wallet capture (§7.5): receipt hints on a verified session persist.
             final java.util.UUID walletAccount =

@@ -9,6 +9,7 @@ import com.yayatechandinnovations.yayaagentic.core.entity.EntityMemory;
 import com.yayatechandinnovations.yayaagentic.core.entity.EntityRef;
 import com.yayatechandinnovations.yayaagentic.engine.PromptBuilder;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
+import static com.yayatechandinnovations.yayaagentic.engine.banca.BancaContext.COVERAGE_DIRECTIVE_SLOT;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievedChunk;
 import com.yayatechandinnovations.yayaagentic.memory.WorkingMemory;
@@ -213,7 +214,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
             sb.append('\n');
         }
         // 8 — Working memory snapshot
-        Map<String, Object> memory = workingMemory.get(session.id());
+        Map<String, Object> memory = new java.util.LinkedHashMap<>(workingMemory.get(session.id()));
+        // 8.1 — Per-turn system directive (network chat design §4.1): a tool
+        // may set COVERAGE_DIRECTIVE_SLOT when a cross-banca aggregation came
+        // back with a non-OK source. It rides the VARIABLE suffix (never the
+        // cached prefix) and is strongly framed as an instruction rather than
+        // buried in the memory blob, so the model MUST disclose the gap.
+        // Scoped to the turn: send() clears it at the start of the next turn.
+        Object directive = memory.remove(COVERAGE_DIRECTIVE_SLOT);
+        if (directive != null && !String.valueOf(directive).isBlank()) {
+            sb.append("IMPORTANT — this turn: ").append(String.valueOf(directive)).append("\n\n");
+        }
         if (!memory.isEmpty()) {
             sb.append("Working memory: ").append(jsonOf(memory)).append("\n\n");
         }

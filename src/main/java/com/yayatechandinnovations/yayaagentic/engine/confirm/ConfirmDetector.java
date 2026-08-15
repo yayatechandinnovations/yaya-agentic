@@ -23,11 +23,17 @@ public class ConfirmDetector {
     private static final Set<String> AFFIRMATIVE = Set.of(
             "yes", "yeah", "yep", "yup", "ok", "okay", "sure",
             "confirm", "confirmed", "go", "go ahead", "do it", "please do",
-            "y", "👍");
+            "y", "👍",
+            // Spanish — the network entry point (player_network_v1) is DR
+            // banca chat; "Sí" MUST resolve a pending confirm (design §3.2/§5).
+            "sí", "si", "claro", "dale", "confirmar", "confirmo", "hazlo",
+            "de acuerdo", "está bien", "esta bien");
 
     private static final Set<String> NEGATIVE = Set.of(
             "no", "nope", "nah", "cancel", "stop", "wait", "nevermind",
-            "never mind", "don't", "do not", "abort", "n", "👎");
+            "never mind", "don't", "do not", "abort", "n", "👎",
+            // Spanish negatives, mirroring the affirmatives above.
+            "cancela", "cancelar", "espera", "para", "detente");
 
     public Signal detect(String text) {
         if (text == null) return Signal.UNCLEAR;

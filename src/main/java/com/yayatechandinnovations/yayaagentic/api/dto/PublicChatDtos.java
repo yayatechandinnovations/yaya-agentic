@@ -77,11 +77,28 @@ public final class PublicChatDtos {
     ) {}
 
     /** {@code attachmentIds} reference prior uploads to this session
-     *  ({@code chat-experience-design.md} §6.1 — upload first, then reference). */
-    public record MessageRequest(String text, List<String> attachmentIds) {
+     *  ({@code chat-experience-design.md} §6.1 — upload first, then reference).
+     *
+     *  <p>{@code selection} carries an optional structured choice
+     *  (yaya-agentic-network-chat-runtime-design.md §3.2) — backward compatible:
+     *  {@code text} stays required (legible transcript; old runtimes ignore
+     *  {@code selection}). {@code kind == "banca"} picks an offered install
+     *  {@code code}; {@code kind == "confirm"} approves the pending confirm frame
+     *  named by {@code callId} (a structured alternative to a plain "Sí").</p> */
+    public record MessageRequest(String text, List<String> attachmentIds, Selection selection) {
         public MessageRequest(String text) {
-            this(text, List.of());
+            this(text, List.of(), null);
         }
+
+        public MessageRequest(String text, List<String> attachmentIds) {
+            this(text, attachmentIds, null);
+        }
+
+        /** {@code code} is only echoed for {@code kind == "banca"} (the install
+         *  code — the sole value the client sends back; everything else in the
+         *  picker is display-only). {@code callId} is only set for
+         *  {@code kind == "confirm"}. */
+        public record Selection(String kind, String code, String callId) {}
     }
 
     /** One uploaded attachment ({@code POST /sessions/{id}/attachments}). The

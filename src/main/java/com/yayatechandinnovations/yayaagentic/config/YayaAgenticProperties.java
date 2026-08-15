@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.time.Duration;
 import java.util.List;
@@ -18,8 +19,30 @@ public record YayaAgenticProperties(
         HttpTools httpTools,
         OperatorAuth operatorAuth,
         UserAccounts userAccounts,
-        Email email
+        Email email,
+        Network network
 ) {
+    // The record has a second (back-compat) constructor, so Spring's
+    // configuration-property binding must be told which one to bind through —
+    // the canonical one, which carries `network`.
+    @ConstructorBinding
+    public YayaAgenticProperties {
+    }
+
+    /** Back-compat: construct without the network block (defaults apply). */
+    public YayaAgenticProperties(String defaultPersonality, String defaultTenant, String publicBaseUrl,
+                                 Session session, Llm llm, Cors cors, Auth auth, HttpTools httpTools,
+                                 OperatorAuth operatorAuth, UserAccounts userAccounts, Email email) {
+        this(defaultPersonality, defaultTenant, publicBaseUrl, session, llm, cors, auth, httpTools,
+                operatorAuth, userAccounts, email, null);
+    }
+
+    public Network network() {
+        return network == null
+                ? new Network(null, null, Network.Capabilities.defaults(), Network.RateLimits.defaults())
+                : network;
+    }
+
     public record Session(Duration idleTimeout, Memory memory) {
         public Memory memory() {
             return memory == null ? Memory.defaults() : memory;
@@ -130,6 +153,60 @@ public record YayaAgenticProperties(
         public record Sessions(Duration userTtl, Duration bootstrapTtl) {
             public static Sessions defaults() {
                 return new Sessions(Duration.ofHours(12), Duration.ofHours(1));
+            }
+        }
+    }
+
+    /**
+     * Corillo network entry point ({@code player_network_v1}) —
+     * yaya-agentic-network-chat-runtime-design.md. The hub broker is the Smart
+     * Lottery action plane the runtime calls with its own {@code X-Agent-Auth}
+     * credential (never the chat principal); {@code capabilities} gate the
+     * play/claim tools (both ship OFF until the platform chain is green);
+     * {@code rateLimits} sit in front of any provider limits (§6).
+     */
+    public record Network(
+            String seedTenant,
+            Hub hub,
+            Capabilities capabilities,
+            RateLimits rateLimits
+    ) {
+        public Capabilities capabilities() {
+            return capabilities == null ? Capabilities.defaults() : capabilities;
+        }
+
+        public RateLimits rateLimits() {
+            return rateLimits == null ? RateLimits.defaults() : rateLimits;
+        }
+
+        /** {@code credentialRef} names the encrypted X-Agent-Auth secret (resolved
+         *  via the tenant secret store), NOT the plaintext credential. */
+        public record Hub(String baseUrl, String credentialRef, Duration timeout) {
+            public Duration timeout() {
+                return timeout == null ? Duration.ofSeconds(10) : timeout;
+            }
+        }
+
+        /** Play-path and claim-path feature flags. Default OFF (design §4/§7 S3). */
+        public record Capabilities(boolean playEnabled, boolean claimEnabled) {
+            public static Capabilities defaults() {
+                return new Capabilities(false, false);
+            }
+        }
+
+        /**
+         * App-level ceilings in front of any provider limits (§6). Per-session:
+         * picker emissions, link confirms, play_confirm attempts. Per-phone
+         * across sessions: broker calls.
+         */
+        public record RateLimits(
+                int pickerPerSessionPerHour,
+                int linkConfirmsPerSessionPerDay,
+                int playConfirmsPerSessionPerHour,
+                int brokerCallsPerPhonePerHour
+        ) {
+            public static RateLimits defaults() {
+                return new RateLimits(30, 3, 10, 120);
             }
         }
     }

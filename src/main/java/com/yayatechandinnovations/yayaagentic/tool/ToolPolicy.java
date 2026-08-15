@@ -26,8 +26,31 @@ public record ToolPolicy(
          * "Do you want to continue?"; the tool id and raw args are NEVER
          * user-facing confirmation copy.
          */
-        String confirmPrompt
+        String confirmPrompt,
+        /**
+         * Network play-path (yaya-agentic-network-chat-runtime-design.md §2/§4):
+         * when true, the engine REFUSES to dispatch this tool unless a banca
+         * context is committed for the session, emitting a {@code banca_picker}
+         * ui_hint instead. The tool never reads this — the engine gate does, in
+         * {@code runToolDispatch}, before the confirmable gate. Read-class tools
+         * and {@code banca_context_set} (which SETS the context) leave it false.
+         */
+        boolean requiresBancaContext,
+        /**
+         * Network play-path (design §4, {@code play_confirm}/{@code
+         * prize_claim_network}): a HARD precondition enforced by the engine, not
+         * the prompt — an approved confirm frame for THIS exact quote (callId
+         * match, quote unchanged) must exist before dispatch. Idempotency key is
+         * (sessionId, callId). Gate runs immediately before execute.
+         */
+        boolean requiresApprovedQuote
 ) {
+    /** Back-compat: no network play-path gating. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable, String confirmPrompt) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, confirmPrompt, false, false);
+    }
+
     /** Back-compat: no operator confirmation copy. */
     public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
                       boolean confirmable, boolean clientInvocable) {

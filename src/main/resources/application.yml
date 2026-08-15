@@ -235,6 +235,27 @@ yaya:
         # Base64-encoded raw Ed25519 public key (32 bytes). Empty disables.
         public-key-pem: ""
 
+    # Corillo network entry point (player_network_v1) —
+    # yaya-agentic-network-chat-runtime-design.md. Empty seed-tenant means the
+    # profile is NOT auto-seeded (opt in per deployment). play/claim ship OFF
+    # until the platform enablement chain is green (§7 S3).
+    network:
+      seed-tenant: ${YAYA_NETWORK_SEED_TENANT:}
+      hub:
+        # Smart Lottery hub action plane. credential-ref names the X-Agent-Auth
+        # secret (an env var name resolved at call time), never the plaintext.
+        base-url: ${YAYA_NETWORK_HUB_BASE_URL:}
+        credential-ref: ${YAYA_NETWORK_HUB_CREDENTIAL_REF:}
+        timeout: PT10S
+      capabilities:
+        play-enabled: ${YAYA_NETWORK_PLAY_ENABLED:false}
+        claim-enabled: ${YAYA_NETWORK_CLAIM_ENABLED:false}
+      rate-limits:
+        picker-per-session-per-hour: 30
+        link-confirms-per-session-per-day: 3
+        play-confirms-per-session-per-hour: 10
+        broker-calls-per-phone-per-hour: 120
+
     # Operator console authentication — see docs/design/operator-auth-design.md.
     # Distinct from `auth` above, which authenticates conversational callers.
     operator-auth:

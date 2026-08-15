@@ -7,8 +7,10 @@ import com.yayatechandinnovations.yayaagentic.core.*;
 import com.yayatechandinnovations.yayaagentic.core.entity.EntityKind;
 import com.yayatechandinnovations.yayaagentic.core.entity.EntityMemory;
 import com.yayatechandinnovations.yayaagentic.core.entity.EntityRef;
+import com.yayatechandinnovations.yayaagentic.engine.banca.BancaContext;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfileBootstrap;
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
+import com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmDetector;
 import com.yayatechandinnovations.yayaagentic.engine.confirm.EntityConflictDetector;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalContext;
 import com.yayatechandinnovations.yayaagentic.knowledge.RetrievalQuery;
@@ -279,11 +281,44 @@ public class DefaultConversationEngine implements ConversationEngine {
 
         Map<String, Object> wm = workingMemory.get(sessionId);
 
+        // A per-turn directive (e.g. partial coverage, network chat design §4.1)
+        // is scoped to the turn that set it; clear it at the start of the next
+        // user turn so it never leaks forward. A tool sets it again mid-turn if
+        // still relevant, and it renders for the remaining rounds of THIS turn.
+        workingMemory.remove(sessionId, BancaContext.COVERAGE_DIRECTIVE_SLOT);
+
+        // Structured selection (network chat design §3.2): a banca pick bypasses
+        // NL resolution but is validated against the last offered picker (the
+        // client cannot inject an install never offered). A confirm selection is
+        // handled inside the pending_confirm block below by callId.
+        Map<String, Object> selection = selectionOf(message);
+        if (selection != null && "banca".equals(String.valueOf(selection.get("kind")))) {
+            String code = selection.get("code") == null ? null : String.valueOf(selection.get("code"));
+            if (code == null || !BancaContext.wasOffered(workingMemory, sessionId, code)) {
+                String reject = "Esa banca no está entre las opciones. ¿Cuál eliges?";
+                return Flux.<TurnEvent>just(new TurnEvent.Token(reject))
+                        .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
+                                reject, List.of(), List.of()))
+                        .concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+            }
+            Flux<TurnEvent> resolved = dispatchByToolId(
+                    new Ids.ToolId(BancaContext.SELECTION_TOOL_ID), Map.of("code", code),
+                    profile, personality, session, exec, recorder, turnId, message,
+                    /* skipConfirm */ true, /* callIdHint */ null, /* llmDriven */ true);
+            if (resolved != null) {
+                return resolved.concatWith(Mono.fromCallable(() -> TurnEvent.End.of(turnId, 0, 0)));
+            }
+        }
+
         // ---- M2-D: confirm/cancel for a pending confirmable dispatch ----
         @SuppressWarnings("unchecked")
         Map<String, Object> pendingConfirm = pendingMapOf(wm, "pending_confirm");
         if (pendingConfirm != null) {
-            var signal = confirmDetector.detect(message.text());
+            // A structured confirm selection (§3.2) whose callId matches the
+            // pending frame counts as an affirmative, alongside NL "Sí".
+            var signal = confirmSelectionMatches(selection, pendingConfirm)
+                    ? ConfirmDetector.Signal.CONFIRM
+                    : confirmDetector.detect(message.text());
             switch (signal) {
                 case CONFIRM -> {
                     String toolId = String.valueOf(pendingConfirm.get("toolId"));
@@ -298,10 +333,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                     // later in the same turn skips the confirm gate. Keyed on
                     // args fingerprint so a tool with different args still
                     // earns its own confirmation.
+                    // callId is threaded so the network approved-quote gate can
+                    // bind execution to THIS approved frame (design §4.3).
                     workingMemory.merge(sessionId, Map.of("consumed_confirm", Map.of(
                             "toolId", toolId,
                             "argsFingerprint", argsFingerprint(args),
-                            "turnId", turnId.value())));
+                            "turnId", turnId.value(),
+                            "callId", callIdHint)));
                     IntentFrame intentForResume = activeIntents.getOrDefault(sessionId,
                             session.activeIntent() == null ? IntentFrame.empty() : session.activeIntent());
                     Flux<TurnEvent> resumed = resumeConfirmedDispatch(
@@ -780,6 +818,24 @@ public class DefaultConversationEngine implements ConversationEngine {
         Object raw = wm == null ? null : wm.get(key);
         if (raw instanceof Map<?, ?> m && !m.isEmpty()) return (Map<String, Object>) m;
         return null;
+    }
+
+    /** The framework-owned structured selection (§3.2), if the client sent one. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> selectionOf(UserMessage message) {
+        if (message == null || message.attachments() == null) return null;
+        Object sel = message.attachments().get("_selection");
+        return sel instanceof Map<?, ?> m && !m.isEmpty() ? (Map<String, Object>) m : null;
+    }
+
+    /** A confirm selection whose callId matches the pending frame (§3.2). A null
+     *  callId is permissive (there is only ever one pending_confirm). */
+    private static boolean confirmSelectionMatches(Map<String, Object> selection,
+                                                   Map<String, Object> pendingConfirm) {
+        if (selection == null || !"confirm".equals(String.valueOf(selection.get("kind")))) return false;
+        Object selCall = selection.get("callId");
+        return selCall == null
+                || String.valueOf(selCall).equals(String.valueOf(pendingConfirm.get("callId")));
     }
 
     /**
@@ -1412,6 +1468,20 @@ public class DefaultConversationEngine implements ConversationEngine {
                     recorder, turnId, message, callIdHint, llmDriven);
         }
 
+        // Network banca gate (yaya-agentic-network-chat-runtime-design.md §4.2):
+        // a play-path tool must NOT dispatch without a committed ACTIVE banca
+        // context. Route to the selection tool (which surfaces the picker) instead
+        // — structurally, not by prompt. Placed AFTER authorize (an unauthorized
+        // caller gets the two-reason denial, never a picker) and BEFORE the
+        // confirmable gate (don't advance the confirm state machine for a play
+        // with no banca). banca_context_set itself is never banca-gated, so no
+        // recursion.
+        if (toolDescriptor.policy() != null && toolDescriptor.policy().requiresBancaContext()
+                && !BancaContext.hasActiveContext(workingMemory, session.id())) {
+            return bancaSelectionFlow(profile, personality, session, exec, recorder,
+                    turnId, message, callIdHint, llmDriven);
+        }
+
         // B2.8 — confirmable tools pause for explicit confirm before dispatch.
         // Exception: if the user already consented to this exact (tool,
         // args) operation earlier in this engine turn — e.g. the LLM is
@@ -1425,6 +1495,21 @@ public class DefaultConversationEngine implements ConversationEngine {
             return confirmFlow(toolDescriptor, effectiveArgs, personality, session, exec, recorder, turnId, message);
         }
 
+        // Network approved-quote gate (§4.2/§4.3): play_confirm / prize_claim
+        // execute ONLY as a confirmed resume of an approved frame for THIS exact
+        // call (callId match), and — for a quote — only while the quote is
+        // unchanged. On the first pass a confirmable tool returned at the gate
+        // above; this is the skipConfirm=true resume path, and defense-in-depth
+        // for any non-confirmable/injected route.
+        if (toolDescriptor.policy() != null && toolDescriptor.policy().requiresApprovedQuote()) {
+            AuthzDecision quoteGate = approvedQuoteGate(
+                    session.id(), toolDescriptor.id(), effectiveArgs, callIdHint);
+            if (quoteGate.isDenied()) {
+                return denialFlow(toolDescriptor, effectiveArgs, quoteGate, personality, session, exec,
+                        recorder, turnId, message, callIdHint, llmDriven);
+            }
+        }
+
         // Hop off the Reactor Netty event loop before executing. HTTP tool
         // dispatch is synchronous-blocking inside (WebClient + mono.block in
         // HttpToolDispatcher), and running that on the event loop deadlocks
@@ -1435,15 +1520,31 @@ public class DefaultConversationEngine implements ConversationEngine {
                 .flatMapMany(outcome -> switch (outcome) {
                     case ToolExecutor.Outcome.NeedsInput ni ->
                             elicitationFlow(toolDescriptor, effectiveArgs, ni, personality, session, exec, recorder, turnId, message);
-                    case ToolExecutor.Outcome.Dispatched(var result) ->
-                            dispatchedFlow(toolDescriptor, effectiveArgs,
-                                    passThroughUiHint(session, result),
-                                    profile, session, exec, recorder, turnId, message, llmDriven);
+                    case ToolExecutor.Outcome.Dispatched(var result) -> {
+                        // Network link-offer (§4.5): banca_context_set may return a
+                        // _confirmRequest asking the engine to raise a confirm
+                        // frame for banca_link_confirm. Strip the plumbing (the LLM
+                        // never sees it — #8) and emit the confirm frame INSTEAD of
+                        // a tool_result, so the agentic loop pauses like confirmFlow.
+                        Map<String, Object> confirmReq = extractConfirmRequest(
+                                result == null ? null : result.value());
+                        if (confirmReq != null) {
+                            yield linkOfferConfirmFlow(confirmReq, session, exec, recorder, turnId, message);
+                        }
+                        yield dispatchedFlow(toolDescriptor, effectiveArgs,
+                                passThroughUiHint(session, result),
+                                profile, session, exec, recorder, turnId, message, llmDriven);
+                    }
                 });
     }
 
     /** yaya-sales design §11.2 — see {@link UiHintPassThrough}. */
     private Turn.ToolResult passThroughUiHint(Session session, Turn.ToolResult result) {
+        // Network redaction (§6): a play credential must never reach a
+        // transcript, recorder, or the client stream. The network tools never
+        // emit it — this is the belt to their suspenders, at the one seam every
+        // dispatched OK result passes through before any sink.
+        result = redactNetworkSecrets(result);
         UiHintPassThrough.Split split = result == null
                 ? null : UiHintPassThrough.split(result.value());
         if (split == null) {
@@ -1456,6 +1557,18 @@ public class DefaultConversationEngine implements ConversationEngine {
                 result.error(), result.capturedEntities(), result.diagnostics());
     }
 
+    @SuppressWarnings("unchecked")
+    private static Turn.ToolResult redactNetworkSecrets(Turn.ToolResult result) {
+        if (result == null || !(result.value() instanceof Map<?, ?> m)) return result;
+        Map<String, Object> value = (Map<String, Object>) m;
+        if (!value.containsKey("customerToken") && !value.containsKey("playCredential")) return result;
+        Map<String, Object> clean = new java.util.LinkedHashMap<>(value);
+        clean.remove("customerToken");
+        clean.remove("playCredential");
+        return new Turn.ToolResult(result.callId(), result.status(), clean,
+                result.error(), result.capturedEntities(), result.diagnostics());
+    }
+
     /** B2.8 — Two-phase preview: stream tool_call + UiHint(confirm) and wait for the next turn. */
     private Flux<TurnEvent> confirmFlow(ToolDescriptor toolDescriptor,
                                         Map<String, Object> args,
@@ -1465,7 +1578,6 @@ public class DefaultConversationEngine implements ConversationEngine {
                                         ConversationRecorder recorder,
                                         Ids.TurnId turnId,
                                         UserMessage message) {
-        String callId = UUID.randomUUID().toString();
         // User-facing copy: the operator-authored question when the tool has
         // one, else a neutral fallback. Tool ids and raw args are plumbing —
         // they ride the payload for the client's dispatch, never the copy.
@@ -1473,14 +1585,30 @@ public class DefaultConversationEngine implements ConversationEngine {
                 ? null : toolDescriptor.policy().confirmPrompt();
         String summary = authored == null || authored.isBlank()
                 ? "Do you want to continue?" : authored.trim();
+        return emitConfirmFrame(toolDescriptor.id(), args, summary,
+                session, exec, recorder, turnId, message);
+    }
+
+    /**
+     * Emit a two-phase confirm frame for {@code toolId} + {@code args}: stream
+     * ToolCall + UiHint(confirm) + a spoken line, persist {@code pending_confirm},
+     * and record the (unpaired) ToolCall. No ToolResult is emitted, so the agentic
+     * loop pauses until the next turn resolves the confirm. Shared by
+     * {@link #confirmFlow} and the network link-offer ({@link #linkOfferConfirmFlow}).
+     */
+    private Flux<TurnEvent> emitConfirmFrame(Ids.ToolId toolId, Map<String, Object> args, String summary,
+                                             Session session, ExecutionContext exec,
+                                             ConversationRecorder recorder, Ids.TurnId turnId,
+                                             UserMessage message) {
+        String callId = UUID.randomUUID().toString();
         Map<String, Object> hintPayload = Map.of(
-                "toolId", toolDescriptor.id().value(),
+                "toolId", toolId.value(),
                 "callId", callId,
                 "args", args,
                 "summary", summary);
 
         workingMemory.merge(session.id(), Map.of("pending_confirm", Map.of(
-                "toolId", toolDescriptor.id().value(),
+                "toolId", toolId.value(),
                 "args", args,
                 "callId", callId)));
 
@@ -1488,11 +1616,88 @@ public class DefaultConversationEngine implements ConversationEngine {
         // IS the confirm UX there, so it keeps the reply instruction.
         String spoken = summary + " (reply yes or no)";
         return Flux.<TurnEvent>just(
-                        new TurnEvent.ToolCall(callId, toolDescriptor.id(), args),
+                        new TurnEvent.ToolCall(callId, toolId, args),
                         new TurnEvent.UiHint("confirm", hintPayload),
                         new TurnEvent.Token(spoken))
                 .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
-                        List.of(new Turn.ToolCall(callId, toolDescriptor.id(), args)), List.of()));
+                        List.of(new Turn.ToolCall(callId, toolId, args)), List.of()));
+    }
+
+    // ---- network gates (yaya-agentic-network-chat-runtime-design.md §4) ------
+
+    /**
+     * The banca gate's backstop: surface a picker by dispatching the selection
+     * tool (which builds the linked/online picker) instead of the play tool. When
+     * the profile has no selection tool, refuse in plain text so the play still
+     * cannot run.
+     */
+    private Flux<TurnEvent> bancaSelectionFlow(Profile profile, PersonalityFragment personality,
+                                               Session session, ExecutionContext exec,
+                                               ConversationRecorder recorder, Ids.TurnId turnId,
+                                               UserMessage message, String callIdHint, boolean llmDriven) {
+        Ids.ToolId selector = new Ids.ToolId(BancaContext.SELECTION_TOOL_ID);
+        if (toolInProfile(profile, selector) && catalog.tool(selector).isPresent()) {
+            return dispatchByToolId(selector, Map.of(), profile, personality, session, exec,
+                    recorder, turnId, message, /* skipConfirm */ true, callIdHint, llmDriven);
+        }
+        String ask = "Primero elige la banca donde quieres jugar.";
+        return Flux.<TurnEvent>just(new TurnEvent.Token(ask))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
+                        ask, List.of(), List.of()));
+    }
+
+    /**
+     * The approved-quote gate (§4.3): a requiresApprovedQuote tool runs only as a
+     * confirmed resume of an approved frame for THIS exact call (callId match), and
+     * — when the call names a quoteId — only while it matches the pending quote.
+     * Two-reason denial (§5.5): user-safe copy differs from the audit line.
+     */
+    private AuthzDecision approvedQuoteGate(Ids.SessionId sessionId, Ids.ToolId toolId,
+                                            Map<String, Object> args, String callIdHint) {
+        Map<String, Object> consumed = pendingMapOf(workingMemory.get(sessionId), "consumed_confirm");
+        if (consumed == null || callIdHint == null
+                || !callIdHint.equals(String.valueOf(consumed.get("callId")))
+                || !toolId.value().equals(String.valueOf(consumed.get("toolId")))) {
+            return new AuthzDecision.Deny(
+                    "Necesito tu confirmación antes de completar esa acción.",
+                    "network approved-quote gate: no approved confirm frame matching callId for "
+                            + toolId.value());
+        }
+        Object quoteIdArg = args == null ? null : args.get("quoteId");
+        if (quoteIdArg != null) {
+            Map<String, Object> pendingQuote = pendingMapOf(
+                    workingMemory.get(sessionId), BancaContext.PENDING_QUOTE_SLOT);
+            if (pendingQuote == null
+                    || !String.valueOf(quoteIdArg).equals(String.valueOf(pendingQuote.get("quoteId")))) {
+                return new AuthzDecision.Deny(
+                        "Esa cotización ya no está vigente; te preparo una nueva.",
+                        "network approved-quote gate: quote mismatch/stale for " + toolId.value());
+            }
+        }
+        return AuthzDecision.Allow.none();
+    }
+
+    /** Extract a {@code _confirmRequest} frame from a tool result value, if present. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> extractConfirmRequest(Object value) {
+        if (!(value instanceof Map<?, ?> m)) return null;
+        Object cr = ((Map<String, Object>) m).get("_confirmRequest");
+        return cr instanceof Map<?, ?> req ? (Map<String, Object>) req : null;
+    }
+
+    /** Raise a confirm frame from a tool-emitted {@code _confirmRequest} (§4.5). */
+    private Flux<TurnEvent> linkOfferConfirmFlow(Map<String, Object> confirmReq, Session session,
+                                                 ExecutionContext exec, ConversationRecorder recorder,
+                                                 Ids.TurnId turnId, UserMessage message) {
+        Object toolId = confirmReq.get("toolId");
+        if (toolId == null) return Flux.empty();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> linkArgs = confirmReq.get("args") instanceof Map<?, ?> a
+                ? (Map<String, Object>) a : Map.of();
+        String summary = confirmReq.get("summary") == null
+                ? "Do you want to continue?" : String.valueOf(confirmReq.get("summary"));
+        return emitConfirmFrame(new Ids.ToolId(String.valueOf(toolId)), linkArgs, summary,
+                session, exec, recorder, turnId, message);
     }
 
     private Flux<TurnEvent> dispatchedFlow(ToolDescriptor toolDescriptor,
