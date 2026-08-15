@@ -57,7 +57,8 @@ abstract class AbstractPlayTool implements ToolHandler<Map<String, Object>, Map<
         Instant now = Instant.now();
         Optional<PlayCredential> cached = credentials.get(ctx.sessionId(), installCode, now);
         if (cached.isPresent()) return cached;
-        BrokerResponse resp = hub.playSession("play", installCode, phone, support.sessionRef(ctx));
+        BrokerResponse resp = hub.playSession(support.tenantId(ctx), "play", installCode, phone,
+                support.sessionRef(ctx));
         if (!resp.ok()) return Optional.empty();
         Optional<PlayCredential> fresh = hub.parseCredential(resp.body());
         fresh.ifPresent(c -> credentials.put(ctx.sessionId(), installCode, c));

@@ -29,7 +29,7 @@ public class DirectoryOnlineBancasTool implements ToolHandler<Map<String, Object
     @Override
     public Map<String, Object> execute(Map<String, Object> input, ExecutionContext ctx) {
         Boolean openNow = asBool(input == null ? null : input.get("openNow"));
-        BrokerResponse resp = hub.onlineBancas(openNow, support.sessionRef(ctx));
+        BrokerResponse resp = hub.onlineBancas(support.tenantId(ctx), openNow, support.sessionRef(ctx));
         if (!resp.ok()) {
             return ToolResults.error(resp.error(), support.userSafeReason(resp.error()));
         }

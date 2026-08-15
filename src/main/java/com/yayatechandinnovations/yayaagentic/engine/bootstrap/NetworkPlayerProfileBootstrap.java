@@ -119,16 +119,18 @@ public class NetworkPlayerProfileBootstrap implements ApplicationRunner {
         seedInto(new Ids.TenantId(seedTenant.trim()));
     }
 
-    /** Idempotently seed the network profile into {@code tenant}. */
+    /**
+     * Idempotently seed the network profile into {@code tenant}. ALL capabilities
+     * (incl. play/claim) are seeded unconditionally; visibility of play/claim is a
+     * live, per-tenant runtime toggle enforced by {@code NetworkCapabilityGate}, so
+     * flipping S3 needs no re-seed or restart.
+     */
     @Transactional
     public void seedInto(Ids.TenantId tenant) {
-        boolean playOn = props.network().capabilities().playEnabled();
-        boolean claimOn = props.network().capabilities().claimEnabled();
-
         ensureTenant(tenant);
         ensureAuthBinding(tenant);
 
-        // Read/select tools + personal reads (always on, S2).
+        // Read/select tools + personal reads (S2).
         ensureTool(tenant, LINKED_BANCAS, NO_ARGS, "networkPlayerLinkedBancasTool", readPolicy());
         ensureTool(tenant, ONLINE_BANCAS,
                 "{\"type\":\"object\",\"properties\":{\"openNow\":{\"type\":\"boolean\"}}}",
@@ -142,23 +144,19 @@ public class NetworkPlayerProfileBootstrap implements ApplicationRunner {
                 "{\"type\":\"object\",\"properties\":{\"limit\":{\"type\":\"integer\"}}}",
                 "networkPlayerRecentPlaysTool", readPolicy());
 
-        // Play tools (S3, behind the play flag).
-        if (playOn) {
-            ensureTool(tenant, PLAY_QUOTE, OBJ, "networkPlayQuoteTool", playQuotePolicy());
-            ensureTool(tenant, PLAY_CONFIRM,
-                    "{\"type\":\"object\",\"properties\":{\"quoteId\":{\"type\":\"string\"}}}",
-                    "networkPlayConfirmTool", playConfirmPolicy());
-            ensureTool(tenant, BANCA_LINK_CONFIRM,
-                    "{\"type\":\"object\",\"properties\":{\"installCode\":{\"type\":\"string\"}}}",
-                    "networkBancaLinkConfirmTool", linkConfirmPolicy());
-        }
-        if (claimOn) {
-            ensureTool(tenant, PRIZE_CLAIM,
-                    "{\"type\":\"object\",\"required\":[\"ticketNumber\",\"installCode\"],"
-                            + "\"properties\":{\"ticketNumber\":{\"type\":\"string\"},"
-                            + "\"installCode\":{\"type\":\"string\"}}}",
-                    "networkPrizeClaimTool", claimPolicy());
-        }
+        // Play/claim tools (S3) — seeded always, gated live by NetworkCapabilityGate.
+        ensureTool(tenant, PLAY_QUOTE, OBJ, "networkPlayQuoteTool", playQuotePolicy());
+        ensureTool(tenant, PLAY_CONFIRM,
+                "{\"type\":\"object\",\"properties\":{\"quoteId\":{\"type\":\"string\"}}}",
+                "networkPlayConfirmTool", playConfirmPolicy());
+        ensureTool(tenant, BANCA_LINK_CONFIRM,
+                "{\"type\":\"object\",\"properties\":{\"installCode\":{\"type\":\"string\"}}}",
+                "networkBancaLinkConfirmTool", linkConfirmPolicy());
+        ensureTool(tenant, PRIZE_CLAIM,
+                "{\"type\":\"object\",\"required\":[\"ticketNumber\",\"installCode\"],"
+                        + "\"properties\":{\"ticketNumber\":{\"type\":\"string\"},"
+                        + "\"installCode\":{\"type\":\"string\"}}}",
+                "networkPrizeClaimTool", claimPolicy());
 
         ensureCapability(tenant, CAP_BANCAS, "Bancas de la red",
                 "Encuentra bancas y elige dónde jugar.",
@@ -170,26 +168,18 @@ public class NetworkPlayerProfileBootstrap implements ApplicationRunner {
                 "Usa player_overview, player_prizes y player_recent_plays. Cita los montos "
                         + "verbatim y revela siempre si alguna banca no pudo consultarse.",
                 List.of(PLAYER_OVERVIEW.value(), PLAYER_PRIZES.value(), PLAYER_RECENT_PLAYS.value()));
-        if (playOn) {
-            ensureCapability(tenant, CAP_PLAY, "Jugar en la red",
-                    "Cotiza y confirma jugadas, y vincúlate a una banca.",
-                    "Usa play_quote para cotizar y play_confirm para confirmar (requiere una "
-                            + "cotización aprobada). banca_link_confirm vincula tras confirmación.",
-                    List.of(PLAY_QUOTE.value(), PLAY_CONFIRM.value(), BANCA_LINK_CONFIRM.value()));
-        }
-        if (claimOn) {
-            ensureCapability(tenant, CAP_CLAIM, "Reclamar premios",
-                    "Reclama un premio a tu monedero en la banca del premio.",
-                    "Usa prize_claim_network; requiere confirmación del jugador.",
-                    List.of(PRIZE_CLAIM.value()));
-        }
+        ensureCapability(tenant, CAP_PLAY, "Jugar en la red",
+                "Cotiza y confirma jugadas, y vincúlate a una banca.",
+                "Usa play_quote para cotizar y play_confirm para confirmar (requiere una "
+                        + "cotización aprobada). banca_link_confirm vincula tras confirmación.",
+                List.of(PLAY_QUOTE.value(), PLAY_CONFIRM.value(), BANCA_LINK_CONFIRM.value()));
+        ensureCapability(tenant, CAP_CLAIM, "Reclamar premios",
+                "Reclama un premio a tu monedero en la banca del premio.",
+                "Usa prize_claim_network; requiere confirmación del jugador.",
+                List.of(PRIZE_CLAIM.value()));
 
-        List<Ids.CapabilityId> caps = new ArrayList<>(List.of(CAP_BANCAS, CAP_READS));
-        if (playOn) caps.add(CAP_PLAY);
-        if (claimOn) caps.add(CAP_CLAIM);
-        ensureProfile(tenant, caps);
-
-        mirror(playOn, claimOn);
+        ensureProfile(tenant, List.of(CAP_BANCAS, CAP_READS, CAP_PLAY, CAP_CLAIM));
+        mirror();
     }
 
     // ---- policies -------------------------------------------------------
@@ -280,14 +270,19 @@ public class NetworkPlayerProfileBootstrap implements ApplicationRunner {
                         List.of("¿En cuál banca juego?", "Mis premios", "Mis jugadas recientes"))));
     }
 
-    /** Mirror into the in-memory runtime catalog (engine lookup path). */
-    private void mirror(boolean playOn, boolean claimOn) {
+    /** Mirror into the in-memory runtime catalog (engine lookup path). All caps
+     *  are registered; NetworkCapabilityGate decides play/claim visibility live. */
+    private void mirror() {
         mirrorTool(LINKED_BANCAS, "networkPlayerLinkedBancasTool", NO_ARGS, readPolicy());
         mirrorTool(ONLINE_BANCAS, "networkDirectoryOnlineBancasTool", OBJ, readPolicy());
         mirrorTool(BANCA_CONTEXT_SET, "networkBancaContextSetTool", OBJ, selectPolicy());
         mirrorTool(PLAYER_OVERVIEW, "networkPlayerOverviewTool", NO_ARGS, readPolicy());
         mirrorTool(PLAYER_PRIZES, "networkPlayerPrizesTool", NO_ARGS, readPolicy());
         mirrorTool(PLAYER_RECENT_PLAYS, "networkPlayerRecentPlaysTool", OBJ, readPolicy());
+        mirrorTool(PLAY_QUOTE, "networkPlayQuoteTool", OBJ, playQuotePolicy());
+        mirrorTool(PLAY_CONFIRM, "networkPlayConfirmTool", OBJ, playConfirmPolicy());
+        mirrorTool(BANCA_LINK_CONFIRM, "networkBancaLinkConfirmTool", OBJ, linkConfirmPolicy());
+        mirrorTool(PRIZE_CLAIM, "networkPrizeClaimTool", OBJ, claimPolicy());
         catalog.registerCapability(new Capability(CAP_BANCAS, "Bancas de la red",
                 "Encuentra bancas y elige dónde jugar.", "",
                 List.of(LINKED_BANCAS, ONLINE_BANCAS, BANCA_CONTEXT_SET), List.of(),
@@ -296,21 +291,13 @@ public class NetworkPlayerProfileBootstrap implements ApplicationRunner {
                 "Consulta puntos, premios y jugadas recientes por banca.", "",
                 List.of(PLAYER_OVERVIEW, PLAYER_PRIZES, PLAYER_RECENT_PLAYS), List.of(),
                 PermissionRequirement.none()));
-        if (playOn) {
-            mirrorTool(PLAY_QUOTE, "networkPlayQuoteTool", OBJ, playQuotePolicy());
-            mirrorTool(PLAY_CONFIRM, "networkPlayConfirmTool", OBJ, playConfirmPolicy());
-            mirrorTool(BANCA_LINK_CONFIRM, "networkBancaLinkConfirmTool", OBJ, linkConfirmPolicy());
-            catalog.registerCapability(new Capability(CAP_PLAY, "Jugar en la red",
-                    "Cotiza y confirma jugadas, y vincúlate a una banca.", "",
-                    List.of(PLAY_QUOTE, PLAY_CONFIRM, BANCA_LINK_CONFIRM), List.of(),
-                    PermissionRequirement.none()));
-        }
-        if (claimOn) {
-            mirrorTool(PRIZE_CLAIM, "networkPrizeClaimTool", OBJ, claimPolicy());
-            catalog.registerCapability(new Capability(CAP_CLAIM, "Reclamar premios",
-                    "Reclama un premio a tu monedero en la banca del premio.", "",
-                    List.of(PRIZE_CLAIM), List.of(), PermissionRequirement.none()));
-        }
+        catalog.registerCapability(new Capability(CAP_PLAY, "Jugar en la red",
+                "Cotiza y confirma jugadas, y vincúlate a una banca.", "",
+                List.of(PLAY_QUOTE, PLAY_CONFIRM, BANCA_LINK_CONFIRM), List.of(),
+                PermissionRequirement.none()));
+        catalog.registerCapability(new Capability(CAP_CLAIM, "Reclamar premios",
+                "Reclama un premio a tu monedero en la banca del premio.", "",
+                List.of(PRIZE_CLAIM), List.of(), PermissionRequirement.none()));
     }
 
     private void mirrorTool(Ids.ToolId id, String beanName, String inputSchema, ToolPolicy policy) {

@@ -79,15 +79,18 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final WorkingMemory workingMemory;
     private final EntityMemory entityMemory;
     private final ObjectMapper json;
+    private final com.yayatechandinnovations.yayaagentic.engine.CapabilityGates capabilityGates;
 
     public DefaultPromptBuilder(M0Catalog catalog,
                                 WorkingMemory workingMemory,
                                 EntityMemory entityMemory,
-                                ObjectMapper json) {
+                                ObjectMapper json,
+                                com.yayatechandinnovations.yayaagentic.engine.CapabilityGates capabilityGates) {
         this.catalog = catalog;
         this.workingMemory = workingMemory;
         this.entityMemory = entityMemory;
         this.json = json;
+        this.capabilityGates = capabilityGates;
     }
 
     @Override
@@ -128,15 +131,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // rule rather than a hint so the model doesn't drift into the
         // user's input language.
         sb.append(languageRule(profile.language())).append("\n\n");
+        // A capability a live gate has switched off is omitted from BOTH the
+        // catalog and the tool schemas, so the cached prefix never describes a
+        // tool the model may not use (non-negotiable #2). Yields a stable prefix
+        // variant per enabled-set, not churn.
+        java.util.Set<com.yayatechandinnovations.yayaagentic.core.Ids.CapabilityId> disabledCaps =
+                capabilityGates.disabled(profile.tenant(), profile.id());
         // 3 — Capability catalog
         sb.append("Capabilities (what the user can ask for):\n");
         for (var capRef : profile.capabilities()) {
+            if (disabledCaps.contains(capRef)) continue;
             catalog.capability(capRef).ifPresent(c -> sb.append("- ").append(formatCapability(c)).append('\n'));
         }
         sb.append('\n');
         // 4 — Tool schemas
         sb.append("Tools (proposed via tool_call; the executor validates schemas):\n");
         for (var capRef : profile.capabilities()) {
+            if (disabledCaps.contains(capRef)) continue;
             catalog.capability(capRef).ifPresent(c -> {
                 for (var toolId : c.tools()) {
                     catalog.tool(toolId).ifPresent(t -> sb.append(formatTool(t)));

@@ -48,9 +48,11 @@ class BancaContextSetToolTest {
     }
 
     private void stubBancas(List<Map<String, Object>> linked, List<Map<String, Object>> online) {
-        when(hub.linkedBancas(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        when(hub.linkedBancas(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(BrokerResponse.ok(Map.of("bancas", linked)));
-        when(hub.onlineBancas(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        when(hub.onlineBancas(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(BrokerResponse.ok(Map.of("bancas", online)));
     }
 

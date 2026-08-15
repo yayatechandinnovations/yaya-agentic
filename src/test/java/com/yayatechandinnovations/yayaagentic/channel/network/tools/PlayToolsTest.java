@@ -52,8 +52,8 @@ class PlayToolsTest {
     @SuppressWarnings("unchecked")
     void playQuoteNeverLeaksCustomerTokenAndBindsPendingQuote() {
         commitActiveBanca();
-        when(hub.playSession(ArgumentMatchers.eq("play"), ArgumentMatchers.anyString(),
-                ArgumentMatchers.anyString(), ArgumentMatchers.any()))
+        when(hub.playSession(ArgumentMatchers.anyString(), ArgumentMatchers.eq("play"),
+                ArgumentMatchers.anyString(), ArgumentMatchers.anyString(), ArgumentMatchers.any()))
                 .thenReturn(BrokerResponse.ok(Map.of("playCredential", Map.of())));
         when(hub.parseCredential(ArgumentMatchers.any()))
                 .thenReturn(Optional.of(new PlayCredential(

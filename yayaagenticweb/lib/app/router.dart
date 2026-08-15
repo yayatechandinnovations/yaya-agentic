@@ -12,6 +12,7 @@ import '../features/admin/forum/forum_screen.dart';
 import '../features/admin/identity_routing/identity_routing_screen.dart';
 import '../features/admin/jwt_secrets/jwt_secrets_screen.dart';
 import '../features/admin/knowledge_sources/knowledge_sources_screen.dart';
+import '../features/admin/network/network_settings_screen.dart';
 import '../features/admin/oidc_issuers/oidc_issuers_screen.dart';
 import '../features/admin/operator_auth/operator_auth_screen.dart';
 import '../features/admin/profiles/profiles_screen.dart';
@@ -97,6 +98,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/jwt-secrets', builder: (_, __) => const JwtSecretsScreen()),
           GoRoute(path: '/admin/auth-resolvers', builder: (_, __) => const AuthResolversScreen()),
           GoRoute(path: '/admin/identity-routing', builder: (_, __) => const IdentityRoutingScreen()),
+          GoRoute(path: '/admin/network', builder: (_, __) => const NetworkSettingsScreen()),
           GoRoute(path: '/admin/whatsapp-senders', builder: (_, __) => const WhatsAppSendersScreen()),
           GoRoute(path: '/admin/sms', builder: (_, __) => const SmsAdminScreen()),
           GoRoute(path: '/admin/chats', builder: (_, __) => const ChatsAdminScreen()),
@@ -277,6 +279,7 @@ const _navItems = <_NavEntry>[
   // generically so SMS / Telegram / Meta-Cloud slot in beside WhatsApp
   // without nav churn.
   _NavGroup('Inbound channels', Icons.inbox_outlined, Icons.inbox, children: [
+    _NavItem('Network chat', Icons.hub_outlined, Icons.hub, '/admin/network'),
     _NavItem('WhatsApp senders', Icons.chat_outlined, Icons.chat, '/admin/whatsapp-senders'),
     _NavItem('SMS (A2P 10DLC)', Icons.sms_outlined, Icons.sms, '/admin/sms'),
     _NavItem('Chats', Icons.chat_bubble_outline, Icons.chat_bubble, '/admin/chats'),

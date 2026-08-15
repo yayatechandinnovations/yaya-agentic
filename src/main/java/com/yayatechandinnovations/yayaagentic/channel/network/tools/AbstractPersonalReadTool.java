@@ -31,12 +31,13 @@ abstract class AbstractPersonalReadTool implements ToolHandler<Map<String, Objec
     /** The hub call for this read (phone already resolved from the session).
      *  {@code input} carries any tool args (e.g. {@code limit}); identity never
      *  comes from it. */
-    protected abstract BrokerResponse fetch(String phoneE164, String sessionRef, Map<String, Object> input);
+    protected abstract BrokerResponse fetch(String tenantId, String phoneE164, String sessionRef,
+                                            Map<String, Object> input);
 
     @Override
     public final Map<String, Object> execute(Map<String, Object> input, ExecutionContext ctx) {
         String phone = support.requireVerifiedPhone(ctx);
-        BrokerResponse resp = fetch(phone, support.sessionRef(ctx),
+        BrokerResponse resp = fetch(support.tenantId(ctx), phone, support.sessionRef(ctx),
                 input == null ? Map.of() : input);
         if (!resp.ok()) {
             return ToolResults.error(resp.error(), support.userSafeReason(resp.error()));

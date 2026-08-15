@@ -62,44 +62,50 @@ public class HubBrokerClient {
     private final YayaAgenticProperties props;
     private final ObjectMapper json;
     private final NetworkRateLimiter rateLimiter;
+    private final com.yayatechandinnovations.yayaagentic.config.TenantNetworkSettingsService settings;
 
     public HubBrokerClient(WebClient.Builder webClientBuilder,
                            YayaAgenticProperties props,
                            ObjectMapper json,
-                           NetworkRateLimiter rateLimiter) {
+                           NetworkRateLimiter rateLimiter,
+                           com.yayatechandinnovations.yayaagentic.config.TenantNetworkSettingsService settings) {
         this.webClientBuilder = webClientBuilder;
         this.props = props;
         this.json = json;
         this.rateLimiter = rateLimiter;
+        this.settings = settings;
     }
 
     // ---- hub action-plane calls (X-Agent-Auth) -------------------------
+    // The hub base-url + X-Agent-Auth credential are resolved per tenant from
+    // the live network settings (falling back to env props), so an operator can
+    // point a tenant at its hub from the console with no restart.
 
-    public BrokerResponse linkedBancas(String phoneE164, String sessionRef) {
+    public BrokerResponse linkedBancas(String tenantId, String phoneE164, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
-        return hubGet("/internal/agent/players/" + enc(phoneE164) + "/bancas", Map.of(), sessionRef);
+        return hubGet(tenantId, "/internal/agent/players/" + enc(phoneE164) + "/bancas", Map.of(), sessionRef);
     }
 
-    public BrokerResponse onlineBancas(Boolean openNow, String sessionRef) {
+    public BrokerResponse onlineBancas(String tenantId, Boolean openNow, String sessionRef) {
         // Directory is not per-player, so no per-phone budget applies here.
         Map<String, String> q = openNow == null ? Map.of() : Map.of("openNow", String.valueOf(openNow));
-        return hubGet("/internal/agent/directory/online-bancas", q, sessionRef);
+        return hubGet(tenantId, "/internal/agent/directory/online-bancas", q, sessionRef);
     }
 
-    public BrokerResponse playerOverview(String phoneE164, String sessionRef) {
+    public BrokerResponse playerOverview(String tenantId, String phoneE164, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
-        return hubGet("/internal/agent/players/" + enc(phoneE164) + "/overview", Map.of(), sessionRef);
+        return hubGet(tenantId, "/internal/agent/players/" + enc(phoneE164) + "/overview", Map.of(), sessionRef);
     }
 
-    public BrokerResponse playerPrizes(String phoneE164, String sessionRef) {
+    public BrokerResponse playerPrizes(String tenantId, String phoneE164, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
-        return hubGet("/internal/agent/players/" + enc(phoneE164) + "/prizes", Map.of(), sessionRef);
+        return hubGet(tenantId, "/internal/agent/players/" + enc(phoneE164) + "/prizes", Map.of(), sessionRef);
     }
 
-    public BrokerResponse playerTickets(String phoneE164, Integer limit, String sessionRef) {
+    public BrokerResponse playerTickets(String tenantId, String phoneE164, Integer limit, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
         Map<String, String> q = limit == null ? Map.of() : Map.of("limit", String.valueOf(limit));
-        return hubGet("/internal/agent/players/" + enc(phoneE164) + "/tickets", q, sessionRef);
+        return hubGet(tenantId, "/internal/agent/players/" + enc(phoneE164) + "/tickets", q, sessionRef);
     }
 
     /**
@@ -108,13 +114,14 @@ public class HubBrokerClient {
      * {@link PlayCredential}). The credential (when present) is parsed by
      * {@link #parseCredential}.
      */
-    public BrokerResponse playSession(String op, String installCode, String phoneE164, String sessionRef) {
+    public BrokerResponse playSession(String tenantId, String op, String installCode,
+                                      String phoneE164, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("op", op);
         body.put("installCode", installCode);
         body.put("phone", phoneE164);
-        return hubPost("/internal/agent/play-session", body, sessionRef);
+        return hubPost(tenantId, "/internal/agent/play-session", body, sessionRef);
     }
 
     // ---- install play-surface calls (brokered customer token) ----------
@@ -172,19 +179,21 @@ public class HubBrokerClient {
 
     // ---- transport -----------------------------------------------------
 
-    private BrokerResponse hubGet(String path, Map<String, String> query, String sessionRef) {
-        return hubCall(HttpMethod.GET, path, query, null, sessionRef);
+    private BrokerResponse hubGet(String tenantId, String path, Map<String, String> query, String sessionRef) {
+        return hubCall(tenantId, HttpMethod.GET, path, query, null, sessionRef);
     }
 
-    private BrokerResponse hubPost(String path, Map<String, Object> body, String sessionRef) {
-        return hubCall(HttpMethod.POST, path, Map.of(), body, sessionRef);
+    private BrokerResponse hubPost(String tenantId, String path, Map<String, Object> body, String sessionRef) {
+        return hubCall(tenantId, HttpMethod.POST, path, Map.of(), body, sessionRef);
     }
 
-    private BrokerResponse hubCall(HttpMethod method, String path, Map<String, String> query,
-                                   Map<String, Object> body, String sessionRef) {
-        String base = props.network().hub() == null ? null : props.network().hub().baseUrl();
+    private BrokerResponse hubCall(String tenantId, HttpMethod method, String path,
+                                   Map<String, String> query, Map<String, Object> body, String sessionRef) {
+        var effective = settings.settings(tenantId);
+        String base = effective.hubBaseUrl();
         if (base == null || base.isBlank()) {
-            log.warn("[network] hub base-url not configured; refusing broker call path={}", path);
+            log.warn("[network] hub base-url not configured for tenant={}; refusing broker call path={}",
+                    tenantId, path);
             return BrokerResponse.error(BrokerError.UNAVAILABLE);
         }
         try {
@@ -195,7 +204,7 @@ public class HubBrokerClient {
                         query.forEach(uriBuilder::queryParam);
                         return uriBuilder.build();
                     })
-                    .header("X-Agent-Auth", agentCredential())
+                    .header("X-Agent-Auth", agentCredential(effective.hubCredentialRef()))
                     .header("X-Yaya-Session-Ref", nullSafe(sessionRef));
             @SuppressWarnings("unchecked")
             Map<String, Object> respBody = (method == HttpMethod.GET || body == null
@@ -244,13 +253,11 @@ public class HubBrokerClient {
     }
 
     /**
-     * Resolve the {@code X-Agent-Auth} credential. {@code credentialRef} is a
-     * REFERENCE, not the secret: if an env var by that name is set, its value is
-     * used; otherwise the ref itself is used verbatim (local/dev). The credential
-     * is never logged.
+     * Resolve the {@code X-Agent-Auth} credential from a credential REFERENCE (not
+     * the secret): if an env var by that name is set, its value is used; otherwise
+     * the ref itself is used verbatim (local/dev). Never logged.
      */
-    private String agentCredential() {
-        String ref = props.network().hub() == null ? null : props.network().hub().credentialRef();
+    private String agentCredential(String ref) {
         if (ref == null || ref.isBlank()) return "";
         String fromEnv = System.getenv(ref);
         return fromEnv != null && !fromEnv.isBlank() ? fromEnv : ref;

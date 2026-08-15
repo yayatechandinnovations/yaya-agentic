@@ -64,8 +64,9 @@ public class BancaContextSetTool implements ToolHandler<Map<String, Object>, Map
                 str(input == null ? null : input.get("banca")),
                 str(input == null ? null : input.get("query")));
 
-        BrokerResponse linkedResp = hub.linkedBancas(phone, sessionRef);
-        BrokerResponse onlineResp = hub.onlineBancas(null, sessionRef);
+        String tenantId = support.tenantId(ctx);
+        BrokerResponse linkedResp = hub.linkedBancas(tenantId, phone, sessionRef);
+        BrokerResponse onlineResp = hub.onlineBancas(tenantId, null, sessionRef);
         if (!linkedResp.ok() && !onlineResp.ok()) {
             return ToolResults.error(linkedResp.error(), support.userSafeReason(linkedResp.error()));
         }

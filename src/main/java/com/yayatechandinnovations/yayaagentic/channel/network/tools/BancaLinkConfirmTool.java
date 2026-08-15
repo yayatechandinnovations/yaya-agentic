@@ -55,7 +55,8 @@ public class BancaLinkConfirmTool implements ToolHandler<Map<String, Object>, Ma
         }
         String phone = support.requireVerifiedPhone(ctx);
 
-        BrokerResponse resp = hub.playSession("link", installCode, phone, support.sessionRef(ctx));
+        BrokerResponse resp = hub.playSession(support.tenantId(ctx), "link", installCode, phone,
+                support.sessionRef(ctx));
         if (!resp.ok()) {
             return ToolResults.error(resp.error(), support.userSafeReason(resp.error()));
         }

@@ -13,6 +13,7 @@ import '../models/admin/clone.dart';
 import '../models/admin/forum.dart';
 import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
+import '../models/admin/network_settings.dart';
 import '../models/admin/operator_auth_strategies.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/receipt_template.dart';
@@ -688,6 +689,19 @@ class AdminApi {
   }
 
   // ---- Tenant secondary comms (W-A9) ---------------------------------
+
+  Future<NetworkSettings> getNetworkSettings(String tenantId) async {
+    final res = await _dio.get('/v1/admin/tenants/$tenantId/network-settings');
+    return NetworkSettings.fromJson(_asMap(res.data));
+  }
+
+  Future<NetworkSettings> updateNetworkSettings(
+      String tenantId, NetworkSettings body) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/network-settings',
+        data: body.toJson());
+    return NetworkSettings.fromJson(_asMap(res.data));
+  }
 
   Future<SecondaryComms> getSecondaryComms(String tenantId) async {
     final res = await _dio.get('/v1/admin/tenants/$tenantId/secondary-comms');

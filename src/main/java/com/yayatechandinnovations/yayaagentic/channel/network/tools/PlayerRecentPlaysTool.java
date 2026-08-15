@@ -23,8 +23,8 @@ public class PlayerRecentPlaysTool extends AbstractPersonalReadTool {
     }
 
     @Override
-    protected BrokerResponse fetch(String phoneE164, String sessionRef, Map<String, Object> input) {
-        return hub.playerTickets(phoneE164, readLimit(input), sessionRef);
+    protected BrokerResponse fetch(String tenantId, String phoneE164, String sessionRef, Map<String, Object> input) {
+        return hub.playerTickets(tenantId, phoneE164, readLimit(input), sessionRef);
     }
 
     private static int readLimit(Map<String, Object> input) {

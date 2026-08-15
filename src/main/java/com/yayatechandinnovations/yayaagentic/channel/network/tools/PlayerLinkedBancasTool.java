@@ -29,7 +29,7 @@ public class PlayerLinkedBancasTool implements ToolHandler<Map<String, Object>, 
     @Override
     public Map<String, Object> execute(Map<String, Object> input, ExecutionContext ctx) {
         String phone = support.requireVerifiedPhone(ctx);
-        BrokerResponse resp = hub.linkedBancas(phone, support.sessionRef(ctx));
+        BrokerResponse resp = hub.linkedBancas(support.tenantId(ctx), phone, support.sessionRef(ctx));
         if (!resp.ok()) {
             return ToolResults.error(resp.error(), support.userSafeReason(resp.error()));
         }

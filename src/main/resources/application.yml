@@ -250,6 +250,12 @@ yaya:
       capabilities:
         play-enabled: ${YAYA_NETWORK_PLAY_ENABLED:false}
         claim-enabled: ${YAYA_NETWORK_CLAIM_ENABLED:false}
+      # Dev-only stand-in for the Smart Lottery hub (serves /internal/agent/*).
+      # OFF by default; enable for local end-to-end testing without the real hub,
+      # then point the tenant's network hub base-url at this server.
+      stub:
+        enabled: ${YAYA_NETWORK_STUB_ENABLED:false}
+        base-url: ${YAYA_NETWORK_STUB_BASE_URL:http://localhost:8080}
       rate-limits:
         picker-per-session-per-hour: 30
         link-confirms-per-session-per-day: 3

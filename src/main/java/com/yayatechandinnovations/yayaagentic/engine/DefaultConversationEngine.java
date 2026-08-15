@@ -70,6 +70,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final LlmClient llmClient;
     private final ToolExecutor toolExecutor;
     private final M0Catalog catalog;
+    private final CapabilityGates capabilityGates;
     private final com.yayatechandinnovations.yayaagentic.engine.IntentTracker intentTracker;
     private final com.yayatechandinnovations.yayaagentic.memory.WorkingMemory workingMemory;
     private final PendingUiHints pendingUiHints;
@@ -119,8 +120,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                                      com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator stepUpCoordinator,
                                      com.yayatechandinnovations.yayaagentic.startflow.StartFlowResolver startFlowResolver,
                                      com.yayatechandinnovations.yayaagentic.startflow.StartFlowRegistry startFlowRegistry,
-                                     com.yayatechandinnovations.yayaagentic.startflow.StartFlowRunner startFlowRunner) {
+                                     com.yayatechandinnovations.yayaagentic.startflow.StartFlowRunner startFlowRunner,
+                                     CapabilityGates capabilityGates) {
         this.personalityProvider = personalityProvider;
+        this.capabilityGates = capabilityGates;
         this.resolverChain = resolverChain;
         this.profileRegistry = profileRegistry;
         this.authenticator = authenticator;
@@ -510,7 +513,8 @@ public class DefaultConversationEngine implements ConversationEngine {
             // tool outside the profile is never leaked (non-negotiable #2).
             ToolDescriptor descriptor = catalog.tool(tool).orElse(null);
             if (descriptor == null || !toolInProfile(profile, tool)
-                    || descriptor.policy() == null || !descriptor.policy().clientInvocable()) {
+                    || descriptor.policy() == null || !descriptor.policy().clientInvocable()
+                    || isToolGatedOff(profile, tool)) {
                 return Flux.<TurnEvent>error(new ActionNotPermittedException(
                         "action refused for tool '" + tool.value() + "' on profile " + profile.id().value()));
             }
@@ -690,6 +694,28 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code toolId} is reachable in this profile ONLY through
+     * capabilities a live {@link CapabilityGate} has switched off — i.e. it must
+     * not dispatch right now. Defense in depth behind the tool-offer/prefix
+     * filtering: a tap or an injected call for a gated-off tool is still refused.
+     */
+    private boolean isToolGatedOff(Profile profile, Ids.ToolId toolId) {
+        if (profile == null || profile.capabilities() == null) return false;
+        java.util.Set<Ids.CapabilityId> disabled =
+                capabilityGates.disabled(profile.tenant(), profile.id());
+        if (disabled.isEmpty()) return false;
+        boolean inSomeCap = false;
+        boolean inEnabledCap = false;
+        for (Ids.CapabilityId capId : profile.capabilities()) {
+            var cap = catalog.capability(capId).orElse(null);
+            if (cap == null || cap.tools() == null || !cap.tools().contains(toolId)) continue;
+            inSomeCap = true;
+            if (!disabled.contains(capId)) inEnabledCap = true;
+        }
+        return inSomeCap && !inEnabledCap;
     }
 
     /** Per-session prior context for prompt + LLM history. */
@@ -1321,8 +1347,14 @@ public class DefaultConversationEngine implements ConversationEngine {
     private List<LlmClient.ToolDefinition> buildAvailableTools(Profile profile) {
         List<LlmClient.ToolDefinition> out = new java.util.ArrayList<>();
         if (profile == null || profile.capabilities() == null) return out;
+        // A capability a live gate has switched off (e.g. network play/claim) is
+        // dropped BEFORE its tools are expanded — the model never sees them
+        // (non-negotiable #2). Same filter runs in the cached prompt prefix.
+        java.util.Set<Ids.CapabilityId> disabledCaps =
+                capabilityGates.disabled(profile.tenant(), profile.id());
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (Ids.CapabilityId capId : profile.capabilities()) {
+            if (disabledCaps.contains(capId)) continue;
             catalog.capability(capId).ifPresent(cap -> {
                 // The full multi-step playbook lives ONCE in the cached system
                 // prefix (capability catalog, see DefaultPromptBuilder). The
@@ -1438,6 +1470,16 @@ public class DefaultConversationEngine implements ConversationEngine {
                                             boolean llmDriven) {
         ToolDescriptor toolDescriptor = catalog.tool(toolId)
                 .orElseThrow(() -> new IllegalStateException("tool descriptor missing: " + toolId.value()));
+
+        // Live capability gate (enablement UX): a tool reachable only via a
+        // switched-off capability (e.g. network play/claim toggled off) is
+        // refused at dispatch — defense in depth behind the tool-offer filtering.
+        if (isToolGatedOff(profile, toolId)) {
+            return denialFlow(toolDescriptor, args, new AuthzDecision.Deny(
+                    "Esa opción no está disponible por ahora.",
+                    "capability gate: " + toolId.value() + " reachable only via a disabled capability"),
+                    personality, session, exec, recorder, turnId, message, callIdHint, llmDriven);
+        }
 
         // M2.10 — apply entity bindings BEFORE authorize so the chain sees
         // the real expanded args (the actual ticketId / principalSubject,

@@ -18,7 +18,8 @@ public class PlayerOverviewTool extends AbstractPersonalReadTool {
     }
 
     @Override
-    protected BrokerResponse fetch(String phoneE164, String sessionRef, java.util.Map<String, Object> input) {
-        return hub.playerOverview(phoneE164, sessionRef);
+    protected BrokerResponse fetch(String tenantId, String phoneE164, String sessionRef,
+                                   java.util.Map<String, Object> input) {
+        return hub.playerOverview(tenantId, phoneE164, sessionRef);
     }
 }

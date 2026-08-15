@@ -57,6 +57,13 @@ public class NetworkToolSupport {
         return ctx.sessionId() == null ? "" : ctx.sessionId().value();
     }
 
+    /** The session's tenant — used to resolve the tenant's hub base-url/credential
+     *  from the live network settings. */
+    public String tenantId(ExecutionContext ctx) {
+        return ctx.principal() == null || ctx.principal().tenant() == null
+                ? "" : ctx.principal().tenant().value();
+    }
+
     /**
      * Apply the §4.1 coverage contract to an aggregation result before returning
      * it. Inspects {@code sources} (each entry a map with a {@code status} and a
