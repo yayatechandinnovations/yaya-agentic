@@ -14,7 +14,8 @@ import java.util.Map;
  * {@code network_results} — lottery draw results ("¿qué salió hoy/ayer?").
  * Results are lottery-wide (identical across bancas), so the hub proxies one
  * install's public, non-digital results feed — no identity, no org principal.
- * Args: optional {@code date} (YYYY-MM-DD; defaults to today) and optional
+ * Args (all optional): {@code date} (YYYY-MM-DD; defaults to today),
+ * {@code lottery} (id / short name / name to narrow to one lottery), and
  * {@code installCode} to pin a specific banca as the source. Read-safe (S2).
  */
 @Component("networkResultsTool")
@@ -31,9 +32,10 @@ public class NetworkResultsTool implements ToolHandler<Map<String, Object>, Map<
     @Override
     public Map<String, Object> execute(Map<String, Object> input, ExecutionContext ctx) {
         String date = asString(input == null ? null : input.get("date"));
+        String lottery = asString(input == null ? null : input.get("lottery"));
         String installCode = asString(input == null ? null : input.get("installCode"));
         BrokerResponse resp = hub.results(
-                support.tenantId(ctx), date, installCode, support.sessionRef(ctx));
+                support.tenantId(ctx), date, lottery, installCode, support.sessionRef(ctx));
         if (!resp.ok()) {
             return ToolResults.error(resp.error(), support.userSafeReason(resp.error()));
         }

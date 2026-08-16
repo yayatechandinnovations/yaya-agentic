@@ -93,14 +93,17 @@ public class HubBrokerClient {
     }
 
     /**
-     * Lottery draw results ("¿qué salió hoy/ayer?"). Results are lottery-wide,
-     * not per-player, so no per-phone budget applies. {@code date} is optional
-     * (YYYY-MM-DD; hub defaults to today); {@code installCode} optionally pins
-     * the source banca (else the hub picks a representative install).
+     * Lottery draw results ("¿qué salió hoy/ayer?", "¿qué salió en La Real?").
+     * Results are lottery-wide, not per-player, so no per-phone budget applies.
+     * All args optional: {@code date} (YYYY-MM-DD; hub defaults to today),
+     * {@code lottery} (id / short name / name to narrow), {@code installCode}
+     * (pins the source banca; else the hub picks a representative install).
      */
-    public BrokerResponse results(String tenantId, String date, String installCode, String sessionRef) {
+    public BrokerResponse results(String tenantId, String date, String lottery,
+                                  String installCode, String sessionRef) {
         Map<String, String> q = new LinkedHashMap<>();
         if (date != null && !date.isBlank()) q.put("date", date.trim());
+        if (lottery != null && !lottery.isBlank()) q.put("lottery", lottery.trim());
         if (installCode != null && !installCode.isBlank()) q.put("installCode", installCode.trim());
         return hubGet(tenantId, "/internal/agent/directory/results", q, sessionRef);
     }

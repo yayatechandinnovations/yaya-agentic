@@ -20,6 +20,10 @@ INSERT INTO tools_registry (
           "type": "string",
           "description": "Fecha del sorteo YYYY-MM-DD (America/Santo_Domingo). Omitir para hoy."
         },
+        "lottery": {
+          "type": "string",
+          "description": "Opcional: nombre o nombre corto de una loteria para filtrar (ej. 'La Real'). Omitir para todas."
+        },
         "installCode": {
           "type": "string",
           "description": "Opcional: codigo de instalacion de una banca especifica como fuente."
@@ -55,7 +59,7 @@ INSERT INTO capabilities (
 
 WHEN TO USE: '¿qué salió hoy?', '¿qué salió anoche/ayer?', 'resultados de hoy', '¿cuáles fueron los números?', 'resultados del 10 de agosto'. Los resultados son de toda la red, no de una banca específica — no hace falta que el jugador esté vinculado.
 
-STEPS: (1) Calcula la fecha pedida en America/Santo_Domingo. Para HOY, llama network_results SIN date. Para 'ayer' o una fecha concreta, pásala como date=YYYY-MM-DD. (2) Recita, por cada draw, el lotteryName y sus números: usa resultGroups (label + numbers) cuando venga; si no, ordena results por position y léelos tal cual. Recita status/hora si el jugador lo pide. (3) No reordenes ni reformatees los números.
+STEPS: (1) Calcula la fecha pedida en America/Santo_Domingo. Para HOY, llama network_results SIN date. Para 'ayer' o una fecha concreta, pásala como date=YYYY-MM-DD. Si el jugador nombró una lotería ('en La Real'), pásala como lottery. (2) Recita, por cada draw, el lotteryName y sus números: usa groupedResults (label + numbers) cuando venga; si no, ordena results por position y léelos tal cual. Recita status/hora si el jugador lo pide. (3) No reordenes ni reformatees los números.
 
 BRANCHES: status='PAST_UNAVAILABLE' → 'Por ahora solo tengo los resultados de hoy; los de fechas anteriores todavía no los puedo sacar aquí.'. status='NO_SOURCE' o 'SOURCE_ERROR' → 'Tuve un problema sacando los resultados, ¿me das un segundo?' y reintenta una vez. draws vacío para hoy → 'Ese sorteo todavía no ha salido; sale más tarde. ¿Te aviso cuando lo carguen?'. Fecha futura → 'Ese sorteo no se ha jugado todavía' — jamás un pronóstico.
 
