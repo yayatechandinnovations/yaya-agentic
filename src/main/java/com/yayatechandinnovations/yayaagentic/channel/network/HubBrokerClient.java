@@ -92,6 +92,19 @@ public class HubBrokerClient {
         return hubGet(tenantId, "/internal/agent/directory/online-bancas", q, sessionRef);
     }
 
+    /**
+     * Lottery draw results ("¿qué salió hoy/ayer?"). Results are lottery-wide,
+     * not per-player, so no per-phone budget applies. {@code date} is optional
+     * (YYYY-MM-DD; hub defaults to today); {@code installCode} optionally pins
+     * the source banca (else the hub picks a representative install).
+     */
+    public BrokerResponse results(String tenantId, String date, String installCode, String sessionRef) {
+        Map<String, String> q = new LinkedHashMap<>();
+        if (date != null && !date.isBlank()) q.put("date", date.trim());
+        if (installCode != null && !installCode.isBlank()) q.put("installCode", installCode.trim());
+        return hubGet(tenantId, "/internal/agent/directory/results", q, sessionRef);
+    }
+
     public BrokerResponse playerOverview(String tenantId, String phoneE164, String sessionRef) {
         if (!rateLimiter.allowBrokerCall(phoneE164)) return BrokerResponse.error(BrokerError.RATE_LIMITED);
         return hubGet(tenantId, "/internal/agent/players/" + enc(phoneE164) + "/overview", Map.of(), sessionRef);
