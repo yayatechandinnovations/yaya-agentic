@@ -183,14 +183,16 @@ public class ApiKeyAuthFilter implements WebFilter, Ordered {
         // NOTE: user_id is the creator's id (may be null if the creator was
         // deleted). The API_KEY branch in WorkspaceAccessHelper never routes
         // through OperatorIdentity/membership, so a null here cannot escalate
-        // to the synthetic platform admin. is_platform_admin is explicitly
-        // false: a key is never platform admin.
+        // to the synthetic platform admin. is_platform_admin comes ONLY from
+        // the key's own platform_scope column (mintable exclusively by
+        // platform-admin users — one-click provisioning design, gap B); an
+        // ordinary key remains explicitly non-platform-admin.
         return Map.of(
                 "user_id", key.getCreatedByUserId() == null ? "" : key.getCreatedByUserId().toString(),
                 "workspace_id", key.getWorkspaceId(),
                 "role", key.getRole(),
                 "api_key_id", key.getId().toString(),
-                "is_platform_admin", false);
+                "is_platform_admin", key.isPlatformScope());
     }
 
     private void touch(java.util.UUID id, String ip) {

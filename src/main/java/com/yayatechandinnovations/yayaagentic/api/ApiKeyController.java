@@ -116,7 +116,8 @@ public class ApiKeyController {
                     Role requested = parseRole(body.role());
                     OffsetDateTime expiresAt = parseExpiry(body.expiresAt());
                     ApiKeyService.Minted minted = service.mint(
-                            ws, body.name(), requested, expiresAt, me, creatorRole, metaOf(exchange));
+                            ws, body.name(), requested, expiresAt, me, creatorRole, metaOf(exchange),
+                            Boolean.TRUE.equals(body.platformScope()));
                     return new CreateResponse(
                             minted.key().id().toString(),
                             minted.key().name(),
@@ -124,6 +125,7 @@ public class ApiKeyController {
                             minted.key().role().name(),
                             iso(minted.key().createdAt()),
                             iso(minted.key().expiresAt()),
+                            minted.key().platformScope(),
                             minted.secret());
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -244,7 +246,8 @@ public class ApiKeyController {
                 iso(k.expiresAt()),
                 iso(k.lastUsedAt()),
                 k.lastUsedIp(),
-                k.status().name().toLowerCase());
+                k.status().name().toLowerCase(),
+                k.platformScope());
     }
 
     private String createdByLabel(UserId createdBy) {
@@ -273,17 +276,20 @@ public class ApiKeyController {
 
     // ---- DTOs ---------------------------------------------------------
 
-    public record CreateRequest(String name, String role, String expiresAt) {}
+    /** {@code platformScope} requires a platform-admin creator (gap B). */
+    public record CreateRequest(String name, String role, String expiresAt, Boolean platformScope) {}
 
     public record PatchRequest(String name) {}
 
     /** The only response that carries {@code secret}. */
     public record CreateResponse(String id, String name, String keyPrefix, String role,
-                                 String createdAt, String expiresAt, String secret) {}
+                                 String createdAt, String expiresAt, boolean platformScope,
+                                 String secret) {}
 
     public record ApiKeyDto(String id, String name, String keyPrefix, String role,
                             String createdBy, String createdAt, String expiresAt,
-                            String lastUsedAt, String lastUsedIp, String status) {}
+                            String lastUsedAt, String lastUsedIp, String status,
+                            boolean platformScope) {}
 
     public record AuditDto(String kind, String detail, String clientIp, String occurredAt) {}
 }

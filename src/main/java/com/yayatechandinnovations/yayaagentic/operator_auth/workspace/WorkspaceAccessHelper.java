@@ -82,15 +82,24 @@ public class WorkspaceAccessHelper {
         if (pinned == null || keyRole == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "api_key_context_missing");
         }
+        // Platform-scope key (gap B): reaches ANY workspace at any role —
+        // is_platform_admin here comes solely from the key row's
+        // platform_scope column stamped by ApiKeyAuthFilter, never from the
+        // creator's account.
+        boolean platformKey = OperatorContext.current(exchange)
+                .map(OperatorIdentity::isPlatformAdmin).orElse(false);
         // No explicit workspace on the request → default to the pinned one.
         if (tenant != null && !tenant.isBlank()) {
             TenantId requested = workspaces.resolveToId(tenant)
                     .orElseThrow(() -> new WorkspaceNotFoundException(new TenantId(tenant), null));
+            if (platformKey) {
+                return requested.value();
+            }
             if (!requested.equals(pinned)) {
                 throw new WorkspaceNotFoundException(requested, null);   // 404, not 403
             }
         }
-        if (!keyRole.atLeast(minRole)) {
+        if (!platformKey && !keyRole.atLeast(minRole)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "insufficient_role");
         }
         return pinned.value();

@@ -25,7 +25,8 @@ public record ApiKey(
         OffsetDateTime expiresAt,
         OffsetDateTime lastUsedAt,
         String lastUsedIp,
-        OffsetDateTime revokedAt
+        OffsetDateTime revokedAt,
+        boolean platformScope
 ) {
 
     public boolean revoked() { return revokedAt != null; }
@@ -56,6 +57,7 @@ public record ApiKey(
                 e.getExpiresAt(),
                 e.getLastUsedAt(),
                 e.getLastUsedIp(),
-                e.getRevokedAt());
+                e.getRevokedAt(),
+                e.isPlatformScope());
     }
 }

@@ -61,6 +61,12 @@ public class ApiKeyEntity {
     @Column(name = "revoked_by_user_id")
     private UUID revokedByUserId;
 
+    /** Platform-scope key: acts with platform-admin reach across every
+     *  workspace (one-click provisioning design, gap B). Mintable only
+     *  by platform-admin users — enforced in ApiKeyService. */
+    @Column(name = "platform_scope", nullable = false)
+    private boolean platformScope;
+
     protected ApiKeyEntity() {}
 
     public ApiKeyEntity(UUID id, String workspaceId, String name, String keyPrefix,
@@ -90,6 +96,8 @@ public class ApiKeyEntity {
     public String getLastUsedIp() { return lastUsedIp; }
     public OffsetDateTime getRevokedAt() { return revokedAt; }
     public UUID getRevokedByUserId() { return revokedByUserId; }
+    public boolean isPlatformScope() { return platformScope; }
+    public void setPlatformScope(boolean platformScope) { this.platformScope = platformScope; }
 
     public void setName(String name) { this.name = name; }
     public void setLastUsedAt(OffsetDateTime lastUsedAt) { this.lastUsedAt = lastUsedAt; }

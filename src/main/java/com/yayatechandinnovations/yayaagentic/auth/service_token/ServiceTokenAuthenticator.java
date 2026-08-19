@@ -3,9 +3,14 @@ package com.yayatechandinnovations.yayaagentic.auth.service_token;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
+import com.yayatechandinnovations.yayaagentic.auth.secrets.JwtSecretCipher;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
+import com.yayatechandinnovations.yayaagentic.persistence.TenantServiceTokenSecretRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -26,18 +32,33 @@ import java.util.stream.Collectors;
  * </pre>
  *
  * The HMAC is computed over {@code tenantId.subject.exp.scopesCsv} using
- * the tenant's secret from {@code yaya.agentic.auth.service-token.tenant-secrets}.
- * Comparison is constant-time. Empty secret map = service tokens disabled.
+ * the tenant's secret, resolved DB-first ({@code tenant_service_token_secrets},
+ * written by the {@code /v1/admin/tenants/{id}/service-token-secret} admin
+ * surface) with the static {@code yaya.agentic.auth.service-token.tenant-secrets}
+ * config map as fallback for pre-existing deployments. Comparison is
+ * constant-time. No DB row AND no map entry = service tokens disabled for
+ * that tenant.
  */
 @Component
 @Order(200)
 public class ServiceTokenAuthenticator implements Authenticator {
 
+    private static final Logger log = LoggerFactory.getLogger(ServiceTokenAuthenticator.class);
+
     public static final String HEADER = "X-Yaya-Service-Token";
 
-    private final Map<String, byte[]> tenantSecrets;
+    private final Map<String, byte[]> envSecrets;
+    private final TenantServiceTokenSecretRepository repo;
+    private final JwtSecretCipher cipher;
 
-    public ServiceTokenAuthenticator(YayaAgenticProperties props) {
+    /** Cache: tenantId → resolved secret (empty = known-absent). Evicted by
+     *  {@link TenantServiceTokenSecretChangedEvent}; mirrors the
+     *  SharedSecretJwtAuthenticator cache pattern. */
+    private final Map<String, Optional<byte[]>> cache = new ConcurrentHashMap<>();
+
+    public ServiceTokenAuthenticator(YayaAgenticProperties props,
+                                     TenantServiceTokenSecretRepository repo,
+                                     JwtSecretCipher cipher) {
         Map<String, byte[]> secrets = new HashMap<>();
         if (props.auth() != null && props.auth().serviceToken() != null
                 && props.auth().serviceToken().tenantSecrets() != null) {
@@ -47,7 +68,9 @@ public class ServiceTokenAuthenticator implements Authenticator {
                 }
             });
         }
-        this.tenantSecrets = Map.copyOf(secrets);
+        this.envSecrets = Map.copyOf(secrets);
+        this.repo = repo;
+        this.cipher = cipher;
     }
 
     @Override
@@ -55,7 +78,6 @@ public class ServiceTokenAuthenticator implements Authenticator {
 
     @Override
     public Optional<Principal> tryAuthenticate(AuthContext ctx) throws AuthenticationException {
-        if (tenantSecrets.isEmpty()) return Optional.empty();
         String token = ctx.headers() == null ? null : firstNonNull(
                 ctx.headers().get(HEADER),
                 ctx.headers().get(HEADER.toLowerCase(Locale.ROOT)));
@@ -70,7 +92,7 @@ public class ServiceTokenAuthenticator implements Authenticator {
         String scopesCsv = parts[3];
         String mac = parts[4];
 
-        byte[] secret = tenantSecrets.get(tenantId);
+        byte[] secret = resolveSecret(tenantId);
         if (secret == null) throw new AuthenticationException("service-token: unknown tenant");
 
         long exp;
@@ -105,6 +127,31 @@ public class ServiceTokenAuthenticator implements Authenticator {
                 scopes,
                 Map.of("auth_method", "service-token", "exp", exp),
                 Instant.now()));
+    }
+
+    /** DB row first (decrypted, cached), config map fallback; null = unknown. */
+    private byte[] resolveSecret(String tenantId) {
+        Optional<byte[]> hit = cache.computeIfAbsent(tenantId, this::loadSecret);
+        return hit.orElse(envSecrets.get(tenantId));
+    }
+
+    private Optional<byte[]> loadSecret(String tenantId) {
+        try {
+            return repo.findById(tenantId)
+                    .map(row -> cipher.decrypt(row.getSecretCiphertext(), row.getSecretIv())
+                            .getBytes(StandardCharsets.UTF_8));
+        } catch (RuntimeException ex) {
+            // Cipher misconfigured or row corrupt — fail toward the env map
+            // rather than hard-failing every service-token request.
+            log.warn("service-token secret load failed for tenant {}: {}", tenantId, ex.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    @EventListener
+    public void onSecretChanged(TenantServiceTokenSecretChangedEvent event) {
+        if (event == null || event.tenantId() == null) return;
+        cache.remove(event.tenantId());
     }
 
     private static byte[] hmac(byte[] key, byte[] msg) {

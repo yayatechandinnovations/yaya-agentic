@@ -73,6 +73,17 @@ public class ApiKeyService {
     @Transactional
     public Minted mint(TenantId workspace, String name, Role requestedRole, OffsetDateTime expiresAt,
                        UserId creator, Role creatorRole, RequestMeta meta) {
+        return mint(workspace, name, requestedRole, expiresAt, creator, creatorRole, meta, false);
+    }
+
+    public Minted mint(TenantId workspace, String name, Role requestedRole, OffsetDateTime expiresAt,
+                       UserId creator, Role creatorRole, RequestMeta meta, boolean platformScope) {
+        // Platform-scope keys act with platform-admin reach across every
+        // workspace (one-click provisioning, gap B) — only a platform-admin
+        // creator may mint one.
+        if (platformScope && creatorRole != Role.PLATFORM_ADMIN) {
+            throw new RoleExceedsCreatorException(Role.PLATFORM_ADMIN, creatorRole);
+        }
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.length() < NAME_MIN || trimmed.length() > NAME_MAX) {
             throw new IllegalArgumentException("name must be " + NAME_MIN + "-" + NAME_MAX + " characters");
@@ -111,6 +122,7 @@ public class ApiKeyService {
         ApiKeyEntity entity = new ApiKeyEntity(
                 UUID.randomUUID(), workspace.value(), trimmed, secrets.prefixOf(secret),
                 hash, requestedRole.name(), creator == null ? null : creator.value(), now, expiresAt);
+        entity.setPlatformScope(platformScope);
         repo.save(entity);
 
         audit.record(ApiKeyAuditWriter.CREATE, workspace.value(), entity.getId(),
@@ -118,6 +130,7 @@ public class ApiKeyService {
                 meta == null ? null : meta.clientIp(),
                 meta == null ? null : meta.userAgent(),
                 detail("role", requestedRole.name(),
+                        "platform_scope", platformScope ? "true" : null,
                         "expires_at", expiresAt == null ? null : expiresAt.toString()));
 
         enqueueCreationEmail(creator, workspace, trimmed, entity.getKeyPrefix(), requestedRole);
