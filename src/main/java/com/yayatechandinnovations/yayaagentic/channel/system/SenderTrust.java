@@ -24,6 +24,13 @@ public record SenderTrust(
     /** The baseline scope every ingest request must carry (§4.1). */
     public static final String SEND_SCOPE = "system:inbound:send";
 
+    /**
+     * Additional scope required to upload into the tenant's media library
+     * via the sender-scoped media endpoint (§10, GAP-U1). Senders that only
+     * send text never need it.
+     */
+    public static final String MEDIA_SCOPE = "system:inbound:media";
+
     public SenderTrust {
         authenticatorName = authenticatorName == null ? "" : authenticatorName.trim();
         requiredScopes = requiredScopes == null ? Set.of() : Set.copyOf(requiredScopes);
