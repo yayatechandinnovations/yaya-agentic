@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 
-/// Brand assets + palette for the Yaya Chat app. The logo is a neon lockup, so
-/// the app runs a dark theme to let it (and the per-tile accents) glow.
+/// Brand assets + palette for the Yaya Chat app. The logo is a blue circuit-Y
+/// lockup on white; it's rendered on a white "logo tile" so it reads on both the
+/// dark brand surface and the light theme.
 class Brand {
+  /// Full horizontal lockup (mark + "Yaya Agentic"). Hero/brand moments.
   static const String logoAsset = 'assets/yaya-chat-logo.png';
 
-  /// Neon endpoints of the logo gradient (magenta → cyan).
+  /// Square mark only (the circuit-Y speech bubble). Compact spots + the app
+  /// icon. Also on white, so it's shown via [mark] on a tile.
+  static const String markAsset = 'assets/yayachat-logo-1.png';
+
+  /// Neon endpoints of the accent gradient (magenta → cyan).
   static const Color magenta = Color(0xFFD000FF);
   static const Color cyan = Color(0xFF00C2FF);
   static const Color violet = Color(0xFF7A3CFF);
@@ -16,6 +22,31 @@ class Brand {
     begin: Alignment.centerLeft,
     end: Alignment.centerRight,
   );
+
+  /// The full wordmark on a white tile — for hero moments (onboarding, empty
+  /// states). [height] is the logo height; the tile adds padding around it.
+  static Widget wordmark({double height = 160}) =>
+      _logoTile(logoAsset, height: height, padding: height * 0.07, radius: 24);
+
+  /// The compact square mark on a white tile — for small brand spots (splash,
+  /// lock, PIN) where the wide wordmark would be too small to read.
+  static Widget mark({double size = 96}) => _logoTile(markAsset,
+      height: size, width: size, padding: size * 0.05, radius: size * 0.24);
+
+  static Widget _logoTile(String asset,
+      {double? height, double? width, double padding = 12, double radius = 20}) {
+    return Container(
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: const [
+          BoxShadow(color: Color(0x22000000), blurRadius: 16, offset: Offset(0, 6)),
+        ],
+      ),
+      child: Image.asset(asset, height: height, width: width, fit: BoxFit.contain),
+    );
+  }
 
   /// Paint text (or any shader-able widget) with the brand gradient.
   static Widget gradientText(String text, {double fontSize = 22, FontWeight weight = FontWeight.w700}) {

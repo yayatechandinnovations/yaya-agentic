@@ -48,7 +48,7 @@ class _LockScreenState extends ConsumerState<LockScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Image.asset(Brand.logoAsset, width: 96),
+                  Brand.mark(size: 96),
                   const SizedBox(height: 24),
                   Text(
                     v.name == null || v.name!.isEmpty

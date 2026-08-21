@@ -43,7 +43,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset(Brand.logoAsset, height: 160),
+                Brand.wordmark(height: 160),
                 const SizedBox(height: 8),
                 Text(
                   _title(t, state.step, state.phone),

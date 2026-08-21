@@ -111,7 +111,7 @@ class _UnlockSplash extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(Brand.logoAsset, width: 96),
+            Brand.mark(size: 96),
             const SizedBox(height: 24),
             const CircularProgressIndicator(),
           ],

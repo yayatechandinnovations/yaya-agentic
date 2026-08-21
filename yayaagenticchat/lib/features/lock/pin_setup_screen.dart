@@ -75,7 +75,7 @@ class _PinSetupScreenState extends ConsumerState<PinSetupScreen> {
               shrinkWrap: true,
               padding: const EdgeInsets.all(24),
               children: [
-                Center(child: Image.asset(Brand.logoAsset, width: 96)),
+                Center(child: Brand.mark(size: 96)),
                 const SizedBox(height: 24),
                 Text(t.pinSetupTitle,
                     style: Theme.of(context).textTheme.titleLarge,

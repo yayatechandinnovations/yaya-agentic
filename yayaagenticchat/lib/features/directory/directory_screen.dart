@@ -64,7 +64,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(Brand.logoAsset, height: 200),
+            Brand.wordmark(height: 200),
             const SizedBox(height: 8),
             Text(t.noChatsYet, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),

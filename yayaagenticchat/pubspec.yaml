@@ -81,26 +81,28 @@ flutter:
   generate: true
   assets:
     - assets/yaya-chat-logo.png
+    - assets/yayachat-logo-1.png
 
-# App icon: the neon Yaya logo on the dark brand background. iOS gets an opaque
-# icon (no alpha allowed); Android uses an adaptive icon with the dark bg + the
-# transparent logo as the foreground.
+# App icon: the square Yaya mark (circuit-Y speech bubble) on white. iOS gets an
+# opaque icon; Android's adaptive icon sits on a white background so the mark
+# reads the same as the legacy/iOS icon. Regenerate with:
+#   dart run flutter_launcher_icons
 flutter_launcher_icons:
-  image_path: "assets/icon/app_icon.png"
+  image_path: "assets/yayachat-logo-1.png"
   android: true
   ios: true
   remove_alpha_ios: true
   min_sdk_android: 21
-  adaptive_icon_background: "#0E0B1A"
-  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/yayachat-logo-1.png"
   web:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/yayachat-logo-1.png"
     background_color: "#0E0B1A"
     theme_color: "#0E0B1A"
   macos:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/yayachat-logo-1.png"
   windows:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/yayachat-logo-1.png"
