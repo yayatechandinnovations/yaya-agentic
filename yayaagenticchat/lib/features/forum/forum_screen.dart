@@ -112,9 +112,18 @@ class _ForumScreenState extends ConsumerState<ForumScreen> {
     final t = AppL10n.of(context);
     final tiles = ref.watch(tilesProvider);
 
+    final verified = ref.watch(verificationProvider.select((s) => s.verified));
     return Scaffold(
       appBar: AppBar(
         title: Brand.gradientText(t.forumTitle, fontSize: 20),
+        actions: [
+          if (verified && _handle != null && _enabled)
+            IconButton(
+              icon: const Icon(Icons.block_outlined),
+              tooltip: t.forumBlockedMembers,
+              onPressed: () => _showBlocked(_handle!),
+            ),
+        ],
         bottom: tiles.length > 1
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(52),
@@ -140,6 +149,16 @@ class _ForumScreenState extends ConsumerState<ForumScreen> {
       ),
       body: _body(t, tiles),
     );
+  }
+
+  Future<void> _showBlocked(String handle) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => _BlockedMembersSheet(handle: handle),
+    );
+    // Unblocking may have restored posts — refresh the feed.
+    if (mounted) _load();
   }
 
   Widget _body(AppL10n t, List<Tile> tiles) {
@@ -411,6 +430,27 @@ class _PostCard extends ConsumerWidget {
                 messenger
                     .showSnackBar(SnackBar(content: Text(t.forumReported)));
               }
+            case 'block':
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text(t.forumBlockTitle),
+                  content: Text(t.forumBlockBody),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: Text(t.cancel)),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: Text(t.forumBlock)),
+                  ],
+                ),
+              );
+              if (ok == true) {
+                await api.forumBlockAuthor(handle, post.id);
+                onDeleted(post.id);
+                messenger.showSnackBar(SnackBar(content: Text(t.forumBlocked)));
+              }
           }
         } on ChatApiException catch (e) {
           messenger.showSnackBar(SnackBar(content: Text(e.message)));
@@ -420,6 +460,8 @@ class _PostCard extends ConsumerWidget {
         if (post.mine) PopupMenuItem(value: 'edit', child: Text(t.forumEdit)),
         if (post.mine) PopupMenuItem(value: 'delete', child: Text(t.forumDelete)),
         if (!post.mine) PopupMenuItem(value: 'report', child: Text(t.forumReport)),
+        if (!post.mine && !post.isSystem)
+          PopupMenuItem(value: 'block', child: Text(t.forumBlock)),
       ],
     );
   }
@@ -628,4 +670,96 @@ String _ago(AppL10n t, String? iso) {
   if (diff.inHours < 1) return '${diff.inMinutes}m';
   if (diff.inDays < 1) return '${diff.inHours}h';
   return '${diff.inDays}d';
+}
+
+/// Manage-blocks sheet (Apple 1.2): lists the members you've blocked in this
+/// forum and lets you unblock them. Loads on open; unblock is optimistic.
+class _BlockedMembersSheet extends ConsumerStatefulWidget {
+  const _BlockedMembersSheet({required this.handle});
+
+  final String handle;
+
+  @override
+  ConsumerState<_BlockedMembersSheet> createState() => _BlockedMembersSheetState();
+}
+
+class _BlockedMembersSheetState extends ConsumerState<_BlockedMembersSheet> {
+  bool _loading = true;
+  String? _error;
+  List<({String blockId, String display})> _blocked = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final rows = await ref.read(chatApiProvider).forumBlocks(widget.handle);
+      if (!mounted) return;
+      setState(() {
+        _blocked = rows;
+        _loading = false;
+      });
+    } on ChatApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _unblock(String blockId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _blocked = _blocked.where((b) => b.blockId != blockId).toList());
+    try {
+      await ref.read(chatApiProvider).forumUnblock(widget.handle, blockId);
+    } on ChatApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      _load(); // reconcile on failure
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppL10n.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(t.forumBlockedMembers,
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_error != null)
+              Padding(padding: const EdgeInsets.all(16), child: Text(_error!))
+            else if (_blocked.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(t.forumNoBlocked),
+              )
+            else
+              ..._blocked.map((b) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.person_off_outlined),
+                    title: Text(b.display),
+                    trailing: TextButton(
+                      onPressed: () => _unblock(b.blockId),
+                      child: Text(t.forumUnblock),
+                    ),
+                  )),
+          ],
+        ),
+      ),
+    );
+  }
 }

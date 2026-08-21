@@ -70,7 +70,8 @@ public class ForumController {
                 return new ForumDtos.FeedResponse(false, List.of(), null);
             }
             UUID caller = callerAccountId(exchange);
-            ForumService.FeedPage page = forum.feed(ep.id().value(), cursor);
+            var blocked = forum.blockedAccountIds(ep.id().value(), caller);
+            ForumService.FeedPage page = forum.feed(ep.id().value(), cursor, blocked);
             return new ForumDtos.FeedResponse(true,
                     page.posts().stream().map(p -> ForumDtos.PostView.of(p, caller)).toList(),
                     page.nextCursor());
@@ -84,8 +85,10 @@ public class ForumController {
         return async(() -> {
             ChatEntryPoint ep = requireEnabled(handle);
             UUID caller = callerAccountId(exchange);
-            return new ForumDtos.RepliesResponse(forum.replies(ep.id().value(), postId).stream()
-                    .map(p -> ForumDtos.PostView.of(p, caller)).toList());
+            var blocked = forum.blockedAccountIds(ep.id().value(), caller);
+            return new ForumDtos.RepliesResponse(
+                    forum.replies(ep.id().value(), postId, blocked).stream()
+                            .map(p -> ForumDtos.PostView.of(p, caller)).toList());
         });
     }
 
@@ -202,6 +205,47 @@ public class ForumController {
             } catch (ForumService.ForumException e) {
                 throw toApi(e);
             }
+        });
+    }
+
+    /** Block the author of a post (Apple 1.2). Their posts/replies leave the
+     *  caller's feed; one-way and idempotent. */
+    @PostMapping("/posts/{postId}/block-author")
+    public Mono<Void> blockAuthor(@PathVariable("handle") String handle,
+                                  @PathVariable("postId") String postId,
+                                  ServerWebExchange exchange) {
+        return asyncVoid(() -> {
+            ChatEntryPoint ep = requireEnabled(handle);
+            Caller caller = requireVerified(exchange);
+            try {
+                forum.blockAuthorOfPost(ep.id().value(), postId, caller.accountId());
+            } catch (ForumService.ForumException e) {
+                throw toApi(e);
+            }
+        });
+    }
+
+    /** The caller's blocked members, for the "manage blocks" list. */
+    @GetMapping("/blocks")
+    public Mono<ForumDtos.BlocksResponse> blocks(@PathVariable("handle") String handle,
+                                                 ServerWebExchange exchange) {
+        return async(() -> {
+            ChatEntryPoint ep = requireEnabled(handle);
+            Caller caller = requireVerified(exchange);
+            return new ForumDtos.BlocksResponse(
+                    forum.listBlocked(ep.id().value(), caller.accountId()).stream()
+                            .map(ForumDtos.BlockedView::of).toList());
+        });
+    }
+
+    @DeleteMapping("/blocks/{blockId}")
+    public Mono<Void> unblock(@PathVariable("handle") String handle,
+                              @PathVariable("blockId") String blockId,
+                              ServerWebExchange exchange) {
+        return asyncVoid(() -> {
+            ChatEntryPoint ep = requireEnabled(handle);
+            Caller caller = requireVerified(exchange);
+            forum.unblock(ep.id().value(), caller.accountId(), blockId);
         });
     }
 

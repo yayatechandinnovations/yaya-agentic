@@ -1,11 +1,11 @@
 {
-    "name": "yayaagenticchat",
-    "short_name": "yayaagenticchat",
+    "name": "Yaya Chat",
+    "short_name": "Yaya",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0E0B1A",
     "theme_color": "#0E0B1A",
-    "description": "A new Flutter project.",
+    "description": "Chat with your favorite businesses — scan a QR, pick a tile, and start a conversation.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

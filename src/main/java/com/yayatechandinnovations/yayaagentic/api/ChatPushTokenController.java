@@ -65,6 +65,27 @@ public class ChatPushTokenController {
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * Unregister this device's token on sign-out / account deletion so a
+     * signed-out device stops receiving wakes (chat-mobile-publishing-and-push
+     * §B.4). Idempotent — deleting an absent token is a no-op.
+     */
+    @DeleteMapping
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public Mono<Void> unregister(@PathVariable("handle") String handle,
+                                 @RequestBody RegisterRequest body,
+                                 ServerWebExchange exchange) {
+        return Mono.<Void>fromRunnable(() -> {
+            ChatEntryPoint ep = requirePublic(handle);
+            Principal op = requireVerified(ep, exchange);
+            if (body == null || body.token() == null || body.token().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "token required");
+            }
+            String recipientKey = new OutreachRecipient.ByPrincipal(op.subject()).key();
+            tokens.deleteByRecipientKeyAndToken(recipientKey, body.token().trim());
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
     private ChatEntryPoint requirePublic(String handle) {
         ChatEntryPoint ep = entryPoints.findByHandle(handle)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown handle"));

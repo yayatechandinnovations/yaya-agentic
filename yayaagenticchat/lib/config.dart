@@ -17,6 +17,22 @@ class AppConfig {
     defaultValue: 'http://localhost:8092',
   );
 
+  /// True when a base URL points at the local machine — a localhost/loopback
+  /// host that must never ship in a store build. Used by the release guard in
+  /// main() so a misconfigured release fails loudly instead of silently hitting
+  /// a dev box that isn't there.
+  static bool isLoopback(String base) {
+    final host = Uri.tryParse(base)?.host.toLowerCase() ?? '';
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '0.0.0.0' ||
+        host == '::1' ||
+        host.endsWith('.local');
+  }
+
+  /// The release build must not point the primary API at localhost.
+  static bool get apiBaseIsLoopback => isLoopback(apiBase);
+
   /// Resolve a (possibly root-relative) URL — e.g. a platform-hosted logo at
   /// `/v1/chat/logos/{id}` — against the API base.
   static String resolveUrl(String url) {

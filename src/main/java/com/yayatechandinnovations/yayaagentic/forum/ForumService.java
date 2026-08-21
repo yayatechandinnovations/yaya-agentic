@@ -1,5 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.forum;
 
+import com.yayatechandinnovations.yayaagentic.persistence.ForumBlockEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.ForumBlockRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ForumPostEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ForumPostRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.ForumReactionRepository;
@@ -56,15 +58,18 @@ public class ForumService {
     private final ForumReactionRepository reactions;
     private final ForumReportRepository reports;
     private final ForumSettingsRepository settings;
+    private final ForumBlockRepository blocks;
 
     public ForumService(ForumPostRepository posts,
                         ForumReactionRepository reactions,
                         ForumReportRepository reports,
-                        ForumSettingsRepository settings) {
+                        ForumSettingsRepository settings,
+                        ForumBlockRepository blocks) {
         this.posts = posts;
         this.reactions = reactions;
         this.reports = reports;
         this.settings = settings;
+        this.blocks = blocks;
     }
 
     /* ------------------------------ settings -------------------------------- */
@@ -167,18 +172,21 @@ public class ForumService {
     public record FeedPage(List<ForumPostEntity> posts, String nextCursor) {}
 
     @Transactional(readOnly = true)
-    public FeedPage feed(String entryPointId, String cursor) {
+    public FeedPage feed(String entryPointId, String cursor, Set<UUID> blocked) {
         List<ForumPostEntity> page;
         var pageable = PageRequest.of(0, PAGE_SIZE + 1);
+        boolean filter = blocked != null && !blocked.isEmpty();
         if (cursor == null || cursor.isBlank()) {
-            page = posts.feed(entryPointId, pageable);
+            page = filter ? posts.feedExcluding(entryPointId, blocked, pageable)
+                          : posts.feed(entryPointId, pageable);
         } else {
             int sep = cursor.lastIndexOf('|');
             if (sep <= 0) return new FeedPage(List.of(), null);
             try {
-                page = posts.feedAfter(entryPointId,
-                        OffsetDateTime.parse(cursor.substring(0, sep)),
-                        cursor.substring(sep + 1), pageable);
+                OffsetDateTime at = OffsetDateTime.parse(cursor.substring(0, sep));
+                String id = cursor.substring(sep + 1);
+                page = filter ? posts.feedAfterExcluding(entryPointId, at, id, blocked, pageable)
+                              : posts.feedAfter(entryPointId, at, id, pageable);
             } catch (RuntimeException e) {
                 return new FeedPage(List.of(), null);
             }
@@ -193,13 +201,16 @@ public class ForumService {
     }
 
     @Transactional(readOnly = true)
-    public List<ForumPostEntity> replies(String entryPointId, String postId) {
+    public List<ForumPostEntity> replies(String entryPointId, String postId, Set<UUID> blocked) {
         // Existence is scoped to the entry point — a foreign post id is a 404.
         posts.findById(postId)
                 .filter(p -> p.getEntryPointId().equals(entryPointId))
                 .filter(ForumPostEntity::isVisible)
                 .orElseThrow(() -> new ForumException("not_found", "no such post"));
-        return posts.replies(postId, PageRequest.of(0, 200));
+        var pageable = PageRequest.of(0, 200);
+        return blocked != null && !blocked.isEmpty()
+                ? posts.repliesExcluding(postId, blocked, pageable)
+                : posts.replies(postId, pageable);
     }
 
     /* ------------------------------ reactions ------------------------------- */
@@ -246,6 +257,55 @@ public class ForumService {
             p.setHidden(true);
         }
         posts.save(p);
+    }
+
+    /* -------------------------------- blocks -------------------------------- */
+
+    /** Block the author of a post so their content leaves the caller's feed
+     *  (Apple 1.2). Only user-authored posts can be blocked; blocking yourself
+     *  or a system/operator post is rejected. Idempotent per (blocker, blocked). */
+    @Transactional
+    public void blockAuthorOfPost(String entryPointId, String postId, UUID blockerAccountId) {
+        ForumPostEntity p = requireVisible(entryPointId, postId);
+        UUID author = p.getAccountId();
+        if (author == null) {
+            throw new ForumException("cannot_block", "you can only block members");
+        }
+        if (author.equals(blockerAccountId)) {
+            throw new ForumException("cannot_block_self", "you can't block yourself");
+        }
+        if (blocks.findByEntryPointIdAndBlockerAccountIdAndBlockedAccountId(
+                entryPointId, blockerAccountId, author).isPresent()) {
+            return;
+        }
+        String id = "fb_" + UUID.randomUUID().toString().replace("-", "");
+        blocks.save(new ForumBlockEntity(id, p.getTenantId(), entryPointId,
+                blockerAccountId, author, p.getAuthorDisplay()));
+    }
+
+    @Transactional
+    public void unblock(String entryPointId, UUID blockerAccountId, String blockId) {
+        blocks.findByIdAndBlockerAccountId(blockId, blockerAccountId)
+                .filter(b -> b.getEntryPointId().equals(entryPointId))
+                .ifPresent(blocks::delete);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ForumBlockEntity> listBlocked(String entryPointId, UUID blockerAccountId) {
+        if (blockerAccountId == null) return List.of();
+        return blocks.findByEntryPointIdAndBlockerAccountIdOrderByCreatedAtDesc(
+                entryPointId, blockerAccountId);
+    }
+
+    /** The set of account ids the caller has blocked — fed to the feed/replies
+     *  queries. Empty for an anonymous viewer. */
+    @Transactional(readOnly = true)
+    public Set<UUID> blockedAccountIds(String entryPointId, UUID blockerAccountId) {
+        if (blockerAccountId == null) return Set.of();
+        return blocks.findByEntryPointIdAndBlockerAccountIdOrderByCreatedAtDesc(
+                        entryPointId, blockerAccountId).stream()
+                .map(ForumBlockEntity::getBlockedAccountId)
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     /* ------------------------------ moderation ------------------------------ */

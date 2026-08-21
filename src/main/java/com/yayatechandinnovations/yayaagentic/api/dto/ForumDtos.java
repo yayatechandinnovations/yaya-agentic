@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.api.dto;
 
+import com.yayatechandinnovations.yayaagentic.persistence.ForumBlockEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ForumPostEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ForumReportEntity;
 
@@ -34,6 +35,18 @@ public final class ForumDtos {
     public record EditPostRequest(String body) {}
 
     public record ReportRequest(String reason) {}
+
+    /* ---- blocks (Apple 1.2) ---- */
+
+    public record BlockedView(String blockId, String display, String createdAt) {
+        public static BlockedView of(ForumBlockEntity b) {
+            return new BlockedView(b.getId(),
+                    b.getBlockedDisplay() == null ? "Member" : b.getBlockedDisplay(),
+                    b.getCreatedAt() == null ? null : b.getCreatedAt().toString());
+        }
+    }
+
+    public record BlocksResponse(List<BlockedView> blocked) {}
 
     /* ---- trusted-sender surface (§8.1) ---- */
 

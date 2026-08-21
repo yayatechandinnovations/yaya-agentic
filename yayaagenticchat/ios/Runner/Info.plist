@@ -7,6 +7,12 @@
 	     App Review. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Yaya Chat uses the camera to scan a business QR code so you can start a chat.</string>
+	<!-- Required by `record`: voice notes in chat. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Yaya Chat uses the microphone to record voice notes you send in a chat.</string>
+	<!-- Required by `file_picker` when attaching a photo from the library. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Yaya Chat needs access to your photos so you can attach them to a chat.</string>
 	<!-- The app only uses standard HTTPS/TLS, which is exempt from U.S. export
 	     rules. Declaring this skips the export-compliance prompt on every upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>

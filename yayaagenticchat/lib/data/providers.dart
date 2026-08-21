@@ -9,6 +9,7 @@ import '../models/tile.dart';
 import 'chat_api.dart';
 import 'credential_store.dart';
 import 'directory_store.dart';
+import 'push_service.dart';
 
 /// Overridden in main() once SharedPreferences has loaded.
 final sharedPrefsProvider = Provider<SharedPreferences>(
@@ -298,15 +299,28 @@ class VerificationNotifier extends StateNotifier<VerificationState> {
   /// pass is already revoked server-side; drop all local state so the app shell
   /// (which gates on [VerificationState.verified]) returns to onboarding.
   Future<void> signOut() async {
+    await _unregisterPush();
     await _store.clearAll();
     await _creds.clear();
     state = const VerificationState();
+  }
+
+  /// Drop this device's push token while the pass is still valid — after the
+  /// credentials clear, the unregister call would 401. Best-effort.
+  Future<void> _unregisterPush() async {
+    try {
+      await _ref.read(pushServiceProvider).unregister();
+    } catch (_) {
+      // A signed-out device with a lingering token self-heals: the token is
+      // pruned on the first failed send, or overwritten on next sign-in.
+    }
   }
 
   /// Log out of THIS device only (chat-experience §5.4): the server row is
   /// already revoked; drop the credentials but keep the identity hints so the
   /// phone field comes prefilled next time. Tiles stay — they are local.
   Future<void> signOutThisDevice() async {
+    await _unregisterPush();
     await _creds.clear();
     await _store.savePinRequired(true);
     state = VerificationState(phone: state.phone, name: state.name);

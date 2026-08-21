@@ -749,6 +749,41 @@ class ChatApi {
     }
   }
 
+  /// Block the author of a post (Apple 1.2). Their posts/replies drop out of the
+  /// caller's feed on the next fetch.
+  Future<void> forumBlockAuthor(String handle, String postId) async {
+    try {
+      await _dio.post('/v1/chat/e/$handle/forum/posts/$postId/block-author',
+          options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  /// The caller's blocked members, for the manage-blocks screen.
+  Future<List<({String blockId, String display})>> forumBlocks(String handle) async {
+    try {
+      final r = await _dio.get('/v1/chat/e/$handle/forum/blocks',
+          options: Options(headers: _deviceHeader));
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['blocked'] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .map((m) => (blockId: m['blockId'] as String, display: (m['display'] ?? 'Member') as String))
+          .toList();
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
+  Future<void> forumUnblock(String handle, String blockId) async {
+    try {
+      await _dio.delete('/v1/chat/e/$handle/forum/blocks/$blockId',
+          options: Options(headers: _deviceHeader));
+    } on DioException catch (e) {
+      throw _map(e);
+    }
+  }
+
   /// Drain pending system messages delivered while offline (system-messaging §11).
   /// Identity-scoped: the server derives the recipient from the verified bearer,
   /// never from the client. `peek` leaves them undelivered.
@@ -781,6 +816,20 @@ class ChatApi {
       await _dio.post(
         '/v1/chat/e/$handle/push-tokens',
         data: {'platform': platform, 'token': token},
+        options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
+      );
+    } on DioException catch (_) {
+      // best-effort
+    }
+  }
+
+  /// Drop this device's wake token on sign-out/delete (chat-mobile-publishing-
+  /// and-push §B.4). Must run while the pass is still valid; best-effort.
+  Future<void> unregisterPushToken(String handle, String token, {String? bearer}) async {
+    try {
+      await _dio.delete(
+        '/v1/chat/e/$handle/push-tokens',
+        data: {'token': token},
         options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
       );
     } on DioException catch (_) {

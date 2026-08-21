@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme.dart';
 import '../../config.dart';
+import '../../data/push_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/chat_message.dart';
 import '../../models/commerce/catalog_payload.dart';
@@ -100,6 +101,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final card = state.card;
     final title = card?.displayName ?? 'Chat';
     ref.listen(chatControllerProvider(widget.handle), (_, _) => _scrollToBottom());
+
+    // A foreground push wake for THIS tile → re-drain so the new message shows
+    // without reopening the chat (push_service sets the ping).
+    ref.listen(pushInboxPingProvider, (_, ping) {
+      if (ping != null && ping.handle == widget.handle) {
+        controller.refreshInbox();
+      }
+    });
 
     // Fire the checkout hand-off exactly once when a fresh result arrives (open
     // the hosted page / mount the PSP sheet / confirm the order), then clear.

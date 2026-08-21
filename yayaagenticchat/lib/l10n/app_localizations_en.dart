@@ -571,6 +571,28 @@ class AppL10nEn extends AppL10n {
   String get forumReported => 'Thanks — the team will review it.';
 
   @override
+  String get forumBlock => 'Block member';
+
+  @override
+  String get forumBlockTitle => 'Block this member?';
+
+  @override
+  String get forumBlockBody =>
+      'You won\'t see their posts or replies in this forum anymore.';
+
+  @override
+  String get forumBlocked => 'Blocked — you won\'t see their posts.';
+
+  @override
+  String get forumBlockedMembers => 'Blocked members';
+
+  @override
+  String get forumUnblock => 'Unblock';
+
+  @override
+  String get forumNoBlocked => 'You haven\'t blocked anyone.';
+
+  @override
   String get forumEdited => 'edited';
 
   @override

@@ -181,6 +181,18 @@
             <version>8.5.12</version>
         </dependency>
 
+        <!-- Firebase Admin SDK: FCM/APNs delivery for the content-free chat
+             wake nudge (system-messaging-design.md §11; SM-3). Native push is
+             operator-owned by definition — APNs/FCM are the only channels to
+             iOS/Android — but FCM itself is free. Only active when
+             yaya.agentic.push.fcm.enabled=true; absent config leaves the
+             transport unwired and the CompositePushNotifier logs instead. -->
+        <dependency>
+            <groupId>com.google.firebase</groupId>
+            <artifactId>firebase-admin</artifactId>
+            <version>9.10.0</version>
+        </dependency>
+
         <!-- Observability -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

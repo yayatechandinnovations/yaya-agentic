@@ -57,6 +57,16 @@ dependencies:
   flutter_stripe: ^11.1.0
   flutter_stripe_web: ^6.1.0
 
+  # Push: content-free wake nudges over FCM/APNs when an inbound/system message
+  # arrives (system-messaging §11 / chat-mobile-publishing-and-push §B). All
+  # push wiring degrades to a no-op when Firebase isn't configured, so dev/web
+  # builds and `flutter test` run without any Firebase project.
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
+  # Renders a heads-up notification for messages that arrive while the app is
+  # foregrounded (the OS tray handles background/terminated automatically).
+  flutter_local_notifications: ^18.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

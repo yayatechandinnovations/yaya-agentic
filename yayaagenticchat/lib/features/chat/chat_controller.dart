@@ -274,6 +274,10 @@ class ChatController extends StateNotifier<ChatState> {
     unawaited(_drainInbox());
   }
 
+  /// Re-drain the inbox on a foreground push wake for this tile, so a message
+  /// that arrives while the chat is open appears without reopening it.
+  Future<void> refreshInbox() => _drainInbox();
+
   /// Fetch + append pending system-participant messages, rendered as attributed
   /// bubbles with their attachments (system-messaging-design.md §11, §14).
   Future<void> _drainInbox() async {

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/providers.dart';
+import '../data/push_service.dart';
 import '../features/courier/courier_screen.dart';
 import '../features/lock/lock_screen.dart';
 import '../features/lock/pin_setup_screen.dart';
@@ -24,11 +27,39 @@ import 'theme.dart';
 /// token) — the shopper phone gate would block "open a link, register" for
 /// someone who never shops here, so a courier deep link renders courier mode
 /// directly.
-class YayaChatApp extends ConsumerWidget {
+class YayaChatApp extends ConsumerStatefulWidget {
   const YayaChatApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<YayaChatApp> createState() => _YayaChatAppState();
+}
+
+class _YayaChatAppState extends ConsumerState<YayaChatApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Already-verified cold start: listeners below only fire on change, so kick
+    // registration once after the first frame. All calls no-op unless Firebase
+    // is configured and the user is verified with at least one tile.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncPush());
+  }
+
+  void _syncPush() {
+    if (!ref.read(verificationProvider).verified) return;
+    final push = ref.read(pushServiceProvider);
+    unawaited(push.start());
+    unawaited(push.syncRegistration());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Register when the user becomes verified, and re-sync when their tile set
+    // changes (a first tile is what makes registration meaningful).
+    ref.listen(verificationProvider.select((s) => s.verified), (_, verified) {
+      if (verified) _syncPush();
+    });
+    ref.listen(tilesProvider, (_, _) => _syncPush());
+
     final v = ref.watch(verificationProvider);
 
     Widget? gate;

@@ -1,0 +1,5 @@
+{
+  "_comment": "Staging build config. Use: flutter build --release --dart-define-from-file=dart_define/staging.json. Point these at the staging backend before use.",
+  "YAYA_API_BASE": "https://staging.yayaagentic.smartlottery.do",
+  "SALES_API_BASE_URL": "https://staging.yayaagentic.smartlottery.do/sales"
+}

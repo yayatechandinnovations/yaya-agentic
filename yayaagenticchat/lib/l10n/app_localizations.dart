@@ -1129,6 +1129,48 @@ abstract class AppL10n {
   /// **'Thanks — the team will review it.'**
   String get forumReported;
 
+  /// No description provided for @forumBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Block member'**
+  String get forumBlock;
+
+  /// No description provided for @forumBlockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Block this member?'**
+  String get forumBlockTitle;
+
+  /// No description provided for @forumBlockBody.
+  ///
+  /// In en, this message translates to:
+  /// **'You won\'t see their posts or replies in this forum anymore.'**
+  String get forumBlockBody;
+
+  /// No description provided for @forumBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked — you won\'t see their posts.'**
+  String get forumBlocked;
+
+  /// No description provided for @forumBlockedMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked members'**
+  String get forumBlockedMembers;
+
+  /// No description provided for @forumUnblock.
+  ///
+  /// In en, this message translates to:
+  /// **'Unblock'**
+  String get forumUnblock;
+
+  /// No description provided for @forumNoBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'You haven\'t blocked anyone.'**
+  String get forumNoBlocked;
+
   /// No description provided for @forumEdited.
   ///
   /// In en, this message translates to:

@@ -1,0 +1,5 @@
+{
+  "_comment": "Production build config. Use: flutter build appbundle --release --dart-define-from-file=dart_define/prod.json (same for ipa). No secrets here — just non-loopback base URLs; the release guard in main() rejects a build that still points at localhost. Verify SALES_API_BASE_URL against the actual yaya-sales deployment before release.",
+  "YAYA_API_BASE": "https://yayaagentic.smartlottery.do",
+  "SALES_API_BASE_URL": "https://yayaagentic.smartlottery.do/sales"
+}
