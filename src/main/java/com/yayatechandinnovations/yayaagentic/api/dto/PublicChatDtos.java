@@ -172,6 +172,13 @@ public final class PublicChatDtos {
                                       String phoneE164, String name,
                                       String deviceSecret, boolean pinSet) {}
 
+    /** Portal-session exchange ({@code corillo-chat-portal-session-exchange-design.md}):
+     *  a hub-verified portal JWT stands in for the SMS check. The phone is NOT a
+     *  field on purpose — the server takes it from the hub's introspection, so the
+     *  caller can only mint a pass for the phone the hub already verified.
+     *  Responds with the same {@link VerifyCheckResponse} shape as {@code /check}. */
+    public record PortalExchangeRequest(String portalToken, String deviceId, String name) {}
+
     /* ---- PIN unlock (chat-experience-design.md §5.4) ---- */
 
     /** The everyday login: device secret proves the enrolled device, PIN proves

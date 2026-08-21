@@ -31,6 +31,10 @@ public class ChatVerifyLimitsProperties {
     private int unlockPerIpPerHour = 60;
     /** PIN-unlock attempts per device per hour. */
     private int unlockPerDevicePerHour = 20;
+    /** Portal-session exchanges per IP per hour (no SMS; mint surface). */
+    private int exchangePerIpPerHour = 30;
+    /** Portal-session exchanges per device per hour. */
+    private int exchangePerDevicePerHour = 10;
 
     public int getStartPerIpPerHour() { return startPerIpPerHour; }
     public void setStartPerIpPerHour(int v) { this.startPerIpPerHour = v; }
@@ -52,4 +56,10 @@ public class ChatVerifyLimitsProperties {
 
     public int getUnlockPerDevicePerHour() { return unlockPerDevicePerHour; }
     public void setUnlockPerDevicePerHour(int v) { this.unlockPerDevicePerHour = v; }
+
+    public int getExchangePerIpPerHour() { return exchangePerIpPerHour; }
+    public void setExchangePerIpPerHour(int v) { this.exchangePerIpPerHour = v; }
+
+    public int getExchangePerDevicePerHour() { return exchangePerDevicePerHour; }
+    public void setExchangePerDevicePerHour(int v) { this.exchangePerDevicePerHour = v; }
 }
