@@ -43,6 +43,12 @@ public class ChatAccountDeviceEntity {
     @Column(name = "last_seen_at", nullable = false)
     private OffsetDateTime lastSeenAt;
 
+    // Last time this device re-proved phone control via OTP (enrollment). PIN
+    // unlock leaves it untouched; once it ages past the reverify window the
+    // unlock endpoint forces a fresh OTP (chat-experience-design.md §5.4).
+    @Column(name = "last_verified_at", nullable = false)
+    private OffsetDateTime lastVerifiedAt;
+
     @Column(name = "revoked_at")
     private OffsetDateTime revokedAt;
 
@@ -54,6 +60,7 @@ public class ChatAccountDeviceEntity {
         this.deviceSecretHash = deviceSecretHash;
         this.label = label;
         this.lastSeenAt = OffsetDateTime.now();
+        this.lastVerifiedAt = this.lastSeenAt;
     }
 
     public UUID getAccountId() { return accountId; }
@@ -63,6 +70,7 @@ public class ChatAccountDeviceEntity {
     public boolean isPinRequired() { return pinRequired; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getLastSeenAt() { return lastSeenAt; }
+    public OffsetDateTime getLastVerifiedAt() { return lastVerifiedAt; }
     public OffsetDateTime getRevokedAt() { return revokedAt; }
 
     public boolean isRevoked() { return revokedAt != null; }
@@ -71,6 +79,8 @@ public class ChatAccountDeviceEntity {
     public void setLabel(String label) { this.label = label; }
     public void setPinRequired(boolean pinRequired) { this.pinRequired = pinRequired; }
     public void touchLastSeen() { this.lastSeenAt = OffsetDateTime.now(); }
+    /** Restart the periodic-OTP clock — call only on a fresh OTP enrollment. */
+    public void touchVerified() { this.lastVerifiedAt = OffsetDateTime.now(); }
     public void revoke() { this.revokedAt = OffsetDateTime.now(); }
     public void unrevoke() { this.revokedAt = null; }
 

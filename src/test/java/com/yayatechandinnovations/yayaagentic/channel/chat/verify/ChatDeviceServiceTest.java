@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.ChatAccountDeviceRepos
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,7 +24,7 @@ import static org.mockito.Mockito.when;
 class ChatDeviceServiceTest {
 
     private final ChatAccountDeviceRepository repo = mock(ChatAccountDeviceRepository.class);
-    private final ChatDeviceService svc = new ChatDeviceService(repo);
+    private final ChatDeviceService svc = new ChatDeviceService(repo, 30);
 
     @Test
     void enrollStoresHashNotSecret() {
@@ -99,5 +100,33 @@ class ChatDeviceServiceTest {
         UUID acct = UUID.randomUUID();
         when(repo.findByAccountIdAndDeviceId(acct, "ghost")).thenReturn(Optional.empty());
         assertThat(svc.isRevoked(acct, "ghost")).isFalse();
+    }
+
+    @Test
+    void reverifyDueOnlyPastTheWindow() {
+        ChatAccountDeviceEntity recent = mock(ChatAccountDeviceEntity.class);
+        when(recent.getLastVerifiedAt()).thenReturn(OffsetDateTime.now().minusDays(10));
+        assertThat(svc.isReverifyDue(recent)).isFalse();
+
+        ChatAccountDeviceEntity stale = mock(ChatAccountDeviceEntity.class);
+        when(stale.getLastVerifiedAt()).thenReturn(OffsetDateTime.now().minusDays(31));
+        assertThat(svc.isReverifyDue(stale)).isTrue();
+
+        ChatAccountDeviceEntity never = mock(ChatAccountDeviceEntity.class);
+        when(never.getLastVerifiedAt()).thenReturn(null);
+        assertThat(svc.isReverifyDue(never)).isTrue();
+    }
+
+    @Test
+    void enrollRestartsTheReverifyClock() {
+        UUID acct = UUID.randomUUID();
+        when(repo.findByAccountIdAndDeviceId(acct, "dev1")).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.enroll(acct, "dev1", null);
+
+        ArgumentCaptor<ChatAccountDeviceEntity> captor = ArgumentCaptor.forClass(ChatAccountDeviceEntity.class);
+        verify(repo).save(captor.capture());
+        assertThat(svc.isReverifyDue(captor.getValue())).isFalse();
     }
 }

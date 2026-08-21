@@ -25,7 +25,7 @@ class ChatAccountServiceTest {
     private final ChatAccountRepository repo = mock(ChatAccountRepository.class);
     private final ChatAccountDeviceRepository deviceRepo = mock(ChatAccountDeviceRepository.class);
     private final ChatAccountService svc =
-            new ChatAccountService(repo, new ChatDeviceService(deviceRepo));
+            new ChatAccountService(repo, new ChatDeviceService(deviceRepo, 30));
 
     private static ChatAccountEntity account(UUID id, String phone, int gen, boolean active) {
         ChatAccountEntity a = new ChatAccountEntity(id, phone, "Ada");

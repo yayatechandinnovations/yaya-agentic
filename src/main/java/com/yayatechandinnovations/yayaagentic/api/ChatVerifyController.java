@@ -154,6 +154,14 @@ public class ChatVerifyController {
             var account = accounts.liveById(device.getAccountId())
                     .orElseThrow(ChatVerifyController::unlockDenied);
 
+            // Periodic step-up (chat-experience-design.md §5.4): once the device
+            // ages past the reverify window, no PIN — even a correct one, even on a
+            // "don't ask" device — substitutes for a fresh OTP. Same signal the
+            // lockout ladder uses, so the app already routes it to SMS re-verify.
+            if (devices.isReverifyDue(device)) {
+                throw otpRequired();
+            }
+
             boolean pinRequired = account.hasPin() && device.isPinRequired();
             if (pinRequired) {
                 ChatPinService.PinResult result = pins.verify(account.getId(), body.pin());

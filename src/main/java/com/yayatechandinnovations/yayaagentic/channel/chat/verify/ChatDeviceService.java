@@ -38,8 +38,17 @@ public class ChatDeviceService {
     private final SecureRandom random = new SecureRandom();
     private final Map<String, CachedRevocation> revocationCache = new ConcurrentHashMap<>();
 
-    public ChatDeviceService(ChatAccountDeviceRepository devices) {
+    // How long an enrolled device may ride the PIN before it must re-prove phone
+    // control with a fresh OTP (chat-experience-design.md §5.4). The PIN is a
+    // convenience factor below OTP; this floor keeps it from becoming a permanent
+    // replacement for it.
+    private final Duration reverifyAfter;
+
+    public ChatDeviceService(ChatAccountDeviceRepository devices,
+                             @org.springframework.beans.factory.annotation.Value(
+                                     "${yaya.agentic.chat.pin-reverify-days:30}") int reverifyDays) {
         this.devices = devices;
+        this.reverifyAfter = Duration.ofDays(reverifyDays <= 0 ? 30 : reverifyDays);
     }
 
     /** Result of an enrollment: the plaintext secret exists only here, once. */
@@ -67,6 +76,9 @@ public class ChatDeviceService {
             row.unrevoke();
             row.touchLastSeen();
         }
+        // Enrollment always follows a fresh OTP (or a pass-proving lazy migration):
+        // that IS the phone-control proof, so restart the periodic-OTP clock.
+        row.touchVerified();
         devices.save(row);
         revocationCache.remove(cacheKey(accountId, deviceId));
         return new Enrollment(secret, row.isPinRequired());
@@ -92,6 +104,18 @@ public class ChatDeviceService {
                         presented, d.getDeviceSecretHash().getBytes(StandardCharsets.UTF_8)))
                 .filter(d -> !d.isRevoked())
                 .findFirst();
+    }
+
+    /**
+     * Is this device overdue for a fresh OTP? Even a valid PIN can't unlock past
+     * the reverify window — the device must re-prove phone control periodically
+     * (chat-experience-design.md §5.4). A row with no recorded verification (only
+     * possible transiently before the DB default lands) is treated as due.
+     */
+    public boolean isReverifyDue(ChatAccountDeviceEntity device) {
+        Instant last = device.getLastVerifiedAt() == null
+                ? null : device.getLastVerifiedAt().toInstant();
+        return last == null || last.isBefore(Instant.now().minus(reverifyAfter));
     }
 
     @Transactional
