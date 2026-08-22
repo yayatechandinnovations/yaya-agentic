@@ -299,18 +299,48 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   bool _loaded = false;
   bool _showTranscript = false;
 
+  // The resolved clip length. Held in state because a browser-recorded WebM
+  // reports its duration late (or not at all until the source is loaded), so we
+  // can't read `_player.duration` synchronously in build — durationStream fills
+  // this in once the decoder knows, and it survives even after playback ends.
+  Duration? _total;
+  StreamSubscription<Duration?>? _durationSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Resolve the duration up front so the bubble shows the real length instead
+    // of 0:00 before the user ever presses play (the WebM-no-duration trap).
+    _durationSub = _player.durationStream.listen((d) {
+      if (!mounted || d == null || d <= Duration.zero || d == _total) return;
+      setState(() => _total = d);
+    });
+    unawaited(_ensureLoaded());
+  }
+
   @override
   void dispose() {
+    _durationSub?.cancel();
     _player.dispose();
     super.dispose();
   }
 
+  /// Attach the audio source once. Loading eagerly (not on first play) is what
+  /// lets the duration resolve before playback; failures are swallowed here and
+  /// surfaced only when the user actually tries to play.
+  Future<Duration?> _ensureLoaded() async {
+    if (_loaded) return _total;
+    final d = await _player.setUrl(AppConfig.resolveUrl(widget.attachment.url));
+    _loaded = true;
+    if (mounted && d != null && d > Duration.zero) {
+      setState(() => _total = d);
+    }
+    return d;
+  }
+
   Future<void> _toggle() async {
     try {
-      if (!_loaded) {
-        await _player.setUrl(AppConfig.resolveUrl(widget.attachment.url));
-        _loaded = true;
-      }
+      await _ensureLoaded();
       if (_player.playing) {
         await _player.pause();
       } else {
@@ -367,7 +397,10 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
                   stream: _player.positionStream,
                   builder: (context, snap) {
                     final pos = snap.data ?? Duration.zero;
-                    final total = _player.duration ?? Duration.zero;
+                    // Prefer the eagerly-resolved length (durationStream) over
+                    // _player.duration, which stays null for a browser WebM until
+                    // its metadata is decoded — the source of the "0:00" bubble.
+                    final total = _total ?? _player.duration ?? Duration.zero;
                     final progress = total.inMilliseconds == 0
                         ? 0.0
                         : (pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
