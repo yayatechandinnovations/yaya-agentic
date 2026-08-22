@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -43,25 +44,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
+  // Live delivery while the chat is open: there is no server push/SSE for
+  // proactive messages, so the open chat polls the inbox on a short heartbeat.
+  // Each tick reuses _onWake() — drain when at the bottom, badge when scrolled
+  // up — so a request sent while the owner is looking arrives without a refresh.
+  static const Duration _pollInterval = Duration(seconds: 12);
+  Timer? _pollTimer;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _startPolling();
   }
 
   @override
   void dispose() {
+    _stopPolling();
     WidgetsBinding.instance.removeObserver(this);
     _input.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
+  void _startPolling() {
+    _pollTimer ??= Timer.periodic(_pollInterval, (_) => _onWake());
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
   /// Returning to the foreground re-checks for messages delivered while away
-  /// (owner-ai v2 §5) — same wake path as a foreground push ping.
+  /// (owner-ai v2 §5) — same wake path as a foreground push ping — and resumes
+  /// the heartbeat; backgrounding pauses it to save the connection.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _onWake();
+    if (state == AppLifecycleState.resumed) {
+      _onWake();
+      _startPolling();
+    } else {
+      _stopPolling();
+    }
   }
 
   bool get _nearBottom =>
@@ -119,6 +144,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     );
     if (token != null && token.trim().isNotEmpty) {
       ref.read(chatControllerProvider(widget.handle).notifier).upgrade(token.trim());
+    }
+  }
+
+  Future<void> _clearConversationDialog(BuildContext context) async {
+    final t = AppL10n.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(t.clearConversation),
+        content: Text(t.clearConversationConfirm),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(t.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(t.clear)),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(chatControllerProvider(widget.handle).notifier).clearConversation();
+      _scrollToBottom();
     }
   }
 
@@ -213,6 +257,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
               padding: EdgeInsets.only(right: 12),
               child: Icon(Icons.verified_user, size: 18, color: Colors.white),
             ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onSelected: (v) {
+              if (v == 'clear') _clearConversationDialog(context);
+            },
+            itemBuilder: (ctx) => [
+              PopupMenuItem<String>(
+                value: 'clear',
+                child: Row(
+                  children: [
+                    const Icon(Icons.delete_sweep_outlined, size: 18),
+                    const SizedBox(width: 10),
+                    Text(AppL10n.of(context).clearConversation),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(

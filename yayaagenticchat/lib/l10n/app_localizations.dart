@@ -1242,6 +1242,24 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Total'**
   String get totalsLabel;
+
+  /// No description provided for @clearConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear conversation'**
+  String get clearConversation;
+
+  /// No description provided for @clearConversationConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation will be cleared and a new one will start. Previous messages can\'t be recovered.'**
+  String get clearConversationConfirm;
+
+  /// No description provided for @clear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get clear;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

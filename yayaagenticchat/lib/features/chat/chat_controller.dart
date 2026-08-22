@@ -407,6 +407,28 @@ class ChatController extends StateNotifier<ChatState> {
     }
   }
 
+  /// "Limpiar conversación": wipe the visible transcript and start a fresh
+  /// session. Ends the old session best-effort so the server stops resuming it,
+  /// and clears any pending confirm so nothing carries over into the new thread.
+  Future<void> clearConversation() async {
+    final old = state.sessionId;
+    if (old != null && old.isNotEmpty) {
+      unawaited(_api.end(old));
+    }
+    state = state.copyWith(
+      loading: true,
+      messages: const [],
+      clearResume: true,
+      clearError: true,
+      clearConfirm: true,
+    );
+    try {
+      await _startSession();
+    } on ChatApiException catch (e) {
+      state = state.copyWith(loading: false, error: _friendly(e));
+    }
+  }
+
   /* --------------------------- attachments (§6) -------------------------- */
 
   static int _attachSeq = 0;

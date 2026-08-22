@@ -211,5 +211,8 @@
   "systemSender": "Sistema",
   "documentTitle": "Documento",
   "download": "Descargar",
-  "totalsLabel": "Total"
+  "totalsLabel": "Total",
+  "clearConversation": "Limpiar conversación",
+  "clearConversationConfirm": "Se borrará esta conversación y empezarás una nueva. Los mensajes anteriores no se recuperan.",
+  "clear": "Limpiar"
 }

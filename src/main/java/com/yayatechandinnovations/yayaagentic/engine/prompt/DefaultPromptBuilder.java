@@ -75,6 +75,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
               if a tool produced it.
             """;
 
+    // Current-date framing (§6.1 of renderSuffix). The platform operates in the
+    // Dominican Republic; a per-tenant zone override is a future refinement.
+    private static final java.time.ZoneId PROMPT_ZONE =
+            java.time.ZoneId.of("America/Santo_Domingo");
+    private static final java.time.format.DateTimeFormatter NOW_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern(
+                    "EEEE d 'de' MMMM 'de' yyyy, HH:mm", new java.util.Locale("es"));
+
     private final M0Catalog catalog;
     private final WorkingMemory workingMemory;
     private final EntityMemory entityMemory;
@@ -213,6 +221,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 .append(" principal=").append(session.principal() == null
                         ? "anonymous" : abbreviate(session.principal().subject()))
                 .append("\n\n");
+        // 6.1 — Current date/time. The model has NO inherent notion of "today";
+        // without this it resolves "hoy"/"ayer" to a stale training-era date
+        // (e.g. an owner asking for "cuadre de hoy" got 2025-07-24). Rides the
+        // VARIABLE suffix so it is never frozen in the cached prefix.
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(PROMPT_ZONE);
+        sb.append("Fecha y hora actual: ").append(NOW_FORMAT.format(now))
+                .append(" — hoy es ").append(now.toLocalDate())
+                .append(" (America/Santo_Domingo). Usa esta fecha para resolver ")
+                .append("\"hoy\", \"ayer\", \"esta semana\", etc.\n\n");
         // 7 — Active IntentFrame
         if (intent != null && intent.label() != null) {
             sb.append("Active intent: ").append(jsonOf(Map.of(

@@ -628,4 +628,14 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get totalsLabel => 'Total';
+
+  @override
+  String get clearConversation => 'Clear conversation';
+
+  @override
+  String get clearConversationConfirm =>
+      'This conversation will be cleared and a new one will start. Previous messages can\'t be recovered.';
+
+  @override
+  String get clear => 'Clear';
 }
