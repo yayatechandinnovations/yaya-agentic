@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -29,6 +30,16 @@ class CredentialStore {
   SharedPreferences? _prefs;
   bool _secureAvailable = true;
 
+  // On web, flutter_secure_storage is itself just an encrypted localStorage
+  // entry, keyed separately from SharedPreferences — a second, evictable store
+  // that drifts from the plain deviceId and silently loses the device secret,
+  // dropping every login back to OTP (chat-pin-vs-otp-login-fix.md §3). Prefs
+  // (localStorage) is the single durable source of truth on web; the design
+  // accepts prefs-grade storage there because the pass TTL is short and the PIN
+  // is server-verified (chat-experience-design.md §5.5). Native keeps Keychain
+  // / Keystore, where plaintext must never touch SharedPreferences.
+  bool get _useSecure => !kIsWeb;
+
   CredentialStore([FlutterSecureStorage? storage])
       : _storage = storage ?? const FlutterSecureStorage();
 
@@ -38,6 +49,7 @@ class CredentialStore {
   /// sign the user out.
   Future<Credentials> load(SharedPreferences prefs) async {
     _prefs = prefs;
+    if (!_useSecure) return _loadWeb(prefs);
     String? pass;
     String? secret;
     try {
@@ -58,6 +70,36 @@ class CredentialStore {
     return Credentials(devicePass: pass, deviceSecret: secret);
   }
 
+  /// Web load: prefs is authoritative. One-time only, if a value is missing
+  /// from prefs but survives in the pre-fix secure-storage backend (encrypted
+  /// localStorage), adopt it so an already-enrolled web device is not forced
+  /// back to OTP by the switch to prefs.
+  Future<Credentials> _loadWeb(SharedPreferences prefs) async {
+    var pass = prefs.getString(_passKey);
+    var secret = prefs.getString(_secretKey);
+    if ((pass == null || pass.isEmpty) || (secret == null || secret.isEmpty)) {
+      try {
+        if (secret == null || secret.isEmpty) {
+          final s = await _storage.read(key: _secretKey);
+          if (s != null && s.isNotEmpty) {
+            await prefs.setString(_secretKey, s);
+            secret = s;
+          }
+        }
+        if (pass == null || pass.isEmpty) {
+          final p = await _storage.read(key: _passKey);
+          if (p != null && p.isNotEmpty) {
+            await prefs.setString(_passKey, p);
+            pass = p;
+          }
+        }
+      } catch (_) {
+        // Secure storage unreadable on this web build — prefs is authoritative.
+      }
+    }
+    return Credentials(devicePass: pass, deviceSecret: secret);
+  }
+
   Future<void> savePass(String pass) =>
       _write(_passKey, pass);
 
@@ -72,7 +114,7 @@ class CredentialStore {
   Future<void> clearPassOnly() => _delete(_passKey);
 
   Future<void> _write(String key, String value) async {
-    if (_secureAvailable) {
+    if (_useSecure && _secureAvailable) {
       try {
         await _storage.write(key: key, value: value);
         return;
@@ -84,12 +126,13 @@ class CredentialStore {
   }
 
   Future<void> _delete(String key) async {
+    // Clear both backends so sign-out is complete regardless of which one holds
+    // the value: web migrated the secret to prefs but a pre-fix copy may linger
+    // in secure storage; native keeps it in secure storage with a possible prefs
+    // fallback copy. Secure delete is best-effort (the plugin may be absent).
     if (_secureAvailable) {
       try {
         await _storage.delete(key: key);
-        // Also drop any prefs copy a fallback period may have left behind.
-        await _prefs?.remove(key);
-        return;
       } catch (_) {
         _secureAvailable = false;
       }
