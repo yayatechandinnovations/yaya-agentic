@@ -55,6 +55,10 @@ public class ChatInboxEntity {
     @Column(name = "media_json", columnDefinition = "jsonb", nullable = false)
     private String mediaJson = "[]";
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "actions_json", columnDefinition = "jsonb")
+    private String actionsJson = "[]";
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -89,6 +93,8 @@ public class ChatInboxEntity {
     public void setCorrelationJson(String v) { this.correlationJson = v; }
     public String getMediaJson() { return mediaJson; }
     public void setMediaJson(String v) { this.mediaJson = v; }
+    public String getActionsJson() { return actionsJson; }
+    public void setActionsJson(String v) { this.actionsJson = v == null || v.isBlank() ? "[]" : v; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getDeliveredAt() { return deliveredAt; }
     public void setDeliveredAt(OffsetDateTime v) { this.deliveredAt = v; }

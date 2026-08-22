@@ -47,6 +47,11 @@ dependencies:
   # QR marks on the thermal-paper widget. Pure Dart, web-safe.
   barcode_widget: ^2.0.4
 
+  # In-app PDF preview on NATIVE targets only (owner-ai-experience v3 §D1). Kept
+  # behind a conditional import so it never enters the web bundle (web previews
+  # PDFs with a native <iframe> instead).
+  pdfx: ^2.6.0
+
   # Browser-native fetch for reading recorded blob: URLs (Firefox blocks XHR
   # on blob:, so Dio/XHR reads come back empty there).
   web: ^1.1.0

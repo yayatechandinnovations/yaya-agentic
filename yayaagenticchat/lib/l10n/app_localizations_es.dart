@@ -619,4 +619,16 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get newMessages => 'Mensajes nuevos';
+
+  @override
+  String get systemSender => 'Sistema';
+
+  @override
+  String get documentTitle => 'Documento';
+
+  @override
+  String get download => 'Descargar';
+
+  @override
+  String get totalsLabel => 'Total';
 }

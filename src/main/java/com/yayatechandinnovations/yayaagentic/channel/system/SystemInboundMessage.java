@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.channel.system;
 
 import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.outreach.ActionItem;
 
 import java.util.List;
 import java.util.Map;
@@ -26,7 +27,8 @@ public record SystemInboundMessage(
         List<MediaRef> media,
         Correlation correlation,
         String dedupKey,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        List<ActionItem> actions
 ) {
     public SystemInboundMessage {
         if (tenant == null) throw new IllegalArgumentException("tenant required");
@@ -40,5 +42,13 @@ public record SystemInboundMessage(
             throw new IllegalArgumentException("dedupKey required");
         correlation = correlation == null ? new Correlation("", "", "") : correlation;
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        actions = actions == null ? List.of() : List.copyOf(actions);
+    }
+
+    /** Back-compat: an envelope with no inline action buttons (§D3). */
+    public SystemInboundMessage(Ids.TenantId tenant, Ids.SystemSenderId senderId,
+                                OutreachRecipient recipient, String body, List<MediaRef> media,
+                                Correlation correlation, String dedupKey, Map<String, Object> metadata) {
+        this(tenant, senderId, recipient, body, media, correlation, dedupKey, metadata, List.of());
     }
 }

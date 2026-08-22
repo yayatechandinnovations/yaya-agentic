@@ -8,6 +8,7 @@ import '../../data/credential_store.dart';
 import '../../data/providers.dart';
 import '../../models/chat_menu.dart';
 import '../../models/chat_message.dart';
+import '../../models/data_view.dart';
 import '../../models/commerce/cart.dart';
 import '../../models/commerce/catalog_payload.dart';
 import '../../models/commerce/checkout_result.dart';
@@ -328,8 +329,9 @@ class ChatController extends StateNotifier<ChatState> {
           .map((m) => ChatMessage(
                 role: 'assistant',
                 text: m.body,
-                senderDisplayName: m.senderDisplay ?? 'System',
+                senderDisplayName: m.senderDisplay ?? ChatMessage.systemSenderFallback,
                 attachments: m.attachments,
+                actions: m.actions,
               ))
           .toList();
       state = state.copyWith(
@@ -753,6 +755,36 @@ class ChatController extends StateNotifier<ChatState> {
           } else {
             _appendAssistant(ChatMessage(role: 'assistant', text: '', receipt: receipt));
           }
+        }
+        break;
+      case 'actions':
+        // Action buttons that belong to the current bubble (owner-ai v3 §D3).
+        // Primary path is inbox-carried actions; this handles a live hint too.
+        final parsed = MessageAction.listFrom(payload['actions'] ?? payload['items']);
+        if (parsed.isEmpty) break;
+        if (hasAssistantBubble) {
+          final last = state.messages.last;
+          _replaceLast(last.copyWith(actions: [...last.actions, ...parsed]));
+        } else {
+          _appendAssistant(ChatMessage(role: 'assistant', text: '', actions: parsed));
+        }
+        break;
+      case 'data_table':
+        // Styled tabular result (owner-ai v3 §D4): rides the current assistant
+        // bubble, or a bare bubble if the hint arrived on a tap channel.
+        final table = DataTablePayload.fromJson(payload);
+        if (hasAssistantBubble) {
+          _replaceLast(state.messages.last.copyWith(dataTable: table));
+        } else {
+          _appendAssistant(ChatMessage(role: 'assistant', text: '', dataTable: table));
+        }
+        break;
+      case 'data_card':
+        final cardData = DataCardPayload.fromJson(payload);
+        if (hasAssistantBubble) {
+          _replaceLast(state.messages.last.copyWith(dataCard: cardData));
+        } else {
+          _appendAssistant(ChatMessage(role: 'assistant', text: '', dataCard: cardData));
         }
         break;
       default:

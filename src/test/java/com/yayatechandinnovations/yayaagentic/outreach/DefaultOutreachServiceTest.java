@@ -136,6 +136,35 @@ class DefaultOutreachServiceTest {
     }
 
     @Test
+    void writesInlineActionsToInboxActionsJson() {
+        when(ledger.findByTenantIdAndSenderIdAndDedupKey(any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(outreachSessions.findByTenantIdAndEntryPointIdAndRecipientKey(any(), any(), any()))
+                .thenReturn(Optional.of(new OutreachSessionEntity(
+                        TENANT.value(), ENTRY_POINT, "principal:" + OPERATOR, "sess-1", "cashier", 1)));
+
+        SystemInboundMessage withActions = new SystemInboundMessage(TENANT, SENDER,
+                new OutreachRecipient.ByPrincipal(OPERATOR), "cash short by 200",
+                java.util.List.of(),
+                new Correlation("Cash Register #3", "cb-9", "cash closure"),
+                "closure-actions",
+                Map.of(),
+                java.util.List.of(new ActionItem("Confirmar", "/confirm cb-9", "primary"),
+                        new ActionItem("Disputar", "/dispute cb-9", "danger")));
+
+        service.ingest(withActions, new OutreachService.OutreachAuth(posPrincipal()));
+
+        ArgumentCaptor<ChatInboxEntity> inbox = ArgumentCaptor.forClass(ChatInboxEntity.class);
+        verify(chatInbox).save(inbox.capture());
+        String actionsJson = inbox.getValue().getActionsJson();
+        assertThat(actionsJson)
+                .contains("\"label\":\"Confirmar\"")
+                .contains("\"send\":\"/confirm cb-9\"")
+                .contains("\"style\":\"primary\"")
+                .contains("\"style\":\"danger\"");
+    }
+
+    @Test
     void reusesExistingOutreachSessionWithoutMinting() {
         when(ledger.findByTenantIdAndSenderIdAndDedupKey(any(), any(), any()))
                 .thenReturn(Optional.empty());

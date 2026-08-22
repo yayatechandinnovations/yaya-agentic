@@ -248,6 +248,7 @@ public class DefaultOutreachService implements OutreachService {
         inbox.setBody(deliveredBody);
         inbox.setCorrelationJson(writeJson(correlationMap(msg)));
         inbox.setMediaJson(writeJson(mediaList));
+        inbox.setActionsJson(writeJson(msg.actions() == null ? List.of() : msg.actions()));
         chatInbox.save(inbox);
 
         // Best-effort wake nudge (§11 #3), gated by the sender's quiet hours (§3).

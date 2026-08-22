@@ -60,6 +60,14 @@ public class ToolEntity {
     @Column(name = "suggestions_json", columnDefinition = "jsonb", nullable = false)
     private String suggestionsJson = "[]";
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "table_outputs_json", columnDefinition = "jsonb")
+    private String tableOutputsJson;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "card_fields_json", columnDefinition = "jsonb")
+    private String cardFieldsJson;
+
     @Column(nullable = false, length = 16)
     private String status = "ACTIVE";
 
@@ -92,6 +100,8 @@ public class ToolEntity {
     public String getCapturesJson() { return capturesJson; }
     public String getBindingsJson() { return bindingsJson; }
     public String getSuggestionsJson() { return suggestionsJson; }
+    public String getTableOutputsJson() { return tableOutputsJson; }
+    public String getCardFieldsJson() { return cardFieldsJson; }
     public String getStatus() { return status; }
 
     public void setInputSchemaJson(String v) { this.inputSchemaJson = v; }
@@ -106,6 +116,8 @@ public class ToolEntity {
     public void setStatus(String v) { this.status = v; }
 
     public void setSuggestionsJson(String v) { this.suggestionsJson = v; }
+    public void setTableOutputsJson(String v) { this.tableOutputsJson = v; }
+    public void setCardFieldsJson(String v) { this.cardFieldsJson = v; }
 
     public static class PK implements Serializable {
         private String tenantId; private String id; private Integer version;

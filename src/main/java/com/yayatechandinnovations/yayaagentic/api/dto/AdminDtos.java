@@ -137,10 +137,18 @@ public final class AdminDtos {
     public record HttpBodyDto(String contentType, String template) {}
 
     public record HttpResponseDto(String jsonPath, Map<String, String> headerOutputs,
-                                   Map<String, String> mediaOutputs) {
+                                   Map<String, String> mediaOutputs,
+                                   Map<String, String> tableOutputs,
+                                   List<Map<String, String>> cardFields) {
         /** Compat ctor — most tools declare no media outputs. */
         public HttpResponseDto(String jsonPath, Map<String, String> headerOutputs) {
-            this(jsonPath, headerOutputs, null);
+            this(jsonPath, headerOutputs, null, null, null);
+        }
+
+        /** Compat ctor — media outputs but no table/card projections (§D4). */
+        public HttpResponseDto(String jsonPath, Map<String, String> headerOutputs,
+                               Map<String, String> mediaOutputs) {
+            this(jsonPath, headerOutputs, mediaOutputs, null, null);
         }
     }
 

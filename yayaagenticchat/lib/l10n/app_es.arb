@@ -207,5 +207,9 @@
   "receiptDraftTitle": "Boleto en progreso",
   "receiptDraftHint": "Toca para verlo — sigue agregando para armar tu boleto",
   "ownerMenu": "Menú",
-  "newMessages": "Mensajes nuevos"
+  "newMessages": "Mensajes nuevos",
+  "systemSender": "Sistema",
+  "documentTitle": "Documento",
+  "download": "Descargar",
+  "totalsLabel": "Total"
 }

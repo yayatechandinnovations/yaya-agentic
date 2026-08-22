@@ -1218,6 +1218,30 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'New messages'**
   String get newMessages;
+
+  /// No description provided for @systemSender.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get systemSender;
+
+  /// No description provided for @documentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Document'**
+  String get documentTitle;
+
+  /// No description provided for @download.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get download;
+
+  /// No description provided for @totalsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Total'**
+  String get totalsLabel;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

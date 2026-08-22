@@ -142,7 +142,8 @@ public class SystemInboundController {
                 tenant, sid, recipient, body.body(), body.mediaDomain(),
                 body.correlation() == null ? null : body.correlation().toDomain(),
                 dedupKey,
-                body.metadata() == null ? Map.of() : body.metadata());
+                body.metadata() == null ? Map.of() : body.metadata(),
+                body.actionsDomain());
     }
 
     private static ResponseStatusException map(OutreachException e) {

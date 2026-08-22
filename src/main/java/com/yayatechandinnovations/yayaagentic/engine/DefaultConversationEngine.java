@@ -1845,6 +1845,17 @@ public class DefaultConversationEngine implements ConversationEngine {
             if (attachment != null) {
                 events.add(attachment);
             }
+            // Declared data projections → data_table / data_card UiHints (§D4).
+            // Config-driven, tenant-safe (no media), fail-soft. A tool may carry
+            // any combination of media + table + card.
+            TurnEvent.UiHint dataTable = dataTableHint(toolDescriptor, recordedResult.value());
+            if (dataTable != null) {
+                events.add(dataTable);
+            }
+            TurnEvent.UiHint dataCard = dataCardHint(toolDescriptor, recordedResult.value());
+            if (dataCard != null) {
+                events.add(dataCard);
+            }
             // Briefing-style results carry the menu badge state (design §3):
             // refresh badges and re-emit the profile menu.
             TurnEvent.UiHint menuHint = menuHintFromResult(
@@ -2139,6 +2150,50 @@ public class DefaultConversationEngine implements ConversationEngine {
             return new TurnEvent.UiHint("attachment", payload);
         } catch (RuntimeException ex) {
             log.warn("media attachment hint failed for tool {}: {}",
+                    toolDescriptor.id().value(), ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * A declared table projection on an OK HTTP tool result becomes a {@code
+     * data_table} UiHint (owner-cockpit v3 §D4) — config-driven, never
+     * LLM-driven. Fail-soft: a missing {@code columnsPath}/{@code rowsPath}, or
+     * a path that resolves to null / not-a-list, drops the hint (never the turn).
+     */
+    private TurnEvent.UiHint dataTableHint(ToolDescriptor toolDescriptor, Object resultValue) {
+        try {
+            if (!(toolDescriptor.handler() instanceof ToolHandlerRef.Http http)
+                    || http.spec() == null || http.spec().response() == null) {
+                return null;
+            }
+            Map<String, Object> payload = DataProjectionHints.dataTable(http.spec().response(), resultValue);
+            return payload == null ? null : new TurnEvent.UiHint("data_table", payload);
+        } catch (RuntimeException ex) {
+            log.warn("data_table hint failed for tool {}: {}",
+                    toolDescriptor.id().value(), ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * A declared card projection on an OK HTTP tool result becomes a {@code
+     * data_card} UiHint (owner-cockpit v3 §D4). Each field resolves a {@code
+     * {label, value, type}} row via its {@code path}; a field whose path is
+     * null / misses is skipped, and the card emits when ≥1 row resolves. An
+     * optional title reuses {@code tableOutputs.titlePath} when declared.
+     * Fail-soft.
+     */
+    private TurnEvent.UiHint dataCardHint(ToolDescriptor toolDescriptor, Object resultValue) {
+        try {
+            if (!(toolDescriptor.handler() instanceof ToolHandlerRef.Http http)
+                    || http.spec() == null || http.spec().response() == null) {
+                return null;
+            }
+            Map<String, Object> payload = DataProjectionHints.dataCard(http.spec().response(), resultValue);
+            return payload == null ? null : new TurnEvent.UiHint("data_card", payload);
+        } catch (RuntimeException ex) {
+            log.warn("data_card hint failed for tool {}: {}",
                     toolDescriptor.id().value(), ex.getMessage());
             return null;
         }

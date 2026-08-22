@@ -257,6 +257,13 @@ public class AdminController {
                 }
                 validateHttpSpec(h.httpSpec());
                 entity.setHandlerHttpSpecJson(writeJson(h.httpSpec()));
+                // §D4 — persist the declarative data-projection config alongside the
+                // spec so it is queryable (the engine reads it back off the spec).
+                AdminDtos.HttpResponseDto resp = h.httpSpec().response();
+                if (resp != null) {
+                    entity.setTableOutputsJson(resp.tableOutputs() == null ? null : writeJson(resp.tableOutputs()));
+                    entity.setCardFieldsJson(resp.cardFields() == null ? null : writeJson(resp.cardFields()));
+                }
             }
             default -> throw badRequest("tool.handler.kind must be BEAN or HTTP");
         }

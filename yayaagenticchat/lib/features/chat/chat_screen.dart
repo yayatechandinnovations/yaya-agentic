@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/theme.dart';
 import '../../config.dart';
@@ -14,6 +13,7 @@ import '../../models/commerce/catalog_payload.dart';
 import '../../models/commerce/product.dart';
 import '../../widgets/brand_logo.dart';
 import 'chat_controller.dart';
+import 'data_view_widgets.dart';
 import 'commerce/cart_header_button.dart';
 import 'commerce/storefront_card.dart';
 import 'commerce/cart_sheet.dart';
@@ -481,18 +481,29 @@ class _Bubble extends ConsumerWidget {
     return Column(
       crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        // Attributed header for a system-participant message (§14).
+        // Attributed header for a system-participant message (§14). The default
+        // (nameless) sender renders localized (owner-ai v3 §D7).
         if (message.isSystem)
           Padding(
             padding: const EdgeInsets.only(left: 6, top: 4),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.hub_outlined, size: 14, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 6),
-              Text(message.senderDisplayName!,
+              Text(
+                  message.senderDisplayName == ChatMessage.systemSenderFallback
+                      ? AppL10n.of(context).systemSender
+                      : message.senderDisplayName!,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
             ]),
           ),
+
+        // ---- styled data views (owner-ai v3 §D4): a card reads best above the
+        // prose that narrates it. ----
+        if (message.dataCard != null)
+          DataCardView(card: message.dataCard!, accent: accent),
+        if (message.dataTable != null)
+          DataTableView(table: message.dataTable!, accent: accent),
         if (hasText)
           Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
@@ -581,6 +592,20 @@ class _Bubble extends ConsumerWidget {
                     ))
                 .toList(),
           ),
+        // Action buttons that BELONG to this message (owner-ai v3 §D3): rendered
+        // on ANY bubble (not gated to latest), never stripped on later turns. A
+        // tap submits through the same send path quick replies use.
+        if (message.actions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 8),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: message.actions
+                  .map((a) => _ActionButton(action: a, accent: accent, onTap: onQuickReply))
+                  .toList(),
+            ),
+          ),
         if (!isUser && isLatest && message.quickReplies.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -594,6 +619,42 @@ class _Bubble extends ConsumerWidget {
           ),
       ],
     );
+  }
+}
+
+/// One message-owned action button (owner-ai v3 §D3). Style maps: primary →
+/// filled accent, danger → filled error, neutral → outlined.
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({required this.action, required this.accent, required this.onTap});
+
+  final MessageAction action;
+  final Color accent;
+  final void Function(String) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = Text(action.label);
+    void onPressed() => onTap(action.send);
+    switch (action.style) {
+      case 'danger':
+        final scheme = Theme.of(context).colorScheme;
+        return FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: scheme.error,
+            foregroundColor: scheme.onError,
+          ),
+          onPressed: onPressed,
+          child: label,
+        );
+      case 'primary':
+        return FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: accent, foregroundColor: Colors.white),
+          onPressed: onPressed,
+          child: label,
+        );
+      default:
+        return OutlinedButton(onPressed: onPressed, child: label);
+    }
   }
 }
 
@@ -680,18 +741,15 @@ class _AttachmentView extends StatelessWidget {
 
   final ChatAttachment attachment;
 
-  Future<void> _open() async {
-    final uri = Uri.parse(AppConfig.resolveUrl(attachment.url));
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
+  /// Open the document in the in-app viewer (owner-ai v3 §D1) instead of kicking
+  /// the owner out to an external browser/viewer.
+  void _open(BuildContext context) => context.push('/doc', extra: attachment);
 
   @override
   Widget build(BuildContext context) {
     if (attachment.isImage) {
       return GestureDetector(
-        onTap: _open,
+        onTap: () => _open(context),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: Image.network(
@@ -710,7 +768,7 @@ class _AttachmentView extends StatelessWidget {
   Widget _chip(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
-      onTap: _open,
+      onTap: () => _open(context),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -725,7 +783,7 @@ class _AttachmentView extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 180),
             child: Text(
-              attachment.filename ?? 'Document',
+              attachment.filename ?? AppL10n.of(context).documentTitle,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium,
             ),

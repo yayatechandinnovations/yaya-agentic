@@ -1,9 +1,12 @@
+import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/account/account_screen.dart';
 import '../features/account/receipts_screen.dart';
 import '../features/chat/chat_screen.dart';
+import '../features/chat/document_viewer_screen.dart';
 import '../features/courier/courier_screen.dart';
+import '../models/chat_message.dart';
 import '../features/directory/directory_screen.dart';
 import '../features/discover/discover_screen.dart';
 import '../features/entry/entry_screen.dart';
@@ -72,6 +75,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/chat/:handle',
       builder: (context, state) => ChatScreen(handle: state.pathParameters['handle']!),
+    ),
+    // In-app document viewer (owner-ai v3 §D1): the attachment rides as `extra`.
+    // A direct nav without one just pops back to safety.
+    GoRoute(
+      path: '/doc',
+      builder: (context, state) {
+        final att = state.extra;
+        if (att is! ChatAttachment) return const SizedBox.shrink();
+        return DocumentViewerScreen(attachment: att);
+      },
     ),
   ],
 );

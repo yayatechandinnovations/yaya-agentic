@@ -57,6 +57,15 @@ public class ChatInboxService {
     }
 
     private InboxItem toItem(Ids.TenantId tenant, ChatInboxEntity e) {
+        List<ActionItem> actions = new ArrayList<>();
+        try {
+            actions = json.readValue(
+                    e.getActionsJson() == null ? "[]" : e.getActionsJson(),
+                    new com.fasterxml.jackson.core.type.TypeReference<List<ActionItem>>() {});
+        } catch (Exception ignored) {
+            // A malformed actions blob never blocks message delivery.
+            actions = new ArrayList<>();
+        }
         List<Attachment> attachments = new ArrayList<>();
         try {
             List<Map<String, Object>> media = json.readValue(
@@ -78,7 +87,7 @@ public class ChatInboxService {
         return new InboxItem(e.getId(), e.getSessionId(), e.getSenderDisplay(),
                 e.getSubject(), e.getBody(),
                 e.getCreatedAt() == null ? Instant.now() : e.getCreatedAt().toInstant(),
-                attachments);
+                attachments, actions);
     }
 
     public record InboxItem(
@@ -88,7 +97,8 @@ public class ChatInboxService {
             String subject,
             String body,
             Instant createdAt,
-            List<Attachment> attachments
+            List<Attachment> attachments,
+            List<ActionItem> actions
     ) {}
 
     /** A delivered attachment with its short-lived signed URL. */

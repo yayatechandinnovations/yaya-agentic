@@ -25,10 +25,22 @@ public final class SystemInboundDtos {
             List<MediaItem> media,
             CorrelationRef correlation,
             String dedupKey,
-            Map<String, Object> metadata
+            Map<String, Object> metadata,
+            /** Optional inline action buttons the message offers the operator (§D3). */
+            List<ActionItem> actions
     ) {
+        /** Back-compat: an ingest body with no inline actions. */
+        public IngestRequest(RecipientRef recipient, String body, List<MediaItem> media,
+                             CorrelationRef correlation, String dedupKey, Map<String, Object> metadata) {
+            this(recipient, body, media, correlation, dedupKey, metadata, null);
+        }
+
         public List<MediaRef> mediaDomain() {
             return media == null ? List.of() : media.stream().map(MediaItem::toDomain).toList();
+        }
+
+        public List<com.yayatechandinnovations.yayaagentic.outreach.ActionItem> actionsDomain() {
+            return actions == null ? List.of() : actions.stream().map(ActionItem::toDomain).toList();
         }
     }
 
@@ -36,6 +48,13 @@ public final class SystemInboundDtos {
     public record MediaItem(String assetId, String contentType, String filename, long sizeBytes) {
         public MediaRef toDomain() {
             return new MediaRef(assetId, contentType, filename, sizeBytes);
+        }
+    }
+
+    /** An inline action button on the message (§D3); style ∈ {primary, danger, neutral}. */
+    public record ActionItem(String label, String send, String style) {
+        public com.yayatechandinnovations.yayaagentic.outreach.ActionItem toDomain() {
+            return new com.yayatechandinnovations.yayaagentic.outreach.ActionItem(label, send, style);
         }
     }
 

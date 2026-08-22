@@ -2,6 +2,7 @@ import 'commerce/cart.dart';
 import 'commerce/catalog_payload.dart';
 import 'commerce/checkout_result.dart';
 import 'commerce/product.dart';
+import 'data_view.dart';
 import 'receipts.dart';
 
 /// One bubble in the conversation. Assistant bubbles accrete streamed tokens and
@@ -34,6 +35,34 @@ class QuickReply {
   }
 }
 
+/// An action button that BELONGS to a message (owner-ai-experience v3 §D3):
+/// approve/deny under an undo-request, etc. Unlike a [QuickReply], these are not
+/// stripped on later turns — they stay with their bubble. [style] picks the
+/// affordance (primary/danger/neutral); a tap submits [send] through the normal
+/// send path.
+class MessageAction {
+  final String label;
+  final String send;
+  final String style; // primary | danger | neutral
+
+  const MessageAction({required this.label, required this.send, this.style = 'neutral'});
+
+  /// Parses one `actions` entry: `{"label":"Aprobar","send":"…","style":"primary"}`.
+  factory MessageAction.fromJson(Map<String, dynamic> j) {
+    final label = (j['label'] ?? j['send'] ?? '').toString();
+    final send = (j['send'] ?? j['label'] ?? '').toString();
+    final style = (j['style'] ?? 'neutral').toString();
+    return MessageAction(label: label, send: send, style: style);
+  }
+
+  static List<MessageAction> listFrom(Object? raw) => raw is List
+      ? [
+          for (final a in raw)
+            if (a is Map) MessageAction.fromJson(Map<String, dynamic>.from(a)),
+        ]
+      : const [];
+}
+
 class ChatMessage {
   final String role; // 'user' | 'assistant'
   final String text;
@@ -56,6 +85,15 @@ class ChatMessage {
   final String? senderDisplayName;
   final List<ChatAttachment> attachments;
 
+  // Action buttons that belong to this message (owner-ai v3 §D3): rendered as a
+  // row under the bubble, NOT stripped on later turns.
+  final List<MessageAction> actions;
+
+  // Styled data views (owner-ai v3 §D4): a two-column card or a scrollable table
+  // synthesized from a tool result. At most one of each per bubble.
+  final DataTablePayload? dataTable;
+  final DataCardPayload? dataCard;
+
   const ChatMessage({
     required this.role,
     required this.text,
@@ -69,7 +107,14 @@ class ChatMessage {
     this.receipt,
     this.senderDisplayName,
     this.attachments = const [],
+    this.actions = const [],
+    this.dataTable,
+    this.dataCard,
   });
+
+  /// The default attributed sender label when a system message carries no
+  /// explicit name — rendered localized (owner-ai v3 §D7).
+  static const systemSenderFallback = 'System';
 
   bool get isUser => role == 'user';
 
@@ -95,6 +140,9 @@ class ChatMessage {
     ReceiptInstance? receipt,
     String? senderDisplayName,
     List<ChatAttachment>? attachments,
+    List<MessageAction>? actions,
+    DataTablePayload? dataTable,
+    DataCardPayload? dataCard,
   }) =>
       ChatMessage(
         role: role,
@@ -109,6 +157,9 @@ class ChatMessage {
         receipt: receipt ?? this.receipt,
         senderDisplayName: senderDisplayName ?? this.senderDisplayName,
         attachments: attachments ?? this.attachments,
+        actions: actions ?? this.actions,
+        dataTable: dataTable ?? this.dataTable,
+        dataCard: dataCard ?? this.dataCard,
       );
 }
 
@@ -168,12 +219,16 @@ class InboxMessage {
   final String body;
   final List<ChatAttachment> attachments;
 
+  /// Action buttons carried on the message (owner-ai v3 §D3).
+  final List<MessageAction> actions;
+
   const InboxMessage({
     required this.sessionId,
     this.senderDisplay,
     this.subject,
     required this.body,
     this.attachments = const [],
+    this.actions = const [],
   });
 
   factory InboxMessage.fromJson(Map<String, dynamic> json) => InboxMessage(
@@ -184,5 +239,6 @@ class InboxMessage {
         attachments: (json['attachments'] as List? ?? const [])
             .map((e) => ChatAttachment.fromJson((e as Map).cast<String, dynamic>()))
             .toList(),
+        actions: MessageAction.listFrom(json['actions']),
       );
 }
