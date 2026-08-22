@@ -2,9 +2,13 @@ package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatAuthService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPoint;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointService;
 import com.yayatechandinnovations.yayaagentic.channel.chat.EntryPointStatus;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatAccountService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.DevicePassService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.verify.VerifiedDevice;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.outreach.ChatInboxService;
 import com.yayatechandinnovations.yayaagentic.outreach.ChatInboxService.InboxItem;
@@ -35,13 +39,22 @@ public class ChatInboxController {
     private final ChatEntryPointService entryPoints;
     private final Authenticator authenticator;
     private final ChatInboxService inbox;
+    private final DevicePassService devicePasses;
+    private final ChatAccountService accounts;
+    private final ChatAuthService chatAuth;
 
     public ChatInboxController(ChatEntryPointService entryPoints,
                                Authenticator authenticator,
-                               ChatInboxService inbox) {
+                               ChatInboxService inbox,
+                               DevicePassService devicePasses,
+                               ChatAccountService accounts,
+                               ChatAuthService chatAuth) {
         this.entryPoints = entryPoints;
         this.authenticator = authenticator;
         this.inbox = inbox;
+        this.devicePasses = devicePasses;
+        this.accounts = accounts;
+        this.chatAuth = chatAuth;
     }
 
     @GetMapping
@@ -82,8 +95,31 @@ public class ChatInboxController {
         return ep;
     }
 
-    /** The inbox is identity-scoped: an anonymous or missing bearer can't drain. */
+    /**
+     * The inbox is identity-scoped: only a verified, non-anonymous identity
+     * may drain, and only its own messages.
+     *
+     * <p>A chat user's identity is their <b>verified device pass</b>
+     * ({@code X-Device-Pass} → subject {@code chat:+E164}) — the exact key
+     * proactive outreach addresses. The generic {@code authenticator} chain
+     * only understands bearer/OIDC tokens, so resolving the device pass here
+     * (mirroring {@code PublicChatController.caller}) is what lets an owner
+     * actually pull their messages; without it a device-pass-only user always
+     * 401s and every proactive message strands undelivered. A tenant bearer
+     * still works as the fallback (resolver-verified chats).
+     */
     private Principal requireVerified(ChatEntryPoint ep, ServerWebExchange exchange) {
+        Optional<VerifiedDevice> device = devicePasses
+                .verify(exchange.getRequest().getHeaders().getFirst("X-Device-Pass"))
+                .filter(accounts::isLive);
+        if (device.isPresent()) {
+            AuthContext deviceCtx = chatAuth.verifiedDeviceContext(ep, ep.handle(), device.get());
+            Optional<Principal> resolved = authenticator.tryAuthenticate(deviceCtx)
+                    .filter(p -> !isAnonymous(p));
+            if (resolved.isPresent()) {
+                return resolved.get();
+            }
+        }
         AuthContext ctx = new AuthContext(ep.tenant(),
                 exchange.getRequest().getHeaders().toSingleValueMap(), Optional.empty());
         return authenticator.tryAuthenticate(ctx)
