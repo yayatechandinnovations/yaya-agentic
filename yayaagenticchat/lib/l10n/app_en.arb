@@ -216,5 +216,6 @@
   "totalsLabel": "Total",
   "clearConversation": "Clear conversation",
   "clearConversationConfirm": "This conversation will be cleared and a new one will start. Previous messages can't be recovered.",
-  "clear": "Clear"
+  "clear": "Clear",
+  "openInNewTab": "Open in a new tab"
 }

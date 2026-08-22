@@ -638,4 +638,7 @@ class AppL10nEn extends AppL10n {
 
   @override
   String get clear => 'Clear';
+
+  @override
+  String get openInNewTab => 'Open in a new tab';
 }

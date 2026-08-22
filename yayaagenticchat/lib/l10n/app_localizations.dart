@@ -1260,6 +1260,12 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Clear'**
   String get clear;
+
+  /// No description provided for @openInNewTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in a new tab'**
+  String get openInNewTab;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

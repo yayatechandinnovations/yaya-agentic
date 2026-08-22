@@ -641,4 +641,7 @@ class AppL10nEs extends AppL10n {
 
   @override
   String get clear => 'Limpiar';
+
+  @override
+  String get openInNewTab => 'Abrir en una pestaña nueva';
 }

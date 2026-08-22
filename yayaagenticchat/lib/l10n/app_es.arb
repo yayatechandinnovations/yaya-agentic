@@ -214,5 +214,6 @@
   "totalsLabel": "Total",
   "clearConversation": "Limpiar conversación",
   "clearConversationConfirm": "Se borrará esta conversación y empezarás una nueva. Los mensajes anteriores no se recuperan.",
-  "clear": "Limpiar"
+  "clear": "Limpiar",
+  "openInNewTab": "Abrir en una pestaña nueva"
 }
