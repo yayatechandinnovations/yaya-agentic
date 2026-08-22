@@ -21,5 +21,15 @@ public record Capability(
         String llmGuidance,
         List<Ids.ToolId> tools,
         List<String> followUpHints,
-        PermissionRequirement requires
-) {}
+        PermissionRequirement requires,
+        MenuBlock menu
+) {
+
+    /** Compat constructor for capabilities without a menu entry. */
+    public Capability(Ids.CapabilityId id, String userFacingLabel, String userFacingDescription,
+                      String llmGuidance, List<Ids.ToolId> tools, List<String> followUpHints,
+                      PermissionRequirement requires) {
+        this(id, userFacingLabel, userFacingDescription, llmGuidance, tools, followUpHints,
+                requires, null);
+    }
+}

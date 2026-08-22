@@ -34,6 +34,23 @@ public record HttpToolSpec(
     /** Builds a JSON body from input args. Concrete strategy chosen per spec. */
     public record BodyTemplate(String contentType, String template) {}
 
-    /** Maps the HTTP response into the tool's declared output schema. */
-    public record ResponseProjection(String jsonPath, Map<String, String> headerOutputs) {}
+    /**
+     * Maps the HTTP response into the tool's declared output schema.
+     *
+     * <p>{@code mediaOutputs} (optional, owner-cockpit design): when set,
+     * an OK result names a tenant media asset the engine surfaces as a
+     * signed-URL document attachment on the assistant turn. Keys:
+     * {@code assetIdPath} (required, JSON path into the result, e.g.
+     * {@code $.assetId}) and {@code filenamePath} (optional). The engine
+     * verifies the asset belongs to the session's tenant before minting
+     * the URL — a tool result can never link foreign media.</p>
+     */
+    public record ResponseProjection(String jsonPath, Map<String, String> headerOutputs,
+                                     Map<String, String> mediaOutputs) {
+
+        /** Compat constructor — most tools declare no media outputs. */
+        public ResponseProjection(String jsonPath, Map<String, String> headerOutputs) {
+            this(jsonPath, headerOutputs, null);
+        }
+    }
 }

@@ -57,6 +57,22 @@ public class ChatInboxController {
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * Unread count (owner-cockpit design §2.3): a pure peek — never marks
+     * delivered — so clients can badge without consuming the inbox.
+     */
+    @GetMapping("/count")
+    public Mono<CountResponse> count(@PathVariable("handle") String handle,
+                                     ServerWebExchange exchange) {
+        return Mono.fromSupplier(() -> {
+            ChatEntryPoint ep = requirePublic(handle);
+            Principal principal = requireVerified(ep, exchange);
+            List<InboxItem> items = inbox.drain(ep.tenant(), ep.id().value(),
+                    principal.subject(), /* markDelivered */ false);
+            return new CountResponse(items.size());
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
     private ChatEntryPoint requirePublic(String handle) {
         ChatEntryPoint ep = entryPoints.findByHandle(handle)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown handle"));
@@ -82,4 +98,6 @@ public class ChatInboxController {
     }
 
     public record InboxResponse(List<InboxItem> items) {}
+
+    public record CountResponse(int count) {}
 }

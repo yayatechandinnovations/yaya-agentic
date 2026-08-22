@@ -178,6 +178,17 @@ public class AdminController {
         entity.setLlmGuidance(req.llmGuidance());
         entity.setToolIdsJson(writeJson(safeList(req.tools())));
         entity.setFollowUpHintsJson(writeJson(safeList(req.followUpHints())));
+        if (req.menu() != null && !req.menu().isEmpty()) {
+            // Validate by projecting into the runtime record (its compact
+            // invariants produce the message the operator should see).
+            try {
+                json.convertValue(req.menu(),
+                        com.yayatechandinnovations.yayaagentic.profile.MenuBlock.class);
+            } catch (IllegalArgumentException ex) {
+                throw badRequest("capability.menu is invalid: " + ex.getMessage());
+            }
+            entity.setMenuJson(writeJson(req.menu()));
+        }
         capabilities.save(entity);
         runtimeCatalog.registerCapability(catalogMapper.toCapability(entity));
         return ResponseEntity.status(HttpStatus.CREATED).body(toCapabilityResponse(entity));
@@ -231,6 +242,7 @@ public class AdminController {
         validateBindings(bindings, req.inputSchemaJson());
         entity.setCapturesJson(writeJson(captures));
         entity.setBindingsJson(writeJson(bindings));
+        entity.setSuggestionsJson(writeJson(req.suggestions() == null ? List.of() : req.suggestions()));
 
         switch (kind) {
             case "BEAN" -> {
@@ -600,6 +612,8 @@ public class AdminController {
                 e.getLabel(), e.getDescription(), e.getLlmGuidance(),
                 readJson(e.getToolIdsJson(), new TypeReference<List<String>>() {}),
                 readJson(e.getFollowUpHintsJson(), new TypeReference<List<String>>() {}),
+                e.getMenuJson() == null ? null
+                        : readJson(e.getMenuJson(), new TypeReference<Map<String, Object>>() {}),
                 null /* createdAt populated by DB; not loaded here in M1 */);
     }
 
@@ -616,6 +630,8 @@ public class AdminController {
                 readJson(e.getPolicyJson(), MAP_REF),
                 readList(e.getCapturesJson(), CAPTURE_LIST_REF),
                 readList(e.getBindingsJson(), BINDING_LIST_REF),
+                readList(e.getSuggestionsJson(),
+                        new TypeReference<List<com.yayatechandinnovations.yayaagentic.tool.SuggestionRule>>() {}),
                 e.getStatus(), null);
     }
 

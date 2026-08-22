@@ -98,7 +98,13 @@ public final class PublicChatDtos {
          *  code — the sole value the client sends back; everything else in the
          *  picker is display-only). {@code callId} is only set for
          *  {@code kind == "confirm"}. */
-        public record Selection(String kind, String code, String callId) {}
+        public record Selection(String kind, String code, String callId,
+                                java.util.List<String> itemIds) {
+            /** Compat ctor — selections without the multi-item confirm ids. */
+            public Selection(String kind, String code, String callId) {
+                this(kind, code, callId, null);
+            }
+        }
     }
 
     /** One uploaded attachment ({@code POST /sessions/{id}/attachments}). The

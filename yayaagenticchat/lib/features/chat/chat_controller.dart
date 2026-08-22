@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/chat_api.dart';
 import '../../data/credential_store.dart';
 import '../../data/providers.dart';
+import '../../models/chat_menu.dart';
 import '../../models/chat_message.dart';
 import '../../models/commerce/cart.dart';
 import '../../models/commerce/catalog_payload.dart';
@@ -85,6 +86,14 @@ class ChatState {
   /// Attachments staged in the composer tray, not yet sent (§6).
   final List<PendingAttachment> pendingAttachments;
 
+  /// The persistent owner menu (owner-ai-experience v2 §3): session chrome, not
+  /// a bubble. Only the LATEST `menu` UiHint is kept — each new one replaces it.
+  final ChatMenu? menu;
+
+  /// Pending (undelivered) inbox messages, peeked via `/inbox/count` — drives
+  /// the app-bar badge; cleared when the inbox is drained (owner-ai v2 §5).
+  final int unreadCount;
+
   const ChatState({
     this.card,
     this.messages = const [],
@@ -102,6 +111,8 @@ class ChatState {
     this.resumeAvailable = false,
     this.resumeSessionId,
     this.pendingAttachments = const [],
+    this.menu,
+    this.unreadCount = 0,
   });
 
   bool get authenticated => bearer != null && bearer!.isNotEmpty;
@@ -141,6 +152,8 @@ class ChatState {
     String? resumeSessionId,
     bool clearResume = false,
     List<PendingAttachment>? pendingAttachments,
+    ChatMenu? menu,
+    int? unreadCount,
   }) =>
       ChatState(
         card: card ?? this.card,
@@ -159,6 +172,8 @@ class ChatState {
         resumeAvailable: clearResume ? false : (resumeAvailable ?? this.resumeAvailable),
         resumeSessionId: clearResume ? null : (resumeSessionId ?? this.resumeSessionId),
         pendingAttachments: pendingAttachments ?? this.pendingAttachments,
+        menu: menu ?? this.menu,
+        unreadCount: unreadCount ?? this.unreadCount,
       );
 }
 
@@ -253,7 +268,10 @@ class ChatController extends StateNotifier<ChatState> {
       if ((state.card?.welcomeText ?? '').isNotEmpty)
         ChatMessage(role: 'assistant', text: state.card!.welcomeText!),
       if (result.greeting.isNotEmpty)
-        ChatMessage(role: 'assistant', text: result.greeting, quickReplies: result.quickReplies),
+        ChatMessage(
+            role: 'assistant',
+            text: result.greeting,
+            quickReplies: [for (final q in result.quickReplies) QuickReply.text(q)]),
     ];
     state = state.copyWith(
       sessionId: result.sessionId,
@@ -263,6 +281,10 @@ class ChatController extends StateNotifier<ChatState> {
       clearError: true,
       commerce: result.commerce,
       receipts: result.receipts,
+      // Seed the docked owner menu from the profile's `extensions.menu`
+      // (owner-ai v2 §3) so it's there before the first turn; any later
+      // `menu` ui_hint still replaces it wholesale.
+      menu: result.menu,
     );
     // Hydrate the cart badge for a returning shopper (durable cart projection,
     // §14). Best-effort — a fresh session just gets an empty cart.
@@ -278,12 +300,30 @@ class ChatController extends StateNotifier<ChatState> {
   /// that arrives while the chat is open appears without reopening it.
   Future<void> refreshInbox() => _drainInbox();
 
+  /// Peek the pending-inbox count WITHOUT delivering (owner-ai v2 §5) — drives
+  /// the app-bar unread badge. Only touches state when the count actually
+  /// changed, so the badge never flickers.
+  Future<void> refreshUnreadCount() async {
+    try {
+      final count = await _api.inboxCount(_handle, bearer: state.bearer);
+      if (!mounted || count == state.unreadCount) return;
+      state = state.copyWith(unreadCount: count);
+    } catch (_) {
+      // Badge is a nicety — a failed peek changes nothing.
+    }
+  }
+
   /// Fetch + append pending system-participant messages, rendered as attributed
   /// bubbles with their attachments (system-messaging-design.md §11, §14).
+  /// A drain always clears the unread badge — those messages are now on screen.
   Future<void> _drainInbox() async {
     try {
       final items = await _api.inbox(_handle, bearer: state.bearer);
-      if (items.isEmpty || !mounted) return;
+      if (!mounted) return;
+      if (items.isEmpty) {
+        if (state.unreadCount != 0) state = state.copyWith(unreadCount: 0);
+        return;
+      }
       final drained = items
           .map((m) => ChatMessage(
                 role: 'assistant',
@@ -292,7 +332,9 @@ class ChatController extends StateNotifier<ChatState> {
                 attachments: m.attachments,
               ))
           .toList();
-      state = state.copyWith(messages: [...state.messages, ...drained]);
+      state = state.copyWith(
+          messages: [..._withoutQuickReplies(state.messages), ...drained],
+          unreadCount: 0);
     } catch (_) {
       // Never let a drain failure disrupt the live chat.
     }
@@ -427,7 +469,10 @@ class ChatController extends StateNotifier<ChatState> {
 
   /* ------------------------------ chat send ----------------------------- */
 
-  Future<void> send(String text) async {
+  /// [selection] optionally rides the message as the structured `selection`
+  /// field (network-chat-runtime §3.2) — used by the multi-item confirm
+  /// (`{"kind":"confirm_items","itemIds":[…]}`, owner-ai v2 §4).
+  Future<void> send(String text, {Map<String, Object?>? selection}) async {
     final trimmed = text.trim();
     final ready = state.pendingAttachments.where((p) => p.uploaded != null).toList();
     if ((trimmed.isEmpty && ready.isEmpty) || state.sending || state.sessionId == null) {
@@ -439,9 +484,11 @@ class ChatController extends StateNotifier<ChatState> {
     final sentAttachments = [for (final p in ready) p.uploaded!];
 
     // Any new user turn resolves or pivots away from a pending confirm — the
-    // engine drops its own pending_confirm; mirror that on the client.
+    // engine drops its own pending_confirm; mirror that on the client. Stale
+    // quick replies come off older bubbles too (owner-ai v2 §5): chips belong
+    // only to the LATEST assistant turn.
     final withUser = [
-      ...state.messages,
+      ..._withoutQuickReplies(state.messages),
       ChatMessage(role: 'user', text: trimmed, attachments: sentAttachments),
     ];
     final assistant = const ChatMessage(role: 'assistant', text: '', streaming: true);
@@ -455,7 +502,7 @@ class ChatController extends StateNotifier<ChatState> {
     final buf = _TurnBuffers();
     try {
       await for (final evt in _api.sendMessage(state.sessionId!, trimmed,
-          bearer: state.bearer, attachmentIds: attachmentIds)) {
+          bearer: state.bearer, attachmentIds: attachmentIds, selection: selection)) {
         _applyEvent(evt, buf, hasAssistantBubble: true);
       }
       _finishAssistant();
@@ -562,6 +609,18 @@ class ChatController extends StateNotifier<ChatState> {
 
   Future<void> cancelPending() => send('no');
 
+  /// Approve a MULTI-ITEM confirm (owner-ai v2 §4): the transcript-legible "SÍ"
+  /// plus a structured selection naming exactly the checked item ids. The
+  /// engine reads `_selection` before NL resolution, so partial approval is
+  /// deterministic — never inferred from prose.
+  Future<void> confirmPendingItems(List<String> itemIds) => send('SÍ', selection: {
+        'kind': 'confirm_items',
+        'itemIds': itemIds,
+      });
+
+  /// Decline a multi-item confirm — a plain "NO", no selection.
+  Future<void> cancelPendingItems() => send('NO');
+
   /// The UI layer calls this after it has consumed [state.pendingCheckout].
   void checkoutConsumed() => state = state.copyWith(clearCheckout: true);
 
@@ -600,13 +659,38 @@ class ChatController extends StateNotifier<ChatState> {
 
     switch (kind) {
       case 'quick_replies':
-        // Engine emits {"payload":{"items":[…]}}. Tolerate the older shapes too.
+        // v2 `actions` win when present ({label, send} — owner-ai v2 §5);
+        // otherwise the legacy label-only shapes: {"payload":{"items":[…]}}
+        // and its older variants.
+        final actions = payload['actions'];
         final raw = payload['items'] ?? payload['quick_replies'] ?? data['quick_replies'];
-        if (raw is List && hasAssistantBubble) {
+        final replies = actions is List && actions.isNotEmpty
+            ? [
+                for (final a in actions)
+                  if (a is Map) QuickReply.fromJson(Map<String, dynamic>.from(a)),
+              ]
+            : raw is List
+                ? [for (final e in raw) QuickReply.text(e.toString())]
+                : null;
+        if (replies != null && hasAssistantBubble) {
           buf.quickReplies
             ..clear()
-            ..addAll(raw.map((e) => e.toString()));
+            ..addAll(replies);
           _replaceLast(state.messages.last.copyWith(quickReplies: List.of(buf.quickReplies)));
+        }
+        break;
+      case 'attachment':
+        // A document the engine hands over mid-turn (e.g. a cash report PDF):
+        // rides the current assistant bubble as a standard attachment tile —
+        // same chrome + signed-URL open path as inbox attachments.
+        final attachment = ChatAttachment.fromJson(payload);
+        if (attachment.url.isEmpty) break;
+        if (hasAssistantBubble) {
+          final last = state.messages.last;
+          _replaceLast(last.copyWith(attachments: [...last.attachments, attachment]));
+        } else {
+          _appendAssistant(
+              ChatMessage(role: 'assistant', text: '', attachments: [attachment]));
         }
         break;
       case 'product_catalog':
@@ -636,6 +720,11 @@ class ChatController extends StateNotifier<ChatState> {
         break;
       case 'confirm':
         state = state.copyWith(pendingConfirm: ConfirmPrompt.fromJson(payload));
+        break;
+      case 'menu':
+        // Persistent owner menu (owner-ai v2 §3): session chrome, never a
+        // bubble. The latest hint always wins — replace wholesale.
+        state = state.copyWith(menu: ChatMenu.fromJson(payload));
         break;
       case 'checkout_result':
         final result = CheckoutResult.fromJson(payload);
@@ -681,7 +770,16 @@ class ChatController extends StateNotifier<ChatState> {
   }
 
   void _appendAssistant(ChatMessage m) =>
-      state = state.copyWith(messages: [...state.messages, m]);
+      // A new assistant bubble demotes every older one — stale quick replies
+      // come off so chips only ever ride the latest turn (owner-ai v2 §5).
+      state = state.copyWith(messages: [..._withoutQuickReplies(state.messages), m]);
+
+  /// Strip quick replies from every message — used whenever a NEW bubble is
+  /// about to be appended, so chips never linger on older turns.
+  static List<ChatMessage> _withoutQuickReplies(List<ChatMessage> msgs) => [
+        for (final m in msgs)
+          m.quickReplies.isEmpty ? m : m.copyWith(quickReplies: const []),
+      ];
 
   void _finishAssistant() {
     if (state.messages.isEmpty) return;
@@ -734,7 +832,7 @@ class ChatController extends StateNotifier<ChatState> {
 /// Per-turn accumulators for the streamed assistant bubble.
 class _TurnBuffers {
   final StringBuffer text = StringBuffer();
-  final List<String> quickReplies = <String>[];
+  final List<QuickReply> quickReplies = <QuickReply>[];
   final List<Citation> citations = <Citation>[];
 }
 

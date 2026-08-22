@@ -10,10 +10,34 @@ import 'receipts.dart';
 /// chrome instead of prose: a product carousel, an expanded product card, or a
 /// checkout result. `cartSnapshot` is the inline "what just changed" confirmation
 /// after a cart mutation (ecommerce-chat-design.md §10.1, §10.3).
+/// One tappable suggestion chip under the latest assistant bubble. The legacy
+/// `quick_replies` payload carries bare labels (label == send); the v2
+/// `actions` form separates the visible [label] from the [send] text the tap
+/// submits (owner-ai-experience v2 §5).
+class QuickReply {
+  final String label;
+  final String send;
+
+  const QuickReply({required this.label, required this.send});
+
+  /// Legacy label-only chip: what you see is what gets sent.
+  const QuickReply.text(String value)
+      : label = value,
+        send = value;
+
+  /// Parses one `actions` entry: `{"label":"En PDF","send":"Dame ese …"}`.
+  /// Either side falls back to the other, so a lopsided entry still works.
+  factory QuickReply.fromJson(Map<String, dynamic> j) {
+    final label = (j['label'] ?? j['send'] ?? '').toString();
+    final send = (j['send'] ?? j['label'] ?? '').toString();
+    return QuickReply(label: label, send: send);
+  }
+}
+
 class ChatMessage {
   final String role; // 'user' | 'assistant'
   final String text;
-  final List<String> quickReplies;
+  final List<QuickReply> quickReplies;
   final List<Citation> citations;
   final bool streaming;
 
@@ -61,7 +85,7 @@ class ChatMessage {
 
   ChatMessage copyWith({
     String? text,
-    List<String>? quickReplies,
+    List<QuickReply>? quickReplies,
     List<Citation>? citations,
     bool? streaming,
     CatalogPayload? catalog,

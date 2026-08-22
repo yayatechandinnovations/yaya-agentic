@@ -35,6 +35,7 @@ import com.yayatechandinnovations.yayaagentic.tool.EntityCapture;
 import com.yayatechandinnovations.yayaagentic.tool.OnConflict;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolExecutor;
+import com.yayatechandinnovations.yayaagentic.tool.ToolHandlerRef;
 import com.yayatechandinnovations.yayaagentic.tool.dispatch.EntityBinder;
 import com.yayatechandinnovations.yayaagentic.tool.dispatch.JsonPointerExtractor;
 import org.springframework.stereotype.Component;
@@ -86,6 +87,16 @@ public class DefaultConversationEngine implements ConversationEngine {
     private final com.yayatechandinnovations.yayaagentic.startflow.StartFlowResolver startFlowResolver;
     private final com.yayatechandinnovations.yayaagentic.startflow.StartFlowRegistry startFlowRegistry;
     private final com.yayatechandinnovations.yayaagentic.startflow.StartFlowRunner startFlowRunner;
+
+    // Owner-cockpit additions. The evaluator is stateless; the media pair is
+    // optional field injection so the many hand-built test constructors keep
+    // compiling — without them the attachment path simply no-ops.
+    private final SuggestionRuleEvaluator suggestionRuleEvaluator = new SuggestionRuleEvaluator();
+    private static final ObjectMapper CONFIRM_ITEMS_JSON = new ObjectMapper();
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.outreach.media.MediaLibraryService mediaLibrary;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.outreach.media.MediaTokenSigner mediaTokenSigner;
 
     private final Map<Ids.SessionId, Session> active = new ConcurrentHashMap<>();
     private final Map<Ids.SessionId, IntentFrame> activeIntents = new ConcurrentHashMap<>();
@@ -235,7 +246,19 @@ public class DefaultConversationEngine implements ConversationEngine {
                     session.id().value(), e);
         }
 
-        return new StartSessionResult(session, profileId, greeting, quickReplies, profile.extensions());
+        // Owner-cockpit menu (design §3): assembled from the profile's
+        // capability menu blocks, delivered as a session-start extension so
+        // the client can dock it before the first turn. Badges arrive later
+        // via the "menu" ui_hint once a briefing-style tool has run.
+        Map<String, Object> extensions = profile.extensions();
+        Map<String, Object> menuPayload = buildMenuPayload(profile, Map.of());
+        if (menuPayload != null) {
+            Map<String, Object> merged = new java.util.HashMap<>(
+                    extensions == null ? Map.of() : extensions);
+            merged.put("menu", menuPayload);
+            extensions = merged;
+        }
+        return new StartSessionResult(session, profileId, greeting, quickReplies, extensions);
     }
 
     @Override
@@ -327,6 +350,10 @@ public class DefaultConversationEngine implements ConversationEngine {
                     String toolId = String.valueOf(pendingConfirm.get("toolId"));
                     Map<String, Object> args = (Map<String, Object>) pendingConfirm
                             .getOrDefault("args", Map.of());
+                    // Multi-item confirm (owner-cockpit §5.2): a checkbox
+                    // selection prunes array-shaped args to the checked ids.
+                    // Prune-only — ids the frame never offered are ignored.
+                    args = pruneConfirmArgs(args, confirmItemIdsOf(selection));
                     String callIdHint = pendingConfirm.get("callId") == null
                             ? UUID.randomUUID().toString()
                             : String.valueOf(pendingConfirm.get("callId"));
@@ -858,7 +885,11 @@ public class DefaultConversationEngine implements ConversationEngine {
      *  callId is permissive (there is only ever one pending_confirm). */
     private static boolean confirmSelectionMatches(Map<String, Object> selection,
                                                    Map<String, Object> pendingConfirm) {
-        if (selection == null || !"confirm".equals(String.valueOf(selection.get("kind")))) return false;
+        if (selection == null) return false;
+        String kind = String.valueOf(selection.get("kind"));
+        // "confirm_items" is the multi-item checkbox variant (owner-cockpit
+        // §5.2) — same affirmative semantics, plus itemIds for pruning.
+        if (!"confirm".equals(kind) && !"confirm_items".equals(kind)) return false;
         Object selCall = selection.get("callId");
         return selCall == null
                 || String.valueOf(selCall).equals(String.valueOf(pendingConfirm.get("callId")));
@@ -1643,11 +1674,20 @@ public class DefaultConversationEngine implements ConversationEngine {
                                              ConversationRecorder recorder, Ids.TurnId turnId,
                                              UserMessage message) {
         String callId = UUID.randomUUID().toString();
-        Map<String, Object> hintPayload = Map.of(
+        Map<String, Object> hintPayload = new java.util.HashMap<>(Map.of(
                 "toolId", toolId.value(),
                 "callId", callId,
                 "args", args,
-                "summary", summary);
+                "summary", summary));
+        // Owner-cockpit multi-item confirm (design §5.2): array-shaped args
+        // (native lists or the templater's pre-serialized JSON-array strings)
+        // render as a checkbox list the user can PRUNE before the SÍ. The
+        // engine only ever removes items on resume — never adds.
+        List<Map<String, Object>> confirmItems = confirmItemsOf(args);
+        if (confirmItems.size() > 1) {
+            hintPayload.put("items", confirmItems);
+            hintPayload.put("confirmLabel", "SÍ (" + confirmItems.size() + ")");
+        }
 
         workingMemory.merge(session.id(), Map.of("pending_confirm", Map.of(
                 "toolId", toolId.value(),
@@ -1763,7 +1803,25 @@ public class DefaultConversationEngine implements ConversationEngine {
                 : CaptureOutcome.empty();
         Turn.ToolResult recordedResult = result.withCapturedEntities(captureOutcome.captured());
 
-        List<String> followUps = (result.status() == Turn.ToolResult.Status.OK)
+        // Owner-cockpit suggestions (design §4): result-aware per-tool rules
+        // supersede the static per-capability followUpHints — chips must
+        // reflect what THIS dispatch returned, and stale/context-blind chips
+        // were the reported defect. Capability hints remain the fallback for
+        // tools without rules.
+        TurnEvent.UiHint suggestionHint = null;
+        if (result.status() == Turn.ToolResult.Status.OK) {
+            List<SuggestionRuleEvaluator.Chip> chips = suggestionRuleEvaluator
+                    .evaluate(toolDescriptor.suggestions(), recordedResult.value());
+            if (!chips.isEmpty()) {
+                suggestionHint = new TurnEvent.UiHint("quick_replies", Map.of(
+                        "items", chips.stream().map(SuggestionRuleEvaluator.Chip::label).toList(),
+                        "actions", chips.stream()
+                                .map(c -> Map.of("label", c.label(), "send", c.send()))
+                                .toList()));
+            }
+        }
+        List<String> followUps = (suggestionHint == null
+                && result.status() == Turn.ToolResult.Status.OK)
                 ? followUpHintsForTool(profile, toolDescriptor.id())
                 : List.of();
 
@@ -1780,6 +1838,20 @@ public class DefaultConversationEngine implements ConversationEngine {
         // model narrate rich chrome in text, #8).
         if (recordedResult.status() == Turn.ToolResult.Status.OK) {
             events.addAll(pendingUiHints.drain(session.id()));
+            // Declared media output → signed-URL document attachment on this
+            // turn (design §6.3). Tenant-checked; fail-soft.
+            TurnEvent.UiHint attachment = mediaAttachmentHint(
+                    toolDescriptor, recordedResult.value(), session);
+            if (attachment != null) {
+                events.add(attachment);
+            }
+            // Briefing-style results carry the menu badge state (design §3):
+            // refresh badges and re-emit the profile menu.
+            TurnEvent.UiHint menuHint = menuHintFromResult(
+                    profile, session, recordedResult.value());
+            if (menuHint != null) {
+                events.add(menuHint);
+            }
         }
 
         if (llmDriven) {
@@ -1787,7 +1859,9 @@ public class DefaultConversationEngine implements ConversationEngine {
             // profile's language. Don't emit a hardcoded English Token here
             // — that bypasses the language directive in the prompt prefix.
             // Follow-up quick replies are still useful as UI affordances.
-            if (!followUps.isEmpty()) {
+            if (suggestionHint != null) {
+                events.add(suggestionHint);
+            } else if (!followUps.isEmpty()) {
                 events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
             }
             return Flux.fromIterable(events)
@@ -1805,13 +1879,269 @@ public class DefaultConversationEngine implements ConversationEngine {
             case FAILED -> "Sorry — that didn't work (" + recordedResult.error() + ").";
         };
         events.add(new TurnEvent.Token(spoken));
-        if (!followUps.isEmpty()) {
+        if (suggestionHint != null) {
+            events.add(suggestionHint);
+        } else if (!followUps.isEmpty()) {
             events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
         }
 
         return Flux.fromIterable(events)
                 .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, spoken,
                         List.of(call), List.of(recordedResult)));
+    }
+
+    // ------------------------------------------------------------------
+    // Owner cockpit — menu, multi-item confirm, media attachments
+    // ------------------------------------------------------------------
+
+    /**
+     * Assembles the profile's persistent menu from its capabilities' menu
+     * blocks (design §3.1): grouped by section, ordered by {@code order},
+     * badges filled from {@code badges} via each block's {@code badgeSource}.
+     * Null when no capability declares a menu block.
+     */
+    private Map<String, Object> buildMenuPayload(Profile profile, Map<String, Object> badges) {
+        if (profile == null || profile.capabilities() == null) {
+            return null;
+        }
+        record Entry(String capabilityId, com.yayatechandinnovations.yayaagentic.profile.MenuBlock block) {}
+        List<Entry> entries = new java.util.ArrayList<>();
+        for (Ids.CapabilityId capId : profile.capabilities()) {
+            catalog.capability(capId).ifPresent(cap -> {
+                if (cap.menu() != null) {
+                    entries.add(new Entry(capId.value(), cap.menu()));
+                }
+            });
+        }
+        if (entries.isEmpty()) {
+            return null;
+        }
+        entries.sort(java.util.Comparator.comparingInt(e -> e.block().order()));
+        Map<String, List<Map<String, Object>>> sections = new java.util.LinkedHashMap<>();
+        for (Entry entry : entries) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("id", "menu." + entry.capabilityId());
+            item.put("label", entry.block().label());
+            item.put("send", entry.block().send());
+            Object badge = entry.block().badgeSource() == null
+                    ? null : badges.get(entry.block().badgeSource());
+            if (badge instanceof Number n && n.intValue() > 0) {
+                item.put("badge", n.intValue());
+            }
+            sections.computeIfAbsent(entry.block().section(), k -> new java.util.ArrayList<>())
+                    .add(item);
+        }
+        List<Map<String, Object>> sectionList = sections.entrySet().stream()
+                .map(e -> Map.<String, Object>of("title", e.getKey(), "items", e.getValue()))
+                .toList();
+        return Map.of("sections", sectionList);
+    }
+
+    /**
+     * When an OK tool result carries an owner-briefing {@code attention} map,
+     * capture its bucket counts as the session's menu badge state and re-emit
+     * the menu with badges (design §3.1). Null when not briefing-shaped or
+     * the profile has no menu.
+     */
+    @SuppressWarnings("unchecked")
+    private TurnEvent.UiHint menuHintFromResult(Profile profile, Session session, Object resultValue) {
+        if (!(resultValue instanceof Map<?, ?> map)) {
+            return null;
+        }
+        Object attention = ((Map<String, Object>) map).get("attention");
+        if (!(attention instanceof Map<?, ?> buckets) || buckets.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> badges = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> bucket : buckets.entrySet()) {
+            if (bucket.getValue() instanceof Map<?, ?> b) {
+                Object count = ((Map<String, Object>) b).get("count");
+                if (count instanceof Number n) {
+                    badges.put(String.valueOf(bucket.getKey()), n.intValue());
+                }
+            }
+        }
+        if (badges.isEmpty()) {
+            return null;
+        }
+        workingMemory.merge(session.id(), Map.of("menu_badges", badges));
+        Map<String, Object> payload = buildMenuPayload(profile, badges);
+        return payload == null ? null : new TurnEvent.UiHint("menu", payload);
+    }
+
+    /**
+     * Multi-item confirm items extracted from array-shaped args (design
+     * §5.2): native lists, or the M1 templater's pre-serialized JSON-array
+     * strings. Element ids prefer the human keys the SL surfaces use
+     * ({@code requestNumber}) so pruning round-trips cleanly.
+     */
+    private static List<Map<String, Object>> confirmItemsOf(Map<String, Object> args) {
+        List<Map<String, Object>> items = new java.util.ArrayList<>();
+        if (args == null) {
+            return items;
+        }
+        for (Object raw : args.values()) {
+            for (Object element : arrayElementsOf(raw)) {
+                String id = confirmElementId(element);
+                if (id == null || id.isBlank()) {
+                    continue;
+                }
+                String label = confirmElementLabel(element, id);
+                items.add(Map.of("id", id, "label", label, "checked", Boolean.TRUE));
+            }
+        }
+        return items;
+    }
+
+    /** Checked item ids from a confirm selection, or null when the client sent none. */
+    @SuppressWarnings("unchecked")
+    private static List<String> confirmItemIdsOf(Map<String, Object> selection) {
+        if (selection == null) {
+            return null;
+        }
+        Object raw = selection.get("itemIds");
+        if (!(raw instanceof List<?> list)) {
+            return null;
+        }
+        return list.stream().map(String::valueOf).toList();
+    }
+
+    /**
+     * Prunes every array-shaped arg to the elements whose id survives the
+     * checkbox selection. PRUNE-ONLY by construction: the kept set is an
+     * intersection with what the frame offered — a hostile client cannot
+     * widen a batch, only shrink it.
+     */
+    private static Map<String, Object> pruneConfirmArgs(Map<String, Object> args, List<String> keepIds) {
+        if (args == null || keepIds == null) {
+            return args;
+        }
+        java.util.Set<String> keep = new java.util.HashSet<>(keepIds);
+        Map<String, Object> pruned = new java.util.LinkedHashMap<>(args);
+        for (Map.Entry<String, Object> entry : args.entrySet()) {
+            Object raw = entry.getValue();
+            List<Object> elements = arrayElementsOf(raw);
+            if (elements.isEmpty()) {
+                continue;
+            }
+            List<Object> kept = elements.stream()
+                    .filter(el -> {
+                        String id = confirmElementId(el);
+                        return id != null && keep.contains(id);
+                    })
+                    .toList();
+            if (kept.size() == elements.size()) {
+                continue;
+            }
+            if (raw instanceof String) {
+                try {
+                    pruned.put(entry.getKey(), CONFIRM_ITEMS_JSON.writeValueAsString(kept));
+                } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+                    // keep the original string — fail closed on serialization
+                }
+            } else {
+                pruned.put(entry.getKey(), kept);
+            }
+        }
+        return pruned;
+    }
+
+    /** Array elements of a native list or a pre-serialized JSON-array string. */
+    private static List<Object> arrayElementsOf(Object raw) {
+        if (raw instanceof List<?> list) {
+            return new java.util.ArrayList<>(list);
+        }
+        if (raw instanceof String s) {
+            String trimmed = s.trim();
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                try {
+                    List<Object> parsed = CONFIRM_ITEMS_JSON.readValue(trimmed,
+                            new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() {});
+                    return parsed == null ? List.of() : parsed;
+                } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+                    return List.of();
+                }
+            }
+        }
+        return List.of();
+    }
+
+    private static String confirmElementId(Object element) {
+        if (element instanceof String s) {
+            return s;
+        }
+        if (element instanceof Map<?, ?> m) {
+            for (String key : List.of("requestNumber", "id", "number", "code", "ticketNumber")) {
+                Object v = m.get(key);
+                if (v != null && !String.valueOf(v).isBlank()) {
+                    return String.valueOf(v);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String confirmElementLabel(Object element, String id) {
+        if (element instanceof Map<?, ?> m) {
+            Object reason = m.get("reason");
+            if (reason != null && !String.valueOf(reason).isBlank()) {
+                return id + " — " + reason;
+            }
+        }
+        return id;
+    }
+
+    /**
+     * A declared media output on an OK HTTP tool result becomes a signed-URL
+     * document attachment (design §6.3). The asset must belong to the
+     * session's tenant — a tool result can never link foreign media. Any
+     * failure drops the attachment, never the turn.
+     */
+    @SuppressWarnings("unchecked")
+    private TurnEvent.UiHint mediaAttachmentHint(ToolDescriptor toolDescriptor, Object resultValue,
+                                                 Session session) {
+        try {
+            if (mediaLibrary == null || mediaTokenSigner == null) {
+                return null;
+            }
+            if (!(toolDescriptor.handler() instanceof ToolHandlerRef.Http http)
+                    || http.spec() == null
+                    || http.spec().response() == null
+                    || http.spec().response().mediaOutputs() == null
+                    || http.spec().response().mediaOutputs().isEmpty()) {
+                return null;
+            }
+            Map<String, String> mediaOutputs = http.spec().response().mediaOutputs();
+            String assetIdPath = mediaOutputs.getOrDefault("assetIdPath", "$.assetId");
+            Object assetIdRaw = SuggestionRuleEvaluator.navigate(resultValue, assetIdPath);
+            if (assetIdRaw == null || String.valueOf(assetIdRaw).isBlank()) {
+                return null;
+            }
+            String assetId = String.valueOf(assetIdRaw);
+            var asset = mediaLibrary.find(session.tenant(), assetId).orElse(null);
+            if (asset == null) {
+                return null;
+            }
+            String filename = asset.filename();
+            String filenamePath = mediaOutputs.get("filenamePath");
+            if (filenamePath != null) {
+                Object fn = SuggestionRuleEvaluator.navigate(resultValue, filenamePath);
+                if (fn != null && !String.valueOf(fn).isBlank()) {
+                    filename = String.valueOf(fn);
+                }
+            }
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("assetId", asset.id());
+            payload.put("filename", filename);
+            payload.put("contentType", asset.contentType());
+            payload.put("sizeBytes", asset.sizeBytes());
+            payload.put("url", "/v1/media/" + mediaTokenSigner.mint(session.tenant(), asset.id()));
+            return new TurnEvent.UiHint("attachment", payload);
+        } catch (RuntimeException ex) {
+            log.warn("media attachment hint failed for tool {}: {}",
+                    toolDescriptor.id().value(), ex.getMessage());
+            return null;
+        }
     }
 
     /**

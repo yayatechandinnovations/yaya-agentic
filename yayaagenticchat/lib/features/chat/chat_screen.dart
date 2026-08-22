@@ -18,7 +18,9 @@ import 'commerce/cart_header_button.dart';
 import 'commerce/storefront_card.dart';
 import 'commerce/cart_sheet.dart';
 import 'commerce/checkout_handler.dart';
+import 'markdown_lite.dart';
 import 'media_widgets.dart';
+import 'owner_menu.dart';
 import 'receipts/receipt_bubble.dart';
 import 'receipts/receipt_draft_bar.dart';
 import 'commerce/checkout_result_card.dart';
@@ -37,15 +39,51 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObserver {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _input.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// Returning to the foreground re-checks for messages delivered while away
+  /// (owner-ai v2 §5) — same wake path as a foreground push ping.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _onWake();
+  }
+
+  bool get _nearBottom =>
+      !_scroll.hasClients ||
+      _scroll.position.pixels >= _scroll.position.maxScrollExtent - 80;
+
+  /// A wake (app resume or push ping for this tile): reading at the bottom →
+  /// drain straight into the transcript; scrolled up → peek the count and show
+  /// the unread badge instead of yanking the view.
+  void _onWake() {
+    final controller = ref.read(chatControllerProvider(widget.handle).notifier);
+    if (_nearBottom) {
+      controller.refreshInbox();
+    } else {
+      controller.refreshUnreadCount();
+    }
+  }
+
+  /// Badge tap: drain (which clears the badge) and jump to the new messages.
+  Future<void> _openUnread() async {
+    await ref.read(chatControllerProvider(widget.handle).notifier).refreshInbox();
+    _scrollToBottom();
   }
 
   void _send(String text) {
@@ -102,11 +140,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final title = card?.displayName ?? 'Chat';
     ref.listen(chatControllerProvider(widget.handle), (_, _) => _scrollToBottom());
 
-    // A foreground push wake for THIS tile → re-drain so the new message shows
-    // without reopening the chat (push_service sets the ping).
+    // A foreground push wake for THIS tile → drain (at bottom) or peek the
+    // unread count (scrolled up) so the new message never goes unnoticed.
     ref.listen(pushInboxPingProvider, (_, ping) {
       if (ping != null && ping.handle == widget.handle) {
-        controller.refreshInbox();
+        _onWake();
       }
     });
 
@@ -152,6 +190,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ],
               ),
         actions: [
+          // Unread inbox badge (owner-ai v2 §5): pending system messages while
+          // the reader is scrolled up. Tap drains + jumps to the new bubbles.
+          if (state.unreadCount > 0)
+            IconButton(
+              tooltip: AppL10n.of(context).newMessages,
+              onPressed: _openUnread,
+              icon: Badge.count(
+                count: state.unreadCount,
+                child: const Icon(Icons.mark_chat_unread_outlined, color: Colors.white),
+              ),
+            ),
           if (state.isStore) CartHeaderButton(handle: widget.handle, accent: accent),
           if (state.canUpgrade)
             TextButton.icon(
@@ -210,7 +259,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 accent: accent,
                 busy: state.sending,
                 onConfirm: controller.confirmPending,
-                onCancel: controller.cancelPending,
+                // Multi-item confirms decline with a literal "NO" (owner-ai v2
+                // §4); the classic single confirm keeps its "no" path.
+                onCancel: state.pendingConfirm!.hasItems
+                    ? controller.cancelPendingItems
+                    : controller.cancelPending,
+                onConfirmItems: controller.confirmPendingItems,
               ),
             if (state.isStore) MiniCartBar(handle: widget.handle, accent: accent),
             ReceiptDraftBar(handle: widget.handle, accent: accent),
@@ -233,6 +287,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         accent: accent,
         handle: widget.handle,
         onQuickReply: _send,
+        // Chips only ride the LATEST bubble (owner-ai v2 §5) — the controller
+        // strips stale ones, and this gate is the render-side guarantee.
+        isLatest: i == state.messages.length - 1,
       ),
     );
   }
@@ -275,6 +332,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
             child: Row(
               children: [
+                // Docked owner menu (owner-ai v2 §3): thumb-reachable, badge
+                // when anything is pending. Only present once the server has
+                // emitted a `menu` hint for this session.
+                if (state.menu != null && !state.menu!.isEmpty)
+                  OwnerMenuButton(
+                    menu: state.menu!,
+                    accent: accent,
+                    enabled: enabled,
+                    onSelect: _send,
+                  ),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
                   tooltip: AppL10n.of(context).attachTooltip,
@@ -349,11 +416,15 @@ class _Bubble extends ConsumerWidget {
     required this.accent,
     required this.handle,
     required this.onQuickReply,
+    this.isLatest = false,
   });
   final ChatMessage message;
   final Color accent;
   final String handle;
   final void Function(String) onQuickReply;
+
+  /// Only the LATEST bubble may surface quick-reply chips (owner-ai v2 §5).
+  final bool isLatest;
 
   Future<void> _addProduct(BuildContext context, WidgetRef ref, Product p) async {
     final controller = ref.read(chatControllerProvider(handle).notifier);
@@ -428,10 +499,19 @@ class _Bubble extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
             decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
-            child: Text(
-              message.text.isEmpty && message.streaming ? '…' : message.text,
-              style: TextStyle(color: fg),
-            ),
+            // Assistant prose renders markdown-lite (**bold** / *italic*,
+            // owner-ai v2 §5); user text stays literal — it's a transcript.
+            child: isUser
+                ? Text(
+                    message.text.isEmpty && message.streaming ? '…' : message.text,
+                    style: TextStyle(color: fg),
+                  )
+                : Text.rich(
+                    markdownLite(
+                      message.text.isEmpty && message.streaming ? '…' : message.text,
+                      style: TextStyle(color: fg),
+                    ),
+                  ),
           ),
 
         // ---- media attachments on a system message (§10) ----
@@ -501,13 +581,14 @@ class _Bubble extends ConsumerWidget {
                     ))
                 .toList(),
           ),
-        if (!isUser && message.quickReplies.isNotEmpty)
+        if (!isUser && isLatest && message.quickReplies.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
             child: Wrap(
               spacing: 8,
               children: message.quickReplies
-                  .map((q) => ActionChip(label: Text(q), onPressed: () => onQuickReply(q)))
+                  .map((q) => ActionChip(
+                      label: Text(q.label), onPressed: () => onQuickReply(q.send)))
                   .toList(),
             ),
           ),

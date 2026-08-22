@@ -24,18 +24,28 @@ public record ToolDescriptor(
         ToolHandlerRef handler,
         ToolPolicy policy,
         List<EntityCapture> captures,
-        List<EntityBinding> bindings
+        List<EntityBinding> bindings,
+        List<SuggestionRule> suggestions
 ) {
 
     public ToolDescriptor {
         captures = captures == null ? List.of() : List.copyOf(captures);
         bindings = bindings == null ? List.of() : List.copyOf(bindings);
+        suggestions = suggestions == null ? List.of() : List.copyOf(suggestions);
+    }
+
+    /** Compat constructor for tools without suggestion rules. */
+    public ToolDescriptor(Ids.ToolId id, String inputSchemaJson, String outputSchemaJson,
+                          PermissionRequirement requires, ToolHandlerRef handler, ToolPolicy policy,
+                          List<EntityCapture> captures, List<EntityBinding> bindings) {
+        this(id, inputSchemaJson, outputSchemaJson, requires, handler, policy,
+                captures, bindings, List.of());
     }
 
     /** Compat constructor for tools that don't declare entity-memory hooks. */
     public ToolDescriptor(Ids.ToolId id, String inputSchemaJson, String outputSchemaJson,
                           PermissionRequirement requires, ToolHandlerRef handler, ToolPolicy policy) {
         this(id, inputSchemaJson, outputSchemaJson, requires, handler, policy,
-                List.of(), List.of());
+                List.of(), List.of(), List.of());
     }
 }

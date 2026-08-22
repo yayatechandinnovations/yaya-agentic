@@ -205,5 +205,7 @@
   "confirmTitle": "¿Deseas continuar?",
   "view": "Ver",
   "receiptDraftTitle": "Boleto en progreso",
-  "receiptDraftHint": "Toca para verlo — sigue agregando para armar tu boleto"
+  "receiptDraftHint": "Toca para verlo — sigue agregando para armar tu boleto",
+  "ownerMenu": "Menú",
+  "newMessages": "Mensajes nuevos"
 }

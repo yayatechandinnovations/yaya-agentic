@@ -613,4 +613,10 @@ class AppL10nEs extends AppL10n {
   @override
   String get receiptDraftHint =>
       'Toca para verlo — sigue agregando para armar tu boleto';
+
+  @override
+  String get ownerMenu => 'Menú';
+
+  @override
+  String get newMessages => 'Mensajes nuevos';
 }

@@ -43,6 +43,11 @@ public class CapabilityEntity {
     @Column(name = "follow_up_hints_json", columnDefinition = "jsonb", nullable = false)
     private String followUpHintsJson = "[]";
 
+    /** Optional persistent-menu entry (owner-cockpit design); null = not in the menu. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "menu_json", columnDefinition = "jsonb")
+    private String menuJson;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -64,6 +69,7 @@ public class CapabilityEntity {
     public String getToolIdsJson() { return toolIdsJson; }
     public String getRequiresJson() { return requiresJson; }
     public String getFollowUpHintsJson() { return followUpHintsJson; }
+    public String getMenuJson() { return menuJson; }
 
     public void setLabel(String v) { this.label = v; }
     public void setDescription(String v) { this.description = v; }
@@ -71,6 +77,7 @@ public class CapabilityEntity {
     public void setToolIdsJson(String v) { this.toolIdsJson = v; }
     public void setRequiresJson(String v) { this.requiresJson = v; }
     public void setFollowUpHintsJson(String v) { this.followUpHintsJson = v; }
+    public void setMenuJson(String v) { this.menuJson = v; }
 
     public static class PK implements Serializable {
         private String tenantId; private String id; private Integer version;

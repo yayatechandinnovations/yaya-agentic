@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.api.dto;
 
 import com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec;
 import com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec;
+import com.yayatechandinnovations.yayaagentic.tool.SuggestionRule;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -66,13 +67,21 @@ public final class AdminDtos {
 
     public record CapabilityRequest(
             String tenant, String id, String label, String description,
-            String llmGuidance, List<String> tools, List<String> followUpHints
-    ) {}
+            String llmGuidance, List<String> tools, List<String> followUpHints,
+            Map<String, Object> menu
+    ) {
+        /** Compat ctor for capabilities without a menu block. */
+        public CapabilityRequest(String tenant, String id, String label, String description,
+                                 String llmGuidance, List<String> tools, List<String> followUpHints) {
+            this(tenant, id, label, description, llmGuidance, tools, followUpHints, null);
+        }
+    }
 
     public record CapabilityResponse(
             String id, int version, String tenant, String label,
             String description, String llmGuidance, List<String> tools,
             List<String> followUpHints,
+            Map<String, Object> menu,
             OffsetDateTime createdAt
     ) {}
 
@@ -83,11 +92,23 @@ public final class AdminDtos {
             Map<String, Object> requires, ToolHandlerDto handler,
             Map<String, Object> policy,
             List<EntityCaptureSpec> captures,
-            List<EntityBindingSpec> bindings
+            List<EntityBindingSpec> bindings,
+            List<SuggestionRule> suggestions
     ) {
         public ToolRequest {
             captures = captures == null ? List.of() : List.copyOf(captures);
             bindings = bindings == null ? List.of() : List.copyOf(bindings);
+            suggestions = suggestions == null ? List.of() : List.copyOf(suggestions);
+        }
+
+        /** Compat ctor for tools without suggestion rules. */
+        public ToolRequest(String tenant, String id, String inputSchemaJson, String outputSchemaJson,
+                           Map<String, Object> requires, ToolHandlerDto handler,
+                           Map<String, Object> policy,
+                           List<EntityCaptureSpec> captures,
+                           List<EntityBindingSpec> bindings) {
+            this(tenant, id, inputSchemaJson, outputSchemaJson, requires, handler, policy,
+                    captures, bindings, List.of());
         }
 
         /** Compat ctor for tools that don't declare entity-memory hooks. */
@@ -95,7 +116,7 @@ public final class AdminDtos {
                            Map<String, Object> requires, ToolHandlerDto handler,
                            Map<String, Object> policy) {
             this(tenant, id, inputSchemaJson, outputSchemaJson, requires, handler, policy,
-                    List.of(), List.of());
+                    List.of(), List.of(), List.of());
         }
     }
 
@@ -115,7 +136,13 @@ public final class AdminDtos {
 
     public record HttpBodyDto(String contentType, String template) {}
 
-    public record HttpResponseDto(String jsonPath, Map<String, String> headerOutputs) {}
+    public record HttpResponseDto(String jsonPath, Map<String, String> headerOutputs,
+                                   Map<String, String> mediaOutputs) {
+        /** Compat ctor — most tools declare no media outputs. */
+        public HttpResponseDto(String jsonPath, Map<String, String> headerOutputs) {
+            this(jsonPath, headerOutputs, null);
+        }
+    }
 
     public record ToolResponse(
             String id, int version, String tenant,
@@ -124,12 +151,14 @@ public final class AdminDtos {
             Map<String, Object> policy,
             List<EntityCaptureSpec> captures,
             List<EntityBindingSpec> bindings,
+            List<SuggestionRule> suggestions,
             String status,
             OffsetDateTime createdAt
     ) {
         public ToolResponse {
             captures = captures == null ? List.of() : List.copyOf(captures);
             bindings = bindings == null ? List.of() : List.copyOf(bindings);
+            suggestions = suggestions == null ? List.of() : List.copyOf(suggestions);
         }
     }
 

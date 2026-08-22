@@ -8,11 +8,13 @@ import com.yayatechandinnovations.yayaagentic.core.PermissionRequirement;
 import com.yayatechandinnovations.yayaagentic.persistence.CapabilityEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ToolEntity;
 import com.yayatechandinnovations.yayaagentic.profile.Capability;
+import com.yayatechandinnovations.yayaagentic.profile.MenuBlock;
 import com.yayatechandinnovations.yayaagentic.tool.EntityBinding;
 import com.yayatechandinnovations.yayaagentic.tool.EntityBindingSpec;
 import com.yayatechandinnovations.yayaagentic.tool.EntityCapture;
 import com.yayatechandinnovations.yayaagentic.tool.EntityCaptureSpec;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
+import com.yayatechandinnovations.yayaagentic.tool.SuggestionRule;
 import com.yayatechandinnovations.yayaagentic.tool.ToolDescriptor;
 import com.yayatechandinnovations.yayaagentic.tool.ToolHandlerRef;
 import com.yayatechandinnovations.yayaagentic.tool.ToolPolicy;
@@ -38,6 +40,8 @@ public class CatalogMapper {
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
     private static final TypeReference<List<EntityCaptureSpec>> CAPTURE_LIST = new TypeReference<>() {};
     private static final TypeReference<List<EntityBindingSpec>> BINDING_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<SuggestionRule>> SUGGESTION_LIST = new TypeReference<>() {};
+    private static final TypeReference<MenuBlock> MENU_BLOCK = new TypeReference<>() {};
 
     private final ObjectMapper json;
 
@@ -67,7 +71,8 @@ public class CatalogMapper {
                 handler,
                 policy,
                 captures,
-                bindings);
+                bindings,
+                readJson(e.getSuggestionsJson(), SUGGESTION_LIST, List.of()));
     }
 
     public Capability toCapability(CapabilityEntity e) {
@@ -80,7 +85,8 @@ public class CatalogMapper {
                         .map(Ids.ToolId::new)
                         .toList(),
                 readJson(e.getFollowUpHintsJson(), STRING_LIST, List.of()),
-                readJson(e.getRequiresJson(), PERMISSION_REQUIREMENT, PermissionRequirement.none()));
+                readJson(e.getRequiresJson(), PERMISSION_REQUIREMENT, PermissionRequirement.none()),
+                readJson(e.getMenuJson(), MENU_BLOCK, null));
     }
 
     // ---- internals ------------------------------------------------------

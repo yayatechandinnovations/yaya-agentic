@@ -1206,6 +1206,18 @@ abstract class AppL10n {
   /// In en, this message translates to:
   /// **'Tap to see it — keep adding to build your ticket'**
   String get receiptDraftHint;
+
+  /// No description provided for @ownerMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Menu'**
+  String get ownerMenu;
+
+  /// No description provided for @newMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages'**
+  String get newMessages;
 }
 
 class _AppL10nDelegate extends LocalizationsDelegate<AppL10n> {

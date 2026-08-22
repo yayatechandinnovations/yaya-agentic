@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../config.dart';
+import '../models/chat_menu.dart';
 import '../models/chat_message.dart';
 import '../models/commerce/commerce_config.dart';
 import '../models/forum.dart';
@@ -33,6 +34,12 @@ class StartResult {
   /// (chat-experience-design.md §7.3, trait `chat.receipts`).
   final ReceiptsConfig? receipts;
 
+  /// Non-null when the profile's `extensions.menu` declares the persistent
+  /// owner menu (owner-ai-experience v2 §3) — same payload shape as the `menu`
+  /// ui_hint, seeded at session start so the docked button shows before the
+  /// first turn.
+  final ChatMenu? menu;
+
   const StartResult({
     required this.sessionId,
     required this.greeting,
@@ -40,6 +47,7 @@ class StartResult {
     required this.entryPoint,
     this.commerce,
     this.receipts,
+    this.menu,
   });
 }
 
@@ -328,6 +336,11 @@ class ChatApi {
       final traits = j['traits'];
       final store = (traits is Map ? traits['sales.store'] : null) ?? j['commerce'];
       final receipts = traits is Map ? traits['chat.receipts'] : null;
+      // Owner menu seeded from the profile's extensions map (owner-ai v2 §3);
+      // tolerate it riding `traits` too, in case of an older/parallel server.
+      final extensions = j['extensions'];
+      final menu = (extensions is Map ? extensions['menu'] : null) ??
+          (traits is Map ? traits['menu'] : null);
       return StartResult(
         sessionId: j['sessionId'] as String,
         greeting: (j['greeting'] as String?) ?? '',
@@ -340,6 +353,7 @@ class ChatApi {
         receipts: receipts is Map
             ? ReceiptsConfig.fromJson(Map<String, dynamic>.from(receipts))
             : null,
+        menu: menu is Map ? ChatMenu.fromJson(Map<String, dynamic>.from(menu)) : null,
       );
     } on DioException catch (e) {
       throw _map(e);
@@ -371,13 +385,21 @@ class ChatApi {
   /// Stream the assistant's turn. Each yielded [SseEvent] is one `event:/data:`
   /// frame from the SSE response. [attachmentIds] reference prior uploads to
   /// this session (chat-experience-design.md §6.1 — upload first, then send).
+  ///
+  /// [selection] is the optional structured choice riding the top-level
+  /// `selection` field of MessageRequest (network-chat-runtime §3.2; owner-ai
+  /// v2 §4 uses `{"kind":"confirm_items","itemIds":[…]}`). `text` stays the
+  /// legible transcript — old servers simply ignore `selection`.
   Stream<SseEvent> sendMessage(String sessionId, String text,
-          {String? bearer, List<String> attachmentIds = const []}) =>
+          {String? bearer,
+          List<String> attachmentIds = const [],
+          Map<String, Object?>? selection}) =>
       _streamSse(
           '/v1/chat/sessions/$sessionId/messages',
           {
             'text': text,
             if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+            'selection': ?selection,
           },
           bearer: bearer);
 
@@ -801,6 +823,22 @@ class ChatApi {
     } on DioException catch (_) {
       // No inbox / not authenticated → nothing to drain, never fatal to the chat.
       return const [];
+    }
+  }
+
+  /// Peek at the number of pending (undelivered) inbox messages WITHOUT marking
+  /// them delivered (owner-ai-experience v2 §5). Same auth as the drain. Any
+  /// failure (no identity, offline) reads as 0 — the badge is a nicety.
+  Future<int> inboxCount(String handle, {String? bearer}) async {
+    try {
+      final r = await _dio.get(
+        '/v1/chat/e/$handle/inbox/count',
+        options: Options(headers: {..._authHeader(bearer), ..._deviceHeader}),
+      );
+      final j = Map<String, dynamic>.from(r.data as Map);
+      return (j['count'] as num?)?.toInt() ?? 0;
+    } on DioException catch (_) {
+      return 0;
     }
   }
 

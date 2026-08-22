@@ -207,5 +207,7 @@
   "confirmTitle": "Do you want to continue?",
   "view": "View",
   "receiptDraftTitle": "Ticket in progress",
-  "receiptDraftHint": "Tap to see it — keep adding to build your ticket"
+  "receiptDraftHint": "Tap to see it — keep adding to build your ticket",
+  "ownerMenu": "Menu",
+  "newMessages": "New messages"
 }
