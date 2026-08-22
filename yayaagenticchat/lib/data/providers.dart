@@ -348,6 +348,15 @@ final accountProvider = FutureProvider.autoDispose<Account>(
 class TilesNotifier extends StateNotifier<List<Tile>> {
   TilesNotifier(this._ref) : super(_ref.read(directoryStoreProvider).loadTiles()) {
     unawaited(_reconcileWithServer());
+    // Login often happens after this notifier already exists (onboarding / PIN
+    // unlock in the same session), when the first reconcile bailed on an
+    // unverified device. Re-pull the server tiles the moment the device becomes
+    // verified so added chats appear without a page refresh.
+    _ref.listen<VerificationState>(verificationProvider, (prev, next) {
+      if (next.verified && (prev == null || !prev.verified)) {
+        unawaited(_reconcileWithServer());
+      }
+    });
   }
 
   final Ref _ref;
