@@ -194,4 +194,14 @@ public final class PublicChatDtos {
 
     public record PinUnlockResponse(String devicePass, String phoneE164, String name,
                                     boolean pinRequired) {}
+
+    /* ---- errors (chat-channel-design.md §7) ---- */
+
+    /** Public chat error body. {@code error}/{@code message} keep the shape the
+     *  admin handler has always emitted, so existing consumers are unaffected;
+     *  {@code code} is the stable machine-readable identifier clients branch on.
+     *  Without it a {@code verification_required} 403 is indistinguishable from
+     *  any other failure and the app renders a generic connection error instead
+     *  of verifying (or silently re-minting from a portal session). */
+    public record ChatError(String error, String message, String code) {}
 }

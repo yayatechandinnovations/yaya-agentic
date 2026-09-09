@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
+import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.AccountTokenException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.LastOwnerException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.PasswordPolicyException;
@@ -28,6 +29,28 @@ public class AdminExceptionHandler {
         return ResponseEntity.status(status).body(new AdminDtos.ApiError(
                 ex.code(),
                 ex.getReason() == null ? status.getReasonPhrase() : ex.getReason()));
+    }
+
+    /**
+     * Public chat front door: keep {@code error}/{@code message} exactly as the
+     * generic handler below emits them, but also surface {@link
+     * ChatApiException#code()} — the stable §7 identifier the surface already
+     * documents and clients already branch on. ChatApiException extends {@link
+     * ResponseStatusException}, so without this the generic handler below
+     * matched and the code was dropped; Spring resolves to the closest type
+     * match, so this one now wins for the chat surface.
+     */
+    @ExceptionHandler(ChatApiException.class)
+    public ResponseEntity<PublicChatDtos.ChatError> handle(ChatApiException ex) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status);
+        if (ex.retryAfterSeconds() > 0) {
+            builder.header("Retry-After", Long.toString(ex.retryAfterSeconds()));
+        }
+        return builder.body(new PublicChatDtos.ChatError(
+                status.name(),
+                ex.getReason() == null ? status.getReasonPhrase() : ex.getReason(),
+                ex.code()));
     }
 
     @ExceptionHandler(ResponseStatusException.class)
