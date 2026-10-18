@@ -70,4 +70,11 @@ here, then "Invalidate cached tokens" on the resolver.
 
 - Service token: `tenantId.subject.expEpochSeconds.scopesCsv.base64url(HMAC-SHA256(secret, tenantId.subject.exp.scopesCsv))`, header `X-Yaya-Service-Token`, 60 s lifetime on tool calls.
 - Resolver request: `POST {hostBaseUrl}/webhooks/yaya-agentic/resolve-identity`, JSON body with the caller phone, headers `X-Yaya-Tenant`, `X-Yaya-Request-Id`, `X-Yaya-Idempotency-Key`, `Authorization: Bearer <HS256 JWT, 30 s, aud = tenant id>`.
+- Operator takeover: when a customer asks for a person, Pa'l Patio holds the conversation with
+  `POST /v1/integrations/{tenant}/senders/{systemSenderId}/holds` (`{phone, minutes, reason}`), reads what the customer
+  wrote with `GET .../holds/messages?phone=`, answers through the usual `.../messages` ingest, and releases the hold
+  with `POST .../holds/release` when the row is closed in its console. All four use the same service token and the
+  `system:inbound:send` scope. While a hold is live this side acks inbound without running the engine, so the assistant
+  does not answer over the person; a hold expires on its own (24 h as Pa'l Patio sets it, 7 days maximum here).
+  See `../design/whatsapp-channel-design.md` §11.3.
 - Inbound photos reach a tool as `UserMessage.attachments.images[] = {url, contentType, sizeBytes}` (and the model as `chat.images[] = {contentType, base64}`); the model passes the `url` into the tool's `mediaUrl` argument. Twilio media URLs expire after about 24 h and require the sender's Twilio Basic auth to fetch.

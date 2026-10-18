@@ -85,6 +85,7 @@ public class InboundDispatchWorker {
     private final InboundImageLoader imageLoader;
     private final OutboundDispatcher outboundDispatcher;
     private final OptOutService optOuts;
+    private final ConversationHoldService holds;
     private final ChannelTracing tracing;
     private final com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
             .PlaygroundSessionRegistry playgroundSessions;
@@ -111,6 +112,7 @@ public class InboundDispatchWorker {
             InboundImageLoader imageLoader,
             OutboundDispatcher outboundDispatcher,
             OptOutService optOuts,
+            ConversationHoldService holds,
             ChannelTracing tracing,
             com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
                     .PlaygroundSessionRegistry playgroundSessions,
@@ -133,6 +135,7 @@ public class InboundDispatchWorker {
         this.imageLoader = imageLoader;
         this.outboundDispatcher = outboundDispatcher;
         this.optOuts = optOuts;
+        this.holds = holds;
         this.tracing = tracing;
         this.playgroundSessions = playgroundSessions;
         this.maxAudioMinutes = maxAudioMinutes;
@@ -255,6 +258,17 @@ public class InboundDispatchWorker {
         if (optOuts.isOptedOut(new SenderId(row.getSenderId()), row.getEndUserPhone())) {
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
             row.setProcessingError("recipient_opted_out");
+            inbound.save(row);
+            return;
+        }
+
+        // 1c. §11.3 — a person took this conversation over: ack and keep the
+        // text (the desk reads it back through the hold API), but never run
+        // the engine, or the customer gets a bot reply on top of theirs.
+        if (holds.isHeld(new Ids.TenantId(row.getTenantId()), row.getEndUserPhone())) {
+            row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            row.setProcessingError("human_hold");
+            row.setBodyRedacted(redact(body, row.getEndUserPhone()));
             inbound.save(row);
             return;
         }

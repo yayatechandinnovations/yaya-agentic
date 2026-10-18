@@ -145,6 +145,18 @@ public record Correlation(
 
 `Correlation` is the crux of the reply loop. `originatorRef` is an **opaque handle** the external system understands (a callback URL id, a queue key, a ticket id). The user never sees it; the LLM never invents it; the engine pins it onto the response tool call (§8).
 
+### 5.1 Same gate, other verbs: operator takeover
+
+A sender that answers customers itself also needs the assistant to step aside while a person is on the conversation. Those three routes sit beside the ingest edge and pass the identical gate (`IntegrationSenderGate`: enabled sender, verified non-anonymous principal with `system:inbound:send` plus the sender's required scopes, pinned credential, fresh nonce and timestamp), so one token covers sending, holding and reading:
+
+```
+POST /v1/integrations/{tenant}/senders/{senderId}/holds           { phone, minutes, reason }
+POST /v1/integrations/{tenant}/senders/{senderId}/holds/release    { phone }
+GET  /v1/integrations/{tenant}/senders/{senderId}/holds/messages?phone=&since=
+```
+
+While a hold is live the channel acks inbound and stores it but never runs the engine; outbound keeps working, which is how the person answers. The semantics, the expiry and the table live in `whatsapp-channel-design.md` §11.3.
+
 ---
 
 ## 6. Addressing — who receives it

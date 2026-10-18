@@ -31,6 +31,10 @@ public interface InboundMessageRepository extends JpaRepository<InboundMessageEn
         findFirstBySenderIdAndEndUserPhoneAndReceivedAtAfterOrderByReceivedAtDesc(
                 String senderId, String endUserPhone, OffsetDateTime cutoff);
 
+    /** Operator takeover (§11.3): what the customer wrote while a person was handling the conversation. */
+    List<InboundMessageEntity> findTop50ByTenantIdAndEndUserPhoneAndReceivedAtAfterOrderByReceivedAtAsc(
+            String tenantId, String endUserPhone, OffsetDateTime since);
+
     /** Wrapper to give the dispatcher a tidy method name. */
     @WorkspaceUnscoped("delegates to findFirst… above")
     default java.util.Optional<InboundMessageEntity> findLatestForSenderAndEndUserSince(

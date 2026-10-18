@@ -771,6 +771,28 @@ Outbound dispatch consults `opt_outs` and refuses, returning `OptedOut` (a fifth
 
 This is mandated by Meta policy; we ship it on by default. Operators cannot disable it.
 
+### 11.3 Human hold (operator takeover)
+
+An integration that answers customers itself — a support desk picking up "talk to a person" — needs the assistant to
+stop answering while a person is on the conversation. A trusted system sender holds it:
+
+```
+POST   /v1/integrations/{tenant}/senders/{sid}/holds           { phone, minutes, reason }  → 201 { phone, heldUntil }
+POST   /v1/integrations/{tenant}/senders/{sid}/holds/release   { phone }                   → 200
+GET    /v1/integrations/{tenant}/senders/{sid}/holds/messages?phone=&since=                → the held transcript
+```
+
+While a hold is live, the inbound worker acks and stores the message with `processing_error = human_hold` and
+**does not invoke the engine** (§9.2, step 1c, right after the opt-out checks). Outbound is untouched: that is what
+lets the desk answer through the ingest edge (`system-messaging-design.md` §5) and what makes the transcript readable
+back through `/holds/messages`, which returns the stored bodies since the hold started.
+
+The hold is keyed by `(tenant_id, end_user_phone)`, not by sender: a phone belongs to one person whatever sender they
+reached, and the desk knows the phone, not our sender ids. Every hold carries an expiry, clamped to seven days, so a
+desk that forgets to release one gives the customer the assistant back instead of silence. The trust gate is the same
+one the ingest edge uses (`IntegrationSenderGate`: sender enabled, verified principal with `system:inbound:send`,
+pinned credential, nonce and timestamp), so one service token covers sending, holding and reading.
+
 ---
 
 ## 12. End-user identity, audit, PII
@@ -934,6 +956,16 @@ CREATE TABLE channel_opt_outs (
     opted_out_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     PRIMARY KEY (sender_id, end_user_phone)
 );
+
+-- §11.3 operator takeover: while a row is live the engine does not run for this phone
+CREATE TABLE conversation_holds (
+    tenant_id         VARCHAR(64)  NOT NULL,
+    end_user_phone    VARCHAR(20)  NOT NULL,
+    held_until        TIMESTAMPTZ  NOT NULL,
+    reason            VARCHAR(64),
+    held_from         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, end_user_phone)
+);
 ```
 
 The `whatsapp_senders.webhook_secret_enc` is per-sender and unique-per-sender; rotating it requires re-saving the Twilio webhook URL on Twilio's side (the URL embeds the secret hash). This is conscious — one compromised sender's secret can't be used to forge inbound to another.
@@ -974,6 +1006,15 @@ DELETE /channel-bindings/{bid}                   soft-delete (DEACTIVATED)
 # Opt-outs
 GET    /channel-opt-outs?senderId=...
 DELETE /channel-opt-outs/{senderId}/{phoneE164}  operator-triggered removal (audited)
+```
+
+The integration edge is not admin-scoped: a trusted system sender proves itself per request (§11.3,
+`system-messaging-design.md` §4.1).
+
+```
+POST   /v1/integrations/{tenant}/senders/{sid}/holds           hold the conversation (operator takeover)
+POST   /v1/integrations/{tenant}/senders/{sid}/holds/release    give it back to the assistant
+GET    /v1/integrations/{tenant}/senders/{sid}/holds/messages   what the customer wrote while it was held
 ```
 
 The webhook receiver is **not** tenant-scoped in the URL (Twilio sends to one URL per sender; the sender row resolves the tenant):

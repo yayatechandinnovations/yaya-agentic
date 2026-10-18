@@ -63,6 +63,7 @@ class WhatsAppWebhookE2ETest {
     @Autowired EntityMemory entityMemory;
     @Autowired ObjectMapper mapper;
     @Autowired ChannelSessionService channelSessions;
+    @Autowired ConversationHoldService holds;
     @Value("${yaya.agentic.channels.twilio.webhook-base-url}") String webhookBase;
     @Value("${yaya.agentic.channels.twilio.auth-token}") String authToken;
 
@@ -212,6 +213,35 @@ class WhatsAppWebhookE2ETest {
                 .findFirst().orElseThrow();
         assertThat(phoneEnt.value()).isEqualTo("+15559876543");
         assertThat(phoneEnt.producedBy().value()).isEqualTo("__channel_whatsapp_inbound__");
+    }
+
+    @Test
+    void a_held_conversation_is_acked_but_never_reaches_the_engine() {
+        holds.hold(new Ids.TenantId(TENANT), "+15559876543", java.time.Duration.ofMinutes(30), "handoff");
+        try {
+            String messageSid = "SM_hold_" + UUID.randomUUID();
+            Map<String, String> params = baseParams(messageSid, "Necesito una persona");
+            String fullUrl = webhookBase + "/v1/channels/whatsapp/twilio/webhook/" + SENDER_ID.get();
+            String sig = TwilioSignatureVerifier.computeExpectedSignature(fullUrl, params, authToken);
+
+            client.post()
+                    .uri("/v1/channels/whatsapp/twilio/webhook/{sid}", SENDER_ID.get())
+                    .header("X-Twilio-Signature", sig)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .bodyValue(asForm(params))
+                    .exchange()
+                    .expectStatus().isOk();
+
+            await().atMost(java.time.Duration.ofSeconds(20))
+                    .until(() -> inbound.findById(messageSid).map(e -> e.getProcessedAt() != null).orElse(false));
+
+            var row = inbound.findById(messageSid).orElseThrow();
+            assertThat(row.getProcessingError()).isEqualTo("human_hold");
+            // kept so the desk can read what the customer wrote while a person had the conversation
+            assertThat(row.getBodyRedacted()).isEqualTo("Necesito una persona");
+        } finally {
+            holds.release(new Ids.TenantId(TENANT), "+15559876543");
+        }
     }
 
     @Test
