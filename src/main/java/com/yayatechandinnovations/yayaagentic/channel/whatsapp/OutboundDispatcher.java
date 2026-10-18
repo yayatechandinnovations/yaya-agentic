@@ -6,6 +6,7 @@ import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
 import com.yayatechandinnovations.yayaagentic.channel.InteractivePayload;
 import com.yayatechandinnovations.yayaagentic.channel.InteractiveRenderer;
 import com.yayatechandinnovations.yayaagentic.channel.OutboundFreeform;
+import com.yayatechandinnovations.yayaagentic.channel.OutboundMedia;
 import com.yayatechandinnovations.yayaagentic.channel.OutboundResult;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
 import com.yayatechandinnovations.yayaagentic.channel.SenderRef;
@@ -14,6 +15,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.Playgr
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
+import com.yayatechandinnovations.yayaagentic.outreach.media.MediaTokenSigner;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageEntity;
@@ -22,6 +24,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.OutboundPendingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundPendingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
@@ -77,6 +80,8 @@ public class OutboundDispatcher {
     private final com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
             .PlaygroundSessionRegistry playgroundSessions;
     private final ObjectMapper json;
+    private final MediaTokenSigner mediaSigner;
+    private final String publicBaseUrl;
 
     public OutboundDispatcher(TwilioMessagingChannelProvider twilio,
                               ProviderCredsResolver credsResolver,
@@ -90,7 +95,10 @@ public class OutboundDispatcher {
                               PlaygroundOutboundSink playgroundSink,
                               com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
                                       .PlaygroundSessionRegistry playgroundSessions,
-                              ObjectMapper json) {
+                              ObjectMapper json,
+                              MediaTokenSigner mediaSigner,
+                              @Value("${yaya.agentic.channels.twilio.webhook-base-url:${yaya.agentic.public-base-url:}}")
+                              String publicBaseUrl) {
         this.twilio = twilio;
         this.credsResolver = credsResolver;
         this.renderer = renderer;
@@ -103,6 +111,8 @@ public class OutboundDispatcher {
         this.playgroundSink = playgroundSink;
         this.playgroundSessions = playgroundSessions;
         this.json = json;
+        this.mediaSigner = mediaSigner;
+        this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
     }
 
     /**
@@ -119,13 +129,18 @@ public class OutboundDispatcher {
                 .doOnNext(buffer::accept)
                 .blockLast(MAX_BUFFER);
 
-        if (buffer.body.length() == 0 && buffer.lastHint == null) {
+        if (buffer.body.length() == 0 && buffer.lastHint == null && buffer.attachments.isEmpty()) {
             // Engine produced nothing dispatchable — silent no-op. The
             // recorder still saw every TurnEvent through its own subscription.
             return;
         }
-        dispatch(tenant, sender, endUserPhone, sessionId,
-                collapseRepeatedBody(buffer.body.toString()), buffer.lastHint);
+        if (buffer.body.length() > 0 || buffer.lastHint != null) {
+            dispatch(tenant, sender, endUserPhone, sessionId,
+                    collapseRepeatedBody(buffer.body.toString()), buffer.lastHint);
+        }
+        if (!buffer.attachments.isEmpty()) {
+            dispatchAttachments(tenant, sender, endUserPhone, sessionId, buffer.attachments);
+        }
     }
 
     /**
@@ -452,17 +467,113 @@ public class OutboundDispatcher {
     /** Simple accumulator over a {@code Flux<TurnEvent>}. */
     private static final class Buffer {
         final StringBuilder body = new StringBuilder();
+        final List<TurnEvent.UiHint> attachments = new ArrayList<>();
         TurnEvent.UiHint lastHint;
 
         void accept(TurnEvent event) {
             if (event instanceof TurnEvent.Token t) {
                 body.append(t.text());
             } else if (event instanceof TurnEvent.UiHint h) {
-                lastHint = h;
+                // "attachment" hints (engine §6.3 media outputs) accumulate —
+                // each becomes its own media message; every other hint kind
+                // keeps last-wins semantics (quick_replies, menu, confirm…).
+                if ("attachment".equals(h.kind())) {
+                    attachments.add(h);
+                } else {
+                    lastHint = h;
+                }
             }
             // Citation events are recorded by the recorder side; the
             // dispatcher doesn't surface them on WhatsApp in v1 (§10.1).
             // ToolCall / ToolResult are internal to the recorder.
+        }
+    }
+
+    /**
+     * WhatsApp leg for engine "attachment" UiHints (a tool's declared media
+     * output). Each attachment goes out as its own media message: Twilio
+     * fetches the file from a fresh signed {@code /v1/media/{token}} URL, so
+     * the platform's public base URL must be set and reachable from Twilio.
+     * Service-window rule: media can't be parked (outbound_pending stores
+     * text only), so outside the 24h window the attachment is dropped with a
+     * log — in practice these are replies to an inbound and always inside it.
+     */
+    private void dispatchAttachments(Ids.TenantId tenant, SenderId sender, String endUserPhone,
+                                     Ids.SessionId sessionId, List<TurnEvent.UiHint> attachments) {
+        if (optOuts.isOptedOut(sender, endUserPhone)) {
+            metrics.optedOutBlocked(tenant.value(), sender.value());
+            return;
+        }
+        if (PlaygroundSenders.isPlayground(sender.value())) {
+            for (TurnEvent.UiHint h : attachments) {
+                String filename = String.valueOf(h.payload().getOrDefault("filename", "archivo"));
+                Ids.SessionId sinkKey = playgroundSessions.clientFor(sessionId)
+                        .map(Ids.SessionId::new)
+                        .orElse(sessionId);
+                playgroundSink.append(sinkKey, "[attachment] " + filename, null);
+            }
+            metrics.outbound(tenant.value(), sender.value(), "media", "playground");
+            return;
+        }
+        if (!isInsideServiceWindow(sender.value(), endUserPhone)) {
+            log.warn("Dropping {} attachment(s) for {} — outside the 24h service window "
+                    + "and outbound_pending is text-only", attachments.size(), endUserPhone);
+            metrics.serviceWindowBlocked(tenant.value(), sender.value());
+            return;
+        }
+        if (publicBaseUrl.isBlank()) {
+            log.warn("Dropping {} attachment(s) — no public base url configured "
+                    + "(yaya.agentic.public-base-url); Twilio cannot fetch relative media links",
+                    attachments.size());
+            return;
+        }
+        if (!credsResolver.isReady()) {
+            log.warn("Attachments skipped for {} — Twilio not configured on this instance",
+                    endUserPhone);
+            return;
+        }
+        WhatsAppSender resolved = senders.requireForTenant(tenant, sender);
+        if (!resolved.status().acceptsOutbound()) {
+            log.warn("Sender {} not accepting outbound (status={}), dropping attachments",
+                    sender.value(), resolved.status());
+            return;
+        }
+        SenderRef ref = new SenderRef(twilio.id(),
+                resolved.onboarding().twilioSenderSid() == null
+                        ? resolved.id().value()
+                        : resolved.onboarding().twilioSenderSid());
+
+        for (TurnEvent.UiHint h : attachments) {
+            Map<String, Object> p = h.payload();
+            String filename = String.valueOf(p.getOrDefault("filename", "archivo"));
+            String contentType = p.get("contentType") == null ? null : String.valueOf(p.get("contentType"));
+            // Prefer re-minting a fresh token off the assetId — the hint's own
+            // URL was minted at turn time and Twilio's fetch (plus retries)
+            // deserves the full 15-minute TTL.
+            String path;
+            Object assetId = p.get("assetId");
+            if (assetId != null && !String.valueOf(assetId).isBlank()) {
+                path = "/v1/media/" + mediaSigner.mint(tenant, String.valueOf(assetId));
+            } else if (p.get("url") instanceof String u && !u.isBlank()) {
+                path = u;
+            } else {
+                log.warn("Attachment hint without assetId or url — skipped");
+                continue;
+            }
+            String mediaUrl = path.startsWith("http") ? path : publicBaseUrl + path;
+
+            Map<String, Object> providerHints = new LinkedHashMap<>();
+            providerHints.put("fromPhoneE164", resolved.phoneE164());
+            OutboundMedia media = new OutboundMedia(
+                    endUserPhone, mediaUrl, filename, contentType, filename, providerHints);
+            OutboundResult result = twilio.sendMedia(ref, media, credsResolver.resolve(resolved));
+            recordResult(tenant, sender, endUserPhone, sessionId, "[media] " + filename, result);
+            String resultLabel = result instanceof OutboundResult.Sent ? "sent" : "failed";
+            if (!(result instanceof OutboundResult.Sent)) {
+                log.warn("Attachment send {} for {} → {}: {}", resultLabel, filename,
+                        endUserPhone, result);
+            }
+            metrics.outbound(tenant.value(), sender.value(), "media", resultLabel);
         }
     }
 }

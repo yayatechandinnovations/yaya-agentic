@@ -6,10 +6,12 @@ import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
 import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
+import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
 import com.yayatechandinnovations.yayaagentic.channel.SyntheticToolIds;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioCreds;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.WhisperMediaTranscriber;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
@@ -79,6 +81,8 @@ public class InboundDispatchWorker {
     private final EntityMemory entityMemory;
     private final ObjectMapper json;
     private final Optional<MediaTranscriber> transcriber;
+    private final ProviderCredsResolver credsResolver;
+    private final InboundImageLoader imageLoader;
     private final OutboundDispatcher outboundDispatcher;
     private final OptOutService optOuts;
     private final ChannelTracing tracing;
@@ -103,6 +107,8 @@ public class InboundDispatchWorker {
             EntityMemory entityMemory,
             ObjectMapper json,
             Optional<MediaTranscriber> transcriber,
+            ProviderCredsResolver credsResolver,
+            InboundImageLoader imageLoader,
             OutboundDispatcher outboundDispatcher,
             OptOutService optOuts,
             ChannelTracing tracing,
@@ -123,6 +129,8 @@ public class InboundDispatchWorker {
         this.entityMemory = entityMemory;
         this.json = json;
         this.transcriber = transcriber;
+        this.credsResolver = credsResolver;
+        this.imageLoader = imageLoader;
         this.outboundDispatcher = outboundDispatcher;
         this.optOuts = optOuts;
         this.tracing = tracing;
@@ -218,7 +226,7 @@ public class InboundDispatchWorker {
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         new Ids.SessionId(java.util.UUID.randomUUID().toString()),
-                        OptOutService.STOP_CONFIRMATION,
+                        OptOutService.stopConfirmation(sender.defaultLocale()),
                         java.util.List.of());
             } catch (RuntimeException ignored) {}
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -234,7 +242,7 @@ public class InboundDispatchWorker {
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         new Ids.SessionId(java.util.UUID.randomUUID().toString()),
-                        OptOutService.START_CONFIRMATION,
+                        OptOutService.startConfirmation(sender.defaultLocale()),
                         java.util.List.of());
             } catch (RuntimeException ignored) {}
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -262,7 +270,7 @@ public class InboundDispatchWorker {
 
         // 2. transcribe audio + mutate body if needed
         List<MediaDescriptor> media = extractMedia(raw);
-        TranscriptionOutcome transcription = transcribeIfPresent(row, media);
+        TranscriptionOutcome transcription = transcribeIfPresent(row, sender, media);
         if (transcription.text != null && !transcription.text.isBlank()) {
             body = body.isBlank()
                     ? transcription.text
@@ -270,6 +278,10 @@ public class InboundDispatchWorker {
             row.setMediaTranscriptsJson(transcription.transcriptsJson);
             inbound.save(row);
         }
+        // 2b. inbound photos → the model sees them (vision) and tools can
+        //     reference them by URL. See whatsapp-channel-design.md §9.5.
+        List<InboundImageLoader.LoadedImage> images = loadImagesIfAccepted(sender, media);
+        Map<String, Object> attachments = imageAttachments(images);
 
         // 3. binding resolution — supplies the session policy + profile id
         var endpoint = new com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef
@@ -388,7 +400,7 @@ public class InboundDispatchWorker {
             // static greeting double-introduces the bot — the engine reply
             // introduces itself on first contact via the personality "greet"
             // rule. Send only the reply in that case.
-            if (userText.isBlank()) {
+            if (userText.isBlank() && images.isEmpty()) {
                 outboundDispatcher.dispatchGreeting(
                         new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
@@ -402,7 +414,7 @@ public class InboundDispatchWorker {
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         sessionId,
-                        engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                        engine.send(sessionId, new UserMessage(userText, attachments), auth));
             }
         } else {
             // §9 step 3e on continuation — refresh the session row's JWT
@@ -414,20 +426,54 @@ public class InboundDispatchWorker {
             recordAuthFlowTrace(sessionId, row, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
-            if (!userText.isBlank()) {
+            if (!userText.isBlank() || !images.isEmpty()) {
                 // §6.6 — when an OTP-shaped pending exists for this session,
                 // interpret the inbound as the user's verification code BEFORE
                 // routing to the engine. The LLM never sees the OTP digits.
-                if (stepUp.hasOpenOtpPending(sessionId)
+                if (!userText.isBlank() && stepUp.hasOpenOtpPending(sessionId)
                         && handleStepUpVerify(row, sessionId, userText)) {
                     // Step-up dispatcher already sent the response; skip engine.
                 } else {
-                    outboundDispatcher.dispatchTurn(
-                            new Ids.TenantId(row.getTenantId()),
-                            new SenderId(row.getSenderId()),
-                            row.getEndUserPhone(),
-                            sessionId,
-                            engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                    try {
+                        outboundDispatcher.dispatchTurn(
+                                new Ids.TenantId(row.getTenantId()),
+                                new SenderId(row.getSenderId()),
+                                row.getEndUserPhone(),
+                                sessionId,
+                                engine.send(sessionId, new UserMessage(userText, attachments), auth));
+                    } catch (IllegalStateException stale) {
+                        // The channel_sessions row survived a backend restart
+                        // but the engine's session didn't. Self-heal: retire
+                        // the stale mapping, open a fresh engine session, and
+                        // replay this message into it — the user never sees
+                        // the seam (beyond losing prior conversation memory).
+                        if (stale.getMessage() == null
+                                || !stale.getMessage().startsWith("unknown session")) {
+                            throw stale;
+                        }
+                        log.warn("Engine session {} vanished (backend restart?) — "
+                                + "reopening a fresh session for {}",
+                                sessionId.value(), row.getEndUserPhone());
+                        sessions.close(new Ids.TenantId(row.getTenantId()), sessionId,
+                                "ENGINE_SESSION_LOST");
+                        StartSessionResult healed = engine.start(startReq, auth);
+                        Ids.SessionId healedId = healed.session().id();
+                        sessions.register(
+                                new Ids.TenantId(row.getTenantId()),
+                                new SenderId(row.getSenderId()),
+                                row.getEndUserPhone(),
+                                healedId);
+                        authResolved.jwt().ifPresent(jwt ->
+                                authTokenStore.persist(healedId, jwt));
+                        recordAuthFlowTrace(healedId, row, binding, authResolved);
+                        captureEntities(healedId, sender, row, transcription, policy);
+                        outboundDispatcher.dispatchTurn(
+                                new Ids.TenantId(row.getTenantId()),
+                                new SenderId(row.getSenderId()),
+                                row.getEndUserPhone(),
+                                healedId,
+                                engine.send(healedId, new UserMessage(userText, attachments), auth));
+                    }
                 }
             }
         }
@@ -437,10 +483,26 @@ public class InboundDispatchWorker {
         inbound.save(row);
     }
 
-    private TranscriptionOutcome transcribeIfPresent(InboundMessageEntity row, List<MediaDescriptor> media) {
+    private TranscriptionOutcome transcribeIfPresent(InboundMessageEntity row, WhatsAppSender sender,
+                                                     List<MediaDescriptor> media) {
         if (media.isEmpty()) return TranscriptionOutcome.empty();
         boolean enabled = transcriber.isPresent();
         if (!enabled) return TranscriptionOutcome.empty();
+
+        // Twilio's media CDN enforces HTTP Basic auth on accounts that have
+        // it enabled (and always for WhatsApp media on some account tiers) —
+        // fetch with the same creds the sender uses for outbound, or the
+        // download 401s and the voice note is silently dropped.
+        String basicAuthHeader = null;
+        try {
+            if (credsResolver.isReady()
+                    && credsResolver.resolve(sender) instanceof TwilioCreds tc) {
+                basicAuthHeader = tc.basicAuthHeader();
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not resolve Twilio creds for media download (sender {}): {}",
+                    sender.id().value(), e.getMessage());
+        }
 
         List<Map<String, Object>> transcripts = new ArrayList<>();
         StringBuilder combined = new StringBuilder();
@@ -453,7 +515,7 @@ public class InboundDispatchWorker {
                         new MediaTranscriber.TranscriptionContext(
                                 row.getTenantId(), row.getSenderId(), row.getMessageSid(),
                                 Duration.ofMinutes(maxAudioMinutes), maxAudioBytes,
-                                null));
+                                basicAuthHeader));
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("mediaUrl", m.mediaUrl());
                 entry.put("contentType", m.contentType());
@@ -750,6 +812,46 @@ public class InboundDispatchWorker {
         return body.replace(phone, "+<redacted>");
     }
 
+    /**
+     * Images are accepted unless the sender's metadata says
+     * {@code acceptInboundImages: false}. Twilio's CDN wants the sender's
+     * Basic auth, resolved the same way the transcriber does.
+     */
+    private List<InboundImageLoader.LoadedImage> loadImagesIfAccepted(WhatsAppSender sender,
+                                                                       List<MediaDescriptor> media) {
+        if (media == null || media.isEmpty()) return List.of();
+        if (media.stream().noneMatch(m -> InboundImageLoader.isImage(m.contentType()))) return List.of();
+        Object flag = sender.metadata() == null ? null : sender.metadata().get("acceptInboundImages");
+        if (flag != null && "false".equalsIgnoreCase(flag.toString())) {
+            log.info("Sender {} rejects inbound images; {} dropped", sender.id().value(), media.size());
+            return List.of();
+        }
+        String basicAuthHeader = null;
+        try {
+            if (credsResolver.isReady()
+                    && credsResolver.resolve(sender) instanceof TwilioCreds tc) {
+                basicAuthHeader = tc.basicAuthHeader();
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not resolve Twilio creds for image download (sender {}): {}",
+                    sender.id().value(), e.getMessage());
+        }
+        return imageLoader.load(media, basicAuthHeader);
+    }
+
+    /**
+     * {@code chat.images} = inline parts the engine turns into vision input
+     * ({@code DefaultConversationEngine.currentUserEntry}); {@code images} =
+     * URL metadata an HTTP tool argument can reference ({@code mediaUrl}).
+     */
+    static Map<String, Object> imageAttachments(List<InboundImageLoader.LoadedImage> images) {
+        if (images == null || images.isEmpty()) return Map.of();
+        Map<String, Object> attachments = new LinkedHashMap<>();
+        attachments.put("chat.images", images.stream().map(InboundImageLoader.LoadedImage::inlinePart).toList());
+        attachments.put("images", images.stream().map(InboundImageLoader.LoadedImage::metadata).toList());
+        return attachments;
+    }
+
     private List<MediaDescriptor> extractMedia(Map<String, Object> raw) {
         // Twilio's WhatsApp webhook puts NumMedia + MediaUrl0..N + MediaContentType0..N
         Object numMedia = raw.get("NumMedia");
@@ -796,7 +898,12 @@ public class InboundDispatchWorker {
         });
     }
 
-    record MediaDescriptor(String mediaUrl, String contentType, long size) {}
+    record MediaDescriptor(String mediaUrl, String contentType, long size) implements InboundImageLoader.MediaRef {
+        @Override
+        public long sizeBytes() {
+            return size;
+        }
+    }
 
     record TranscriptionOutcome(String text, String detectedLanguage, String transcriptsJson) {
         static TranscriptionOutcome empty() {

@@ -109,9 +109,14 @@ public class WhisperMediaTranscriber implements MediaTranscriber {
         // Step 2 — POST to OpenAI's transcription endpoint with the audio
         // bytes as multipart/form-data.
         MultipartBodyBuilder mp = new MultipartBodyBuilder();
+        // OpenAI infers the audio format from the FILENAME EXTENSION, not the
+        // multipart content type — an unknown extension (".dat") is a 400
+        // "Invalid file format" even for perfectly valid Opus/OGG bytes.
+        String uploadName = (ctx.messageSid() == null ? "audio" : ctx.messageSid())
+                + "." + extensionFor(media.contentType());
         ByteArrayResource resource = new ByteArrayResource(audio) {
             @Override public String getFilename() {
-                return ctx.messageSid() == null ? "audio.dat" : ctx.messageSid() + ".dat";
+                return uploadName;
             }
         };
         mp.part("file", resource).contentType(MediaType.parseMediaType(media.contentType()));
@@ -163,6 +168,19 @@ public class WhisperMediaTranscriber implements MediaTranscriber {
         if (node == null) return fallback;
         JsonNode f = node.get(field);
         return f == null || f.isNull() ? fallback : f.asText(fallback);
+    }
+
+    /** Maps a Twilio audio content type to an extension OpenAI recognizes. */
+    private static String extensionFor(String contentType) {
+        if (contentType == null) return "ogg";
+        String ct = contentType.toLowerCase(java.util.Locale.ROOT);
+        if (ct.startsWith("audio/ogg") || ct.startsWith("audio/opus")) return "ogg";
+        if (ct.startsWith("audio/mpeg") || ct.startsWith("audio/mp3"))  return "mp3";
+        if (ct.startsWith("audio/mp4") || ct.startsWith("audio/aac")
+                || ct.startsWith("audio/x-m4a"))                        return "m4a";
+        if (ct.startsWith("audio/wav"))                                 return "wav";
+        if (ct.startsWith("audio/webm"))                                return "webm";
+        return "ogg";
     }
 
     /** Thrown by the transcriber when the input is invalid or fetch failed.

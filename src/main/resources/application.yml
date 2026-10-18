@@ -41,7 +41,10 @@ spring:
       api-key: ${ANTHROPIC_API_KEY:}
       chat:
         options:
-          model: claude-sonnet-4-6
+          # Per-deployment override; the platform default stays Sonnet 4.6.
+          # Pa'l Patio deployments set ANTHROPIC_CHAT_MODEL=claude-opus-5
+          # (docs/guides/palpatio-tenant-setup.md).
+          model: ${ANTHROPIC_CHAT_MODEL:claude-sonnet-4-6}
     openai:
       # Used for embeddings always and for chat when YAYA_LLM_PROVIDER=openai.
       # Without a key the embedding bean is absent and we fall back to the
