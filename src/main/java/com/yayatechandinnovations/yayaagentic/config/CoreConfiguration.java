@@ -28,7 +28,8 @@ import java.time.Clock;
         ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
         IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class,
         com.yayatechandinnovations.yayaagentic.outreach.push.PushProperties.class,
-        com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class})
+        com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class,
+        com.yayatechandinnovations.yayaagentic.structured.StructuredCompletionsProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 

@@ -205,6 +205,12 @@ yaya:
       idle-timeout: PT30M
     llm:
       provider: ${YAYA_LLM_PROVIDER:stub}   # stub | anthropic
+    structured-completions:
+      # POST /v1/structured-completions (docs/guides/structured-completions.md):
+      # per-tenant fixed-window rate limit (Redis) and the overall deadline for
+      # one request, retry included.
+      per-minute: ${YAYA_STRUCTURED_COMPLETIONS_PER_MINUTE:30}
+      timeout: ${YAYA_STRUCTURED_COMPLETIONS_TIMEOUT:PT60S}
     cors:
       allowed-origins:
         - "http://localhost:*"

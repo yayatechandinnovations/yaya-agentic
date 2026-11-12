@@ -24,7 +24,7 @@ import java.util.UUID;
  * keeps the engine bootable instead of crashing on a missing dependency.
  */
 @Component
-public class StubLlmClient implements LlmClient {
+public class StubLlmClient implements LlmClient, StructuredLlmClient {
 
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(StubLlmClient.class);
 
@@ -72,6 +72,70 @@ public class StubLlmClient implements LlmClient {
                 .delayElements(Duration.ofMillis(40))
                 .<LlmEvent>map(LlmEvent.TokenChunk::new)
                 .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
+    }
+
+    // ---- Structured completion (offline, deterministic) ---------------
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Test hook: when set, decides the answer instead of the schema skeleton. */
+    private volatile java.util.function.Function<StructuredRequest, Map<String, Object>> structuredResponder;
+
+    /** Test hook — pass {@code null} to restore the default skeleton answer. */
+    public void setStructuredResponder(
+            java.util.function.Function<StructuredRequest, Map<String, Object>> responder) {
+        this.structuredResponder = responder;
+    }
+
+    @Override
+    public String provider() { return "stub"; }
+
+    /**
+     * No model: answers with the smallest object the schema's {@code required}
+     * list allows (empty strings/arrays, zeroes, first enum value), or whatever
+     * the test hook returns. Token counts are a deterministic chars/4 estimate
+     * so callers can exercise their usage plumbing offline.
+     */
+    @Override
+    public StructuredResult complete(StructuredRequest request) {
+        var responder = structuredResponder;
+        Map<String, Object> output;
+        try {
+            output = responder != null
+                    ? responder.apply(request)
+                    : JSON.convertValue(skeleton(JSON.readTree(request.schemaJson())),
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new StructuredLlmException("stub could not read the schema", e);
+        }
+        long in = ((request.system() == null ? 0 : request.system().length())
+                + request.input().length() + request.schemaJson().length()) / 4;
+        long out = output == null ? 0 : JSON.valueToTree(output).toString().length() / 4;
+        return new StructuredResult(output, false, in, out, 0, 0, "stub");
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode skeleton(com.fasterxml.jackson.databind.JsonNode schema) {
+        var f = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+        if (schema == null || !schema.isObject()) return f.nullNode();
+        if (schema.has("const")) return schema.get("const");
+        if (schema.path("enum").isArray() && !schema.get("enum").isEmpty()) return schema.get("enum").get(0);
+        var type = schema.path("type");
+        String t = type.isArray() && !type.isEmpty() ? type.get(0).asText() : type.asText("");
+        return switch (t) {
+            case "object" -> {
+                var obj = f.objectNode();
+                for (var name : schema.path("required")) {
+                    obj.set(name.asText(), skeleton(schema.path("properties").get(name.asText())));
+                }
+                yield obj;
+            }
+            case "array" -> f.arrayNode();
+            case "string" -> f.textNode("");
+            case "integer", "number" -> schema.has("minimum") ? schema.get("minimum") : f.numberNode(0);
+            case "boolean" -> f.booleanNode(false);
+            default -> f.nullNode();
+        };
     }
 
     private static String lastUserMessage(List<HistoryEntry> history) {

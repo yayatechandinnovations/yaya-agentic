@@ -11,4 +11,10 @@ public interface TenantJwtSecretRepository extends JpaRepository<TenantJwtSecret
     List<TenantJwtSecretEntity> findByTenantId(String tenantId);
 
     Optional<TenantJwtSecretEntity> findByTenantIdAndIss(String tenantId, String iss);
+
+    /** Issuer → tenant resolution for tenant-less service endpoints
+     *  ({@code StructuredCompletionAuthenticator}): every tenant that trusts {@code iss}. */
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "token-bearer lookup: the tenant is what the token's issuer + signature resolve to")
+    List<TenantJwtSecretEntity> findByIss(String iss);
 }
