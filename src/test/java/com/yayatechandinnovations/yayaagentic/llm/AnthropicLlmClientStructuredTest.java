@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import reactor.core.publisher.Flux;
 
 /**
  * The structured-completion round on Anthropic: one answer tool carrying the
@@ -110,11 +111,14 @@ class AnthropicLlmClientStructuredTest {
                 AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall(
                         "toolu_1", "function", "emit_result", "{\"ids\":[\"a\",\"b\"]}"))).build(),
                 ChatGenerationMetadata.builder().finishReason("tool_use").build());
-        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(text, tool),
-                ChatResponseMetadata.builder()
-                        .model("claude-sonnet-4-6")
-                        .usage(new DefaultUsage(34, 210, 244, new AnthropicApi.Usage(34, 210, 200, 1000)))
-                        .build()));
+        // …and the answer arrives as a stream: the tool call and the settled usage in a later chunk.
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(
+                new ChatResponse(List.of(text)),
+                new ChatResponse(List.of(tool),
+                        ChatResponseMetadata.builder()
+                                .model("claude-sonnet-4-6")
+                                .usage(new DefaultUsage(34, 210, 244, new AnthropicApi.Usage(34, 210, 200, 1000)))
+                                .build())));
 
         StructuredResult result = client("claude-sonnet-4-6").complete(request(null));
 
@@ -127,7 +131,7 @@ class AnthropicLlmClientStructuredTest {
         assertThat(result.model()).isEqualTo("claude-sonnet-4-6");
 
         ArgumentCaptor<Prompt> sent = ArgumentCaptor.forClass(Prompt.class);
-        verify(chatModel).call(sent.capture());
+        verify(chatModel).stream(sent.capture());
         assertThat(sent.getValue().getInstructions()).hasSize(3);
     }
 
@@ -137,7 +141,7 @@ class AnthropicLlmClientStructuredTest {
                 AssistantMessage.builder().content("").toolCalls(List.of(new AssistantMessage.ToolCall(
                         "toolu_1", "function", "emit_result", "{\"ids\":[\"a\","))).build(),
                 ChatGenerationMetadata.builder().finishReason("max_tokens").build());
-        when(chatModel.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(cut)));
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(new ChatResponse(List.of(cut))));
 
         StructuredResult result = client("claude-sonnet-4-6").complete(request(null));
 
@@ -147,8 +151,8 @@ class AnthropicLlmClientStructuredTest {
 
     @Test
     void a_provider_error_becomes_a_structured_llm_exception_without_the_provider_message() {
-        when(chatModel.call(any(Prompt.class)))
-                .thenThrow(new IllegalStateException("400 … request body echoed: SYSTEM PROMPT"));
+        when(chatModel.stream(any(Prompt.class)))
+                .thenReturn(Flux.error(new IllegalStateException("400 … request body echoed: SYSTEM PROMPT")));
 
         assertThatThrownBy(() -> client("claude-sonnet-4-6").complete(request(null)))
                 .isInstanceOf(StructuredLlmException.class)

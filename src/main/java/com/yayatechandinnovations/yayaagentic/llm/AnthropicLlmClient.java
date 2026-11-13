@@ -185,50 +185,56 @@ public class AnthropicLlmClient implements LlmClient, StructuredLlmClient {
 
     @Override
     public StructuredResult complete(StructuredRequest request) {
-        org.springframework.ai.chat.model.ChatResponse response;
+        // Streamed and collected, not chatModel.call(): streaming is the
+        // transport every chat turn already uses in production, while the
+        // blocking call failed there reading the provider's response body
+        // ("unexpected end-of-input" after the first byte).
+        List<org.springframework.ai.chat.model.ChatResponse> chunks;
         try {
-            response = chatModel.call(structuredPrompt(request));
+            chunks = chatModel.stream(structuredPrompt(request)).collectList().block();
         } catch (RuntimeException e) {
             // Class name only — provider error bodies can echo request content.
             throw new StructuredLlmException("anthropic call failed: " + e.getClass().getSimpleName(), e);
         }
-        if (response == null) throw new StructuredLlmException("anthropic returned no response", null);
+        if (chunks == null || chunks.isEmpty()) throw new StructuredLlmException("anthropic returned no response", null);
 
-        // Spring AI splits text and tool_use blocks into separate generations,
-        // so scan them all for the answer tool's call.
+        // Spring AI splits text and tool_use blocks into separate generations
+        // (and chunks), so scan them all for the answer tool's call. Usage
+        // accumulates across chunks; the last one carrying it is the settled count.
         Map<String, Object> output = null;
         boolean truncated = false;
-        for (var generation : response.getResults()) {
-            if (generation == null) continue;
-            var meta = generation.getMetadata();
-            if (meta != null && "max_tokens".equalsIgnoreCase(meta.getFinishReason())) truncated = true;
-            AssistantMessage out = generation.getOutput();
-            if (out == null || out.getToolCalls() == null || output != null) continue;
-            for (var tc : out.getToolCalls()) {
-                if (request.toolName().equals(tc.name())) {
-                    output = parseStructuredArgs(tc.arguments());
-                    break;
-                }
-            }
-        }
-
         long input = 0, outputTokens = 0, cacheRead = 0, cacheCreation = 0;
         String model = null;
-        var metadata = response.getMetadata();
-        if (metadata != null) {
-            model = metadata.getModel();
+        for (var response : chunks) {
+            if (response == null) continue;
+            for (var generation : response.getResults()) {
+                if (generation == null) continue;
+                var meta = generation.getMetadata();
+                if (meta != null && "max_tokens".equalsIgnoreCase(meta.getFinishReason())) truncated = true;
+                AssistantMessage out = generation.getOutput();
+                if (out == null || out.getToolCalls() == null || output != null) continue;
+                for (var tc : out.getToolCalls()) {
+                    if (request.toolName().equals(tc.name())) {
+                        output = parseStructuredArgs(tc.arguments());
+                        break;
+                    }
+                }
+            }
+            var metadata = response.getMetadata();
+            if (metadata == null) continue;
+            if (metadata.getModel() != null && !metadata.getModel().isBlank()) model = metadata.getModel();
             var usage = metadata.getUsage();
-            if (usage != null) {
+            if (usage == null) continue;
+            if (usage.getNativeUsage() instanceof org.springframework.ai.anthropic.api.AnthropicApi.Usage u) {
+                // Anthropic's input_tokens EXCLUDES cached tokens; the prompt
+                // the caller paid for is the sum of all three.
+                cacheRead = nz(u.cacheReadInputTokens());
+                cacheCreation = nz(u.cacheCreationInputTokens());
+                input = nz(u.inputTokens()) + cacheRead + cacheCreation;
+                outputTokens = nz(u.outputTokens());
+            } else if (nz(usage.getPromptTokens()) + nz(usage.getCompletionTokens()) > 0) {
                 input = nz(usage.getPromptTokens());
                 outputTokens = nz(usage.getCompletionTokens());
-                if (usage.getNativeUsage() instanceof org.springframework.ai.anthropic.api.AnthropicApi.Usage u) {
-                    // Anthropic's input_tokens EXCLUDES cached tokens; the prompt
-                    // the caller paid for is the sum of all three.
-                    cacheRead = nz(u.cacheReadInputTokens());
-                    cacheCreation = nz(u.cacheCreationInputTokens());
-                    input = nz(u.inputTokens()) + cacheRead + cacheCreation;
-                    outputTokens = nz(u.outputTokens());
-                }
             }
         }
         if (model == null || model.isBlank()) model = configuredModel;
