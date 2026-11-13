@@ -557,6 +557,17 @@ class ChatController extends StateNotifier<ChatState> {
     }
   }
 
+  /// A tap on a message-owned action button (owner-ai v3 §D3). A bound action
+  /// (WhatsApp ops §14.3) sends its label as the legible transcript plus the
+  /// structured `{"kind":"action","actionId":…}` selection: the platform
+  /// resolves the action and runs its tool, and the tap IS the one consent
+  /// (§5 R1) — no confirm card follows. A legacy action submits its `send`
+  /// text, as before.
+  Future<void> tapMessageAction(MessageAction action) => action.isBound
+      ? send(action.label.isNotEmpty ? action.label : action.send,
+          selection: {'kind': 'action', 'actionId': action.actionId})
+      : send(action.send);
+
   /// A tap action whose cart/confirm side effects matter but whose failures are
   /// silent (e.g. the on-open cart hydration).
   Future<void> _silentAction(String tool, Map<String, Object?> args) async {
@@ -626,24 +637,42 @@ class ChatController extends StateNotifier<ChatState> {
 
   /* --------------------------- confirm flow ----------------------------- */
 
-  /// Approve a pending confirm. The engine reads the next message text via its
-  /// `ConfirmDetector`, so a canonical affirmative resolves the pending tool
-  /// (there is no dedicated confirm endpoint).
-  Future<void> confirmPending() => send('yes');
+  /// Approve the pending confirm (one-confirmation rule, WhatsApp ops §6.7):
+  /// the button's label (the frame's own `confirmLabel`, else [fallbackLabel])
+  /// as the legible transcript plus the structured
+  /// `{"kind":"confirm","callId":…}` selection, which the engine resolves by
+  /// callId before any NL reading. The label alone is still a recognized
+  /// affirmative for an engine that predates the selection.
+  Future<void> confirmPending({String fallbackLabel = 'Confirmar'}) {
+    final prompt = state.pendingConfirm;
+    return send(prompt?.confirmText(fallbackLabel) ?? fallbackLabel, selection: {
+      'kind': 'confirm',
+      'callId': ?prompt?.callId,
+    });
+  }
 
-  Future<void> cancelPending() => send('no');
+  /// Decline the pending confirm — single or multi-item — with
+  /// `{"kind":"cancel","callId":…}`; "Cancelar" is also a recognized negative.
+  Future<void> cancelPending({String fallbackLabel = 'Cancelar'}) {
+    final prompt = state.pendingConfirm;
+    return send(prompt?.cancelText(fallbackLabel) ?? fallbackLabel, selection: {
+      'kind': 'cancel',
+      'callId': ?prompt?.callId,
+    });
+  }
 
-  /// Approve a MULTI-ITEM confirm (owner-ai v2 §4): the transcript-legible "SÍ"
-  /// plus a structured selection naming exactly the checked item ids. The
-  /// engine reads `_selection` before NL resolution, so partial approval is
+  /// Approve a MULTI-ITEM confirm (owner-ai v2 §4): the legible label plus a
+  /// structured selection naming exactly the checked item ids. The engine
+  /// reads `_selection` before NL resolution, so partial approval is
   /// deterministic — never inferred from prose.
-  Future<void> confirmPendingItems(List<String> itemIds) => send('SÍ', selection: {
-        'kind': 'confirm_items',
-        'itemIds': itemIds,
-      });
-
-  /// Decline a multi-item confirm — a plain "NO", no selection.
-  Future<void> cancelPendingItems() => send('NO');
+  Future<void> confirmPendingItems(List<String> itemIds, {String fallbackLabel = 'Confirmar'}) {
+    final prompt = state.pendingConfirm;
+    return send(prompt?.confirmText(fallbackLabel) ?? fallbackLabel, selection: {
+      'kind': 'confirm_items',
+      'callId': ?prompt?.callId,
+      'itemIds': itemIds,
+    });
+  }
 
   /// The UI layer calls this after it has consumed [state.pendingCheckout].
   void checkoutConsumed() => state = state.copyWith(clearCheckout: true);
@@ -655,7 +684,7 @@ class ChatController extends StateNotifier<ChatState> {
       case 'token':
         if (!hasAssistantBubble) break;
         buf.text.write((evt.data['text'] ?? '').toString());
-        _replaceLast(state.messages.last.copyWith(text: buf.text.toString()));
+        _replaceLast(state.messages.last.copyWith(text: buf.visibleText()));
         break;
       case 'citation':
         if (!hasAssistantBubble) break;
@@ -743,7 +772,15 @@ class ChatController extends StateNotifier<ChatState> {
         }
         break;
       case 'confirm':
-        state = state.copyWith(pendingConfirm: ConfirmPrompt.fromJson(payload));
+        final prompt = ConfirmPrompt.fromJson(payload);
+        state = state.copyWith(pendingConfirm: prompt);
+        // One confirmation, one question (WhatsApp ops §6.7 C1): the engine
+        // also streams the summary as a token, but the pinned ConfirmCard
+        // already asks it — drop it from the bubble, whichever frame came first.
+        if (hasAssistantBubble && prompt.summary.trim().isNotEmpty) {
+          buf.confirmSummary = prompt.summary.trim();
+          _replaceLast(state.messages.last.copyWith(text: buf.visibleText()));
+        }
         break;
       case 'menu':
         // Persistent owner menu (owner-ai v2 §3): session chrome, never a
@@ -888,6 +925,22 @@ class _TurnBuffers {
   final StringBuffer text = StringBuffer();
   final List<QuickReply> quickReplies = <QuickReply>[];
   final List<Citation> citations = <Citation>[];
+
+  /// The `confirm` frame's question once this turn raised one (§6.7 C1).
+  String? confirmSummary;
+
+  /// The bubble text: the streamed prose minus the confirm question the card
+  /// shows (and anything after it, e.g. an older engine's "(reply yes or no)"
+  /// suffix). Lead-in prose before the question stays.
+  String visibleText() => stripConfirmSummary(text.toString(), confirmSummary);
+}
+
+/// Removes the LAST occurrence of [summary] — and whatever follows it — from
+/// [text]. Unchanged when there is no summary or the text never carried it.
+String stripConfirmSummary(String text, String? summary) {
+  if (summary == null || summary.isEmpty) return text;
+  final at = text.lastIndexOf(summary);
+  return at < 0 ? text : text.substring(0, at).trimRight();
 }
 
 /// Canonical commerce tool ids (mirror of the backend `CommerceTools`), used

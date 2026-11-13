@@ -35,24 +35,44 @@ class QuickReply {
   }
 }
 
-/// An action button that BELONGS to a message (owner-ai-experience v3 §D3):
-/// approve/deny under an undo-request, etc. Unlike a [QuickReply], these are not
-/// stripped on later turns — they stay with their bubble. [style] picks the
-/// affordance (primary/danger/neutral); a tap submits [send] through the normal
-/// send path.
+/// An action button that BELONGS to a message (owner-ai v3 §D3): approve/deny
+/// under an undo-request, etc. Unlike a [QuickReply], these are not stripped on
+/// later turns — they stay with their bubble. [style] picks the affordance
+/// (primary/danger/neutral).
+///
+/// A tap submits [send] through the normal send path — unless the platform
+/// registered the action and handed back an [actionId] (WhatsApp ops §14.3):
+/// then the tap sends the [label] as the legible transcript plus the
+/// structured selection `{"kind":"action","actionId":…}`, and the platform runs
+/// the bound tool itself. A bound TOOL action carries no `send` at all.
 class MessageAction {
   final String label;
   final String send;
   final String style; // primary | danger | neutral
 
-  const MessageAction({required this.label, required this.send, this.style = 'neutral'});
+  /// The platform's capability id for this action (§14.3); null for a legacy
+  /// text-only action, which keeps sending [send].
+  final String? actionId;
 
-  /// Parses one `actions` entry: `{"label":"Aprobar","send":"…","style":"primary"}`.
+  const MessageAction(
+      {required this.label, required this.send, this.style = 'neutral', this.actionId});
+
+  /// Whether a tap goes out as the bound `{kind:"action"}` selection.
+  bool get isBound => actionId != null;
+
+  /// Parses one `actions` entry: `{"label":"Aprobar","send":"…","style":"primary"}`
+  /// or a bound one `{"label":"Aprobar","style":"primary","actionId":"…"}`.
   factory MessageAction.fromJson(Map<String, dynamic> j) {
     final label = (j['label'] ?? j['send'] ?? '').toString();
     final send = (j['send'] ?? j['label'] ?? '').toString();
     final style = (j['style'] ?? 'neutral').toString();
-    return MessageAction(label: label, send: send, style: style);
+    final rawId = j['actionId']?.toString().trim();
+    return MessageAction(
+      label: label,
+      send: send,
+      style: style,
+      actionId: rawId == null || rawId.isEmpty ? null : rawId,
+    );
   }
 
   static List<MessageAction> listFrom(Object? raw) => raw is List

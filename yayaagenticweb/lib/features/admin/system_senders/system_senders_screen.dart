@@ -5,6 +5,7 @@ import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/chat_entry_point.dart';
 import '../../../models/admin/system_sender.dart';
+import '../../../models/admin/whatsapp_sender.dart';
 import '../shared/admin_shared.dart';
 
 /// Refetched after every write so the list reflects the latest config.
@@ -23,6 +24,13 @@ final _entryPointsProvider =
     FutureProvider.family<List<ChatEntryPointResponse>, String>((ref, tenantId) async {
   final api = await ref.watch(adminApiProvider.future);
   return api.listChatEntryPoints(tenantId);
+});
+
+/// WhatsApp numbers this tenant owns — the optional proactive WhatsApp leg.
+final _whatsappSendersProvider =
+    FutureProvider.family<List<WhatsAppSenderResponse>, String>((ref, tenantId) async {
+  final api = await ref.watch(adminApiProvider.future);
+  return api.listWhatsAppSenders(tenantId);
 });
 
 /// `iss` of every configured HS256 shared secret — the credentialRef a
@@ -69,6 +77,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
   final _subjectsCtrl = TextEditingController(); // allowed subjects, one per line
   String _authenticator = 'shared-secret-jwt';
   String _mediation = 'VERBATIM';
+  String _whatsappSenderId = '';
   bool _enabled = false;
   String? _editingId;
   bool _saving = false;
@@ -90,6 +99,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
       _subjectsCtrl.clear();
       _authenticator = 'shared-secret-jwt';
       _mediation = 'VERBATIM';
+      _whatsappSenderId = '';
       _enabled = false;
     });
   }
@@ -107,6 +117,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
           ? row.trust.authenticatorName
           : 'shared-secret-jwt';
       _mediation = row.mediation;
+      _whatsappSenderId = row.whatsappSenderId ?? '';
       _enabled = row.enabled;
     });
   }
@@ -260,6 +271,39 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
     );
   }
 
+  /// Optional WhatsApp leg: when linked, a message whose envelope asks for
+  /// WhatsApp goes out on this number (template outside the 24 h window) and
+  /// falls back to the chat when it cannot.
+  Widget _whatsappField(AsyncValue<List<WhatsAppSenderResponse>> options) {
+    return options.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (_, _) => const Text('Could not load WhatsApp numbers.'),
+      data: (list) {
+        final missing = _whatsappSenderId.isNotEmpty && !list.any((s) => s.id == _whatsappSenderId);
+        return DropdownButtonFormField<String>(
+          initialValue: _whatsappSenderId,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'WhatsApp number (optional)',
+            helperText: 'Proactive messages that ask for WhatsApp go out on this number; '
+                'otherwise they land in the chat.',
+          ),
+          items: [
+            const DropdownMenuItem(value: '', child: Text('Chat only')),
+            ...list.map((s) => DropdownMenuItem(
+                  value: s.id,
+                  child: Text('${s.displayName}  ·  ${s.phoneE164}  ·  ${s.status}',
+                      overflow: TextOverflow.ellipsis),
+                )),
+            if (missing)
+              DropdownMenuItem(value: _whatsappSenderId, child: Text('$_whatsappSenderId  (not found)')),
+          ],
+          onChanged: (v) => setState(() => _whatsappSenderId = v ?? ''),
+        );
+      },
+    );
+  }
+
   Future<void> _save() async {
     final tenant = ref.read(currentTenantOrNull);
     if (tenant == null) {
@@ -289,6 +333,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
         ),
         responseToolId:
             _responseToolCtrl.text.trim().isEmpty ? null : _responseToolCtrl.text.trim(),
+        whatsappSenderId: _whatsappSenderId,
       );
       if (_editingId == null) {
         await api.createSystemSender(tenant, body);
@@ -388,6 +433,7 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
     final jwtIss = ref.watch(_jwtSecretIssProvider(tenant));
     final oidcIss = ref.watch(_oidcIssuerIssProvider(tenant));
     final toolIds = ref.watch(_toolIdsProvider(tenant));
+    final whatsappSenders = ref.watch(_whatsappSendersProvider(tenant));
 
     return AdminTwoPane(
       title: 'System inbound senders',
@@ -426,6 +472,8 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
               ),
               const SizedBox(height: 12),
               _entryPointField(entryPoints),
+              const SizedBox(height: 12),
+              _whatsappField(whatsappSenders),
               const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,

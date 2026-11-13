@@ -1,9 +1,10 @@
 import 'commerce_json.dart';
 
 /// The `confirm` UiHint payload — the two-phase guardrail before a money-mover
-/// (checkout) runs. The client shows `summary` with Confirm/Cancel; approval is
-/// a normal text reply the engine's `ConfirmDetector` reads as affirmative
-/// ("yes") — there is no dedicated confirm endpoint (design §5.3, §9).
+/// (checkout) runs. The client shows `summary` with Confirmar/Cancelar; the
+/// reply is a normal message carrying the `{"kind":"confirm"|"cancel","callId"}`
+/// selection (WhatsApp ops §14.3) — there is no dedicated confirm endpoint
+/// (design §5.3, §9).
 class ConfirmPrompt {
   final String toolId;
   final String? callId;
@@ -19,8 +20,11 @@ class ConfirmPrompt {
   /// e.g. "Total a revertir: RD$4,300" — shown under the item list.
   final String? totalLine;
 
-  /// Label for the approve button, e.g. "SÍ, aprobar 3". Fallback: "SÍ".
+  /// The frame's own button labels, localized by the engine ("Confirmar" /
+  /// "Cancelar"; a multi-item frame counts its approve label, e.g. "SÍ (3)").
+  /// Null on an older engine — the card falls back to the app's strings.
   final String? confirmLabel;
+  final String? cancelLabel;
 
   const ConfirmPrompt({
     required this.toolId,
@@ -30,9 +34,21 @@ class ConfirmPrompt {
     this.items = const [],
     this.totalLine,
     this.confirmLabel,
+    this.cancelLabel,
   });
 
   bool get hasItems => items.isNotEmpty;
+
+  /// The approve button text — also what the tap sends as its transcript, so
+  /// the engine sees the frame's own label (one-confirmation rule R3).
+  String confirmText(String fallback) => _orElse(confirmLabel, fallback);
+
+  String cancelText(String fallback) => _orElse(cancelLabel, fallback);
+
+  static String _orElse(String? label, String fallback) {
+    final text = label?.trim() ?? '';
+    return text.isEmpty ? fallback : text;
+  }
 
   factory ConfirmPrompt.fromJson(Map<String, dynamic> j) => ConfirmPrompt(
         toolId: (j['toolId'] ?? '').toString(),
@@ -45,6 +61,7 @@ class ConfirmPrompt {
         ],
         totalLine: asStr(j['totalLine']),
         confirmLabel: asStr(j['confirmLabel']),
+        cancelLabel: asStr(j['cancelLabel']),
       );
 }
 

@@ -67,6 +67,7 @@ class SystemSenderResponse {
     required this.mediation,
     required this.addressing,
     this.responseToolId,
+    this.whatsappSenderId,
   });
 
   final String id;
@@ -78,6 +79,7 @@ class SystemSenderResponse {
   final String mediation; // VERBATIM | LLM_MEDIATED
   final AddressingPolicy addressing;
   final String? responseToolId;
+  final String? whatsappSenderId;
 
   factory SystemSenderResponse.fromJson(Map<String, dynamic> json) => SystemSenderResponse(
         id: json['id'] as String,
@@ -90,6 +92,7 @@ class SystemSenderResponse {
         addressing: AddressingPolicy.fromJson(
             (json['addressing'] as Map?)?.cast<String, dynamic>() ?? const {}),
         responseToolId: json['responseToolId'] as String?,
+        whatsappSenderId: json['whatsappSenderId'] as String?,
       );
 }
 
@@ -102,6 +105,7 @@ class SystemSenderRequest {
     required this.mediation,
     required this.addressing,
     this.responseToolId,
+    this.whatsappSenderId,
   });
 
   final String entryPoint;
@@ -112,6 +116,10 @@ class SystemSenderRequest {
   final AddressingPolicy addressing;
   final String? responseToolId;
 
+  /// WhatsApp number the sender's proactive messages go out on. `null` leaves
+  /// the server's current link untouched; `''` unlinks.
+  final String? whatsappSenderId;
+
   Map<String, dynamic> toJson() => {
         'entryPoint': entryPoint,
         'displayName': displayName,
@@ -120,6 +128,7 @@ class SystemSenderRequest {
         'mediation': mediation,
         'addressing': addressing.toJson(),
         if (responseToolId != null && responseToolId!.isNotEmpty) 'responseToolId': responseToolId,
+        if (whatsappSenderId != null) 'whatsappSenderId': whatsappSenderId,
       };
 }
 

@@ -124,6 +124,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     _scrollToBottom();
   }
 
+  /// A message-owned action button tap: bound actions go out as a structured
+  /// selection, legacy ones as their `send` text (see the controller).
+  void _tapAction(MessageAction action) {
+    ref.read(chatControllerProvider(widget.handle).notifier).tapMessageAction(action);
+    _scrollToBottom();
+  }
+
   Future<void> _signInDialog(BuildContext context) async {
     final t = AppL10n.of(context);
     final c = TextEditingController();
@@ -316,17 +323,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           Expanded(child: _body(state, accent)),
           if (!state.needsSignIn) ...[
             if (state.pendingConfirm != null)
+              // The tapped label is the transcript; the callId-bound selection
+              // is what the engine acts on (WhatsApp ops §6.7, §14.3).
               ConfirmCard(
                 prompt: state.pendingConfirm!,
                 accent: accent,
                 busy: state.sending,
-                onConfirm: controller.confirmPending,
-                // Multi-item confirms decline with a literal "NO" (owner-ai v2
-                // §4); the classic single confirm keeps its "no" path.
-                onCancel: state.pendingConfirm!.hasItems
-                    ? controller.cancelPendingItems
-                    : controller.cancelPending,
-                onConfirmItems: controller.confirmPendingItems,
+                onConfirm: () => controller.confirmPending(
+                    fallbackLabel: AppL10n.of(context).confirmAction),
+                onCancel: () =>
+                    controller.cancelPending(fallbackLabel: AppL10n.of(context).cancel),
+                onConfirmItems: (ids) => controller.confirmPendingItems(ids,
+                    fallbackLabel: AppL10n.of(context).confirmAction),
               ),
             if (state.isStore) MiniCartBar(handle: widget.handle, accent: accent),
             ReceiptDraftBar(handle: widget.handle, accent: accent),
@@ -349,6 +357,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         accent: accent,
         handle: widget.handle,
         onQuickReply: _send,
+        onAction: _tapAction,
         // Chips only ride the LATEST bubble (owner-ai v2 §5) — the controller
         // strips stale ones, and this gate is the render-side guarantee.
         isLatest: i == state.messages.length - 1,
@@ -478,12 +487,14 @@ class _Bubble extends ConsumerWidget {
     required this.accent,
     required this.handle,
     required this.onQuickReply,
+    required this.onAction,
     this.isLatest = false,
   });
   final ChatMessage message;
   final Color accent;
   final String handle;
   final void Function(String) onQuickReply;
+  final void Function(MessageAction) onAction;
 
   /// Only the LATEST bubble may surface quick-reply chips (owner-ai v2 §5).
   final bool isLatest;
@@ -656,7 +667,7 @@ class _Bubble extends ConsumerWidget {
           ),
         // Action buttons that BELONG to this message (owner-ai v3 §D3): rendered
         // on ANY bubble (not gated to latest), never stripped on later turns. A
-        // tap submits through the same send path quick replies use.
+        // tap submits through the send path — bound ones as a selection (§14.3).
         if (message.actions.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -664,7 +675,7 @@ class _Bubble extends ConsumerWidget {
               spacing: 8,
               runSpacing: 8,
               children: message.actions
-                  .map((a) => _ActionButton(action: a, accent: accent, onTap: onQuickReply))
+                  .map((a) => _ActionButton(action: a, accent: accent, onTap: onAction))
                   .toList(),
             ),
           ),
@@ -691,12 +702,12 @@ class _ActionButton extends StatelessWidget {
 
   final MessageAction action;
   final Color accent;
-  final void Function(String) onTap;
+  final void Function(MessageAction) onTap;
 
   @override
   Widget build(BuildContext context) {
     final label = Text(action.label);
-    void onPressed() => onTap(action.send);
+    void onPressed() => onTap(action);
     switch (action.style) {
       case 'danger':
         final scheme = Theme.of(context).colorScheme;

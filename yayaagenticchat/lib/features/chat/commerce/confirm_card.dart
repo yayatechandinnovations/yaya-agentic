@@ -8,11 +8,17 @@ import '../../../models/commerce/confirm_prompt.dart';
 /// the operator-authored prompt when the tenant wrote one — never tool ids or
 /// arguments — with full-width, unmissable Confirm/Cancel buttons.
 ///
+/// The card IS the one question (WhatsApp ops §5 R2): the controller drops the
+/// same summary from the streamed bubble, so it is never asked twice.
+///
+/// The buttons carry the frame's own `confirmLabel` / `cancelLabel` (fallback:
+/// the app's "Confirmar" / "Cancelar").
+///
 /// Multi-item mode (owner-ai-experience v2 §4): when the prompt carries
 /// `items`, the card renders a checkbox list (initial state from each item's
-/// `checked`), the `totalLine`, and approve/decline buttons labeled
-/// `confirmLabel` (fallback "SÍ") / "NO". Approval fires [onConfirmItems] with
-/// the ids of the CHECKED items; the single-confirm path is untouched.
+/// `checked`), the `totalLine`, and the approve button keeps the frame's count
+/// label. Approval fires [onConfirmItems] with the ids of the CHECKED items;
+/// the single-confirm path is untouched.
 class ConfirmCard extends StatefulWidget {
   const ConfirmCard({
     super.key,
@@ -35,10 +41,10 @@ class ConfirmCard extends StatefulWidget {
 
   final bool busy;
 
-  /// The engine's neutral fallback when no operator copy exists — the app
-  /// replaces it with its own localized question instead of echoing English
-  /// at a Spanish-speaking user.
-  static const _genericFallback = 'Do you want to continue?';
+  /// The engine's neutral fallbacks when no operator copy exists (English, and
+  /// the localized one from §6.7 C1) — the app shows its own localized
+  /// question instead of repeating the generic one.
+  static const _genericFallbacks = {'Do you want to continue?', '¿Continúo?'};
 
   @override
   State<ConfirmCard> createState() => _ConfirmCardState();
@@ -76,7 +82,8 @@ class _ConfirmCardState extends State<ConfirmCard> {
     final scheme = Theme.of(context).colorScheme;
     final prompt = widget.prompt;
     final detail = prompt.summary.trim();
-    final showDetail = detail.isNotEmpty && detail != ConfirmCard._genericFallback;
+    final showDetail =
+        detail.isNotEmpty && !ConfirmCard._genericFallbacks.contains(detail);
 
     return Material(
       color: scheme.secondaryContainer,
@@ -160,7 +167,7 @@ class _ConfirmCardState extends State<ConfirmCard> {
                       onPressed: widget.busy ? null : widget.onCancel,
                       style: OutlinedButton.styleFrom(
                           minimumSize: const Size.fromHeight(44)),
-                      child: Text(_multi ? 'NO' : t.cancel),
+                      child: Text(prompt.cancelText(t.cancel)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -182,11 +189,7 @@ class _ConfirmCardState extends State<ConfirmCard> {
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text(_multi
-                              ? ((prompt.confirmLabel ?? '').trim().isEmpty
-                                  ? 'SÍ'
-                                  : prompt.confirmLabel!)
-                              : t.confirmAction),
+                          : Text(prompt.confirmText(t.confirmAction)),
                     ),
                   ),
                 ],
