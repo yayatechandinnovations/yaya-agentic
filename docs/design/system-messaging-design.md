@@ -399,3 +399,39 @@ Extends existing:
 
 Reuses without change: `Authenticator` chain (`SharedSecretJwtAuthenticator`, `OidcAuthenticator`, API keys), `ConversationRecorder`/`RecorderRouter`, `ToolExecutor`/`Authorizer`, `BlobStore` + upload gauntlet, entity memory (`EntityCapture`/`EntityBinding`), `channel_sessions`, `opt_outs`, `outbound_messages` + retry/status.
 ```
+
+## 20. WhatsApp leg, bound actions, one confirmation (2026-11-13)
+
+Implemented for the Smart Lottery ops channel; the full rationale lives in
+`smart-lottery-v1/docs/whatsapp-ops-integration-design.md` (§5, §6, §14). Everything
+here is domain-neutral.
+
+- **Delivery preference.** The ingest envelope may carry `delivery {channel, phoneE164}`
+  and `template {name, language, variables}`. `WHATSAPP` goes out on the system
+  sender's linked number (`system_senders.whatsapp_sender_id`): an in-session card or
+  quick-reply inside the 24 h window, the APPROVED template outside it. Every reason it
+  cannot (`no_whatsapp_sender`, `sender_inactive`, `opted_out`, `template_not_approved`,
+  `no_template`, `send_failed`, `provider_not_configured`, `missing_phone`) falls back to
+  the chat inbox and is reported per target in `deliveries[]` and
+  `GET …/messages/{outreachId}` (`outreach_deliveries`, updated by Twilio status
+  callbacks).
+- **Bound actions.** An action is `send` text or a `tool {id, args}` (+ one optional
+  `ask`). Every action gets a 128-bit `outreach_actions` id (7-day TTL, bound to the
+  recipient subject/phone). Chat taps send `_selection {kind:"action", actionId}`;
+  WhatsApp buttons carry `act:<id>`. The engine runs a tool action without a confirm
+  frame only when the tool's policy says `preconfirmableByAction`; the Authorizer chain,
+  the user's own credentials and `Idempotency-Key: act:<id>` still apply. A repeat tap
+  replays the stored result.
+- **One confirmation.** The confirm frame is the only question: no channel suffix in the
+  token (chat draws a card, WhatsApp two buttons `confirm:`/`cancel:<callId>`, SMS adds
+  "Responde SÍ o NO."), `confirmPrompt` interpolates `{arg}` from the call's own args,
+  `ConfirmDetector` accepts natural phrases and the frame's labels, and an unclear reply
+  that makes the model re-propose the identical call re-shows the same frame (callId).
+- **Context.** SYSTEM_PARTICIPANT turns now reach the model's history as delimited data.
+  A WhatsApp reply first gets the phone's unseen outreach of the last 7 days appended to
+  the live conversation (`ConversationEngine.appendSystemTurn`).
+- **Templates.** `PUT …/whatsapp-senders/{s}/templates/by-name/{name}` declares header
+  (NONE/DOCUMENT/IMAGE), body, quick-reply buttons and samples; `submit` creates the
+  Twilio Content and requests WhatsApp approval; `sync` and a 10-minute sweep pull the
+  verdict. Media headers use `{public-base-url}/v1/media/{token}/{filename}`; review
+  samples are served from `/v1/media/sample/{file}`.

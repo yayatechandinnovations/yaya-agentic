@@ -49,6 +49,7 @@ public record TwilioProperties(
 
     public static final String DEFAULT_API_BASE_URL = "https://api.twilio.com";
     public static final String DEFAULT_MESSAGING_BASE_URL = "https://messaging.twilio.com";
+    public static final String DEFAULT_CONTENT_BASE_URL = "https://content.twilio.com";
 
     public boolean isConfigured() {
         return notBlank(accountSid) && notBlank(apiKeySid) && notBlank(apiKeySecret);
@@ -60,6 +61,11 @@ public record TwilioProperties(
 
     public String effectiveMessagingBaseUrl() {
         return notBlank(messagingBaseUrl) ? messagingBaseUrl : DEFAULT_MESSAGING_BASE_URL;
+    }
+
+    /** {@code content.twilio.com}; a test stub of the messaging surface serves it too. */
+    public String effectiveContentBaseUrl() {
+        return notBlank(messagingBaseUrl) ? messagingBaseUrl : DEFAULT_CONTENT_BASE_URL;
     }
 
     private static boolean notBlank(String s) {

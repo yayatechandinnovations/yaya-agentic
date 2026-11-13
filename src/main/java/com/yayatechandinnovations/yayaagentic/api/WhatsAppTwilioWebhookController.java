@@ -67,6 +67,8 @@ public class WhatsAppTwilioWebhookController {
     private final ChannelRateLimiter rateLimiter;
     private final ChannelTracing tracing;
     private final ObjectMapper json;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryRepository outreachDeliveries;
 
     public WhatsAppTwilioWebhookController(WhatsAppSenderService senders,
                                            WhatsAppMessagingAccountService messagingAccounts,
@@ -253,7 +255,23 @@ public class WhatsAppTwilioWebhookController {
             }
             outbound.save(row);
         });
+        // A proactive message's receipt (whatsapp-ops-integration-design.md §14.2,
+        // WA-8). Statuses only move forward: a late "sent" never undoes "read".
+        if (outreachDeliveries != null) {
+            outreachDeliveries.findFirstByProviderMessageSid(messageSid).ifPresent(d -> {
+                String status = mapTwilioStatus(statusRaw);
+                if ("UNDELIVERED".equals(status)) status = "FAILED";
+                if (DELIVERY_RANK.getOrDefault(status, -1) > DELIVERY_RANK.getOrDefault(d.getStatus(), -1)) {
+                    d.setStatus(status);
+                    if ("FAILED".equals(status)) d.setFailureCode(form.getFirst("ErrorCode"));
+                    outreachDeliveries.save(d);
+                }
+            });
+        }
     }
+
+    private static final java.util.Map<String, Integer> DELIVERY_RANK = java.util.Map.of(
+            "QUEUED", 0, "SENT", 1, "DELIVERED", 2, "READ", 3, "FAILED", 4);
 
     /** Twilio's WhatsApp status verbiage → our normalized status enum. */
     private static String mapTwilioStatus(String raw) {

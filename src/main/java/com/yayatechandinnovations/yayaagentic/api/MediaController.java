@@ -81,6 +81,35 @@ public class MediaController {
 
     /* ---------------------------- public serve ---------------------------- */
 
+    /**
+     * Same grant as {@link #serve(String)}, with the filename as the last path
+     * segment: a WhatsApp template's variable media URL must end in a file
+     * suffix (whatsapp-ops-integration-design.md §6.3, GAP-W7). The segment is
+     * cosmetic — the token alone decides what is served.
+     */
+    /**
+     * The fixed sample a media template is submitted with: Meta fetches the
+     * header example during review, and a real (signed, expiring) asset link
+     * would be dead by then. Public by design — it is the same placeholder for
+     * every tenant.
+     */
+    @GetMapping("/v1/media/sample/{filename}")
+    public ResponseEntity<Resource> sample(@PathVariable("filename") String filename) {
+        String lower = filename == null ? "" : filename.toLowerCase(java.util.Locale.ROOT);
+        boolean image = lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+        String resource = image ? "media-samples/sample.png" : "media-samples/sample.pdf";
+        return ResponseEntity.ok()
+                .contentType(image ? MediaType.IMAGE_PNG : MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
+                .body(new org.springframework.core.io.ClassPathResource(resource));
+    }
+
+    @GetMapping("/v1/media/{token}/{filename}")
+    public Mono<ResponseEntity<Resource>> serveNamed(@PathVariable("token") String token,
+                                                     @PathVariable("filename") String filename) {
+        return serve(token);
+    }
+
     @GetMapping("/v1/media/{token}")
     public Mono<ResponseEntity<Resource>> serve(@PathVariable("token") String token) {
         return Mono.fromSupplier(() -> {

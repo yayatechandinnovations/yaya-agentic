@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.SystemInboundDtos.IngestRequest;
+import com.yayatechandinnovations.yayaagentic.api.dto.SystemInboundDtos;
 import com.yayatechandinnovations.yayaagentic.api.dto.SystemInboundDtos.IngestResponse;
 import com.yayatechandinnovations.yayaagentic.channel.system.OutreachRecipient;
 import com.yayatechandinnovations.yayaagentic.channel.system.SystemInboundMessage;
@@ -45,14 +46,38 @@ public class SystemInboundController {
         return Mono.fromSupplier(() -> {
             IntegrationSenderGate.Admitted admitted = gate.admit(tenant, sid, exchange);
 
-            SystemInboundMessage msg = toMessage(tenant, sid, body, exchange);
             try {
+                SystemInboundMessage msg = toMessage(tenant, sid, body, exchange);
                 return IngestResponse.of(outreach.ingest(msg, new OutreachService.OutreachAuth(admitted.principal())));
             } catch (OutreachException e) {
                 throw map(e);
             } catch (IllegalArgumentException e) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
             }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * Delivery status of a message this sender posted (§14.2 of
+     * whatsapp-ops-integration-design.md): same gate as ingest, and an id from
+     * another sender reads as unknown.
+     */
+    @GetMapping("/{outreachId}")
+    public Mono<SystemInboundDtos.StatusResponse> status(@PathVariable("tenantId") String tenantId,
+                                                         @PathVariable("senderId") String senderId,
+                                                         @PathVariable("outreachId") String outreachId,
+                                                         ServerWebExchange exchange) {
+        Ids.TenantId tenant = new Ids.TenantId(tenantId);
+        Ids.SystemSenderId sid = new Ids.SystemSenderId(senderId);
+        return Mono.fromSupplier(() -> {
+            gate.admit(tenant, sid, exchange);
+            var status = outreach.statusFor(tenant, sid, new Ids.OutreachId(outreachId))
+                    .orElseThrow(IntegrationSenderGate::opaque404);
+            return new SystemInboundDtos.StatusResponse(status.id().value(), status.status(),
+                    status.receivedAt(), status.deliveries().stream()
+                    .map(d -> new SystemInboundDtos.DeliveryView(d.channel(), d.fallbackReason(),
+                            d.providerMessageId(), d.status(), d.statusAt()))
+                    .toList());
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -72,7 +97,16 @@ public class SystemInboundController {
                 body.correlation() == null ? null : body.correlation().toDomain(),
                 dedupKey,
                 body.metadata() == null ? Map.of() : body.metadata(),
-                body.actionsDomain());
+                body.actionsDomain(),
+                deliveryOf(body));
+    }
+
+    private static com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest deliveryOf(IngestRequest body) {
+        try {
+            return body.deliveryDomain();
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown delivery.channel");
+        }
     }
 
     private static ResponseStatusException map(OutreachException e) {

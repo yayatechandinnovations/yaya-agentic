@@ -22,6 +22,16 @@ public interface OutreachService {
 
     Optional<OutreachStatus> status(Ids.OutreachId id);
 
+    /**
+     * Status of one ingest as its own sender sees it — per-target delivery
+     * channel and provider state (whatsapp-ops-integration-design.md §14.2).
+     * Empty when the id is unknown or belongs to another sender.
+     */
+    default Optional<OutreachStatus> statusFor(Ids.TenantId tenant, Ids.SystemSenderId sender,
+                                               Ids.OutreachId id) {
+        return Optional.empty();
+    }
+
     /** The verified sender identity + request-integrity facts the ingest edge established. */
     record OutreachAuth(Principal principal) {}
 
@@ -36,12 +46,40 @@ public interface OutreachService {
             Ids.OutreachId id,
             Disposition disposition,
             java.util.List<String> sessionIds,
-            Instant receivedAt
-    ) {}
+            Instant receivedAt,
+            java.util.List<Delivery> deliveries
+    ) {
+        public OutreachReceipt {
+            deliveries = deliveries == null ? java.util.List.of() : java.util.List.copyOf(deliveries);
+        }
+
+        public OutreachReceipt(Ids.OutreachId id, Disposition disposition,
+                               java.util.List<String> sessionIds, Instant receivedAt) {
+            this(id, disposition, sessionIds, receivedAt, java.util.List.of());
+        }
+    }
+
+    /**
+     * How one resolved target got the message (whatsapp-ops-integration-design.md
+     * §14.1/§14.2): {@code channel} ∈ CHAT/WHATSAPP, {@code fallbackReason} set
+     * when WhatsApp was asked for but the chat carried it, {@code status} ∈
+     * QUEUED/SENT/DELIVERED/READ/FAILED/CHAT_DELIVERED.
+     */
+    record Delivery(String channel, String fallbackReason, String providerMessageId,
+                    String status, Instant statusAt) {}
 
     record OutreachStatus(
             Ids.OutreachId id,
             String status,
-            Instant receivedAt
-    ) {}
+            Instant receivedAt,
+            java.util.List<Delivery> deliveries
+    ) {
+        public OutreachStatus {
+            deliveries = deliveries == null ? java.util.List.of() : java.util.List.copyOf(deliveries);
+        }
+
+        public OutreachStatus(Ids.OutreachId id, String status, Instant receivedAt) {
+            this(id, status, receivedAt, java.util.List.of());
+        }
+    }
 }

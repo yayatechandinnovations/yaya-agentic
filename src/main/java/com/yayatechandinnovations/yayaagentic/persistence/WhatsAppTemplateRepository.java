@@ -9,6 +9,10 @@ public interface WhatsAppTemplateRepository extends JpaRepository<WhatsAppTempla
 
     Optional<WhatsAppTemplateEntity> findByTenantIdAndId(String tenantId, Long id);
 
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "platform approval-sync sweep polls pending templates across tenants")
+    List<WhatsAppTemplateEntity> findByStatusIn(java.util.Collection<String> statuses);
+
     List<WhatsAppTemplateEntity> findByTenantIdAndSenderIdOrderByNameAscLocaleAsc(
             String tenantId, String senderId);
 

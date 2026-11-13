@@ -43,8 +43,25 @@ public record ToolPolicy(
          * match, quote unchanged) must exist before dispatch. Idempotency key is
          * (sessionId, callId). Gate runs immediately before execute.
          */
-        boolean requiresApprovedQuote
+        boolean requiresApprovedQuote,
+        /**
+         * A tap on a bound action button (whatsapp-ops-integration-design.md
+         * §6.4) may run this tool WITHOUT a confirm frame: the message that
+         * carried the button already showed the full operation, so the tap is
+         * the one consent (rule R1). Opt-in per tool — a sender can never make
+         * an arbitrary tool one-tap. The call still runs the Authorizer chain
+         * with the user's own credentials.
+         */
+        boolean preconfirmableByAction
 ) {
+    /** Back-compat: not runnable from a bound action without a confirm frame. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable, String confirmPrompt,
+                      boolean requiresBancaContext, boolean requiresApprovedQuote) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, confirmPrompt,
+                requiresBancaContext, requiresApprovedQuote, false);
+    }
+
     /** Back-compat: no network play-path gating. */
     public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
                       boolean confirmable, boolean clientInvocable, String confirmPrompt) {

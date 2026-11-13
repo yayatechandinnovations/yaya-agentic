@@ -8,6 +8,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.SystemSenderEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.SystemSenderRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,13 +31,16 @@ public class SystemSenderService {
     private final SystemSenderRepository repo;
     private final ChatEntryPointRepository entryPoints;
     private final ObjectMapper json;
+    private final WhatsAppSenderRepository whatsappSenders;
 
     public SystemSenderService(SystemSenderRepository repo,
                                ChatEntryPointRepository entryPoints,
-                               ObjectMapper json) {
+                               ObjectMapper json,
+                               WhatsAppSenderRepository whatsappSenders) {
         this.repo = repo;
         this.entryPoints = entryPoints;
         this.json = json;
+        this.whatsappSenders = whatsappSenders;
     }
 
     /* -------------------------------- read -------------------------------- */
@@ -104,6 +108,19 @@ public class SystemSenderService {
                 ? null : cmd.responseToolId().trim());
         e.setCapabilityMaskJson(cmd.capabilityMask() == null ? null : writeJson(cmd.capabilityMask()));
         e.setLimitsJson(cmd.limits() == null ? null : writeJson(cmd.limits()));
+        // Absent keeps the link (a provisioning re-run that predates WhatsApp
+        // must not unlink it); blank unlinks; a value must be this tenant's sender.
+        if (cmd.whatsappSenderId() != null) {
+            String wa = cmd.whatsappSenderId().trim();
+            if (wa.isEmpty()) {
+                e.setWhatsappSenderId(null);
+            } else {
+                whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa)
+                        .orElseThrow(() -> AdminApiException.badRequest("unknown_whatsapp_sender",
+                                "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'"));
+                e.setWhatsappSenderId(wa);
+            }
+        }
     }
 
     private void validate(TenantId tenant, Command cmd) {
@@ -135,7 +152,8 @@ public class SystemSenderService {
                 Optional.ofNullable(readJson(e.getCapabilityMaskJson(), CapabilityMask.class, null)),
                 Optional.ofNullable(readJson(e.getLimitsJson(), RateAndQuiet.class, null)),
                 e.getCreatedAt() == null ? Instant.now() : e.getCreatedAt().toInstant(),
-                e.getUpdatedAt() == null ? Instant.now() : e.getUpdatedAt().toInstant());
+                e.getUpdatedAt() == null ? Instant.now() : e.getUpdatedAt().toInstant(),
+                Optional.ofNullable(e.getWhatsappSenderId()).filter(s -> !s.isBlank()));
     }
 
     private String writeJson(Object o) {
@@ -169,6 +187,14 @@ public class SystemSenderService {
             AddressingPolicy addressing,
             String responseToolId,
             CapabilityMask capabilityMask,
-            RateAndQuiet limits
-    ) {}
+            RateAndQuiet limits,
+            String whatsappSenderId
+    ) {
+        public Command(String entryPoint, String displayName, boolean enabled, SenderTrust trust,
+                       MediationMode mediation, AddressingPolicy addressing, String responseToolId,
+                       CapabilityMask capabilityMask, RateAndQuiet limits) {
+            this(entryPoint, displayName, enabled, trust, mediation, addressing, responseToolId,
+                    capabilityMask, limits, null);
+        }
+    }
 }

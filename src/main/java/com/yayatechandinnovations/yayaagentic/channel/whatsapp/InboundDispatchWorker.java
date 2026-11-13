@@ -97,6 +97,11 @@ public class InboundDispatchWorker {
     private final com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore
             authTokenStore;
     private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace;
+    // Optional so the many hand-built worker tests keep compiling (§6.6).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OutreachContextSeeder contextSeeder;
+
+    void setContextSeeder(OutreachContextSeeder seeder) { this.contextSeeder = seeder; }
 
     public InboundDispatchWorker(
             @Qualifier("channelDispatchExecutor") ThreadPoolTaskExecutor executor,
@@ -295,7 +300,14 @@ public class InboundDispatchWorker {
         // 2b. inbound photos → the model sees them (vision) and tools can
         //     reference them by URL. See whatsapp-channel-design.md §9.5.
         List<InboundImageLoader.LoadedImage> images = loadImagesIfAccepted(sender, media);
-        Map<String, Object> attachments = imageAttachments(images);
+        Map<String, Object> attachments = new LinkedHashMap<>(imageAttachments(images));
+        // 2c. §6.5 — a tapped button whose payload names a bound action or a
+        //     confirm frame reaches the engine as a structured selection, so the
+        //     tap decides exactly that action/frame instead of being re-read as
+        //     the typed label.
+        Map<String, Object> selection = selectionOf(sel);
+        if (selection != null) attachments.put("_selection", selection);
+        String repliedTo = raw.get("OriginalRepliedMessageSid") instanceof String s && !s.isBlank() ? s : null;
 
         // 3. binding resolution — supplies the session policy + profile id
         var endpoint = new com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef
@@ -408,6 +420,7 @@ public class InboundDispatchWorker {
             // engine.send so the very first tool call sees it via the
             // StepUpScopeAuthorizer's elevation-merge path.
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
+            seedContext(row, sessionId, repliedTo);
             // A fresh session that opens WITHOUT a user message (a consumed
             // new-session keyword) gets the proactive greeting + quick-replies.
             // When the first inbound already carries content, ALSO sending the
@@ -440,6 +453,7 @@ public class InboundDispatchWorker {
             recordAuthFlowTrace(sessionId, row, binding, authResolved);
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
+            seedContext(row, sessionId, repliedTo);
             if (!userText.isBlank() || !images.isEmpty()) {
                 // §6.6 — when an OTP-shaped pending exists for this session,
                 // interpret the inbound as the user's verification code BEFORE
@@ -481,6 +495,7 @@ public class InboundDispatchWorker {
                                 authTokenStore.persist(healedId, jwt));
                         recordAuthFlowTrace(healedId, row, binding, authResolved);
                         captureEntities(healedId, sender, row, transcription, policy);
+                        seedContext(row, healedId, repliedTo);
                         outboundDispatcher.dispatchTurn(
                                 new Ids.TenantId(row.getTenantId()),
                                 new SenderId(row.getSenderId()),
@@ -634,6 +649,34 @@ public class InboundDispatchWorker {
     }
 
     private record InteractiveSelection(String id, String label, String kind) {}
+
+    /** Button payload → engine selection (§6.5); null for plain quick replies. */
+    private static Map<String, Object> selectionOf(InteractiveSelection sel) {
+        return sel == null ? null : selectionFor(sel.id(), sel.kind());
+    }
+
+    static Map<String, Object> selectionFor(String payload, String kind) {
+        if (payload == null || !"button".equals(kind)) return null;
+        String id = payload.trim();
+        if (id.startsWith(DefaultInteractiveRenderer.ACTION_PREFIX)) {
+            String actionId = id.substring(DefaultInteractiveRenderer.ACTION_PREFIX.length());
+            return actionId.isBlank() || "none".equals(actionId) ? null
+                    : Map.of("kind", "action", "actionId", actionId);
+        }
+        if (id.startsWith(DefaultInteractiveRenderer.CONFIRM_PREFIX)) {
+            return Map.of("kind", "confirm", "callId", id.substring(DefaultInteractiveRenderer.CONFIRM_PREFIX.length()));
+        }
+        if (id.startsWith(DefaultInteractiveRenderer.CANCEL_PREFIX)) {
+            return Map.of("kind", "cancel", "callId", id.substring(DefaultInteractiveRenderer.CANCEL_PREFIX.length()));
+        }
+        return null;
+    }
+
+    private void seedContext(InboundMessageEntity row, Ids.SessionId sessionId, String repliedTo) {
+        if (contextSeeder == null) return;
+        contextSeeder.seed(new Ids.TenantId(row.getTenantId()), new SenderId(row.getSenderId()),
+                row.getEndUserPhone(), sessionId, repliedTo);
+    }
 
     /**
      * Map the engine's internal session id to the client-chosen id the

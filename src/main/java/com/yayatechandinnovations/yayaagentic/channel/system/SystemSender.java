@@ -31,8 +31,21 @@ public record SystemSender(
         Optional<CapabilityMask> capabilityMask,
         Optional<RateAndQuiet> limits,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        /** The WhatsApp number this sender also delivers through (§6.2 of
+         *  whatsapp-ops-integration-design.md); empty = chat only. */
+        Optional<String> whatsappSenderId
 ) {
+    /** Back-compat: a chat-only sender. */
+    public SystemSender(Ids.SystemSenderId id, Ids.TenantId tenant, String entryPoint, String displayName,
+                        boolean enabled, SenderTrust trust, MediationMode mediation,
+                        Optional<Ids.ToolId> responseTool, AddressingPolicy addressing,
+                        Optional<CapabilityMask> capabilityMask, Optional<RateAndQuiet> limits,
+                        Instant createdAt, Instant updatedAt) {
+        this(id, tenant, entryPoint, displayName, enabled, trust, mediation, responseTool, addressing,
+                capabilityMask, limits, createdAt, updatedAt, Optional.empty());
+    }
+
     public SystemSender {
         if (id == null) throw new IllegalArgumentException("id required");
         if (tenant == null) throw new IllegalArgumentException("tenant required");
@@ -46,6 +59,7 @@ public record SystemSender(
         addressing = addressing == null ? AddressingPolicy.principalsOnly() : addressing;
         capabilityMask = capabilityMask == null ? Optional.empty() : capabilityMask;
         limits = limits == null ? Optional.empty() : limits;
+        whatsappSenderId = whatsappSenderId == null ? Optional.empty() : whatsappSenderId;
     }
 
     /** The tool-authority mask that governs the mediation reply turn (§9.1). */

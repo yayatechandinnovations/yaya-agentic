@@ -43,14 +43,20 @@ public class SmsOutboundDispatcher {
      *  caller is the async inbound worker, so blocking here is intended. */
     public void dispatchTurn(Ids.TenantId tenant, SmsSenderId senderId, String toPhone,
                              Ids.SessionId session, Flux<TurnEvent> events) {
-        String body = events
-                .filter(e -> e instanceof TurnEvent.Token)
-                .map(e -> ((TurnEvent.Token) e).text())
-                .collectList()
-                .map(parts -> String.join("", parts))
-                .block();
-        send(tenant, senderId, toPhone, session, body);
+        List<TurnEvent> all = events.collectList().block();
+        StringBuilder body = new StringBuilder();
+        boolean confirmFrame = false;
+        for (TurnEvent e : all == null ? List.<TurnEvent>of() : all) {
+            if (e instanceof TurnEvent.Token t) body.append(t.text());
+            if (e instanceof TurnEvent.UiHint h && "confirm".equals(h.kind())) confirmFrame = true;
+        }
+        // SMS has no card or buttons: the confirm frame's question is the whole
+        // UX, so the reply instruction is added here, once (whatsapp-ops §5, R2).
+        if (confirmFrame) body.append(body.length() == 0 ? "" : " ").append(CONFIRM_REPLY_HINT);
+        send(tenant, senderId, toPhone, session, body.toString());
     }
+
+    static final String CONFIRM_REPLY_HINT = "Responde SÍ o NO.";
 
     /** Dispatch the session's greeting + any quick-replies as a single SMS. */
     public void dispatchGreeting(Ids.TenantId tenant, SmsSenderId senderId, String toPhone,

@@ -54,6 +54,18 @@ public class WhatsAppTemplateEntity {
     @Column(name = "last_sync_at")
     private OffsetDateTime lastSyncAt;
 
+    @Column(name = "header_kind", nullable = false, length = 16)
+    private String headerKind = "NONE";
+
+    @Column(name = "buttons_json", columnDefinition = "TEXT")
+    private String buttonsJson;
+
+    @Column(name = "samples_json", columnDefinition = "TEXT")
+    private String samplesJson;
+
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
     protected WhatsAppTemplateEntity() {}
 
     public WhatsAppTemplateEntity(String tenantId, String senderId, String name, String locale,
@@ -95,4 +107,12 @@ public class WhatsAppTemplateEntity {
     public void setSubmittedAt(OffsetDateTime v) { this.submittedAt = v; }
     public void setApprovedAt(OffsetDateTime v) { this.approvedAt = v; }
     public void setLastSyncAt(OffsetDateTime v) { this.lastSyncAt = v; }
+    public String getHeaderKind() { return headerKind; }
+    public void setHeaderKind(String v) { this.headerKind = v; }
+    public String getButtonsJson() { return buttonsJson; }
+    public void setButtonsJson(String v) { this.buttonsJson = v; }
+    public String getSamplesJson() { return samplesJson; }
+    public void setSamplesJson(String v) { this.samplesJson = v; }
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String v) { this.contentHash = v; }
 }

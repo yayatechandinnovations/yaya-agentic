@@ -46,6 +46,19 @@ public interface ConversationEngine {
         throw new UnsupportedOperationException("resume not supported by this engine");
     }
 
+    /**
+     * Record a message an integration delivered to the user on another surface
+     * (e.g. a WhatsApp template sent while no conversation was open) as a
+     * non-executable SYSTEM turn of this live session, so the user's reply has
+     * its context (whatsapp-ops-integration-design.md §6.6). The engine owns turn
+     * ordering, so the append goes through it. Returns false when the session is
+     * not live here. Default: unsupported (false).
+     */
+    default boolean appendSystemTurn(Ids.SessionId sessionId, String content,
+                                     java.util.Map<String, Object> metadata) {
+        return false;
+    }
+
     /** Most recent {@link IntentFrame} for the session, or empty if unknown. */
     Optional<IntentFrame> currentIntent(Ids.SessionId sessionId);
 

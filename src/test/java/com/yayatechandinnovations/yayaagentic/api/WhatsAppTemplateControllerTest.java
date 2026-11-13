@@ -128,34 +128,64 @@ class WhatsAppTemplateControllerTest {
     }
 
     @Test @Order(4)
-    void submit_flips_to_submitted() {
-        var res = client.post()
+    void submit_without_twilio_is_a_typed_conflict() {
+        // The test platform has no Twilio credentials: submit must say so,
+        // never pretend the template went to Meta.
+        client.post()
                 .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/{tid}/submit",
                         TENANT, SENDER_ID.get(), TEMPLATE_ID.get())
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody(WhatsAppTemplateDtos.TemplateResponse.class)
-                .returnResult().getResponseBody();
-        assertThat(res.status()).isEqualTo(TemplateStatus.SUBMITTED);
+                .expectStatus().isEqualTo(409)
+                .expectBody(AdminDtos.ApiError.class)
+                .value(err -> assertThat(err.error()).isEqualTo("provider_not_configured"));
     }
 
     @Test @Order(5)
-    void update_after_submit_is_rejected() {
-        var req = new WhatsAppTemplateDtos.TemplateUpdate(
-                "Different body", TemplateCategory.UTILITY);
-        client.put()
-                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/{tid}",
-                        TENANT, SENDER_ID.get(), TEMPLATE_ID.get())
+    void declare_by_name_creates_then_is_idempotent_and_validates() {
+        var decl = new WhatsAppTemplateDtos.TemplateDeclaration(
+                "sl_undo_request_v1", "es", TemplateCategory.UTILITY, "DOCUMENT",
+                "Solicitud {{1}} pendiente.\nBoleto: {{2}} por {{3}}.\nGracias.",
+                java.util.List.of("Aprobar", "Rechazar", "Ver detalle"),
+                new WhatsAppTemplateDtos.Samples(java.util.List.of("UR-1", "120", "RD$5"), "ticket-120.pdf"));
+        var first = client.put()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/by-name/{n}",
+                        TENANT, SENDER_ID.get(), "sl_undo_request_v1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(req).exchange()
-                .expectStatus().isEqualTo(409)
+                .bodyValue(decl).exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppTemplateDtos.TemplateResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(first.status()).isEqualTo(TemplateStatus.DRAFT);
+        assertThat(first.headerKind()).isEqualTo("DOCUMENT");
+        assertThat(first.buttons()).containsExactly("Aprobar", "Rechazar", "Ver detalle");
+
+        var again = client.put()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/by-name/{n}",
+                        TENANT, SENDER_ID.get(), "sl_undo_request_v1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(decl).exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppTemplateDtos.TemplateResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(again.id()).isEqualTo(first.id());
+
+        var tooManyButtons = new WhatsAppTemplateDtos.TemplateDeclaration(
+                "sl_bad_v1", "es", TemplateCategory.UTILITY, "NONE", "Hola {{1}}.",
+                java.util.List.of("a", "b", "c", "d"),
+                new WhatsAppTemplateDtos.Samples(java.util.List.of("x"), null));
+        client.put()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/by-name/{n}",
+                        TENANT, SENDER_ID.get(), "sl_bad_v1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(tooManyButtons).exchange()
+                .expectStatus().isBadRequest()
                 .expectBody(AdminDtos.ApiError.class)
-                .value(err -> assertThat(err.error()).isEqualTo("not_editable"));
+                .value(err -> assertThat(err.error()).isEqualTo("bad_buttons"));
     }
 
     @Test @Order(6)
     void delete_draft_template_is_allowed() {
-        // Create a fresh DRAFT to delete (the prior one is now SUBMITTED).
+        // Create a fresh DRAFT to delete.
         var createReq = new WhatsAppTemplateDtos.TemplateRequest(
                 "scratch_template", "en-US", TemplateCategory.MARKETING,
                 "Scratch body");

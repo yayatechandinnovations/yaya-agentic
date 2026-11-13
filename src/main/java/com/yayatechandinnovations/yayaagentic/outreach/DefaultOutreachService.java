@@ -82,6 +82,25 @@ public class DefaultOutreachService implements OutreachService {
     private final com.yayatechandinnovations.yayaagentic.outreach.media.MediaLibraryService mediaLibrary;
     private final com.yayatechandinnovations.yayaagentic.outreach.push.PushNotifier pushNotifier;
     private final ObjectMapper json;
+    // Optional collaborators (whatsapp-ops-integration-design.md §6): field
+    // injection keeps the hand-built test constructors compiling; without them
+    // delivery is chat-only and action buttons stay plain text.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OutreachActionService actionService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppOutreachLeg whatsappLeg;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryRepository deliveries;
+
+    void setActionService(OutreachActionService actionService) { this.actionService = actionService; }
+
+    void setWhatsappLeg(com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppOutreachLeg leg) {
+        this.whatsappLeg = leg;
+    }
+
+    void setDeliveries(com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryRepository repo) {
+        this.deliveries = repo;
+    }
 
     public DefaultOutreachService(SystemSenderService senders,
                                   List<RecipientResolver> resolvers,
@@ -164,31 +183,115 @@ public class DefaultOutreachService implements OutreachService {
         }
 
         List<String> sessionIds = new ArrayList<>();
+        List<Delivery> receipts = new ArrayList<>();
         for (ResolvedTarget target : targets) {
-            String sessionId = deliver(msg, sender, target, outreachId);
-            sessionIds.add(sessionId);
+            Delivered d = deliver(msg, sender, target, outreachId);
+            if (d.sessionId() != null) sessionIds.add(d.sessionId());
+            receipts.add(d.delivery());
         }
 
         ledgerRow.setStatus("DELIVERED");
-        ledgerRow.setSessionId(sessionIds.get(0));
+        ledgerRow.setSessionId(sessionIds.isEmpty() ? null : sessionIds.get(0));
         ledger.save(ledgerRow);
         return new OutreachReceipt(outreachId, Disposition.DELIVERED, sessionIds,
-                ledgerRow.getReceivedAt() == null ? Instant.now() : ledgerRow.getReceivedAt().toInstant());
+                ledgerRow.getReceivedAt() == null ? Instant.now() : ledgerRow.getReceivedAt().toInstant(),
+                receipts);
     }
 
     @Override
     public Optional<OutreachStatus> status(Ids.OutreachId id) {
         return ledger.findById(id.value())
                 .map(e -> new OutreachStatus(new Ids.OutreachId(e.getId()), e.getStatus(),
-                        e.getReceivedAt() == null ? Instant.now() : e.getReceivedAt().toInstant()));
+                        e.getReceivedAt() == null ? Instant.now() : e.getReceivedAt().toInstant(),
+                        deliveries == null ? List.of() : deliveries.findByTenantIdAndOutreachIdOrderByIdAsc(e.getTenantId(), e.getId())
+                                .stream().map(DefaultOutreachService::toDelivery).toList()));
     }
+
+    @Override
+    public Optional<OutreachStatus> statusFor(Ids.TenantId tenant, Ids.SystemSenderId sender, Ids.OutreachId id) {
+        return ledger.findById(id.value())
+                .filter(e -> tenant.value().equals(e.getTenantId()) && sender.value().equals(e.getSenderId()))
+                .flatMap(e -> status(id));
+    }
+
+    private static Delivery toDelivery(com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryEntity e) {
+        return new Delivery(e.getChannel(), e.getFallbackReason(), e.getProviderMessageSid(), e.getStatus(),
+                e.getStatusAt() == null ? null : e.getStatusAt().toInstant());
+    }
+
+    /** One target's outcome: the chat session it landed in (null on WhatsApp) + its receipt. */
+    private record Delivered(String sessionId, Delivery delivery) {}
 
     /* ---------------------------- delivery ------------------------------- */
 
+    /**
+     * Deliver to one target. A WHATSAPP preference goes out on the sender's
+     * linked WhatsApp number when it can; every reason it cannot falls back to
+     * the chat inbox with that reason on the receipt (§6.1) — never a drop.
+     */
+    private Delivered deliver(SystemInboundMessage msg, SystemSender sender,
+                              ResolvedTarget target, Ids.OutreachId outreachId) {
+        String phone = msg.delivery().phoneE164();
+        List<ActionItem> actions = actionService == null ? msg.actions()
+                : actionService.register(msg.tenant(), outreachId, msg.actions(), target.ownerSubject(), phone);
+
+        String fallbackReason = null;
+        if (msg.delivery().wantsWhatsApp()) {
+            if (whatsappLeg == null) {
+                fallbackReason = "provider_not_configured";
+            } else {
+                var outcome = whatsappLeg.deliver(new com.yayatechandinnovations.yayaagentic.channel.whatsapp
+                        .WhatsAppOutreachLeg.Request(msg.tenant(), sender.whatsappSenderId().orElse(null), phone,
+                        msg.body(), whatsappMedia(msg), actions, msg.delivery().template()));
+                if (outcome.delivered()) {
+                    var row = recordDelivery(msg, target, outreachId, "WHATSAPP", "SENT", null);
+                    if (row != null) {
+                        row.setWhatsappSenderId(sender.whatsappSenderId().orElse(null));
+                        row.setEndUserPhone(phone);
+                        row.setTemplateName(outcome.templateName());
+                        row.setProviderMessageSid(outcome.providerMessageSid());
+                        row.setBody(outcome.deliveredBody());
+                        deliveries.save(row);
+                    }
+                    return new Delivered(null, new Delivery("WHATSAPP", null, outcome.providerMessageSid(),
+                            "SENT", Instant.now()));
+                }
+                fallbackReason = outcome.fallbackReason();
+                log.info("outreach {} → chat fallback for {}: {}", outreachId.value(),
+                        target.recipientKey(), fallbackReason);
+            }
+        }
+        String sessionId = deliverToChat(msg, sender, target, outreachId, actions);
+        var row = recordDelivery(msg, target, outreachId, "CHAT", "CHAT_DELIVERED", fallbackReason);
+        if (row != null) deliveries.save(row);
+        return new Delivered(sessionId, new Delivery("CHAT", fallbackReason, null, "CHAT_DELIVERED", Instant.now()));
+    }
+
+    private com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryEntity recordDelivery(
+            SystemInboundMessage msg, ResolvedTarget target, Ids.OutreachId outreachId,
+            String channel, String status, String fallbackReason) {
+        if (deliveries == null) return null;
+        var row = new com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryEntity(
+                msg.tenant().value(), outreachId.value(), target.recipientKey(), channel, status);
+        row.setFallbackReason(fallbackReason);
+        return row;
+    }
+
+    private List<com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppOutreachLeg.Media> whatsappMedia(
+            SystemInboundMessage msg) {
+        List<com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppOutreachLeg.Media> out = new ArrayList<>();
+        for (com.yayatechandinnovations.yayaagentic.channel.system.MediaRef m : msg.media()) {
+            mediaLibrary.find(msg.tenant(), m.assetId()).ifPresent(a -> out.add(
+                    new com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppOutreachLeg.Media(
+                            a.id(), a.filename(), a.contentType())));
+        }
+        return out;
+    }
+
     /** Record the message into the target's outreach session and enqueue it for
      *  chat drain. Returns the session id delivered into. */
-    private String deliver(SystemInboundMessage msg, SystemSender sender,
-                           ResolvedTarget target, Ids.OutreachId outreachId) {
+    private String deliverToChat(SystemInboundMessage msg, SystemSender sender,
+                                 ResolvedTarget target, Ids.OutreachId outreachId, List<ActionItem> actions) {
         OutreachSession os = findOrCreateSession(msg.tenant(), target);
         Session sessionForRouting = os.asSession(msg.tenant(), target.ownerSubject());
         ConversationRecorder recorder = recorderRouter.recorderFor(sessionForRouting,
@@ -248,7 +351,7 @@ public class DefaultOutreachService implements OutreachService {
         inbox.setBody(deliveredBody);
         inbox.setCorrelationJson(writeJson(correlationMap(msg)));
         inbox.setMediaJson(writeJson(mediaList));
-        inbox.setActionsJson(writeJson(msg.actions() == null ? List.of() : msg.actions()));
+        inbox.setActionsJson(writeJson(drainActions(actions)));
         chatInbox.save(inbox);
 
         // Best-effort wake nudge (§11 #3), gated by the sender's quiet hours (§3).
@@ -257,6 +360,25 @@ public class DefaultOutreachService implements OutreachService {
         maybeWake(msg.tenant(), sender, target);
 
         return os.sessionId();
+    }
+
+    /**
+     * What the chat client sees of each action: label, style, its id, and a
+     * text to post for clients that predate bound actions. Tool ids and args
+     * stay server-side — the id is all a tap needs.
+     */
+    private static List<Map<String, Object>> drainActions(List<ActionItem> actions) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (actions == null) return out;
+        for (ActionItem a : actions) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("label", a.label());
+            m.put("send", a.send() == null || a.send().isBlank() ? a.label() : a.send());
+            m.put("style", a.style());
+            if (a.actionId() != null) m.put("actionId", a.actionId());
+            out.add(m);
+        }
+        return out;
     }
 
     /** The durable outreach session for (tenant, entry point, recipient) — reused

@@ -78,6 +78,43 @@ public class WhatsAppTemplateController {
         return WhatsAppTemplateDtos.TemplateResponse.of(updated);
     }
 
+    /**
+     * Declarative upsert by name — how an integration's provisioning converges
+     * the templates its catalog declares (whatsapp-ops-integration-design.md §14.6).
+     */
+    @PutMapping("/by-name/{name}")
+    public WhatsAppTemplateDtos.TemplateResponse declare(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @PathVariable("name") String name,
+            @RequestBody WhatsAppTemplateDtos.TemplateDeclaration req,
+            ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        if (req == null) throw AdminApiException.badRequest("missing_body", "body required");
+        if (req.name() != null && !req.name().equals(name)) {
+            throw AdminApiException.badRequest("name_mismatch", "body name differs from the path");
+        }
+        var samples = req.samples();
+        WhatsAppTemplate saved = templates.declare(new Ids.TenantId(tenantId), new SenderId(senderId),
+                new WhatsAppTemplateService.Declaration(name, req.language(), req.category(), req.header(),
+                        req.body(), req.buttons(),
+                        samples == null ? null : samples.body(),
+                        samples == null ? null : samples.mediaFilename()));
+        return WhatsAppTemplateDtos.TemplateResponse.of(saved);
+    }
+
+    @PostMapping("/sync")
+    public List<WhatsAppTemplateDtos.TemplateResponse> sync(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireExists(tenantId);
+        return templates.syncSender(new Ids.TenantId(tenantId), new SenderId(senderId))
+                .stream().map(WhatsAppTemplateDtos.TemplateResponse::of).toList();
+    }
+
     @PostMapping("/{templateId}/submit")
     public WhatsAppTemplateDtos.TemplateResponse submit(
             @PathVariable("tenantId") String tenantId,

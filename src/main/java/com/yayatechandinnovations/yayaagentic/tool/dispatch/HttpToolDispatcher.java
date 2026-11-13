@@ -146,6 +146,14 @@ public class HttpToolDispatcher {
         } catch (MissingContextException e) {
             return failed(callId, e.getMessage());
         }
+        // A bound-action tap (whatsapp-ops-integration-design.md §6.4) pins the
+        // key to the action, so a repeat tap in a later turn is the SAME request
+        // to the system of record, whatever the tool's own template renders.
+        Object pinnedKey = ctx == null || ctx.attributes() == null ? null : ctx.attributes().get("idempotencyKey");
+        if (pinnedKey != null) {
+            headers.keySet().removeIf(k -> k.equalsIgnoreCase("Idempotency-Key"));
+            headers.put("Idempotency-Key", String.valueOf(pinnedKey));
+        }
         applyAuthForwarding(spec.authForwarding(), ctx, headers);
         // Diagnostics for the playground auth-flow inspector: which forwarding
         // mode this tool uses and whether an auth header actually got attached.

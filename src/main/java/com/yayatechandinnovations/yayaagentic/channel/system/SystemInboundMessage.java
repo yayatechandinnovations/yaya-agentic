@@ -28,7 +28,8 @@ public record SystemInboundMessage(
         Correlation correlation,
         String dedupKey,
         Map<String, Object> metadata,
-        List<ActionItem> actions
+        List<ActionItem> actions,
+        DeliveryRequest delivery
 ) {
     public SystemInboundMessage {
         if (tenant == null) throw new IllegalArgumentException("tenant required");
@@ -43,12 +44,29 @@ public record SystemInboundMessage(
         correlation = correlation == null ? new Correlation("", "", "") : correlation;
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
         actions = actions == null ? List.of() : List.copyOf(actions);
+        delivery = delivery == null ? DeliveryRequest.chat() : delivery;
+        if (delivery.wantsWhatsApp() && delivery.phoneE164() == null)
+            throw new IllegalArgumentException("delivery.phoneE164 required for WHATSAPP");
+        for (ActionItem a : actions) {
+            if (a.label() == null || a.label().isBlank())
+                throw new IllegalArgumentException("action label required");
+            if (!a.bound() && (a.send() == null || a.send().isBlank()))
+                throw new IllegalArgumentException("action needs send text or a tool");
+        }
+    }
+
+    /** Back-compat: chat-only delivery. */
+    public SystemInboundMessage(Ids.TenantId tenant, Ids.SystemSenderId senderId,
+                                OutreachRecipient recipient, String body, List<MediaRef> media,
+                                Correlation correlation, String dedupKey, Map<String, Object> metadata,
+                                List<ActionItem> actions) {
+        this(tenant, senderId, recipient, body, media, correlation, dedupKey, metadata, actions, null);
     }
 
     /** Back-compat: an envelope with no inline action buttons (§D3). */
     public SystemInboundMessage(Ids.TenantId tenant, Ids.SystemSenderId senderId,
                                 OutreachRecipient recipient, String body, List<MediaRef> media,
                                 Correlation correlation, String dedupKey, Map<String, Object> metadata) {
-        this(tenant, senderId, recipient, body, media, correlation, dedupKey, metadata, List.of());
+        this(tenant, senderId, recipient, body, media, correlation, dedupKey, metadata, List.of(), null);
     }
 }

@@ -29,7 +29,9 @@ public final class SystemSenderDtos {
             AddressingPolicy addressing,
             String responseToolId,
             CapabilityMask capabilityMask,
-            RateAndQuiet limits
+            RateAndQuiet limits,
+            /** null keeps the current link, "" unlinks (whatsapp-ops §14.6). */
+            String whatsappSenderId
     ) {
         public MediationMode mediationMode() {
             if (mediation == null || mediation.isBlank()) return MediationMode.VERBATIM;
@@ -50,7 +52,8 @@ public final class SystemSenderDtos {
             CapabilityMask capabilityMask,
             RateAndQuiet limits,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            String whatsappSenderId
     ) {
         public static SenderResponse of(SystemSender s) {
             return new SenderResponse(
@@ -66,7 +69,8 @@ public final class SystemSenderDtos {
                     s.capabilityMask().orElse(null),
                     s.limits().orElse(null),
                     s.createdAt(),
-                    s.updatedAt());
+                    s.updatedAt(),
+                    s.whatsappSenderId().orElse(null));
         }
     }
 }

@@ -27,12 +27,36 @@ public final class SystemInboundDtos {
             String dedupKey,
             Map<String, Object> metadata,
             /** Optional inline action buttons the message offers the operator (§D3). */
-            List<ActionItem> actions
+            List<ActionItem> actions,
+            /** Optional preferred channel (whatsapp-ops-integration-design.md §14.1). */
+            DeliveryRef delivery,
+            /** Optional template for the WhatsApp leg outside the 24 h window. */
+            TemplateRef template
     ) {
         /** Back-compat: an ingest body with no inline actions. */
         public IngestRequest(RecipientRef recipient, String body, List<MediaItem> media,
                              CorrelationRef correlation, String dedupKey, Map<String, Object> metadata) {
-            this(recipient, body, media, correlation, dedupKey, metadata, null);
+            this(recipient, body, media, correlation, dedupKey, metadata, null, null, null);
+        }
+
+        public IngestRequest(RecipientRef recipient, String body, List<MediaItem> media,
+                             CorrelationRef correlation, String dedupKey, Map<String, Object> metadata,
+                             List<ActionItem> actions) {
+            this(recipient, body, media, correlation, dedupKey, metadata, actions, null, null);
+        }
+
+        public com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest deliveryDomain() {
+            var t = template == null || template.name() == null || template.name().isBlank() ? null
+                    : new com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest.TemplateRef(
+                            template.name().trim(), template.language(), template.variables());
+            if (delivery == null) {
+                return new com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest(null, null, t);
+            }
+            var channel = delivery.channel() == null || delivery.channel().isBlank() ? null
+                    : com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest.Channel.valueOf(
+                            delivery.channel().trim().toUpperCase());
+            return new com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest(
+                    channel, delivery.phoneE164(), t);
         }
 
         public List<MediaRef> mediaDomain() {
@@ -51,12 +75,33 @@ public final class SystemInboundDtos {
         }
     }
 
-    /** An inline action button on the message (§D3); style ∈ {primary, danger, neutral}. */
-    public record ActionItem(String label, String send, String style) {
+    /** An inline action button on the message (§D3); style ∈ {primary, danger, neutral}.
+     *  Either {@code send} text or a bound {@code tool} (+ optional {@code ask}). */
+    public record ActionItem(String label, String send, String style, ToolRef tool, AskRef ask) {
+        public ActionItem(String label, String send, String style) {
+            this(label, send, style, null, null);
+        }
+
         public com.yayatechandinnovations.yayaagentic.outreach.ActionItem toDomain() {
-            return new com.yayatechandinnovations.yayaagentic.outreach.ActionItem(label, send, style);
+            var boundTool = tool == null || tool.id() == null || tool.id().isBlank() ? null
+                    : new com.yayatechandinnovations.yayaagentic.outreach.ActionItem.BoundTool(
+                            tool.id().trim(), tool.args());
+            var boundAsk = ask == null || ask.arg() == null || ask.arg().isBlank() ? null
+                    : new com.yayatechandinnovations.yayaagentic.outreach.ActionItem.Ask(
+                            ask.arg().trim(), ask.prompt(), ask.suggestions());
+            return new com.yayatechandinnovations.yayaagentic.outreach.ActionItem(
+                    label, send, style, boundTool, boundAsk, null);
         }
     }
+
+    public record ToolRef(String id, Map<String, Object> args) {}
+
+    public record AskRef(String arg, String prompt, List<String> suggestions) {}
+
+    /** channel ∈ {CHAT, WHATSAPP}. */
+    public record DeliveryRef(String channel, String phoneE164) {}
+
+    public record TemplateRef(String name, String language, List<String> variables) {}
 
     /** kind ∈ {PRINCIPAL, ROLE, SESSION}; value is the subject / role / session id. */
     public record RecipientRef(String kind, String value) {
@@ -82,11 +127,26 @@ public final class SystemInboundDtos {
             String id,
             String disposition,
             java.util.List<String> sessionIds,
-            Instant receivedAt
+            Instant receivedAt,
+            String deliveredVia,
+            java.util.List<DeliveryView> deliveries
     ) {
         public static IngestResponse of(OutreachReceipt r) {
+            List<DeliveryView> views = r.deliveries().stream()
+                    .map(d -> new DeliveryView(d.channel(), d.fallbackReason(), d.providerMessageId(),
+                            d.status(), d.statusAt()))
+                    .toList();
             return new IngestResponse(r.id().value(), r.disposition().name(),
-                    r.sessionIds(), r.receivedAt());
+                    r.sessionIds(), r.receivedAt(),
+                    views.isEmpty() ? null : views.get(0).channel(), views);
         }
     }
+
+    /** One resolved target's delivery (§14.1 / §14.2). */
+    public record DeliveryView(String channel, String fallbackReason, String providerMessageId,
+                               String status, Instant statusAt) {}
+
+    /** {@code GET …/messages/{outreachId}} (§14.2). */
+    public record StatusResponse(String id, String status, Instant receivedAt,
+                                 List<DeliveryView> deliveries) {}
 }

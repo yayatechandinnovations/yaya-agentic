@@ -39,11 +39,19 @@ public class DefaultInteractiveRenderer implements InteractiveRenderer {
 
     public static final String MORE_ROW_ID = "__more__";
 
+    /** Button payload prefixes the inbound worker maps back to selections (§6.5). */
+    public static final String CONFIRM_PREFIX = "confirm:";
+    public static final String CANCEL_PREFIX = "cancel:";
+    public static final String ACTION_PREFIX = "act:";
+
     @Override
     public InteractivePayload render(String bodyText, TurnEvent.UiHint hint, RenderContext ctx) {
         String body = bodyText == null ? "" : bodyText.trim();
         String footer = truncate(ctx == null ? null : ctx.citationFootnote(), FOOTER_MAX);
 
+        if (hint != null && "confirm".equals(hint.kind())) {
+            return confirmButtons(body, hint.payload(), footer);
+        }
         if (hint == null || !"quick_replies".equals(hint.kind())) {
             return new InteractivePayload.PlainText(body);
         }
@@ -88,6 +96,23 @@ public class DefaultInteractiveRenderer implements InteractiveRenderer {
                 List.of(new InteractivePayload.Section(
                         truncate(headerOr(header, "Choose"), 24), firstPage)),
                 footer);
+    }
+
+    /**
+     * The engine's confirm frame as two buttons whose payloads name the frame
+     * ({@code confirm:<callId>} / {@code cancel:<callId>}), so the tap resolves
+     * exactly that frame (whatsapp-ops-integration-design.md §6.5, GAP-C4). The
+     * multi-item checkbox variant cannot prune on WhatsApp: Confirmar is all.
+     */
+    private static InteractivePayload confirmButtons(String body, Map<String, Object> payload, String footer) {
+        Object callId = payload == null ? null : payload.get("callId");
+        if (callId == null) return new InteractivePayload.PlainText(body);
+        String confirm = truncate(stringOr(payload.get("confirmLabel"), "Confirmar"), BUTTON_TITLE_MAX);
+        String cancel = truncate(stringOr(payload.get("cancelLabel"), "Cancelar"), BUTTON_TITLE_MAX);
+        String text = body.isEmpty() ? stringOr(payload.get("summary"), "") : body;
+        return new InteractivePayload.Buttons(text, List.of(
+                new InteractivePayload.Button(CONFIRM_PREFIX + callId, confirm),
+                new InteractivePayload.Button(CANCEL_PREFIX + callId, cancel)), footer);
     }
 
     /** Extract paginated options for the "More…" follow-up — returns the

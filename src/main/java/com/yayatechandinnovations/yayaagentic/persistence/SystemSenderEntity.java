@@ -57,6 +57,9 @@ public class SystemSenderEntity {
     @Column(name = "limits_json", columnDefinition = "jsonb")
     private String limitsJson;
 
+    @Column(name = "whatsapp_sender_id", length = 64)
+    private String whatsappSenderId;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -77,6 +80,8 @@ public class SystemSenderEntity {
     public String getEntryPointId() { return entryPointId; }
     public void setEntryPointId(String v) { this.entryPointId = v; }
     public String getDisplayName() { return displayName; }
+    public String getWhatsappSenderId() { return whatsappSenderId; }
+    public void setWhatsappSenderId(String v) { this.whatsappSenderId = v; }
     public void setDisplayName(String v) { this.displayName = v; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean v) { this.enabled = v; }

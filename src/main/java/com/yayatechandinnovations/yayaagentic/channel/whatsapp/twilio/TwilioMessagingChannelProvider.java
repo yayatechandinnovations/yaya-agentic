@@ -403,6 +403,99 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         }
     }
 
+    /**
+     * Send a Content API message (template or in-session interactive) with
+     * named variables. Used by the WhatsApp outreach leg and by native
+     * in-window buttons (whatsapp-ops-integration-design.md §6.2, GAP-W3).
+     */
+    public OutboundResult sendContent(String recipientE164, String contentSid,
+                                      Map<String, String> variables,
+                                      Map<String, Object> providerHints, ProviderCreds creds) {
+        ensureCreds(creds);
+        TwilioCreds tc = (TwilioCreds) creds;
+        org.springframework.util.LinkedMultiValueMap<String, String> form =
+                new org.springframework.util.LinkedMultiValueMap<>();
+        form.add("To", "whatsapp:" + recipientE164);
+        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
+            form.add("MessagingServiceSid", tc.messagingServiceSid());
+        } else if (providerHints.get("fromPhoneE164") instanceof String s && !s.isBlank()) {
+            form.add("From", "whatsapp:" + s);
+        } else {
+            return new OutboundResult.ProviderFailure("no_from_addressing",
+                    "Either Messaging Service SID or providerHints.fromPhoneE164 is required", false);
+        }
+        form.add("ContentSid", contentSid);
+        if (variables != null && !variables.isEmpty()) {
+            try {
+                form.add("ContentVariables", json.writeValueAsString(variables));
+            } catch (Exception e) {
+                return new OutboundResult.ProviderFailure("bad_template_variables", e.getMessage(), false);
+            }
+        }
+        if (providerHints.get("statusCallbackUrl") instanceof String s && !s.isBlank()) {
+            form.add("StatusCallback", s);
+        }
+        return postMessage(tc, form);
+    }
+
+    /* --------------------------- Content API (§6.3) ---------------------- */
+
+    /** Create a Content resource; returns its {@code HX…} sid. */
+    public String createContent(Map<String, Object> body, ProviderCreds creds) {
+        ensureCreds(creds);
+        JsonNode resp = buildClient(creds).post()
+                .uri(props.effectiveContentBaseUrl() + "/v1/Content")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(HTTP_TIMEOUT);
+        return textOrThrow(resp, "sid", "Twilio Content response missing 'sid'");
+    }
+
+    /** The sid of an existing Content resource with this friendly name, if any. */
+    public java.util.Optional<String> findContentByName(String friendlyName, ProviderCreds creds) {
+        ensureCreds(creds);
+        String next = props.effectiveContentBaseUrl() + "/v1/Content?PageSize=500";
+        for (int page = 0; page < 10 && next != null; page++) {
+            JsonNode resp = get(next, creds);
+            for (JsonNode c : resp.path("contents")) {
+                if (friendlyName.equals(text(c, "friendly_name", null))) {
+                    return java.util.Optional.ofNullable(text(c, "sid", null));
+                }
+            }
+            next = nullableText(resp.at("/meta/next_page_url"));
+        }
+        return java.util.Optional.empty();
+    }
+
+    /** Ask Meta (through Twilio) to approve a Content resource as a WhatsApp template. */
+    public ApprovalState requestWhatsAppApproval(String contentSid, String name, String category,
+                                                 ProviderCreds creds) {
+        ensureCreds(creds);
+        JsonNode resp = buildClient(creds).post()
+                .uri(props.effectiveContentBaseUrl() + "/v1/Content/" + contentSid + "/ApprovalRequests/whatsapp")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("name", name, "category", category))
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(HTTP_TIMEOUT);
+        return new ApprovalState(text(resp, "status", "received"), nullableText(resp.get("rejection_reason")));
+    }
+
+    /** Current WhatsApp approval state of a Content resource ({@code unsubmitted} when none). */
+    public ApprovalState fetchWhatsAppApproval(String contentSid, ProviderCreds creds) {
+        ensureCreds(creds);
+        JsonNode resp = get(props.effectiveContentBaseUrl() + "/v1/Content/" + contentSid + "/ApprovalRequests",
+                creds);
+        JsonNode wa = resp.path("whatsapp");
+        if (wa.isMissingNode() || wa.isNull()) return new ApprovalState("unsubmitted", null);
+        return new ApprovalState(text(wa, "status", "unsubmitted"), nullableText(wa.get("rejection_reason")));
+    }
+
+    /** Twilio's approval verbiage: received, pending, approved, rejected, paused, disabled, unsubmitted. */
+    public record ApprovalState(String status, String rejectionReason) {}
+
     @Override
     public TemplateSyncResult syncTemplates(SenderRef ref, ProviderCreds creds) {
         // Returns an empty template list rather than throwing — the templates

@@ -64,6 +64,9 @@ public class OutboundDispatcher {
     /** Default buffer guardrail when the engine takes too long. */
     private static final Duration MAX_BUFFER = Duration.ofSeconds(45);
 
+    /** Remembers which hint a parked interactive payload came from. */
+    private static final String PARKED_KIND_KEY = "_hintKind";
+
     /** WhatsApp's 24h customer-service window. */
     private static final Duration SERVICE_WINDOW = Duration.ofHours(24);
 
@@ -82,6 +85,7 @@ public class OutboundDispatcher {
     private final ObjectMapper json;
     private final MediaTokenSigner mediaSigner;
     private final String publicBaseUrl;
+    private final InSessionContents inSession;
 
     public OutboundDispatcher(TwilioMessagingChannelProvider twilio,
                               ProviderCredsResolver credsResolver,
@@ -98,7 +102,8 @@ public class OutboundDispatcher {
                               ObjectMapper json,
                               MediaTokenSigner mediaSigner,
                               @Value("${yaya.agentic.channels.twilio.webhook-base-url:${yaya.agentic.public-base-url:}}")
-                              String publicBaseUrl) {
+                              String publicBaseUrl,
+                              InSessionContents inSession) {
         this.twilio = twilio;
         this.credsResolver = credsResolver;
         this.renderer = renderer;
@@ -113,6 +118,7 @@ public class OutboundDispatcher {
         this.json = json;
         this.mediaSigner = mediaSigner;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
+        this.inSession = inSession;
     }
 
     /**
@@ -217,10 +223,11 @@ public class OutboundDispatcher {
             try {
                 TurnEvent.UiHint hint = null;
                 if (row.getInteractiveJson() != null && !row.getInteractiveJson().isBlank()) {
-                    Map<String, Object> payload = json.readValue(
+                    Map<String, Object> payload = new LinkedHashMap<>(json.readValue(
                             row.getInteractiveJson(),
-                            new com.fasterxml.jackson.core.type.TypeReference<>() {});
-                    hint = new TurnEvent.UiHint("quick_replies", payload);
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+                    Object kind = payload.remove(PARKED_KIND_KEY);
+                    hint = new TurnEvent.UiHint(kind == null ? "quick_replies" : String.valueOf(kind), payload);
                 }
                 sendNow(tenant, sender, endUserPhone,
                         new Ids.SessionId(row.getSessionId()),
@@ -293,6 +300,11 @@ public class OutboundDispatcher {
         InteractivePayload payload = renderer.render(body, hint,
                 new InteractiveRenderer.RenderContext(new ChannelKind.WhatsApp(), null));
 
+        if (payload instanceof InteractivePayload.Buttons buttons
+                && sendNativeButtons(tenant, sender, endUserPhone, sessionId, resolved, buttons)) {
+            return;
+        }
+
         List<String> chunks = splitIntoChunks(payloadBody(payload, body), MAX_BODY_CHARS);
         if (chunks.size() > 1) {
             metrics.splitOutbound(tenant.value(), sender.value(), chunks.size());
@@ -325,6 +337,47 @@ public class OutboundDispatcher {
         // rendered as numbered text into the last chunk by payloadBody.
         // No additional dispatch step needed.
     }
+
+    /**
+     * Real WhatsApp quick-reply buttons through a generic in-session Content
+     * resource (GAP-W3). False when that path is unavailable, so the caller
+     * falls back to numbered text — a reply is never lost to a Content error.
+     */
+    private boolean sendNativeButtons(Ids.TenantId tenant, SenderId sender, String endUserPhone,
+                                      Ids.SessionId sessionId, WhatsAppSender resolved,
+                                      InteractivePayload.Buttons buttons) {
+        String text = buttons.body() == null ? "" : buttons.body();
+        if (buttons.footer() != null && !buttons.footer().isBlank()) text = text + "\n\n" + buttons.footer();
+        if (text.isBlank() || text.length() > InSessionContents.MAX_BODY_CHARS
+                || buttons.buttons().size() > InSessionContents.MAX_BUTTONS) {
+            return false;
+        }
+        var creds = credsResolver.resolve(resolved);
+        Optional<String> contentSid = inSession.quickReply(buttons.buttons().size(), creds);
+        if (contentSid.isEmpty()) return false;
+        List<String[]> titled = buttons.buttons().stream()
+                .map(b -> new String[]{b.title(), b.id()}).toList();
+        OutboundResult result = twilio.sendContent(endUserPhone, contentSid.get(),
+                InSessionContents.quickReplyVariables(text, titled), providerHints(resolved), creds);
+        if (!(result instanceof OutboundResult.Sent)) {
+            log.warn("Native buttons failed for {} ({}); falling back to numbered text", endUserPhone, result);
+            return false;
+        }
+        recordResult(tenant, sender, endUserPhone, sessionId, text, result);
+        metrics.outbound(tenant.value(), sender.value(), "interactive", "sent");
+        return true;
+    }
+
+    private Map<String, Object> providerHints(WhatsAppSender resolved) {
+        Map<String, Object> hints = new LinkedHashMap<>();
+        hints.put("fromPhoneE164", resolved.phoneE164());
+        if (!publicBaseUrl.isBlank()) {
+            hints.put("statusCallbackUrl", publicBaseUrl + STATUS_CALLBACK_PATH + resolved.id().value());
+        }
+        return hints;
+    }
+
+    private static final String STATUS_CALLBACK_PATH = "/v1/channels/whatsapp/twilio/status-callback/";
 
     private String payloadBody(InteractivePayload payload, String fallbackBody) {
         return switch (payload) {
@@ -396,7 +449,9 @@ public class OutboundDispatcher {
         String interactive = null;
         if (hint != null && hint.payload() != null) {
             try {
-                interactive = json.writeValueAsString(hint.payload());
+                Map<String, Object> stored = new LinkedHashMap<>(hint.payload());
+                stored.put(PARKED_KIND_KEY, hint.kind());
+                interactive = json.writeValueAsString(stored);
             } catch (JsonProcessingException e) {
                 log.warn("Failed to encode interactive payload for parked outbound: {}", e.getMessage());
             }

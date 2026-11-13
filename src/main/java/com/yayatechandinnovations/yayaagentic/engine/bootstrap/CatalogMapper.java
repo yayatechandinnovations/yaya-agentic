@@ -104,8 +104,9 @@ public class CatalogMapper {
         Object prompt = raw.get("confirmPrompt");
         String confirmPrompt = prompt == null || String.valueOf(prompt).isBlank()
                 ? null : String.valueOf(prompt).trim();
+        boolean preconfirmableByAction = toBool(raw.get("preconfirmableByAction"), false);
         return new ToolPolicy(timeout, maxRetries, idempotent, confirmable, clientInvocable,
-                confirmPrompt);
+                confirmPrompt, false, false, preconfirmableByAction);
     }
 
     private <T> T readJson(String raw, TypeReference<T> type, T fallback) {
