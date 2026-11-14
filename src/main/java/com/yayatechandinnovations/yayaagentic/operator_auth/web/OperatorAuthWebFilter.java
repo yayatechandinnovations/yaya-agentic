@@ -45,10 +45,12 @@ public class OperatorAuthWebFilter implements WebFilter, Ordered {
      * Paths where the operator is OPTIONAL — bind it if a session cookie is
      * present, but don't 401 if it isn't. Used by token-bearer endpoints
      * (invitation accept) that behave differently for signed-in vs anon
-     * recipients.
+     * recipients, and by the session inspector, which a console operator may
+     * read while a tenant app's user reaches it with their own bearer token.
      */
     private static final List<PathPattern> SOFT_AUTH = List.of(
-            PARSER.parse("/v1/auth/invitations/accept"));
+            PARSER.parse("/v1/auth/invitations/accept"),
+            PARSER.parse("/v1/sessions/{id}/inspector"));
 
     private final OperatorSessionService sessions;
     private final String cookieName;

@@ -25,4 +25,13 @@ public interface WorkingMemory {
 
     /** Drop specific keys. No-op when none of them exist. */
     void remove(Ids.SessionId sessionId, String... keys);
+
+    /**
+     * Take {@code token} for the session, once: true for the first caller,
+     * false for every later one — also one that asks at the same moment from
+     * another thread or another instance. It is how two requests that both
+     * read the same pending state agree on which of them acts on it. A token
+     * is never given back; it is forgotten after a few hours.
+     */
+    boolean claim(Ids.SessionId sessionId, String token);
 }

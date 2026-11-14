@@ -35,7 +35,22 @@ mixin _$ProfileRequest {
   // never interprets it. Catalogs/pricing/PSP live in yaya-sales.
   Map<String, dynamic>? get extensions =>
       throw _privateConstructorUsedError; // Default Session Start Flow id (null = none).
-  String? get defaultStartFlowId => throw _privateConstructorUsedError;
+  String? get defaultStartFlowId =>
+      throw _privateConstructorUsedError; // Model for this profile's turns (null = the deployment's model). The
+  // server refuses a model that is not on its allow-list.
+  String? get model =>
+      throw _privateConstructorUsedError; // Tool rounds per turn, 1..16 (null = the server default, 5).
+  int? get maxToolRounds =>
+      throw _privateConstructorUsedError; // True = turns count against, and are refused by, the tenant's monthly
+  // allowance.
+  bool? get metered =>
+      throw _privateConstructorUsedError; // The source profile exactly as the admin API returned it, when this
+  // request is a new version of an existing profile ("clone & edit"). Not a
+  // wire field: [ProfileRequestWire.toWireJson] sends back the keys of it
+  // this model does not know, so a server field the console has no form
+  // control (or no model field) for survives the round trip.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get carried => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -66,6 +81,11 @@ abstract class $ProfileRequestCopyWith<$Res> {
     Map<String, dynamic> metadata,
     Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
+    String? model,
+    int? maxToolRounds,
+    bool? metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    Map<String, dynamic> carried,
   });
 }
 
@@ -95,6 +115,10 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
     Object? metadata = null,
     Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
+    Object? model = freezed,
+    Object? maxToolRounds = freezed,
+    Object? metered = freezed,
+    Object? carried = null,
   }) {
     return _then(
       _value.copyWith(
@@ -142,6 +166,22 @@ class _$ProfileRequestCopyWithImpl<$Res, $Val extends ProfileRequest>
                 ? _value.defaultStartFlowId
                 : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
                       as String?,
+            model: freezed == model
+                ? _value.model
+                : model // ignore: cast_nullable_to_non_nullable
+                      as String?,
+            maxToolRounds: freezed == maxToolRounds
+                ? _value.maxToolRounds
+                : maxToolRounds // ignore: cast_nullable_to_non_nullable
+                      as int?,
+            metered: freezed == metered
+                ? _value.metered
+                : metered // ignore: cast_nullable_to_non_nullable
+                      as bool?,
+            carried: null == carried
+                ? _value.carried
+                : carried // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>,
           )
           as $Val,
     );
@@ -169,6 +209,11 @@ abstract class _$$ProfileRequestImplCopyWith<$Res>
     Map<String, dynamic> metadata,
     Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
+    String? model,
+    int? maxToolRounds,
+    bool? metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    Map<String, dynamic> carried,
   });
 }
 
@@ -197,6 +242,10 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
     Object? metadata = null,
     Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
+    Object? model = freezed,
+    Object? maxToolRounds = freezed,
+    Object? metered = freezed,
+    Object? carried = null,
   }) {
     return _then(
       _$ProfileRequestImpl(
@@ -244,6 +293,22 @@ class __$$ProfileRequestImplCopyWithImpl<$Res>
             ? _value.defaultStartFlowId
             : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
                   as String?,
+        model: freezed == model
+            ? _value.model
+            : model // ignore: cast_nullable_to_non_nullable
+                  as String?,
+        maxToolRounds: freezed == maxToolRounds
+            ? _value.maxToolRounds
+            : maxToolRounds // ignore: cast_nullable_to_non_nullable
+                  as int?,
+        metered: freezed == metered
+            ? _value.metered
+            : metered // ignore: cast_nullable_to_non_nullable
+                  as bool?,
+        carried: null == carried
+            ? _value._carried
+            : carried // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>,
       ),
     );
   }
@@ -264,9 +329,15 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     final Map<String, dynamic> metadata = const <String, dynamic>{},
     final Map<String, dynamic>? extensions,
     this.defaultStartFlowId,
+    this.model,
+    this.maxToolRounds,
+    this.metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    final Map<String, dynamic> carried = const <String, dynamic>{},
   }) : _capabilities = capabilities,
        _metadata = metadata,
-       _extensions = extensions;
+       _extensions = extensions,
+       _carried = carried;
 
   factory _$ProfileRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileRequestImplFromJson(json);
@@ -323,10 +394,39 @@ class _$ProfileRequestImpl implements _ProfileRequest {
   // Default Session Start Flow id (null = none).
   @override
   final String? defaultStartFlowId;
+  // Model for this profile's turns (null = the deployment's model). The
+  // server refuses a model that is not on its allow-list.
+  @override
+  final String? model;
+  // Tool rounds per turn, 1..16 (null = the server default, 5).
+  @override
+  final int? maxToolRounds;
+  // True = turns count against, and are refused by, the tenant's monthly
+  // allowance.
+  @override
+  final bool? metered;
+  // The source profile exactly as the admin API returned it, when this
+  // request is a new version of an existing profile ("clone & edit"). Not a
+  // wire field: [ProfileRequestWire.toWireJson] sends back the keys of it
+  // this model does not know, so a server field the console has no form
+  // control (or no model field) for survives the round trip.
+  final Map<String, dynamic> _carried;
+  // The source profile exactly as the admin API returned it, when this
+  // request is a new version of an existing profile ("clone & edit"). Not a
+  // wire field: [ProfileRequestWire.toWireJson] sends back the keys of it
+  // this model does not know, so a server field the console has no form
+  // control (or no model field) for survives the round trip.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get carried {
+    if (_carried is EqualUnmodifiableMapView) return _carried;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_carried);
+  }
 
   @override
   String toString() {
-    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId)';
+    return 'ProfileRequest(tenant: $tenant, id: $id, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId, model: $model, maxToolRounds: $maxToolRounds, metered: $metered, carried: $carried)';
   }
 
   @override
@@ -356,7 +456,12 @@ class _$ProfileRequestImpl implements _ProfileRequest {
               _extensions,
             ) &&
             (identical(other.defaultStartFlowId, defaultStartFlowId) ||
-                other.defaultStartFlowId == defaultStartFlowId));
+                other.defaultStartFlowId == defaultStartFlowId) &&
+            (identical(other.model, model) || other.model == model) &&
+            (identical(other.maxToolRounds, maxToolRounds) ||
+                other.maxToolRounds == maxToolRounds) &&
+            (identical(other.metered, metered) || other.metered == metered) &&
+            const DeepCollectionEquality().equals(other._carried, _carried));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -374,6 +479,10 @@ class _$ProfileRequestImpl implements _ProfileRequest {
     const DeepCollectionEquality().hash(_metadata),
     const DeepCollectionEquality().hash(_extensions),
     defaultStartFlowId,
+    model,
+    maxToolRounds,
+    metered,
+    const DeepCollectionEquality().hash(_carried),
   );
 
   /// Create a copy of ProfileRequest
@@ -406,6 +515,11 @@ abstract class _ProfileRequest implements ProfileRequest {
     final Map<String, dynamic> metadata,
     final Map<String, dynamic>? extensions,
     final String? defaultStartFlowId,
+    final String? model,
+    final int? maxToolRounds,
+    final bool? metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    final Map<String, dynamic> carried,
   }) = _$ProfileRequestImpl;
 
   factory _ProfileRequest.fromJson(Map<String, dynamic> json) =
@@ -434,7 +548,22 @@ abstract class _ProfileRequest implements ProfileRequest {
   @override
   Map<String, dynamic>? get extensions; // Default Session Start Flow id (null = none).
   @override
-  String? get defaultStartFlowId;
+  String? get defaultStartFlowId; // Model for this profile's turns (null = the deployment's model). The
+  // server refuses a model that is not on its allow-list.
+  @override
+  String? get model; // Tool rounds per turn, 1..16 (null = the server default, 5).
+  @override
+  int? get maxToolRounds; // True = turns count against, and are refused by, the tenant's monthly
+  // allowance.
+  @override
+  bool? get metered; // The source profile exactly as the admin API returned it, when this
+  // request is a new version of an existing profile ("clone & edit"). Not a
+  // wire field: [ProfileRequestWire.toWireJson] sends back the keys of it
+  // this model does not know, so a server field the console has no form
+  // control (or no model field) for survives the round trip.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get carried;
 
   /// Create a copy of ProfileRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -464,6 +593,13 @@ mixin _$ProfileResponse {
   String? get createdAt => throw _privateConstructorUsedError;
   Map<String, dynamic>? get extensions => throw _privateConstructorUsedError;
   String? get defaultStartFlowId => throw _privateConstructorUsedError;
+  String? get model => throw _privateConstructorUsedError;
+  int? get maxToolRounds => throw _privateConstructorUsedError;
+  bool get metered =>
+      throw _privateConstructorUsedError; // The response body as received, including keys this model has no field
+  // for. Kept so "clone & edit" can send them back (see ProfileRequest).
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get raw => throw _privateConstructorUsedError;
 
   /// Serializes this ProfileResponse to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -497,6 +633,11 @@ abstract class $ProfileResponseCopyWith<$Res> {
     String? createdAt,
     Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
+    String? model,
+    int? maxToolRounds,
+    bool metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    Map<String, dynamic> raw,
   });
 }
 
@@ -529,6 +670,10 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
     Object? createdAt = freezed,
     Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
+    Object? model = freezed,
+    Object? maxToolRounds = freezed,
+    Object? metered = null,
+    Object? raw = null,
   }) {
     return _then(
       _value.copyWith(
@@ -588,6 +733,22 @@ class _$ProfileResponseCopyWithImpl<$Res, $Val extends ProfileResponse>
                 ? _value.defaultStartFlowId
                 : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
                       as String?,
+            model: freezed == model
+                ? _value.model
+                : model // ignore: cast_nullable_to_non_nullable
+                      as String?,
+            maxToolRounds: freezed == maxToolRounds
+                ? _value.maxToolRounds
+                : maxToolRounds // ignore: cast_nullable_to_non_nullable
+                      as int?,
+            metered: null == metered
+                ? _value.metered
+                : metered // ignore: cast_nullable_to_non_nullable
+                      as bool,
+            raw: null == raw
+                ? _value.raw
+                : raw // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>,
           )
           as $Val,
     );
@@ -618,6 +779,11 @@ abstract class _$$ProfileResponseImplCopyWith<$Res>
     String? createdAt,
     Map<String, dynamic>? extensions,
     String? defaultStartFlowId,
+    String? model,
+    int? maxToolRounds,
+    bool metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    Map<String, dynamic> raw,
   });
 }
 
@@ -649,6 +815,10 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
     Object? createdAt = freezed,
     Object? extensions = freezed,
     Object? defaultStartFlowId = freezed,
+    Object? model = freezed,
+    Object? maxToolRounds = freezed,
+    Object? metered = null,
+    Object? raw = null,
   }) {
     return _then(
       _$ProfileResponseImpl(
@@ -708,6 +878,22 @@ class __$$ProfileResponseImplCopyWithImpl<$Res>
             ? _value.defaultStartFlowId
             : defaultStartFlowId // ignore: cast_nullable_to_non_nullable
                   as String?,
+        model: freezed == model
+            ? _value.model
+            : model // ignore: cast_nullable_to_non_nullable
+                  as String?,
+        maxToolRounds: freezed == maxToolRounds
+            ? _value.maxToolRounds
+            : maxToolRounds // ignore: cast_nullable_to_non_nullable
+                  as int?,
+        metered: null == metered
+            ? _value.metered
+            : metered // ignore: cast_nullable_to_non_nullable
+                  as bool,
+        raw: null == raw
+            ? _value._raw
+            : raw // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>,
       ),
     );
   }
@@ -731,9 +917,15 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     this.createdAt,
     final Map<String, dynamic>? extensions,
     this.defaultStartFlowId,
+    this.model,
+    this.maxToolRounds,
+    this.metered = false,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    final Map<String, dynamic> raw = const <String, dynamic>{},
   }) : _capabilities = capabilities,
        _metadata = metadata,
-       _extensions = extensions;
+       _extensions = extensions,
+       _raw = raw;
 
   factory _$ProfileResponseImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProfileResponseImplFromJson(json);
@@ -789,10 +981,29 @@ class _$ProfileResponseImpl implements _ProfileResponse {
 
   @override
   final String? defaultStartFlowId;
+  @override
+  final String? model;
+  @override
+  final int? maxToolRounds;
+  @override
+  @JsonKey()
+  final bool metered;
+  // The response body as received, including keys this model has no field
+  // for. Kept so "clone & edit" can send them back (see ProfileRequest).
+  final Map<String, dynamic> _raw;
+  // The response body as received, including keys this model has no field
+  // for. Kept so "clone & edit" can send them back (see ProfileRequest).
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get raw {
+    if (_raw is EqualUnmodifiableMapView) return _raw;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_raw);
+  }
 
   @override
   String toString() {
-    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId)';
+    return 'ProfileResponse(id: $id, version: $version, tenant: $tenant, displayName: $displayName, introOneLiner: $introOneLiner, systemPromptFragment: $systemPromptFragment, capabilities: $capabilities, authBindingId: $authBindingId, language: $language, metadata: $metadata, status: $status, createdAt: $createdAt, extensions: $extensions, defaultStartFlowId: $defaultStartFlowId, model: $model, maxToolRounds: $maxToolRounds, metered: $metered, raw: $raw)';
   }
 
   @override
@@ -826,7 +1037,12 @@ class _$ProfileResponseImpl implements _ProfileResponse {
               _extensions,
             ) &&
             (identical(other.defaultStartFlowId, defaultStartFlowId) ||
-                other.defaultStartFlowId == defaultStartFlowId));
+                other.defaultStartFlowId == defaultStartFlowId) &&
+            (identical(other.model, model) || other.model == model) &&
+            (identical(other.maxToolRounds, maxToolRounds) ||
+                other.maxToolRounds == maxToolRounds) &&
+            (identical(other.metered, metered) || other.metered == metered) &&
+            const DeepCollectionEquality().equals(other._raw, _raw));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -847,6 +1063,10 @@ class _$ProfileResponseImpl implements _ProfileResponse {
     createdAt,
     const DeepCollectionEquality().hash(_extensions),
     defaultStartFlowId,
+    model,
+    maxToolRounds,
+    metered,
+    const DeepCollectionEquality().hash(_raw),
   );
 
   /// Create a copy of ProfileResponse
@@ -882,6 +1102,11 @@ abstract class _ProfileResponse implements ProfileResponse {
     final String? createdAt,
     final Map<String, dynamic>? extensions,
     final String? defaultStartFlowId,
+    final String? model,
+    final int? maxToolRounds,
+    final bool metered,
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    final Map<String, dynamic> raw,
   }) = _$ProfileResponseImpl;
 
   factory _ProfileResponse.fromJson(Map<String, dynamic> json) =
@@ -915,6 +1140,16 @@ abstract class _ProfileResponse implements ProfileResponse {
   Map<String, dynamic>? get extensions;
   @override
   String? get defaultStartFlowId;
+  @override
+  String? get model;
+  @override
+  int? get maxToolRounds;
+  @override
+  bool get metered; // The response body as received, including keys this model has no field
+  // for. Kept so "clone & edit" can send them back (see ProfileRequest).
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Map<String, dynamic> get raw;
 
   /// Create a copy of ProfileResponse
   /// with the given fields replaced by the non-null parameter values.

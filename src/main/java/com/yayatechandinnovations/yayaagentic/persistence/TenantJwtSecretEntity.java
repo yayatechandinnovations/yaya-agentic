@@ -43,6 +43,16 @@ public class TenantJwtSecretEntity {
     @Column(columnDefinition = "jsonb", nullable = false)
     private String audiences = "[]";
 
+    // Nullable: the label a profile's metadata.principalKinds is matched against
+    // for principals this issuer verified.
+    @Column(name = "principal_kind", length = 128)
+    private String principalKind;
+
+    // Nullable JSON object {"claim": "value"}: claims every token must carry to be
+    // accepted for THIS tenant (pins an issuer several tenants share).
+    @Column(name = "required_claims_json", columnDefinition = "TEXT")
+    private String requiredClaimsJson;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -67,11 +77,15 @@ public class TenantJwtSecretEntity {
     public String getSecretCiphertext() { return secretCiphertext; }
     public String getSecretIv() { return secretIv; }
     public String getAudiencesJson() { return audiences; }
+    public String getPrincipalKind() { return principalKind; }
+    public String getRequiredClaimsJson() { return requiredClaimsJson; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     public void setIss(String v) { this.iss = v; }
     public void setSecretCiphertext(String v) { this.secretCiphertext = v; }
     public void setSecretIv(String v) { this.secretIv = v; }
+    public void setPrincipalKind(String v) { this.principalKind = (v == null || v.isBlank()) ? null : v.trim(); }
+    public void setRequiredClaimsJson(String v) { this.requiredClaimsJson = (v == null || v.isBlank()) ? null : v; }
     public void setAudiencesJson(String v) { this.audiences = v == null ? "[]" : v; }
 }

@@ -57,7 +57,7 @@ public class ActAsMaterializer {
         switch (actAs.get()) {
             case ActAs.RawToken raw -> applyRawToken(headers, raw);
         }
-        return new AuthContext(base.tenant(), Map.copyOf(headers), base.alreadyVerified());
+        return new AuthContext(base.tenant(), Map.copyOf(headers), base.alreadyVerified(), base.channel());
     }
 
     private void applyRawToken(Map<String, String> headers, ActAs.RawToken raw) {

@@ -74,6 +74,15 @@ public class AdminController {
     private final com.yayatechandinnovations.yayaagentic.tool.ToolNameRepairService toolNameRepair;
     private final WorkspaceAccessHelper workspaceAccess;
 
+    /** Models a profile may pin. A catalog can only pick from this list, never an arbitrary string. */
+    private java.util.Set<String> allowedModels = java.util.Set.of();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAgenticProperties(com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties props) {
+        this.allowedModels = props == null || props.llm() == null
+                ? java.util.Set.of() : java.util.Set.copyOf(props.llm().allowedModels());
+    }
+
     public AdminController(TenantGuard tenantGuard,
                            ProfileRepository profiles,
                            CapabilityRepository capabilities,
@@ -129,8 +138,37 @@ public class AdminController {
             throw badRequest("profile references unknown auth binding: " + req.authBindingId());
         }
 
-        int nextVersion = profiles.findByTenantIdAndIdOrderByVersionDesc(tenant, req.id())
-                .stream().mapToInt(ProfileEntity::getVersion).max().orElse(0) + 1;
+        // Every save is a full new version. The three runtime fields are the
+        // exception: left out (null) they keep the current version's value, so
+        // a client that does not know them — or forgets one — cannot switch a
+        // profile's metering off or move it to another model. A sent value
+        // wins: metered false, a model, "" for the deployment's model.
+        List<ProfileEntity> versions = profiles.findByTenantIdAndIdOrderByVersionDesc(tenant, req.id());
+        ProfileEntity current = versions.stream()
+                .max(java.util.Comparator.comparingInt(ProfileEntity::getVersion)).orElse(null);
+
+        String sentModel = req.model() == null || req.model().isBlank() ? null : req.model().trim();
+        if (sentModel != null && !allowedModels.contains(sentModel)) {
+            throw AdminApiException.badRequest("model_not_allowed",
+                    "profile.model '" + sentModel + "' is not on this deployment's allow-list "
+                            + "(yaya.agentic.llm.allowed-models: " + allowedModels + ")");
+        }
+        if (req.maxToolRounds() != null
+                && (req.maxToolRounds() < com.yayatechandinnovations.yayaagentic.profile.Profile.MIN_TOOL_ROUNDS
+                || req.maxToolRounds() > com.yayatechandinnovations.yayaagentic.profile.Profile.MAX_TOOL_ROUNDS)) {
+            throw AdminApiException.badRequest("max_tool_rounds_out_of_range",
+                    "profile.maxToolRounds must be between "
+                            + com.yayatechandinnovations.yayaagentic.profile.Profile.MIN_TOOL_ROUNDS + " and "
+                            + com.yayatechandinnovations.yayaagentic.profile.Profile.MAX_TOOL_ROUNDS);
+        }
+
+        String model = req.model() == null && current != null ? current.getModel() : sentModel;
+        Integer maxToolRounds = req.maxToolRounds() == null && current != null
+                ? current.getMaxToolRounds() : req.maxToolRounds();
+        boolean metered = req.metered() == null && current != null
+                ? current.isMetered() : Boolean.TRUE.equals(req.metered());
+
+        int nextVersion = (current == null ? 0 : current.getVersion()) + 1;
 
         ProfileEntity entity = new ProfileEntity(tenant, req.id(), nextVersion,
                 req.displayName(), req.introOneLiner(), req.systemPromptFragment());
@@ -143,6 +181,9 @@ public class AdminController {
         entity.setDefaultStartFlowId(
                 req.defaultStartFlowId() == null || req.defaultStartFlowId().isBlank()
                         ? null : req.defaultStartFlowId().trim());
+        entity.setModel(model);
+        entity.setMaxToolRounds(maxToolRounds);
+        entity.setMetered(metered);
         profiles.save(entity);
         return ResponseEntity.status(HttpStatus.CREATED).body(toProfileResponse(entity));
     }
@@ -610,7 +651,8 @@ public class AdminController {
                 readJson(e.getMetadataJson(), MAP_REF),
                 e.getStatus(), e.getCreatedAt(),
                 e.getExtensionsJson() == null ? null : readJson(e.getExtensionsJson(), MAP_REF),
-                e.getDefaultStartFlowId());
+                e.getDefaultStartFlowId(),
+                e.getModel(), e.getMaxToolRounds(), e.isMetered());
     }
 
     private AdminDtos.CapabilityResponse toCapabilityResponse(CapabilityEntity e) {

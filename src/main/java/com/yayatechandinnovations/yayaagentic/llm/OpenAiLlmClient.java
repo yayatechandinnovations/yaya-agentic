@@ -67,9 +67,12 @@ public class OpenAiLlmClient implements LlmClient {
         Prompt prompt = buildPrompt(request);
 
         LinkedHashMap<String, AssistantMessage.ToolCall> seenCalls = new LinkedHashMap<>();
+        java.util.concurrent.atomic.AtomicReference<Usage> lastUsage =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
         Flux<LlmEvent> tokens = chatModel.stream(prompt)
                 .concatMap(response -> {
+                    captureUsage(response, lastUsage);
                     AssistantMessage out = response.getResult() == null ? null
                             : response.getResult().getOutput();
                     if (out == null) return Flux.<LlmEvent>empty();
@@ -91,11 +94,26 @@ public class OpenAiLlmClient implements LlmClient {
                 out.add(new LlmEvent.ToolUseProposal(tc.id(), tc.name(), parseArgs(tc.arguments())));
             }
             StopReason stop = seenCalls.isEmpty() ? StopReason.END_TURN : StopReason.TOOL_USE;
-            out.add(new LlmEvent.Done(stop));
+            out.add(new LlmEvent.Done(stop, lastUsage.get()));
             return out;
         });
 
         return tokens.concatWith(tail.flatMapMany(Flux::fromIterable));
+    }
+
+    /** Best-effort: the last chunk carrying usage is the settled count. Never throws. */
+    private static void captureUsage(org.springframework.ai.chat.model.ChatResponse response,
+                                     java.util.concurrent.atomic.AtomicReference<Usage> sink) {
+        try {
+            if (response == null || response.getMetadata() == null) return;
+            var usage = response.getMetadata().getUsage();
+            if (usage == null) return;
+            long in = usage.getPromptTokens() == null ? 0 : usage.getPromptTokens();
+            long out = usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens();
+            if (in + out > 0) sink.set(new Usage(in, out));
+        } catch (RuntimeException ignored) {
+            // Metering must never break a chat turn.
+        }
     }
 
     // ---- Prompt translation -------------------------------------------
@@ -108,11 +126,11 @@ public class OpenAiLlmClient implements LlmClient {
         if (suffix != null && !suffix.isEmpty()) messages.add(new SystemMessage(suffix));
         messages.addAll(historyToMessages(request.history()));
 
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
+        OpenAiChatOptions.Builder options = OpenAiChatOptions.builder()
                 .toolCallbacks(toCallbacks(request.availableTools()))
-                .internalToolExecutionEnabled(false)
-                .build();
-        return new Prompt(messages, options);
+                .internalToolExecutionEnabled(false);
+        if (request.model() != null && !request.model().isBlank()) options.model(request.model());
+        return new Prompt(messages, options.build());
     }
 
     private List<org.springframework.ai.chat.messages.Message> historyToMessages(List<HistoryEntry> history) {

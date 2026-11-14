@@ -89,6 +89,17 @@ public class RedisWorkingMemory implements WorkingMemory {
         redis.expire(key, ttl);
     }
 
+    /** Longer than any pending state a token can stand for (a code prompt waits an hour at most). */
+    private static final Duration CLAIM_TTL = Duration.ofHours(6);
+
+    @Override
+    public boolean claim(Ids.SessionId sessionId, String token) {
+        // SET NX: one atomic step on the server, so it holds across instances.
+        Boolean first = redis.opsForValue().setIfAbsent(
+                "yaya:wm-claim:" + sessionId.value() + ":" + token, "1", CLAIM_TTL);
+        return Boolean.TRUE.equals(first);
+    }
+
     private Map<String, String> encodeAll(Map<String, Object> values) {
         Map<String, String> out = new LinkedHashMap<>();
         values.forEach((k, v) -> {

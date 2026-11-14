@@ -24,6 +24,11 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   final _beanNameCtrl = TextEditingController();
   bool _confirmable = false;
   bool _clientInvocable = false;
+  bool _secretInput = false;
+  bool _plannable = false;
+  // Policy keys of the cloned version this form has no control for
+  // (confirmPrompt, timeout, preconfirmableByAction, …): kept on save.
+  Map<String, dynamic> _clonedPolicy = const {};
 
   String _httpMethod = 'GET';
   final _urlCtrl = TextEditingController();
@@ -61,6 +66,9 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       }
       _confirmable = t.policy['confirmable'] == true;
       _clientInvocable = t.policy['clientInvocable'] == true;
+      _secretInput = t.policy['secretInput'] == true;
+      _plannable = t.policy['plannable'] == true;
+      _clonedPolicy = Map<String, dynamic>.from(t.policy);
       _cloningFromVersion = t.version;
     });
     showSnack(context,
@@ -80,6 +88,9 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       _jsonPathCtrl.text = r'$';
       _kind = 'BEAN';
       _confirmable = false;
+      _secretInput = false;
+      _plannable = false;
+      _clonedPolicy = const {};
       _authForwarding = 'NONE';
     });
   }
@@ -162,7 +173,13 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         inputSchemaJson: _inputSchemaCtrl.text,
         outputSchemaJson: _outputSchemaCtrl.text,
         handler: handler,
-        policy: {'confirmable': _confirmable, 'clientInvocable': _clientInvocable},
+        policy: {
+          ..._clonedPolicy,
+          'confirmable': _confirmable,
+          'clientInvocable': _clientInvocable,
+          'secretInput': _secretInput,
+          'plannable': _plannable,
+        },
       ));
       ref.invalidate(toolsProvider);
       if (!mounted) return;
@@ -173,7 +190,12 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       _headersCtrl.clear();
       _bodyTemplateCtrl.clear();
       _jsonPathCtrl.text = r'$';
-      setState(() => _cloningFromVersion = null);
+      setState(() {
+        _cloningFromVersion = null;
+        _clonedPolicy = const {};
+        _secretInput = false;
+        _plannable = false;
+      });
       showSnack(context,
           wasCloning == null
               ? 'tool saved'
@@ -273,6 +295,27 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
             subtitle: const Text(
                 'Allow a client tap to run this tool via POST /sessions/{id}/actions '
                 '(cart edits, checkout). Off keeps it model-only.',
+                style: TextStyle(fontSize: 12)),
+            contentPadding: EdgeInsets.zero,
+          ),
+          SwitchListTile(
+            value: _secretInput,
+            onChanged: (v) => setState(() => _secretInput = v),
+            title: const Text('Secret input'),
+            subtitle: const Text(
+                'The tool may ask the user for a code by returning _secretPrompt; '
+                'the value reaches it as {secret.value} in a header, never as an argument.',
+                style: TextStyle(fontSize: 12)),
+            contentPadding: EdgeInsets.zero,
+          ),
+          SwitchListTile(
+            value: _plannable,
+            onChanged: (v) => setState(() => _plannable = v),
+            title: const Text('Plannable'),
+            subtitle: const Text(
+                'Several confirmable calls of plannable tools in one answer share '
+                'one card the user agrees to once. Needs Confirmable and a '
+                'confirmPrompt; not for a Secret input tool.',
                 style: TextStyle(fontSize: 12)),
             contentPadding: EdgeInsets.zero,
           ),

@@ -11,6 +11,7 @@ import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.RoleExceedsC
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceCodeConflictException;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceNotFoundException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -26,9 +27,12 @@ public class AdminExceptionHandler {
     @ExceptionHandler(AdminApiException.class)
     public ResponseEntity<AdminDtos.ApiError> handle(AdminApiException ex) {
         HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-        return ResponseEntity.status(status).body(new AdminDtos.ApiError(
-                ex.code(),
-                ex.getReason() == null ? status.getReasonPhrase() : ex.getReason()));
+        // Explicit JSON: a streaming endpoint's caller accepts text/event-stream,
+        // and without this the error body would be framed as an SSE event.
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+                .body(new AdminDtos.ApiError(
+                        ex.code(),
+                        ex.getReason() == null ? status.getReasonPhrase() : ex.getReason()));
     }
 
     /**
@@ -43,7 +47,9 @@ public class AdminExceptionHandler {
     @ExceptionHandler(ChatApiException.class)
     public ResponseEntity<PublicChatDtos.ChatError> handle(ChatApiException ex) {
         HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status);
+        // Explicit JSON, for the same reason as above.
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON);
         if (ex.retryAfterSeconds() > 0) {
             builder.header("Retry-After", Long.toString(ex.retryAfterSeconds()));
         }

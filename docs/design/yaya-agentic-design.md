@@ -243,6 +243,8 @@ public interface ToolHandler<I, O> {
 }
 ```
 
+**Template variables and escaping.** The variables an HTTP tool's URL, headers and body may use (`{arg}`, `{principal.*}`, `{session.id}`, `{session.channel}`, `{turn.id}`, `{call.id}`) and how each substituted value is escaped per position are specified in `docs/guides/admin-panel-sessions.md` §14 and enforced by `HttpToolTemplateSafetyTest`. A substituted value is data: it never changes the fields, the address or the header lines the template declares.
+
 **Why two transports?**
 - **Bean** is for things that live inside this service: validation, formatting, lightweight orchestration, anything that benefits from direct access to Spring beans (repos, mappers, internal services). Fast, no network, fully type-safe.
 - **HTTP** is for everything else: existing domain APIs, third-party SaaS, internal microservices behind their own auth. Declarative — onboarding a remote action does not require writing or deploying Java code, only registering a `ToolDescriptor` with an `Http` handler.
@@ -594,7 +596,8 @@ The system prompt is assembled per turn, in a fixed order, so caching can be max
 1. PersonalityFragment (tenant-level)
 2. Profile.systemPromptFragment
 3. Capability catalog (compact list w/ labels + descriptions)
-4. Tool schemas (filtered to authorized-or-could-be-authorized)
+4. Tools per capability — names only; each tool's input schema is sent once,
+   as the provider's native tool definition, not repeated as prompt text
 5. Static safety / refusal rules
 
 [VARIABLE SUFFIX — per session/turn]
@@ -607,6 +610,8 @@ The system prompt is assembled per turn, in a fixed order, so caching can be max
 ```
 
 Items 1–5 are emitted as a stable prefix to maximize **prompt caching** (Anthropic + OpenAI both support it). Profile version is part of the cache key so prompt edits invalidate cleanly.
+
+On Anthropic the request carries three `cache_control` breakpoints: the last tool definition, the stable prefix (the first system block; the variable suffix is a second, uncached system block), and the last block of the conversation. The third one lets round N+1 of a tool turn read everything round N sent. It only helps while the variable suffix stays the same between the rounds of a turn, which is why every round is told the turn's start as "now"; a tool that changes working memory mid-turn moves the suffix and that round pays in full for the conversation again (the prefix is unaffected). `yaya.agentic.llm.anthropic.prompt-cache.ttl` sets how long the tools + prefix stay cached (`FIVE_MINUTES` or `ONE_HOUR`); `usage.cache_read_input_tokens` per round is logged by `AnthropicLlmClient` and summed per month in the usage tables.
 
 Retrieved chunks (item 9) are wrapped in untrusted delimiters (`<retrieved id="…" source="…">…</retrieved>`) and the system prompt instructs the model to treat them as data, not instructions — the same hardening applied to tool results (§12). Citations are returned out-of-band via SSE `citation` events keyed to the chunk IDs, so the UI can render footnotes without the model having to format them inline.
 
@@ -700,6 +705,9 @@ GET    /v1/profiles                       list profiles visible to caller
 GET    /v1/profiles/{id}                  fetch profile (with capabilities)
 
 POST   /v1/admin/profiles                 create/update profile (versioned)
+                                          each POST is a full new version, except model /
+                                          maxToolRounds / metered: left out, they keep the
+                                          latest version's value (admin-panel-sessions.md §10)
 POST   /v1/admin/capabilities             register capability
 POST   /v1/admin/tools                    register tool (schema + bean OR http handler)
 POST   /v1/admin/auth-bindings            register auth binding

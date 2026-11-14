@@ -52,6 +52,9 @@ public class DefaultInteractiveRenderer implements InteractiveRenderer {
         if (hint != null && "confirm".equals(hint.kind())) {
             return confirmButtons(body, hint.payload(), footer);
         }
+        if (hint != null && "plan".equals(hint.kind())) {
+            return planButtons(body, hint.payload(), footer);
+        }
         if (hint == null || !"quick_replies".equals(hint.kind())) {
             return new InteractivePayload.PlainText(body);
         }
@@ -110,6 +113,23 @@ public class DefaultInteractiveRenderer implements InteractiveRenderer {
         String confirm = truncate(stringOr(payload.get("confirmLabel"), "Confirmar"), BUTTON_TITLE_MAX);
         String cancel = truncate(stringOr(payload.get("cancelLabel"), "Cancelar"), BUTTON_TITLE_MAX);
         String text = body.isEmpty() ? stringOr(payload.get("summary"), "") : body;
+        return new InteractivePayload.Buttons(text, List.of(
+                new InteractivePayload.Button(CONFIRM_PREFIX + callId, confirm),
+                new InteractivePayload.Button(CANCEL_PREFIX + callId, cancel)), footer);
+    }
+
+    /**
+     * A plan (admin-panel-sessions.md §16) like a confirm frame: the list of
+     * steps as the body and two buttons, «Hacer todo» / «Cancelar», that name
+     * the plan. The buttons are all or nothing; a step is left out by typing
+     * the numbers of the ones wanted ({@code PlanAnswers}).
+     */
+    private static InteractivePayload planButtons(String body, Map<String, Object> payload, String footer) {
+        Object callId = payload == null ? null : payload.get("callId");
+        if (callId == null) return new InteractivePayload.PlainText(body);
+        String confirm = truncate(stringOr(payload.get("confirmLabel"), "Hacer todo"), BUTTON_TITLE_MAX);
+        String cancel = truncate(stringOr(payload.get("cancelLabel"), "Cancelar"), BUTTON_TITLE_MAX);
+        String text = body.isEmpty() ? stringOr(payload.get("text"), "") : body;
         return new InteractivePayload.Buttons(text, List.of(
                 new InteractivePayload.Button(CONFIRM_PREFIX + callId, confirm),
                 new InteractivePayload.Button(CANCEL_PREFIX + callId, cancel)), footer);

@@ -21,6 +21,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Admin CRUD for the per-tenant HMAC-signed JWT trust list. Lets a
@@ -38,6 +39,7 @@ import java.util.List;
 public class TenantJwtSecretController {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+    private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
 
     private final TenantGuard tenantGuard;
     private final TenantJwtSecretRepository repo;
@@ -68,7 +70,8 @@ public class TenantJwtSecretController {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
         return repo.findByTenantId(tenantId).stream()
-                .map(e -> SecretResponse.of(e, parseAudiences(e.getAudiencesJson())))
+                .map(e -> SecretResponse.of(e, parseAudiences(e.getAudiencesJson()),
+                        parseRequiredClaims(e.getRequiredClaimsJson())))
                 .toList();
     }
 
@@ -87,6 +90,7 @@ public class TenantJwtSecretController {
                 tenantId, req.iss().trim(),
                 encrypted.ciphertext(), encrypted.iv(),
                 writeAudiences(req.audiences()));
+        applyBinding(entity, req);
         TenantJwtSecretEntity saved;
         try {
             saved = repo.save(entity);
@@ -98,7 +102,8 @@ public class TenantJwtSecretController {
         events.publishEvent(new TenantJwtSecretsChangedEvent(tenantId));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(SecretResponse.of(saved,
-                        req.audiences() == null ? List.of() : req.audiences()));
+                        req.audiences() == null ? List.of() : req.audiences(),
+                        parseRequiredClaims(saved.getRequiredClaimsJson())));
     }
 
     /**
@@ -123,6 +128,7 @@ public class TenantJwtSecretController {
 
         entity.setIss(req.iss().trim());
         entity.setAudiencesJson(writeAudiences(req.audiences()));
+        applyBinding(entity, req);
         if (req.secret() != null && !req.secret().isBlank()) {
             requireCipherConfigured();
             JwtSecretCipher.Encrypted encrypted = cipher.encrypt(req.secret().trim());
@@ -132,7 +138,8 @@ public class TenantJwtSecretController {
         TenantJwtSecretEntity saved = repo.save(entity);
         events.publishEvent(new TenantJwtSecretsChangedEvent(tenantId));
         return SecretResponse.of(saved,
-                req.audiences() == null ? List.of() : req.audiences());
+                req.audiences() == null ? List.of() : req.audiences(),
+                parseRequiredClaims(saved.getRequiredClaimsJson()));
     }
 
     @DeleteMapping("/{id}")
@@ -184,6 +191,50 @@ public class TenantJwtSecretController {
         }
     }
 
+    /**
+     * {@code principalKind} / {@code requiredClaims} follow "absent = keep":
+     * a caller that only rotates the secret must not wipe the tenant binding.
+     * A blank kind or an empty map clears. A kind may only be granted by an
+     * issuer pinned to this tenant — otherwise any tenant sharing the signing
+     * key could present itself as this one.
+     */
+    private void applyBinding(TenantJwtSecretEntity entity, SecretRequest req) {
+        if (req.requiredClaims() != null) {
+            for (Map.Entry<String, String> e : req.requiredClaims().entrySet()) {
+                if (e.getKey() == null || e.getKey().isBlank()
+                        || e.getValue() == null || e.getValue().isBlank()) {
+                    throw AdminApiException.badRequest("invalid_required_claims",
+                            "requiredClaims must map claim names to non-blank values");
+                }
+            }
+            try {
+                entity.setRequiredClaimsJson(req.requiredClaims().isEmpty()
+                        ? null : json.writeValueAsString(new java.util.TreeMap<>(req.requiredClaims())));
+            } catch (JsonProcessingException e) {
+                throw AdminApiException.badRequest("invalid_required_claims",
+                        "could not serialise requiredClaims: " + e.getMessage());
+            }
+        }
+        if (req.principalKind() != null) {
+            entity.setPrincipalKind(req.principalKind());
+        }
+        if (entity.getPrincipalKind() != null && entity.getRequiredClaimsJson() == null) {
+            throw AdminApiException.badRequest("principal_kind_needs_required_claims",
+                    "principalKind requires requiredClaims: pin this issuer to the tenant with at "
+                            + "least one claim (e.g. {\"org\": \"<the tenant's id in the issuer>\"})");
+        }
+    }
+
+    private Map<String, String> parseRequiredClaims(String raw) {
+        if (raw == null || raw.isBlank()) return Map.of();
+        try {
+            Map<String, String> map = json.readValue(raw, STRING_MAP);
+            return map == null ? Map.of() : map;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     private String writeAudiences(List<String> audiences) {
         try {
             return json.writeValueAsString(audiences == null ? List.of() : audiences);
@@ -205,7 +256,12 @@ public class TenantJwtSecretController {
 
     // ---- DTOs ---------------------------------------------------------------
 
-    public record SecretRequest(String iss, String secret, List<String> audiences) {}
+    public record SecretRequest(String iss, String secret, List<String> audiences,
+                                String principalKind, Map<String, String> requiredClaims) {
+        public SecretRequest(String iss, String secret, List<String> audiences) {
+            this(iss, secret, audiences, null, null);
+        }
+    }
 
     /**
      * Response shape — deliberately omits the secret. Operators can rotate
@@ -218,16 +274,21 @@ public class TenantJwtSecretController {
             String iss,
             List<String> audiences,
             OffsetDateTime createdAt,
-            OffsetDateTime updatedAt
+            OffsetDateTime updatedAt,
+            String principalKind,
+            Map<String, String> requiredClaims
     ) {
-        public static SecretResponse of(TenantJwtSecretEntity e, List<String> audiences) {
+        public static SecretResponse of(TenantJwtSecretEntity e, List<String> audiences,
+                                        Map<String, String> requiredClaims) {
             return new SecretResponse(
                     e.getId(),
                     e.getTenantId(),
                     e.getIss(),
                     audiences == null ? List.of() : audiences,
                     e.getCreatedAt(),
-                    e.getUpdatedAt());
+                    e.getUpdatedAt(),
+                    e.getPrincipalKind(),
+                    requiredClaims == null ? Map.of() : requiredClaims);
         }
     }
 }

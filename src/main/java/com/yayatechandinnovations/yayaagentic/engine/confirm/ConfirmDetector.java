@@ -28,7 +28,7 @@ public class ConfirmDetector {
     public enum Signal { CONFIRM, CANCEL, UNCLEAR }
 
     /** Whole-message affirmatives, accent-folded and punctuation-stripped. */
-    private static final Set<String> AFFIRMATIVE = Set.of(
+    static final Set<String> AFFIRMATIVE = Set.of(
             "yes", "yeah", "yep", "yup", "ok", "okay", "sure",
             "confirm", "confirmed", "go", "go ahead", "do it", "please do",
             "y", "👍",
@@ -39,20 +39,20 @@ public class ConfirmDetector {
             "anulalo", "anulala", "hazlo ya", "si confirmo", "si claro", "claro que si",
             "dale que si", "si por favor");
 
-    private static final Set<String> NEGATIVE = Set.of(
+    static final Set<String> NEGATIVE = Set.of(
             "no", "nope", "nah", "cancel", "stop", "wait", "nevermind",
             "never mind", "don't", "dont", "do not", "abort", "n", "👎",
             "cancela", "cancelar", "cancelalo", "espera", "para", "detente",
             "olvidalo", "dejalo", "mejor no", "no gracias", "todavia no", "aun no");
 
     /** A message LED by one of these is affirmative unless a negation follows. */
-    private static final Set<String> AFFIRMATIVE_LEADS = Set.of(
+    static final Set<String> AFFIRMATIVE_LEADS = Set.of(
             "si", "yes", "ok", "okay", "dale", "claro", "confirmo", "confirmar", "confirmado",
             "hazlo", "procede", "adelante", "listo", "perfecto", "correcto", "vale",
             "aprobar", "apruebo", "apruebala", "apruebalo", "anulalo", "anulala", "sure", "yep");
 
     /** A message LED by one of these is negative unless an affirmative follows. */
-    private static final Set<String> NEGATIVE_LEADS = Set.of(
+    static final Set<String> NEGATIVE_LEADS = Set.of(
             "no", "nope", "cancela", "cancelar", "cancelalo", "espera", "detente",
             "olvidalo", "dejalo", "stop", "cancel", "wait", "abort");
 

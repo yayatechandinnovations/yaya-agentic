@@ -60,6 +60,16 @@ public class ProfileEntity {
     @Column(nullable = false, length = 16)
     private String language = "en";
 
+    // Nullable: the deployment's model / default tool-round ceiling apply.
+    @Column(length = 128)
+    private String model;
+
+    @Column(name = "max_tool_rounds")
+    private Integer maxToolRounds;
+
+    @Column(nullable = false)
+    private boolean metered = false;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -93,6 +103,9 @@ public class ProfileEntity {
     public String getExtensionsJson() { return extensionsJson; }
     public String getStatus() { return status; }
     public String getLanguage() { return language; }
+    public String getModel() { return model; }
+    public Integer getMaxToolRounds() { return maxToolRounds; }
+    public boolean isMetered() { return metered; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getDeprecatedAt() { return deprecatedAt; }
 
@@ -105,6 +118,9 @@ public class ProfileEntity {
     public void setMetadataJson(String v) { this.metadataJson = v; }
     public void setExtensionsJson(String v) { this.extensionsJson = v; }
     public void setStatus(String v) { this.status = v; }
+    public void setModel(String v) { this.model = (v == null || v.isBlank()) ? null : v.trim(); }
+    public void setMaxToolRounds(Integer v) { this.maxToolRounds = v; }
+    public void setMetered(boolean v) { this.metered = v; }
     public void setLanguage(String v) { this.language = (v == null || v.isBlank()) ? "en" : v; }
 
     // --- composite key ----------------------------------------------------

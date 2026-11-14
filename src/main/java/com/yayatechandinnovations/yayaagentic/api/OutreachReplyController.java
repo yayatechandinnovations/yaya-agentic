@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
@@ -87,7 +88,7 @@ public class OutreachReplyController {
             engine.resume(sid, auth);
             mediation.primeReply(ep.tenant(), sid);
 
-            return engine.send(sid, new UserMessage(body.text(), Map.of()), auth)
+            return com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sid, new UserMessage(body.text(), Map.of()), auth.onChannel(TurnChannel.CHAT)))
                     .map(chatAdapter::toSse)
                     .doFinally(sig -> resolveIfReplied(sid));
         }).subscribeOn(Schedulers.boundedElastic())

@@ -76,6 +76,8 @@ public class InboundMessageEntity {
     public String getProcessingError() { return processingError; }
 
     public void setBodyRedacted(String v) { this.bodyRedacted = v; }
+    /** Only to redact a payload that turned out to carry a secret. */
+    public void setRawPayloadJson(String v) { this.rawPayloadJson = v; }
     public void setMediaTranscriptsJson(String v) { this.mediaTranscriptsJson = v; }
     public void setProcessedAt(OffsetDateTime v) { this.processedAt = v; }
     public void setProcessingError(String v) { this.processingError = v; }

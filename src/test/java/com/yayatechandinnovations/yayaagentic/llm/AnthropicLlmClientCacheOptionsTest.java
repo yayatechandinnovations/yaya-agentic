@@ -13,7 +13,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 /**
- * Locks in the explicit prompt-caching wiring (design: cost control). The
+ * Locks in the explicit prompt-caching wiring of the single-shot (structured
+ * completion) path; chat rounds are covered on the wire by
+ * {@link AnthropicLlmClientWireCacheTest}. The
  * SYSTEM_AND_TOOLS + multiBlockSystemCaching combination is load-bearing — it
  * is what places the cache_control breakpoint on the byte-stable
  * cacheablePrefix (the second-to-last system block) instead of the per-turn

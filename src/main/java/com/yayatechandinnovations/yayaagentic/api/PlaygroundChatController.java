@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.yayatechandinnovations.yayaagentic.api.dto.InspectorDtos;
 import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
@@ -138,7 +139,7 @@ public class PlaygroundChatController {
 
             StartConversationRequest scr = new StartConversationRequest(
                     ep.tenant(), Optional.empty(), "chat", hints);
-            StartSessionResult result = engine.start(scr, res.auth());
+            StartSessionResult result = engine.start(scr, res.auth().onChannel(TurnChannel.CHAT));
             Ids.SessionId sid = result.session().id();
 
             res.jwt().ifPresent(jwt -> authTokenStore.persist(sid, jwt));
@@ -163,7 +164,7 @@ public class PlaygroundChatController {
         return Flux.defer(() -> {
             AuthContext auth = authorizeAndResolve(tenantId, sid, exchange);
             String text = body == null ? "" : body.text();
-            return engine.send(sid, new UserMessage(text == null ? "" : text, Map.of()), auth)
+            return com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sid, new UserMessage(text == null ? "" : text, Map.of()), auth.onChannel(TurnChannel.CHAT)))
                     .map(chatAdapter::toSse);
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -179,7 +180,7 @@ public class PlaygroundChatController {
         return Flux.defer(() -> {
             AuthContext auth = authorizeAndResolve(tenantId, sid, exchange);
             return engine.dispatchAction(sid, new Ids.ToolId(body.tool()),
-                            body.args() == null ? Map.of() : body.args(), auth)
+                            body.args() == null ? Map.of() : body.args(), auth.onChannel(TurnChannel.CHAT))
                     .map(chatAdapter::toSse);
         }).subscribeOn(Schedulers.boundedElastic())
           .onErrorMap(ActionNotPermittedException.class,

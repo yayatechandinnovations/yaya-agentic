@@ -85,6 +85,37 @@ class DefaultPromptBuilderTest {
         assertThat(second.variableSuffix()).isNotEqualTo(first.variableSuffix());
     }
 
+    @Test
+    void two_sessions_share_the_prefix_and_keep_what_is_theirs_in_the_suffix() {
+        Ids.SessionId first = startSession();
+        drain(first, "hello from the first session");
+        PromptBuilder.PromptPayload one = inspector.lastPayload();
+
+        Ids.SessionId second = startSession();
+        drain(second, "something else entirely");
+        PromptBuilder.PromptPayload two = inspector.lastPayload();
+
+        assertThat(two.cacheablePrefix())
+                .as("one profile version = one cached prefix, whoever is talking")
+                .isEqualTo(one.cacheablePrefix());
+        // Date/time and session data never reach the cached part.
+        assertThat(one.cacheablePrefix()).doesNotContain("Fecha y hora actual", "Session:", first.value());
+        assertThat(one.variableSuffix()).contains("Fecha y hora actual", "Session:");
+        assertThat(two.variableSuffix()).contains("Fecha y hora actual", "Session:");
+    }
+
+    @Test
+    void the_prefix_names_each_capabilitys_tools_without_repeating_their_schemas() {
+        Ids.SessionId sid = startSession();
+        drain(sid, "hello");
+        String prefix = inspector.lastPayload().cacheablePrefix();
+
+        String tools = prefix.substring(prefix.indexOf("Tools (proposed"), prefix.indexOf("Safety:"));
+        assertThat(tools).contains(HelloWorldProfileBootstrap.ECHO.value());
+        // The input schema reaches the model once, as the native tool definition.
+        assertThat(tools).doesNotContain("input:", "\"type\"");
+    }
+
     // ---- helpers ----------------------------------------------------
 
     private Ids.SessionId startSession() {

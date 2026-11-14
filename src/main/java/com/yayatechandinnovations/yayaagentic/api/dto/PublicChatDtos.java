@@ -99,10 +99,21 @@ public final class PublicChatDtos {
          *  picker is display-only). {@code callId} is only set for
          *  {@code kind == "confirm"}. */
         public record Selection(String kind, String code, String callId,
-                                java.util.List<String> itemIds) {
+                                java.util.List<String> itemIds, String value) {
             /** Compat ctor — selections without the multi-item confirm ids. */
             public Selection(String kind, String code, String callId) {
-                this(kind, code, callId, null);
+                this(kind, code, callId, null, null);
+            }
+
+            /** Compat ctor — selections that answer no secret prompt. */
+            public Selection(String kind, String code, String callId, java.util.List<String> itemIds) {
+                this(kind, code, callId, itemIds, null);
+            }
+
+            /** {@code value} answers a secret prompt ({@code kind == "secret"}); never printed. */
+            @Override
+            public String toString() {
+                return "Selection[kind=" + kind + ", callId=" + callId + "]";
             }
         }
     }

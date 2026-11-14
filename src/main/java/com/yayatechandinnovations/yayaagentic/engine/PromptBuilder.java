@@ -25,5 +25,23 @@ public interface PromptBuilder {
                         UserMessage userMessage,
                         String earlierSummary);
 
+    /**
+     * As {@link #build}, with the instant the prompt presents as "now". The
+     * engine passes the start of the turn for every model round of that turn,
+     * so the variable suffix does not change between rounds just because the
+     * clock moved.
+     */
+    default PromptPayload build(PersonalityFragment personality,
+                                Profile profile,
+                                Session session,
+                                IntentFrame intent,
+                                List<Turn> history,
+                                List<RetrievedChunk> retrieved,
+                                UserMessage userMessage,
+                                String earlierSummary,
+                                java.time.Instant now) {
+        return build(personality, profile, session, intent, history, retrieved, userMessage, earlierSummary);
+    }
+
     record PromptPayload(String cacheablePrefix, String variableSuffix) {}
 }

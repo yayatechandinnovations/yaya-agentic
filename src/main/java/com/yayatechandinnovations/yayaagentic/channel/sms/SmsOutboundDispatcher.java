@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.channel.sms;
 
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
+import com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmPrompts;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageRepository;
 import org.slf4j.Logger;
@@ -46,13 +47,25 @@ public class SmsOutboundDispatcher {
         List<TurnEvent> all = events.collectList().block();
         StringBuilder body = new StringBuilder();
         boolean confirmFrame = false;
+        String planReplyHint = null;
         for (TurnEvent e : all == null ? List.<TurnEvent>of() : all) {
             if (e instanceof TurnEvent.Token t) body.append(t.text());
             if (e instanceof TurnEvent.UiHint h && "confirm".equals(h.kind())) confirmFrame = true;
+            if (e instanceof TurnEvent.UiHint h && "plan".equals(h.kind())) {
+                planReplyHint = ConfirmPrompts.planReplyHintFor(h.payload());
+            }
         }
-        // SMS has no card or buttons: the confirm frame's question is the whole
-        // UX, so the reply instruction is added here, once (whatsapp-ops §5, R2).
-        if (confirmFrame) body.append(body.length() == 0 ? "" : " ").append(CONFIRM_REPLY_HINT);
+        // SMS has no card or buttons: the confirm frame's question — or a
+        // plan's list of steps — is the whole UX, so the reply instruction is
+        // added here, once (whatsapp-ops §5, R2). A plan asks for words that
+        // cannot be taken for one of its step numbers.
+        if (planReplyHint != null) {
+            if (!body.toString().endsWith(planReplyHint)) {
+                body.append(body.length() == 0 ? "" : " ").append(planReplyHint);
+            }
+        } else if (confirmFrame) {
+            body.append(body.length() == 0 ? "" : " ").append(CONFIRM_REPLY_HINT);
+        }
         send(tenant, senderId, toPhone, session, body.toString());
     }
 

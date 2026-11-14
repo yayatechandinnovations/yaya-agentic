@@ -62,7 +62,10 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
      *  tenant; evicted by {@link TenantJwtSecretsChangedEvent}. */
     private final Map<String, Map<String, CachedSecret>> cache = new ConcurrentHashMap<>();
 
-    private record CachedSecret(MACVerifier verifier, Set<String> audiences) {}
+    private record CachedSecret(MACVerifier verifier, Set<String> audiences,
+                                Map<String, String> requiredClaims) {}
+
+    private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
 
     public SharedSecretJwtAuthenticator(TenantJwtSecretRepository repo,
                                         JwtSecretCipher cipher,
@@ -139,6 +142,15 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
                 throw new AuthenticationException("shared-secret-jwt: audience not allowed (token aud="
                         + claims.getAudience() + ", expected one of " + hit.audiences() + ")");
             }
+            // A signing key several tenants share proves the issuer, not the
+            // tenant: the pinned claims are what bind the token to THIS one.
+            for (Map.Entry<String, String> pin : hit.requiredClaims().entrySet()) {
+                Object actual = claims.getClaim(pin.getKey());
+                if (actual == null || !pin.getValue().equals(String.valueOf(actual))) {
+                    throw new AuthenticationException("shared-secret-jwt: token does not belong to tenant '"
+                            + tenantId + "' (claim '" + pin.getKey() + "' does not match)");
+                }
+            }
             return Optional.of(toPrincipal(ctx, claims));
         } catch (AuthenticationException e) {
             throw e;
@@ -168,7 +180,8 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
                 MACVerifier verifier = new MACVerifier(
                         secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 built.put(row.getIss(),
-                        new CachedSecret(verifier, parseAudiences(row.getAudiencesJson())));
+                        new CachedSecret(verifier, parseAudiences(row.getAudiencesJson()),
+                                parseRequiredClaims(row.getRequiredClaimsJson())));
             } catch (Exception e) {
                 // One bad row shouldn't poison the whole tenant — log and skip.
                 // The admin endpoint surfaces decrypt failures on read; the
@@ -191,6 +204,18 @@ public class SharedSecretJwtAuthenticator implements Authenticator {
         Set<String> out = new HashSet<>();
         repo.findByTenantId(tenantId).forEach(e -> out.add(e.getIss()));
         return out;
+    }
+
+    /** Unparseable pins fail closed: the row then matches no token at all. */
+    private Map<String, String> parseRequiredClaims(String raw) {
+        if (raw == null || raw.isBlank()) return Map.of();
+        try {
+            Map<String, String> map = json.readValue(raw, STRING_MAP);
+            return map == null ? Map.of() : Map.copyOf(map);
+        } catch (Exception e) {
+            LOG.error("shared-secret-jwt: unreadable required_claims_json; the issuer is rejected until fixed");
+            return Map.of("__unreadable_required_claims__", "__never__");
+        }
     }
 
     private Set<String> parseAudiences(String audsJson) {

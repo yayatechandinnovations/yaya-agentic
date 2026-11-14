@@ -34,11 +34,47 @@ public record Profile(
         String language,
         Map<String, Object> metadata,
         Map<String, Object> extensions,
-        Ids.StartFlowId defaultStartFlowId
+        Ids.StartFlowId defaultStartFlowId,
+        Runtime runtime
 ) {
+    /** The deployment-wide tool-round ceiling a profile gets unless it sets its own. */
+    public static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
+    public static final int MIN_TOOL_ROUNDS = 1;
+    public static final int MAX_TOOL_ROUNDS = 16;
+
     public Profile {
         if (language == null || language.isBlank()) language = "en";
         if (extensions == null) extensions = Map.of();
+        if (runtime == null) runtime = Runtime.defaults();
+    }
+
+    /**
+     * How this profile's turns run. {@code model} null = the deployment's model;
+     * {@code maxToolRounds} null = {@link #DEFAULT_MAX_TOOL_ROUNDS}. A
+     * {@code metered} profile's turns count against the tenant's monthly
+     * allowance and are refused once it is used up; an unmetered profile is
+     * never blocked by it.
+     */
+    public record Runtime(String model, Integer maxToolRounds, boolean metered) {
+        public static Runtime defaults() {
+            return new Runtime(null, null, false);
+        }
+    }
+
+    public int effectiveMaxToolRounds() {
+        Integer rounds = runtime.maxToolRounds();
+        if (rounds == null) return DEFAULT_MAX_TOOL_ROUNDS;
+        return Math.max(MIN_TOOL_ROUNDS, Math.min(MAX_TOOL_ROUNDS, rounds));
+    }
+
+    /** Back-compat: a profile on the deployment's model and tool-round ceiling, unmetered. */
+    public Profile(Ids.ProfileId id, Ids.TenantId tenant, String displayName, String introOneLiner,
+                   String systemPromptFragment, List<Ids.CapabilityId> capabilities,
+                   List<Ids.KnowledgeSourceId> knowledgeSources, Ids.AuthBindingId authBinding,
+                   String language, Map<String, Object> metadata, Map<String, Object> extensions,
+                   Ids.StartFlowId defaultStartFlowId) {
+        this(id, tenant, displayName, introOneLiner, systemPromptFragment, capabilities,
+                knowledgeSources, authBinding, language, metadata, extensions, defaultStartFlowId, null);
     }
 
     /** Back-compat: a profile with no extensions and no default start flow. */
@@ -47,6 +83,6 @@ public record Profile(
                    List<Ids.KnowledgeSourceId> knowledgeSources, Ids.AuthBindingId authBinding,
                    String language, Map<String, Object> metadata) {
         this(id, tenant, displayName, introOneLiner, systemPromptFragment, capabilities,
-                knowledgeSources, authBinding, language, metadata, Map.of(), null);
+                knowledgeSources, authBinding, language, metadata, Map.of(), null, null);
     }
 }

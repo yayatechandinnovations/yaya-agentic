@@ -64,6 +64,25 @@ class SmsOutboundDispatcherTest {
     }
 
     @Test
+    void a_plan_is_its_list_followed_by_the_reply_instruction() {
+        String text = "Voy a hacer esto, en orden:\n1. Detener la venta en la estación 12\n"
+                + "2. Enviar el aviso «Cierre» a la estación 07\n¿Lo hago?";
+        dispatcher.dispatchTurn(TENANT, SENDER, "+18095551234", new Ids.SessionId("sess_1"),
+                Flux.just(new TurnEvent.UiHint("plan", java.util.Map.of("callId", "plan-1")),
+                        new TurnEvent.Token(text)));
+        // Words, not «SÍ o NO» alone: a step can be chosen, and «1» is a step.
+        assertThat(transport.last.bodyText()).isEqualTo(text + " Responde TODO para hacerlos todos, CANCELAR "
+                + "para no hacer nada, o dime cuáles pasos quieres (por ejemplo «solo la 1»).");
+
+        // The run's progress adds nothing to the model's account.
+        dispatcher.dispatchTurn(TENANT, SENDER, "+18095551234", new Ids.SessionId("sess_1"),
+                Flux.just(new TurnEvent.UiHint("plan_step", java.util.Map.of("callId", "plan-1")),
+                        new TurnEvent.UiHint("plan_result", java.util.Map.of("callId", "plan-1")),
+                        new TurnEvent.Token("Hecho.")));
+        assertThat(transport.last.bodyText()).isEqualTo("Hecho.");
+    }
+
+    @Test
     void buffers_token_stream_into_one_message_and_records_segments() {
         dispatcher.dispatchTurn(TENANT, SENDER, "+18095551234", new Ids.SessionId("sess_1"),
                 Flux.just(new TurnEvent.Token("Hello "), new TurnEvent.Token("world"),

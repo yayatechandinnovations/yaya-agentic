@@ -1,11 +1,19 @@
 package com.yayatechandinnovations.yayaagentic.tool.dispatch;
 
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.core.io.JsonStringEncoder;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.ExecutionContext;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlResolutionException;
 import com.yayatechandinnovations.yayaagentic.tenant.BaseUrlResolver;
 import com.yayatechandinnovations.yayaagentic.tool.HttpToolSpec;
@@ -119,7 +127,7 @@ public class HttpToolDispatcher {
                     ctx == null || ctx.principal() == null ? null : ctx.principal().tenant(),
                     renderedPath,
                     override);
-        } catch (MissingContextException e) {
+        } catch (TemplateRenderException e) {
             return failed(callId, e.getMessage());
         } catch (BaseUrlResolutionException e) {
             return failed(callId, "egress: " + e.getMessage());
@@ -134,16 +142,36 @@ public class HttpToolDispatcher {
 
         Map<String, String> headers = new LinkedHashMap<>();
         String body = null;
+        // The secret the user typed for this one call, if the engine attached
+        // one. It is only ever offered to header templates: an address or a
+        // body is echoed in error texts and diagnostics, a header is not.
+        Map<String, Object> secretArgs = withSecret(richArgs, ctx);
         try {
             if (spec.headerTemplates() != null) {
-                spec.headerTemplates().forEach((k, v) -> headers.put(k, renderTemplate(v, richArgs, toolId)));
+                spec.headerTemplates().forEach((k, v) -> {
+                    // {principalToken} is not a template variable: the user's
+                    // token only ever travels through authForwarding below. A
+                    // header written with it (the usual "Bearer {principalToken}")
+                    // is left to that step instead of being rendered as a blank
+                    // credential — and logged as a missing value — first.
+                    if (referencesPrincipalToken(v)) return;
+                    if (referencesSecret(v)) {
+                        // {secret.value} exists for one request and only in a
+                        // header. Without a value the header is left out rather
+                        // than sent empty.
+                        String rendered = renderTemplate(v, secretArgs, toolId);
+                        if (!rendered.isBlank()) headers.put(k, rendered);
+                        return;
+                    }
+                    headers.put(k, renderTemplate(v, richArgs, toolId));
+                });
             }
             if (spec.body() != null && spec.body().template() != null
                     && spec.method() != HttpToolSpec.HttpMethod.GET
                     && spec.method() != HttpToolSpec.HttpMethod.DELETE) {
-                body = renderTemplate(spec.body().template(), richArgs, toolId);
+                body = renderBody(spec.body(), richArgs, descriptor);
             }
-        } catch (MissingContextException e) {
+        } catch (TemplateRenderException e) {
             return failed(callId, e.getMessage());
         }
         // A bound-action tap (whatsapp-ops-integration-design.md §6.4) pins the
@@ -155,6 +183,15 @@ public class HttpToolDispatcher {
             headers.put("Idempotency-Key", String.valueOf(pinnedKey));
         }
         applyAuthForwarding(spec.authForwarding(), ctx, headers);
+        // A header value with a line break would let an argument or a claim
+        // add its own header lines to the request. Never name the value: it
+        // may be a credential.
+        for (Map.Entry<String, String> h : headers.entrySet()) {
+            if (hasControlChars(h.getValue())) {
+                return failed(callId, "HTTP tool '" + toolId + "' header '" + h.getKey()
+                        + "' would carry a line break or control character — nothing was sent.");
+            }
+        }
         // Diagnostics for the playground auth-flow inspector: which forwarding
         // mode this tool uses and whether an auth header actually got attached.
         // A PRINCIPAL_TOKEN tool with authHeaderPresent=false is the smoking gun
@@ -165,12 +202,18 @@ public class HttpToolDispatcher {
         WebClient client = webClientBuilder.build();
         ToolPolicy policy = descriptor.policy() == null ? ToolPolicy.defaults() : descriptor.policy();
         Duration timeout = policy.timeout() == null ? defaultTimeout : policy.timeout();
+        // A request that carries the user's code goes out once, whatever the
+        // tool's retry setting: a repeat after a timeout or a 5xx could spend
+        // another attempt of the code, or apply the change a second time. (A
+        // 409 that asks for a fresh token is not a repeat of a request the
+        // backend acted on: it refused it before reading it.)
+        int retries = secretArgs != richArgs ? 0 : policy.maxRetries();
 
         boolean ownScoped = spec.authForwarding() == HttpToolSpec.AuthForwarding.PRINCIPAL_TOKEN;
         try {
             String responseBody;
             try {
-                responseBody = sendOnce(client, spec, url, headers, body, policy, timeout);
+                responseBody = sendOnce(client, spec, url, headers, body, retries, timeout);
             } catch (WebClientResponseException e) {
                 // Signal 1 — self-healing 409: the own-scoped token is stale
                 // because the caller registered mid-session and this token was
@@ -183,7 +226,7 @@ public class HttpToolDispatcher {
                         headers.put(HttpHeaders.AUTHORIZATION, refreshed.get());
                         diag.put("tokenRefreshed", true);
                         try {
-                            responseBody = sendOnce(client, spec, url, headers, body, policy, timeout);
+                            responseBody = sendOnce(client, spec, url, headers, body, retries, timeout);
                         } catch (WebClientResponseException retryErr) {
                             diag.put("httpStatus", retryErr.getStatusCode().value());
                             return failed(callId, formatHttpFailure(retryErr)).withDiagnostics(diag);
@@ -212,11 +255,12 @@ public class HttpToolDispatcher {
     }
 
     /** One request attempt. Transient failures (5xx/429/IO/timeout) still retry
-     *  per {@link ToolPolicy}; everything else — including a token-refresh 409 —
+     *  {@code maxRetries} times ({@link ToolPolicy}; zero when the request carries
+     *  a user-typed secret); everything else — including a token-refresh 409 —
      *  throws {@link WebClientResponseException} for the caller to classify. */
     private String sendOnce(WebClient client, HttpToolSpec spec, URI url,
                             Map<String, String> headers, String body,
-                            ToolPolicy policy, Duration timeout) {
+                            int maxRetries, Duration timeout) {
         WebClient.RequestBodySpec req = client
                 .method(HttpMethod.valueOf(spec.method().name()))
                 .uri(url)
@@ -228,11 +272,11 @@ public class HttpToolDispatcher {
             req.bodyValue(body);
         }
         var mono = req.retrieve().bodyToMono(String.class).timeout(timeout);
-        if (policy.maxRetries() > 0) {
+        if (maxRetries > 0) {
             // Only retry transient failures. Retrying a 404 / 401 / 409 / 422
             // just wastes time and floods the logs with "Retries exhausted"
             // wrappers that hide the real cause.
-            mono = mono.retryWhen(Retry.backoff(policy.maxRetries(), Duration.ofMillis(200))
+            mono = mono.retryWhen(Retry.backoff(maxRetries, Duration.ofMillis(200))
                     .filter(HttpToolDispatcher::isTransient));
         }
         return mono.block();
@@ -361,7 +405,10 @@ public class HttpToolDispatcher {
      * and the receiving server rejects the request line per RFC 7230/3986
      * ("Invalid character found in the request target"). The template's own
      * structural characters ({@code ? & = /}) are left untouched — only the
-     * interpolated values are encoded.
+     * interpolated values are encoded, so a value can never add a path
+     * segment, a query parameter or a fragment. A path value of {@code .} or
+     * {@code ..} is refused: percent-encoding leaves dots alone and the
+     * receiving server would resolve them to a different resource.
      */
     private String renderUrlTemplate(String template, Map<String, Object> args, String toolId) {
         return render(template, args, toolId, true);
@@ -369,34 +416,19 @@ public class HttpToolDispatcher {
 
     private String render(String template, Map<String, Object> args, String toolId, boolean urlEncodeValues) {
         if (template == null) return null;
+        int queryStart = template.indexOf('?');
         Matcher m = PLACEHOLDER.matcher(template);
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             String path = m.group(1);
-            Object value = pluck(args, path);
-            boolean blank = value == null || value.toString().isBlank();
-            if (blank && path.startsWith("principal.")) {
-                // Server-verified context (organizationId lives at
-                // principal.claims.org) is platform-guaranteed, never an
-                // optional LLM filter. A blank one means the player has no
-                // resolved value — refuse to send it rather than emit e.g.
-                // `?organizationId=`, which the backend reads as "empty scope"
-                // and answers with an empty list. Fail loud so the misconfig
-                // has a fingerprint instead of masquerading as "no data".
-                throw new MissingContextException(
-                        "HTTP tool '" + toolId + "' requires template value {" + path
-                                + "} but it is blank for the current principal — the player has no "
-                                + "resolved value for this scope (check the auth-resolver JWT claims). "
-                                + "Refusing to send a blank value.");
-            }
-            if (blank) {
-                // Optional LLM-supplied arg absent — keep the historical
-                // empty substitution, but make the miss visible in logs.
-                LOG.warn("template placeholder {{{}}} resolved to blank in toolId={} — substituting empty string",
-                        path, toolId);
-            }
+            Object value = resolve(path, args, toolId);
             String rendered = value == null ? "" : value.toString();
             if (urlEncodeValues && !rendered.isEmpty()) {
+                boolean inPath = queryStart < 0 || m.start() < queryStart;
+                if (inPath && (rendered.equals(".") || rendered.equals(".."))) {
+                    throw new TemplateRenderException("HTTP tool '" + toolId + "' value for {" + path
+                            + "} is not a valid identifier for the address — nothing was sent.");
+                }
                 rendered = UriUtils.encode(rendered, StandardCharsets.UTF_8);
             }
             m.appendReplacement(out, Matcher.quoteReplacement(rendered));
@@ -405,15 +437,287 @@ public class HttpToolDispatcher {
         return out.toString();
     }
 
+    /** The value behind one placeholder, with the blank-context guard. */
+    private Object resolve(String path, Map<String, Object> args, String toolId) {
+        Object value = pluck(args, path);
+        boolean blank = value == null || value.toString().isBlank();
+        if (blank && path.startsWith("principal.")) {
+            // Server-verified context (organizationId lives at
+            // principal.claims.org) is platform-guaranteed, never an
+            // optional LLM filter. A blank one means the player has no
+            // resolved value — refuse to send it rather than emit e.g.
+            // `?organizationId=`, which the backend reads as "empty scope"
+            // and answers with an empty list. Fail loud so the misconfig
+            // has a fingerprint instead of masquerading as "no data".
+            throw new MissingContextException(
+                    "HTTP tool '" + toolId + "' requires template value {" + path
+                            + "} but it is blank for the current principal — the player has no "
+                            + "resolved value for this scope (check the auth-resolver JWT claims). "
+                            + "Refusing to send a blank value.");
+        }
+        if (blank && path.startsWith(SECRET_NAME + ".")) {
+            // No secret is attached to most calls; that is not a missing argument.
+            return null;
+        }
+        if (blank) {
+            // Optional LLM-supplied arg absent — make the miss visible in logs.
+            LOG.warn("template placeholder {{{}}} resolved to blank in toolId={}", path, toolId);
+        }
+        return value;
+    }
+
+    // ---- Body rendering ---------------------------------------------------
+
+    private String renderBody(HttpToolSpec.BodyTemplate bodySpec, Map<String, Object> args,
+                              ToolDescriptor descriptor) {
+        String toolId = descriptor.id().value();
+        String contentType = bodySpec.contentType() == null || bodySpec.contentType().isBlank()
+                ? MediaType.APPLICATION_JSON_VALUE : bodySpec.contentType().toLowerCase(Locale.ROOT);
+        if (contentType.contains("json")) {
+            return renderJsonBody(bodySpec.template(), args, descriptor);
+        }
+        if (contentType.contains("x-www-form-urlencoded")) {
+            return render(bodySpec.template(), args, toolId, true);
+        }
+        return renderTemplate(bodySpec.template(), args, toolId);
+    }
+
+    /**
+     * Renders a JSON body so a substituted value is always exactly one JSON
+     * value and can never change the shape the template declares — the request
+     * the system of record receives has the fields the user was shown.
+     *
+     * <ul>
+     *   <li>Inside a string literal ({@code "reason":"{reason}"}) the value is
+     *       JSON-string-escaped.</li>
+     *   <li>Unquoted, standing as a whole value ({@code "amount":{amount}},
+     *       {@code "lines":{linesJson}}) it must be one well-formed JSON value
+     *       of the type the tool's input schema declares; see
+     *       {@link #rawJsonValue}.</li>
+     *   <li>Unquoted anywhere else (part of a token, a key) only letters,
+     *       digits and {@code _ . + -} are accepted.</li>
+     * </ul>
+     */
+    private String renderJsonBody(String template, Map<String, Object> args, ToolDescriptor descriptor) {
+        String toolId = descriptor.id().value();
+        JsonNode[] schemaProps = new JsonNode[1];
+        StringBuilder out = new StringBuilder(template.length() + 64);
+        Matcher m = PLACEHOLDER.matcher(template);
+        boolean inString = false;
+        int i = 0;
+        while (i < template.length()) {
+            char c = template.charAt(i);
+            if (inString && c == '\\' && i + 1 < template.length()) {
+                out.append(c).append(template.charAt(i + 1));
+                i += 2;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+            } else if (c == '{' && m.region(i, template.length()).lookingAt()) {
+                String path = m.group(1);
+                Object value = resolve(path, args, toolId);
+                if (inString) {
+                    out.append(escapeJsonString(value == null ? "" : value.toString()));
+                } else if (standsAsWholeValue(template, i, m.end())) {
+                    if (schemaProps[0] == null) schemaProps[0] = inputProperties(descriptor);
+                    out.append(rawJsonValue(path, value, schemaProps[0].path(path), toolId));
+                } else {
+                    String token = value == null ? "" : value.toString();
+                    if (!SAFE_TOKEN.matcher(token).matches()) {
+                        throw new TemplateRenderException("HTTP tool '" + toolId + "' value for {" + path
+                                + "} may only contain letters, digits and _ . + - — nothing was sent.");
+                    }
+                    out.append(token);
+                }
+                i = m.end();
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
+    }
+
+    private static final Pattern SAFE_TOKEN = Pattern.compile("[A-Za-z0-9_.+-]*");
+
+    /** Strict: no comments, no single quotes, no duplicate keys, nothing after the value. */
+    private static final ObjectReader STRICT_JSON = JsonMapper.builder()
+            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .build()
+            .readerFor(JsonNode.class)
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
+    private static boolean standsAsWholeValue(String template, int start, int end) {
+        int before = start - 1;
+        while (before >= 0 && Character.isWhitespace(template.charAt(before))) before--;
+        int after = end;
+        while (after < template.length() && Character.isWhitespace(template.charAt(after))) after++;
+        boolean opens = before < 0 || ":[,".indexOf(template.charAt(before)) >= 0;
+        boolean closes = after >= template.length() || ",}]".indexOf(template.charAt(after)) >= 0;
+        return opens && closes;
+    }
+
+    /**
+     * An unquoted value. Typed arguments (number, boolean, object, array) are
+     * written as JSON. A string is taken as JSON text the caller serialised
+     * already — the {@code linesJson} convention — and must parse as exactly
+     * one value of an accepted type:
+     * <ul>
+     *   <li>schema type {@code string}: an object or an array, or the types
+     *       named by the property's {@code contentSchema.type} when present;</li>
+     *   <li>schema type {@code number}/{@code integer}/{@code boolean}/
+     *       {@code object}/{@code array}: that type;</li>
+     *   <li>not declared (a context variable): any single value.</li>
+     * </ul>
+     * An absent value is {@code null}. The text is sent as given.
+     */
+    private String rawJsonValue(String path, Object value, JsonNode property, String toolId) {
+        if (value == null || (value instanceof CharSequence cs && cs.toString().isBlank())) {
+            return "null";
+        }
+        if (value instanceof Boolean) return value.toString();
+        if (value instanceof Number n) {
+            if ((n instanceof Double d && !Double.isFinite(d)) || (n instanceof Float f && !Float.isFinite(f))) {
+                throw new TemplateRenderException("HTTP tool '" + toolId + "' argument {" + path
+                        + "} is not a finite number — nothing was sent.");
+            }
+            return n.toString();
+        }
+        if (value instanceof Map<?, ?> || value instanceof Collection<?> || value.getClass().isArray()) {
+            try {
+                return json.writeValueAsString(value);
+            } catch (Exception e) {
+                throw new TemplateRenderException("HTTP tool '" + toolId + "' argument {" + path
+                        + "} could not be written as JSON — nothing was sent.");
+            }
+        }
+        String text = value.toString();
+        Set<String> accepted = acceptedTypes(property);
+        JsonNode parsed;
+        try {
+            parsed = STRICT_JSON.readTree(text);
+        } catch (Exception e) {
+            parsed = null;
+        }
+        if (parsed == null || parsed.isMissingNode()) {
+            throw new TemplateRenderException("HTTP tool '" + toolId + "' argument {" + path
+                    + "} must be " + describe(accepted) + " and it is not well-formed JSON — nothing was sent.");
+        }
+        String actual = switch (parsed.getNodeType()) {
+            case OBJECT -> "object";
+            case ARRAY -> "array";
+            case NUMBER -> "number";
+            case BOOLEAN -> "boolean";
+            case STRING -> "string";
+            case NULL -> "null";
+            default -> "other";
+        };
+        if (!accepted.isEmpty() && !accepted.contains(actual)) {
+            throw new TemplateRenderException("HTTP tool '" + toolId + "' argument {" + path
+                    + "} must be " + describe(accepted) + " but a JSON " + actual
+                    + " was given — nothing was sent.");
+        }
+        return text;
+    }
+
+    /** Empty = no declaration, anything goes. */
+    private static Set<String> acceptedTypes(JsonNode property) {
+        Set<String> declared = typesOf(property.path("type"));
+        if (declared.isEmpty()) return declared;
+        Set<String> accepted = new LinkedHashSet<>();
+        for (String t : declared) {
+            if (t.equals("string")) {
+                Set<String> content = typesOf(property.path("contentSchema").path("type"));
+                accepted.addAll(content.isEmpty() ? List.of("object", "array") : content);
+            } else {
+                accepted.add(t.equals("integer") ? "number" : t);
+            }
+        }
+        return accepted;
+    }
+
+    private static Set<String> typesOf(JsonNode type) {
+        Set<String> out = new LinkedHashSet<>();
+        if (type.isTextual()) {
+            out.add(type.asText());
+        } else if (type.isArray()) {
+            type.forEach(t -> { if (t.isTextual()) out.add(t.asText()); });
+        }
+        if (out.remove("integer")) out.add("number");
+        return out;
+    }
+
+    private static String describe(Set<String> accepted) {
+        return accepted.isEmpty() ? "a JSON value" : "a JSON " + String.join(" or ", accepted);
+    }
+
+    private JsonNode inputProperties(ToolDescriptor descriptor) {
+        try {
+            String schema = descriptor.inputSchemaJson();
+            if (schema != null && !schema.isBlank()) return json.readTree(schema).path("properties");
+        } catch (Exception ignored) {
+            // An unreadable schema declares nothing.
+        }
+        return MissingNode.getInstance();
+    }
+
+    private static String escapeJsonString(String raw) {
+        return new String(JsonStringEncoder.getInstance().quoteAsString(raw));
+    }
+
+    private static boolean hasControlChars(String s) {
+        if (s == null) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c < 0x20 && c != '\t') || c == 0x7f) return true;
+        }
+        return false;
+    }
+
+    private static final String PRINCIPAL_TOKEN_PLACEHOLDER = "{principalToken}";
+
+    private static boolean referencesPrincipalToken(String headerTemplate) {
+        return headerTemplate != null && headerTemplate.contains(PRINCIPAL_TOKEN_PLACEHOLDER);
+    }
+
+    /** Names the platform fills in. A model-supplied argument never stands in for one. */
+    private static final Set<String> RESERVED_NAMES =
+            Set.of("principal", "call", "session", "turn", "principalToken", "secret");
+
+    /** Template root of the user-typed secret: {@code {secret.value}}. */
+    private static final String SECRET_NAME = "secret";
+
+    /**
+     * {@link ExecutionContext#attributes()} key under which the engine hands
+     * over the secret collected by a masked prompt, for the one call that
+     * asked for it. Never logged, never part of a result or its diagnostics.
+     */
+    public static final String SECRET_ATTRIBUTE = "secretValue";
+
+    private static boolean referencesSecret(String headerTemplate) {
+        return headerTemplate != null && headerTemplate.contains("{" + SECRET_NAME + ".");
+    }
+
+    private static Map<String, Object> withSecret(Map<String, Object> richArgs, ExecutionContext ctx) {
+        Object secret = ctx == null || ctx.attributes() == null ? null : ctx.attributes().get(SECRET_ATTRIBUTE);
+        if (secret == null || secret.toString().isEmpty()) return richArgs;
+        Map<String, Object> with = new LinkedHashMap<>(richArgs);
+        with.put(SECRET_NAME, Map.of("value", secret.toString()));
+        return with;
+    }
+
     /**
      * Merge LLM-supplied {@code args} with verified server-side context so
-     * templates can reference {@code {principal.*}} and {@code {call.id}}
+     * templates can reference {@code {principal.*}}, {@code {call.id}},
+     * {@code {session.id}}, {@code {session.channel}} and {@code {turn.id}}
      * without having to trust the model to pass them as arguments.
      */
     private static Map<String, Object> enrichArgs(Map<String, Object> args,
                                                   ExecutionContext ctx,
                                                   String callId) {
         Map<String, Object> rich = new LinkedHashMap<>(args == null ? Map.of() : args);
+        rich.keySet().removeAll(RESERVED_NAMES);
         if (ctx != null && ctx.principal() != null) {
             Map<String, Object> principalNode = new LinkedHashMap<>();
             principalNode.put("subject", ctx.principal().subject());
@@ -425,9 +729,11 @@ public class HttpToolDispatcher {
         }
         rich.put("call", Map.of("id", callId == null ? "" : callId));
         if (ctx != null) {
-            if (ctx.sessionId() != null) {
-                rich.put("session", Map.of("id", ctx.sessionId().value()));
-            }
+            Map<String, Object> sessionNode = new LinkedHashMap<>();
+            if (ctx.sessionId() != null) sessionNode.put("id", ctx.sessionId().value());
+            Object channel = ctx.attributes() == null ? null : ctx.attributes().get(TurnChannel.ATTRIBUTE);
+            if (channel != null) sessionNode.put("channel", TurnChannel.of(channel.toString(), null));
+            if (!sessionNode.isEmpty()) rich.put("session", sessionNode);
             if (ctx.turnId() != null) {
                 rich.put("turn", Map.of("id", ctx.turnId().value()));
             }
@@ -465,8 +771,14 @@ public class HttpToolDispatcher {
 
     /** Signals a blank {@code principal.*} template value — surfaced as a
      *  FAILED tool result rather than a silent empty substitution. */
-    private static final class MissingContextException extends RuntimeException {
+    private static final class MissingContextException extends TemplateRenderException {
         MissingContextException(String message) { super(message); }
+    }
+
+    /** A template value that cannot be sent as it is — surfaced as a FAILED
+     *  tool result before any request leaves. */
+    private static class TemplateRenderException extends RuntimeException {
+        TemplateRenderException(String message) { super(message); }
     }
 
     @SuppressWarnings("unchecked")

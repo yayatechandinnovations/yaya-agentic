@@ -85,6 +85,9 @@ public class PostgresProfileRegistry implements ProfileRegistry {
         entity.setDefaultStartFlowId(
                 profile.defaultStartFlowId() == null ? null : profile.defaultStartFlowId().value());
         entity.setLanguage(profile.language());
+        entity.setModel(profile.runtime().model());
+        entity.setMaxToolRounds(profile.runtime().maxToolRounds());
+        entity.setMetered(profile.runtime().metered());
         repo.save(entity);
     }
 
@@ -106,7 +109,8 @@ public class PostgresProfileRegistry implements ProfileRegistry {
                 e.getLanguage(),
                 metadata,
                 extensions,
-                e.getDefaultStartFlowId() == null ? null : Ids.StartFlowId.latest(e.getDefaultStartFlowId()));
+                e.getDefaultStartFlowId() == null ? null : Ids.StartFlowId.latest(e.getDefaultStartFlowId()),
+                new Profile.Runtime(e.getModel(), e.getMaxToolRounds(), e.isMetered()));
     }
 
     private String writeJson(Object value) {

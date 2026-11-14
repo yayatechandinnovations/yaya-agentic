@@ -48,8 +48,16 @@ public class OriginEnforcer {
         this.json = json;
     }
 
+    // Optional so the hand-built enforcers in tests keep working: with no
+    // registry there are simply no extra origins.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TenantOrigins tenantOrigins;
+
     public void requirePermitted(String tenantId, String origin, String path, String principal) {
         if (origin == null || origin.isBlank()) return;
+        // Origins the deployment accepts for every tenant (shared admin
+        // domains, local development) — explicit configuration, empty by default.
+        if (tenantOrigins != null && tenantOrigins.isExtra(origin)) return;
         Optional<TenantEntity> maybe = (tenantId == null || tenantId.isBlank())
                 ? Optional.empty()
                 : tenants.findById(tenantId);

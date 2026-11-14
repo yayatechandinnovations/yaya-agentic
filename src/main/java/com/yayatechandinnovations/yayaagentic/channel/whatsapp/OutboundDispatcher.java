@@ -15,6 +15,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.Playgr
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
+import com.yayatechandinnovations.yayaagentic.engine.confirm.ConfirmPrompts;
 import com.yayatechandinnovations.yayaagentic.outreach.media.MediaTokenSigner;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
@@ -271,7 +272,7 @@ public class OutboundDispatcher {
         if (PlaygroundSenders.isPlayground(sender.value())) {
             InteractivePayload payload = renderer.render(body, hint,
                     new InteractiveRenderer.RenderContext(new ChannelKind.WhatsApp(), null));
-            String renderedBody = payloadBody(payload, body);
+            String renderedBody = textFallback(payload, hint);
             // The engine session id is an internal UUID the playground UI can't
             // know; route the reply to the client-chosen id it actually polls.
             Ids.SessionId sinkKey = playgroundSessions.clientFor(sessionId)
@@ -305,7 +306,7 @@ public class OutboundDispatcher {
             return;
         }
 
-        List<String> chunks = splitIntoChunks(payloadBody(payload, body), MAX_BODY_CHARS);
+        List<String> chunks = splitIntoChunks(textFallback(payload, hint), MAX_BODY_CHARS);
         if (chunks.size() > 1) {
             metrics.splitOutbound(tenant.value(), sender.value(), chunks.size());
         }
@@ -334,7 +335,7 @@ public class OutboundDispatcher {
         }
 
         // For multi-chunk sends, the interactive payload (if any) was
-        // rendered as numbered text into the last chunk by payloadBody.
+        // rendered as text into the last chunk by textFallback.
         // No additional dispatch step needed.
     }
 
@@ -379,7 +380,11 @@ public class OutboundDispatcher {
 
     private static final String STATUS_CALLBACK_PATH = "/v1/channels/whatsapp/twilio/status-callback/";
 
-    private String payloadBody(InteractivePayload payload, String fallbackBody) {
+    /** The message as plain text, for when it cannot go out with its buttons or list. Package-private for test. */
+    static String textFallback(InteractivePayload payload, TurnEvent.UiHint hint) {
+        if (hint != null && "plan".equals(hint.kind()) && payload instanceof InteractivePayload.Buttons plan) {
+            return planAsText(plan.body(), hint.payload(), plan.footer());
+        }
         return switch (payload) {
             case InteractivePayload.PlainText pt -> pt.body();
             case InteractivePayload.Buttons b -> renderInteractiveAsText(b.body(),
@@ -394,12 +399,29 @@ public class OutboundDispatcher {
         };
     }
 
+    /**
+     * A plan without its buttons (admin-panel-sessions.md §16): its steps are
+     * already a numbered list, so «1. Hacer todo / 2. Cancelar» under it would
+     * make «1» mean two things. The answers are asked for as words.
+     */
+    private static String planAsText(String body, Map<String, Object> planFrame, String footer) {
+        String text = body == null ? "" : body;
+        String replyHint = ConfirmPrompts.planReplyHintFor(planFrame);
+        StringBuilder sb = new StringBuilder(text);
+        if (!text.endsWith(replyHint)) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(replyHint);
+        }
+        if (footer != null && !footer.isBlank()) sb.append("\n\n").append(footer);
+        return sb.toString();
+    }
+
     /** When the BSP path doesn't support native interactive (free-form +
      *  pre-Content-API), the dispatcher inlines the options as numbered
      *  text. The {@link DefaultInteractiveRenderer} also publishes the
      *  structured payload — once {@code sendFreeform} grows native support
      *  in W6+, the dispatcher will pass it through instead of flattening. */
-    private String renderInteractiveAsText(String body, List<String> labels, String footer) {
+    private static String renderInteractiveAsText(String body, List<String> labels, String footer) {
         StringBuilder sb = new StringBuilder(body == null ? "" : body);
         if (!labels.isEmpty()) {
             if (sb.length() > 0) sb.append("\n\n");
@@ -534,6 +556,10 @@ public class OutboundDispatcher {
                 // keeps last-wins semantics (quick_replies, menu, confirm…).
                 if ("attachment".equals(h.kind())) {
                     attachments.add(h);
+                } else if ("plan_step".equals(h.kind()) || "plan_result".equals(h.kind())) {
+                    // A running plan's progress is for a card (§16); here the
+                    // model's account is the report, and these must not take
+                    // the place of the turn's buttons.
                 } else {
                     lastHint = h;
                 }

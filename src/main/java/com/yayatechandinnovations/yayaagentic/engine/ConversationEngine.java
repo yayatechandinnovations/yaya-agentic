@@ -34,6 +34,22 @@ public interface ConversationEngine {
     void end(Ids.SessionId sessionId, AuthContext auth);
 
     /**
+     * True when {@code text}, arriving on {@code channel} (a
+     * {@link com.yayatechandinnovations.yayaagentic.core.TurnChannel} value),
+     * is or may hold the code of the session's secret prompt: the prompt is
+     * pending and the next {@link #send} would take the text as the code or
+     * answer it with a fixed sentence, or the prompt lapsed a moment ago and
+     * the text looks like its code. Either way {@link #send} keeps it from the
+     * model. A text channel asks this as soon as it knows the conversation,
+     * so the inbound row never keeps such a text
+     * ({@code docs/guides/admin-panel-sessions.md} §15). It changes nothing,
+     * and works for a session this instance does not hold in memory.
+     */
+    default boolean awaitsSecret(Ids.SessionId sessionId, String text, String channel) {
+        return false;
+    }
+
+    /**
      * Rehydrate a persisted session into the active set so its rightful owner
      * can continue it after it fell out of memory — e.g. an operator replying to
      * a system-participant message that was delivered while they were offline

@@ -49,6 +49,13 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     Optional<SessionEntity> findFirstByChatAccountIdAndEntryPointIdOrderByCreatedAtDesc(
             UUID chatAccountId, String entryPointId);
 
+    /** The caller's most recent open session in a tenant — on one profile, or on any. */
+    Optional<SessionEntity> findFirstByTenantIdAndPrincipalSubjectAndProfileIdAndEndedAtIsNullOrderByCreatedAtDesc(
+            String tenantId, String principalSubject, String profileId);
+
+    Optional<SessionEntity> findFirstByTenantIdAndPrincipalSubjectAndEndedAtIsNullOrderByCreatedAtDesc(
+            String tenantId, String principalSubject);
+
     /** Every session for an account — drives GDPR erasure on account delete (§6.3). */
     @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
             "chat-account self lookup (GDPR erasure): account id from the authenticated account")

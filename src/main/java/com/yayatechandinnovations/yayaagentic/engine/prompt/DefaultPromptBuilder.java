@@ -30,7 +30,7 @@ import java.util.Map;
  *   1. Personality voice + rules
  *   2. Profile.systemPromptFragment + display name
  *   3. Capability catalog (compact list)
- *   4. Tool input/output schemas
+ *   4. Tools per capability (names; the schemas are native tool definitions)
  *   5. Static safety / refusal rules
  *
  * variableSuffix:
@@ -88,12 +88,24 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final EntityMemory entityMemory;
     private final ObjectMapper json;
     private final com.yayatechandinnovations.yayaagentic.engine.CapabilityGates capabilityGates;
+    private final boolean toolSchemasInPrefix;
 
+    /**
+     * {@code toolSchemasInPrefix}: every tool's input schema already reaches
+     * the model as a native tool definition, so by default the prefix only
+     * names each capability's tools. Repeating the schemas as prompt text
+     * (the old behaviour, {@code true}) sent them twice on every call — and
+     * once more per capability for a tool several capabilities share.
+     */
     public DefaultPromptBuilder(M0Catalog catalog,
                                 WorkingMemory workingMemory,
                                 EntityMemory entityMemory,
                                 ObjectMapper json,
-                                com.yayatechandinnovations.yayaagentic.engine.CapabilityGates capabilityGates) {
+                                com.yayatechandinnovations.yayaagentic.engine.CapabilityGates capabilityGates,
+                                @org.springframework.beans.factory.annotation.Value(
+                                        "${yaya.agentic.prompt.tool-schemas-in-prefix:false}")
+                                boolean toolSchemasInPrefix) {
+        this.toolSchemasInPrefix = toolSchemasInPrefix;
         this.catalog = catalog;
         this.workingMemory = workingMemory;
         this.entityMemory = entityMemory;
@@ -110,9 +122,24 @@ public class DefaultPromptBuilder implements PromptBuilder {
                                List<RetrievedChunk> retrieved,
                                UserMessage userMessage,
                                String earlierSummary) {
+        return build(personality, profile, session, intent, history, retrieved, userMessage,
+                earlierSummary, java.time.Instant.now());
+    }
+
+    @Override
+    public PromptPayload build(PersonalityFragment personality,
+                               Profile profile,
+                               Session session,
+                               IntentFrame intent,
+                               List<Turn> history,
+                               List<RetrievedChunk> retrieved,
+                               UserMessage userMessage,
+                               String earlierSummary,
+                               java.time.Instant now) {
         return new PromptPayload(
                 renderPrefix(personality, profile),
-                renderSuffix(session, intent, history, retrieved, earlierSummary));
+                renderSuffix(session, intent, history, retrieved, earlierSummary,
+                        now == null ? java.time.Instant.now() : now));
     }
 
     // ---- Prefix (cacheable) --------------------------------------------
@@ -152,13 +179,25 @@ public class DefaultPromptBuilder implements PromptBuilder {
             catalog.capability(capRef).ifPresent(c -> sb.append("- ").append(formatCapability(c)).append('\n'));
         }
         sb.append('\n');
-        // 4 — Tool schemas
+        // 4 — Tools. The schemas travel as native tool definitions; here the
+        // model only needs to know which tools serve which capability.
         sb.append("Tools (proposed via tool_call; the executor validates schemas):\n");
         for (var capRef : profile.capabilities()) {
             if (disabledCaps.contains(capRef)) continue;
             catalog.capability(capRef).ifPresent(c -> {
-                for (var toolId : c.tools()) {
-                    catalog.tool(toolId).ifPresent(t -> sb.append(formatTool(t)));
+                if (toolSchemasInPrefix) {
+                    for (var toolId : c.tools()) {
+                        catalog.tool(toolId).ifPresent(t -> sb.append(formatTool(t)));
+                    }
+                    return;
+                }
+                List<String> names = c.tools().stream()
+                        .filter(toolId -> catalog.tool(toolId).isPresent())
+                        .map(toolId -> toolId.value())
+                        .toList();
+                if (!names.isEmpty()) {
+                    sb.append("- ").append(c.id().value()).append(": ")
+                            .append(String.join(", ", names)).append('\n');
                 }
             });
         }
@@ -214,7 +253,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     private String renderSuffix(Session session, IntentFrame intent,
                                 List<Turn> history, List<RetrievedChunk> retrieved,
-                                String earlierSummary) {
+                                String earlierSummary, java.time.Instant at) {
         StringBuilder sb = new StringBuilder();
         // 6 — Session metadata (no PII)
         sb.append("Session: channel=").append(safe(session.channel()))
@@ -225,7 +264,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // without this it resolves "hoy"/"ayer" to a stale training-era date
         // (e.g. an owner asking for "cuadre de hoy" got 2025-07-24). Rides the
         // VARIABLE suffix so it is never frozen in the cached prefix.
-        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(PROMPT_ZONE);
+        java.time.ZonedDateTime now = at.atZone(PROMPT_ZONE);
         sb.append("Fecha y hora actual: ").append(NOW_FORMAT.format(now))
                 .append(" — hoy es ").append(now.toLocalDate())
                 .append(" (America/Santo_Domingo). Usa esta fecha para resolver ")

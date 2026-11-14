@@ -29,7 +29,8 @@ import java.time.Clock;
         IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class,
         com.yayatechandinnovations.yayaagentic.outreach.push.PushProperties.class,
         com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class,
-        com.yayatechandinnovations.yayaagentic.structured.StructuredCompletionsProperties.class})
+        com.yayatechandinnovations.yayaagentic.structured.StructuredCompletionsProperties.class,
+        SessionsApiProperties.class})
 @EnableScheduling
 public class CoreConfiguration {
 
@@ -72,17 +73,48 @@ public class CoreConfiguration {
         return exec;
     }
 
+    /**
+     * CORS for {@code /v1/**}. The operator console's origins come from
+     * {@code yaya.agentic.cors.allowed-origins} and may send its session cookie.
+     *
+     * <p>{@code /v1/sessions/**} additionally answers a tenant's own app: the
+     * origin of any live tenant, or a configured extra origin
+     * ({@link com.yayatechandinnovations.yayaagentic.tenant.TenantOrigins}).
+     * Those callers authenticate with a bearer token only, so their responses
+     * never allow credentials — a cookie can not ride along. Which tenant an
+     * origin may address is decided per request by {@code OriginEnforcer},
+     * not here.
+     */
     @Bean
-    public CorsWebFilter corsWebFilter(YayaAgenticProperties props) {
-        CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOriginPatterns(props.cors().allowedOrigins());
-        cfg.addAllowedMethod("*");
-        cfg.addAllowedHeader("*");
-        cfg.setAllowCredentials(true);
+    public CorsWebFilter corsWebFilter(YayaAgenticProperties props,
+                                       com.yayatechandinnovations.yayaagentic.tenant.TenantOrigins tenantOrigins) {
+        CorsConfiguration console = new CorsConfiguration();
+        console.setAllowedOriginPatterns(props.cors().allowedOrigins());
+        console.addAllowedMethod("*");
+        console.addAllowedHeader("*");
+        console.setAllowCredentials(true);
 
-        UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource(new PathPatternParser());
-        src.registerCorsConfiguration("/v1/**", cfg);
-        return new CorsWebFilter(src);
+        UrlBasedCorsConfigurationSource consoleSource = new UrlBasedCorsConfigurationSource(new PathPatternParser());
+        consoleSource.registerCorsConfiguration("/v1/**", console);
+
+        return new CorsWebFilter(exchange -> {
+            String path = exchange.getRequest().getPath().pathWithinApplication().value();
+            String origin = exchange.getRequest().getHeaders().getOrigin();
+            if (origin != null && (path.equals("/v1/sessions") || path.startsWith("/v1/sessions/"))
+                    && console.checkOrigin(origin) == null
+                    && tenantOrigins.isKnown(origin)) {
+                CorsConfiguration app = new CorsConfiguration();
+                app.addAllowedOrigin(origin);
+                app.setAllowedMethods(java.util.List.of("GET", "POST", "OPTIONS"));
+                app.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type", "Accept",
+                        "Cache-Control", "Last-Event-ID"));
+                app.setExposedHeaders(java.util.List.of("Retry-After"));
+                app.setAllowCredentials(false);
+                app.setMaxAge(600L);
+                return app;
+            }
+            return consoleSource.getCorsConfiguration(exchange);
+        });
     }
 
     /**

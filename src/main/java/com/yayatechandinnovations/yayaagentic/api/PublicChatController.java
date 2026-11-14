@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.yayatechandinnovations.yayaagentic.api.dto.PublicChatDtos;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
@@ -161,7 +162,7 @@ public class PublicChatController {
 
             StartConversationRequest req = new StartConversationRequest(
                     ep.tenant(), Optional.empty(), "chat", hints);
-            StartSessionResult result = engine.start(req, auth);
+            StartSessionResult result = engine.start(req, auth.onChannel(TurnChannel.CHAT));
             Ids.SessionId sid = result.session().id();
 
             // Resolver-exchange: persist the minted JWT on the fresh session row so
@@ -255,7 +256,7 @@ public class PublicChatController {
             final java.util.UUID walletAccount =
                     sessionLinks.accountOf(java.util.UUID.fromString(id)).orElse(null);
             return engine.dispatchAction(sessionId, new Ids.ToolId(body.tool()),
-                            body.args() == null ? Map.of() : body.args(), auth)
+                            body.args() == null ? Map.of() : body.args(), auth.onChannel(TurnChannel.CHAT))
                     .doOnNext(evt -> chatReceipts.maybePersist(
                             evt, ep.tenant(), id, ctx.handle(), walletAccount))
                     .map(chatAdapter::toSse);
@@ -321,6 +322,7 @@ public class PublicChatController {
                 if (sel.code() != null) selMap.put("code", sel.code());
                 if (sel.callId() != null) selMap.put("callId", sel.callId());
                 if (sel.itemIds() != null) selMap.put("itemIds", sel.itemIds());
+                if (sel.value() != null) selMap.put("value", sel.value());
                 java.util.Map<String, Object> attrs = new java.util.LinkedHashMap<>(um.attachments());
                 attrs.put("_selection", selMap);
                 um = new UserMessage(um.text(), attrs);
@@ -329,7 +331,7 @@ public class PublicChatController {
             // Wallet capture (§7.5): receipt hints on a verified session persist.
             final java.util.UUID walletAccount =
                     sessionLinks.accountOf(java.util.UUID.fromString(id)).orElse(null);
-            return engine.send(sessionId, um, auth)
+            return com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, um, auth.onChannel(TurnChannel.CHAT)))
                     .doOnNext(evt -> chatReceipts.maybePersist(
                             evt, ep.tenant(), id, ctx.handle(), walletAccount))
                     .map(chatAdapter::toSse)

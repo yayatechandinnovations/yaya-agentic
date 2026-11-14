@@ -238,8 +238,9 @@ and ignored — the live session keeps the profile it started on.
 
 ## 5. Debugging — the auth-flow inspector
 
-Open a session in the inspector (`/v1/sessions/{id}/inspector`, or the
-playground's inspector panel). The **Binding** stage now shows bound vs.
+Open a session in the inspector (`/v1/sessions/{id}/inspector` — signed in to
+the console as an ADMIN of the workspace, or with an API key of that role —
+or the playground's inspector panel). The **Binding** stage now shows bound vs.
 effective:
 
 - **Applied:** a green "Profile override → retail-vip" row, reading

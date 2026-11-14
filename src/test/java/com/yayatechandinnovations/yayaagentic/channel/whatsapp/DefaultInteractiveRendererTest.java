@@ -94,6 +94,33 @@ class DefaultInteractiveRendererTest {
                 .noneMatch(r -> r.id().equals(DefaultInteractiveRenderer.MORE_ROW_ID));
     }
 
+    @Test
+    void a_plan_renders_its_list_with_two_buttons_that_name_the_plan() {
+        String text = "Voy a hacer esto, en orden:\n1. Detener la venta en la estación 12\n"
+                + "2. Enviar el aviso «Cierre» a la estación 07\n¿Lo hago?";
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("callId", "plan-1");
+        plan.put("confirmLabel", "Hacer todo");
+        plan.put("cancelLabel", "Cancelar");
+        plan.put("text", text);
+        var hint = new TurnEvent.UiHint("plan", plan);
+
+        // The turn's text (the model's words, then the list) is the body.
+        var withBody = (InteractivePayload.Buttons) renderer.render("Te lo dejo en un paso.\n\n" + text, hint, ctx);
+        assertThat(withBody.body()).isEqualTo("Te lo dejo en un paso.\n\n" + text);
+        assertThat(withBody.buttons()).extracting(InteractivePayload.Button::id)
+                .containsExactly("confirm:plan-1", "cancel:plan-1");
+        assertThat(withBody.buttons()).extracting(InteractivePayload.Button::title)
+                .containsExactly("Hacer todo", "Cancelar");
+
+        // No text reached the dispatcher: the frame's own list is used.
+        assertThat(((InteractivePayload.Buttons) renderer.render("", hint, ctx)).body()).isEqualTo(text);
+
+        // A running plan's progress is not a WhatsApp surface.
+        assertThat(renderer.render("Hecho.", new TurnEvent.UiHint("plan_result", Map.of("callId", "plan-1")), ctx))
+                .isInstanceOf(InteractivePayload.PlainText.class);
+    }
+
     /* ---------------------------- helpers --------------------------------- */
 
     private TurnEvent.UiHint hintWith(int count) {

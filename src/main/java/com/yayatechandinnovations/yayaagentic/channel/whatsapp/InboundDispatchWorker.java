@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
@@ -7,6 +8,7 @@ import com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
 import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
+import com.yayatechandinnovations.yayaagentic.channel.SecretInboundRedaction;
 import com.yayatechandinnovations.yayaagentic.channel.SyntheticToolIds;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
@@ -258,6 +260,14 @@ public class InboundDispatchWorker {
             inbound.save(row);
             return;
         }
+        // 1a'. §15 — a code prompt may be waiting in this customer's
+        // conversation. If this message is, or may hold, the code, the stored
+        // row gives it up now: before any branch below can return, fail or
+        // hand the text to something else.
+        final Optional<Ids.SessionId> openSession = sessions.findOpen(
+                new Ids.TenantId(row.getTenantId()), new SenderId(row.getSenderId()), row.getEndUserPhone());
+        boolean secretInbound = redactIfCode(row, openSession, body);
+
         // §11.2 — if the user already opted out, ack without doing anything
         // (Meta policy forbids contacting them). They must START first.
         if (optOuts.isOptedOut(new SenderId(row.getSenderId()), row.getEndUserPhone())) {
@@ -273,7 +283,9 @@ public class InboundDispatchWorker {
         if (holds.isHeld(new Ids.TenantId(row.getTenantId()), row.getEndUserPhone())) {
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
             row.setProcessingError("human_hold");
-            row.setBodyRedacted(redact(body, row.getEndUserPhone()));
+            // The desk reads this text back; a code is not for the desk either.
+            row.setBodyRedacted(secretInbound ? SecretInboundRedaction.MARKER
+                    : redact(body, row.getEndUserPhone()));
             inbound.save(row);
             return;
         }
@@ -294,8 +306,12 @@ public class InboundDispatchWorker {
             body = body.isBlank()
                     ? transcription.text
                     : body + "\n\n[voice note: " + transcription.text + "]";
-            row.setMediaTranscriptsJson(transcription.transcriptsJson);
-            inbound.save(row);
+            // A code may be spoken: the transcript is checked before it is stored.
+            secretInbound = secretInbound || redactIfCode(row, openSession, body);
+            if (!secretInbound) {
+                row.setMediaTranscriptsJson(transcription.transcriptsJson);
+                inbound.save(row);
+            }
         }
         // 2b. inbound photos → the model sees them (vision) and tools can
         //     reference them by URL. See whatsapp-channel-design.md §9.5.
@@ -315,7 +331,8 @@ public class InboundDispatchWorker {
         // The principal is minted by the authenticator chain when the engine
         // start runs; before that, the binding lookup just needs the routing
         // hints. We pass a null principal — only EndUserClaim rules need it.
-        Map<String, Object> hints = buildHints(row, sender, body, transcription);
+        Map<String, Object> hints = buildHints(row, sender,
+                secretInbound ? SecretInboundRedaction.MARKER : body, transcription);
         Optional<ChannelBinding> bindingOpt = bindings.findFor(
                 new Ids.TenantId(row.getTenantId()), endpoint, null, hints);
         if (bindingOpt.isEmpty()) {
@@ -350,7 +367,11 @@ public class InboundDispatchWorker {
 
         // §9.2: when the body is exactly a new-session keyword, the engine
         // never sees it. The next inbound resumes the conversation.
-        String userText = consumedKeyword ? "" : body;
+        // §15: the engine reads a code out of the text only in the conversation
+        // whose prompt it answers. If that conversation is not the one this
+        // message continues (it idled out), the text goes on as the marker.
+        final boolean codeForEarlierSession = secretInbound && fresh;
+        String userText = consumedKeyword ? "" : codeForEarlierSession ? SecretInboundRedaction.MARKER : body;
 
         // 5. build inputs for the engine. Leave explicitProfile empty: the bound
         //    profile comes from ChannelProfileResolver (@30) off the channel
@@ -398,9 +419,11 @@ public class InboundDispatchWorker {
                 new SenderId(row.getSenderId()),
                 row.getEndUserPhone());
 
+        final boolean secretRow = secretInbound;
+
         // 7. run the engine — start when fresh, send when reused
         if (fresh) {
-            StartSessionResult result = engine.start(startReq, auth);
+            StartSessionResult result = engine.start(startReq, auth.onChannel(TurnChannel.WHATSAPP));
             sessionId = result.session().id();
             sessions.register(
                     new Ids.TenantId(row.getTenantId()),
@@ -441,7 +464,7 @@ public class InboundDispatchWorker {
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         sessionId,
-                        engine.send(sessionId, new UserMessage(userText, attachments), auth));
+                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))));
             }
         } else {
             // §9 step 3e on continuation — refresh the session row's JWT
@@ -468,7 +491,7 @@ public class InboundDispatchWorker {
                                 new SenderId(row.getSenderId()),
                                 row.getEndUserPhone(),
                                 sessionId,
-                                engine.send(sessionId, new UserMessage(userText, attachments), auth));
+                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))));
                     } catch (IllegalStateException stale) {
                         // The channel_sessions row survived a backend restart
                         // but the engine's session didn't. Self-heal: retire
@@ -484,7 +507,7 @@ public class InboundDispatchWorker {
                                 sessionId.value(), row.getEndUserPhone());
                         sessions.close(new Ids.TenantId(row.getTenantId()), sessionId,
                                 "ENGINE_SESSION_LOST");
-                        StartSessionResult healed = engine.start(startReq, auth);
+                        StartSessionResult healed = engine.start(startReq, auth.onChannel(TurnChannel.WHATSAPP));
                         Ids.SessionId healedId = healed.session().id();
                         sessions.register(
                                 new Ids.TenantId(row.getTenantId()),
@@ -501,14 +524,20 @@ public class InboundDispatchWorker {
                                 new SenderId(row.getSenderId()),
                                 row.getEndUserPhone(),
                                 healedId,
-                                engine.send(healedId, new UserMessage(userText, attachments), auth));
+                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(healedId, new UserMessage(
+                                        // The prompt went with the lost session; the code must
+                                        // not become an ordinary message of the new one.
+                                        secretRow ? SecretInboundRedaction.MARKER : userText,
+                                        attachments), auth.onChannel(TurnChannel.WHATSAPP))));
                     }
                 }
             }
         }
 
         row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
-        row.setBodyRedacted(redact(body, row.getEndUserPhone()));
+        row.setBodyRedacted(secretRow
+                ? SecretInboundRedaction.MARKER
+                : redact(body, row.getEndUserPhone()));
         inbound.save(row);
     }
 
@@ -946,9 +975,41 @@ public class InboundDispatchWorker {
         }
     }
 
+    /**
+     * §15 — takes the text out of {@code row} (and saves it) when a code
+     * prompt is waiting in {@code session} and {@code text} is, or may hold,
+     * the code. The save is its own write: it does not wait for the rest of
+     * the processing to succeed.
+     */
+    private boolean redactIfCode(InboundMessageEntity row, Optional<Ids.SessionId> session, String text) {
+        if (!SecretInboundRedaction.holdsCode(engine, session, text, TurnChannel.WHATSAPP)) return false;
+        SecretInboundRedaction.apply(row, json);
+        inbound.save(row);
+        return true;
+    }
+
+    /** As above for a row whose processing stopped at an unknown point; never throws. */
+    private void redactFailedRowIfCode(InboundMessageEntity row) {
+        try {
+            Object body = readRaw(row.getRawPayloadJson()).get("Body");
+            if (body == null) return;
+            Optional<Ids.SessionId> session = sessions.findOpen(new Ids.TenantId(row.getTenantId()),
+                    new SenderId(row.getSenderId()), row.getEndUserPhone());
+            if (SecretInboundRedaction.holdsCode(engine, session, body.toString(), TurnChannel.WHATSAPP)) {
+                SecretInboundRedaction.apply(row, json);
+            }
+        } catch (RuntimeException e) {
+            log.warn("InboundDispatchWorker: could not check failed row {} for a code: {}",
+                    row.getMessageSid(), e.getClass().getSimpleName());
+        }
+    }
+
     @Transactional
     protected void markFailed(String messageSid, String error) {
         inbound.findById(messageSid).ifPresent(row -> {
+            // A row that failed before, or outside, the check in the worker
+            // (a full pool, an exception early on) still gives up a code.
+            redactFailedRowIfCode(row);
             row.setProcessingError(error);
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
             inbound.save(row);

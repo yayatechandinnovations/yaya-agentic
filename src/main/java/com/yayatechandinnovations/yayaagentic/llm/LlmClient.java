@@ -24,12 +24,22 @@ public interface LlmClient {
 
     // ---- Request --------------------------------------------------------
 
+    /**
+     * {@code model} overrides the deployment's model for this one round (a
+     * profile may pin its own); {@code null} keeps the deployment default.
+     */
     record LlmRequest(
             String cacheablePrefix,
             String variableSuffix,
             List<HistoryEntry> history,
-            List<ToolDefinition> availableTools
-    ) {}
+            List<ToolDefinition> availableTools,
+            String model
+    ) {
+        public LlmRequest(String cacheablePrefix, String variableSuffix,
+                          List<HistoryEntry> history, List<ToolDefinition> availableTools) {
+            this(cacheablePrefix, variableSuffix, history, availableTools, null);
+        }
+    }
 
     /** What the LLM is told it can call. */
     record ToolDefinition(String name, String description, String inputSchemaJson) {}
@@ -89,7 +99,25 @@ public interface LlmClient {
          *  reason (Anthropic's {@code end_turn}/{@code tool_use}, OpenAI's
          *  {@code stop}/{@code tool_calls}, …) into this enum so the
          *  engine doesn't need to know which provider it's talking to. */
-        record Done(StopReason stopReason) implements LlmEvent {}
+        record Done(StopReason stopReason, Usage usage) implements LlmEvent {
+            public Done(StopReason stopReason) {
+                this(stopReason, null);
+            }
+        }
+    }
+
+    /**
+     * Tokens one round consumed, as the provider billed them. {@code inputTokens}
+     * is the whole prompt (cached reads and cache writes included);
+     * {@code cacheReadTokens} and {@code cacheCreationTokens} are the parts of it
+     * the provider read from / wrote to its prompt cache (billed at about a tenth
+     * and 1.25x of the input price), zero when it reports none.
+     * {@code null} on a {@link LlmEvent.Done} means the provider reported nothing.
+     */
+    record Usage(long inputTokens, long outputTokens, long cacheReadTokens, long cacheCreationTokens) {
+        public Usage(long inputTokens, long outputTokens) {
+            this(inputTokens, outputTokens, 0, 0);
+        }
     }
 
     /** Why the model stopped producing tokens. The engine loops on

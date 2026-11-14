@@ -75,6 +75,18 @@ public class ChannelSessionService {
         return new Outcome.Open(isNewSessionKeyword);
     }
 
+    /**
+     * The engine session of the conversation currently open with
+     * {@code endUserPhone}, if any. Reads only: it neither refreshes the idle
+     * clock nor closes anything, whatever the binding's policy would say.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Ids.SessionId> findOpen(Ids.TenantId tenant, SenderId sender, String endUserPhone) {
+        return repo.findFirstByTenantIdAndSenderIdAndEndUserPhoneAndStatus(
+                        tenant.value(), sender.value(), endUserPhone, OPEN)
+                .map(row -> new Ids.SessionId(row.getSessionId()));
+    }
+
     @Transactional
     public ChannelSessionEntity register(Ids.TenantId tenant,
                                          SenderId sender,

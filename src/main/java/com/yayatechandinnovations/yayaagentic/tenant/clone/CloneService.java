@@ -461,6 +461,9 @@ public class CloneService {
         destProfile.setMetadataJson(sourceProfile.getMetadataJson());
         destProfile.setAuthBindingId(sourceProfile.getAuthBindingId());
         destProfile.setLanguage(sourceProfile.getLanguage());
+        destProfile.setModel(sourceProfile.getModel());
+        destProfile.setMaxToolRounds(sourceProfile.getMaxToolRounds());
+        destProfile.setMetered(sourceProfile.isMetered());
         if (!"REUSE_EXISTING".equals(plan.profile().action())) {
             profiles.save(destProfile);
 

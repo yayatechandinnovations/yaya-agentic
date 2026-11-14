@@ -46,7 +46,7 @@ public class StubLlmClient implements LlmClient, StructuredLlmClient {
                     ? "That didn't work: " + first.value()
                     : "Done. Result: " + first.value();
             return Flux.<LlmEvent>just(new LlmEvent.TokenChunk(summary))
-                    .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
+                    .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN, usage(request, summary))));
         }
 
         String userMessage = lastUserMessage(history);
@@ -59,19 +59,37 @@ public class StubLlmClient implements LlmClient, StructuredLlmClient {
         if (echoAvailable && (lower.equals("/echo") || lower.equals("echo"))) {
             return Flux.just(
                     (LlmEvent) new LlmEvent.ToolUseProposal(callId(), "echo", Map.of()),
-                    new LlmEvent.Done(StopReason.TOOL_USE));
+                    new LlmEvent.Done(StopReason.TOOL_USE, usage(request, "echo")));
         }
         if (echoAvailable && (lower.startsWith("/echo ") || lower.startsWith("echo "))) {
             String arg = trimmed.substring(lower.startsWith("/") ? 6 : 5).trim();
             return Flux.just(
                     (LlmEvent) new LlmEvent.ToolUseProposal(callId(), "echo", Map.of("text", arg)),
-                    new LlmEvent.Done(StopReason.TOOL_USE));
+                    new LlmEvent.Done(StopReason.TOOL_USE, usage(request, arg)));
         }
 
-        return Flux.fromIterable(scriptFor(trimmed))
+        List<String> script = scriptFor(trimmed);
+        return Flux.fromIterable(script)
                 .delayElements(Duration.ofMillis(40))
                 .<LlmEvent>map(LlmEvent.TokenChunk::new)
-                .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN)));
+                .concatWith(Mono.just(new LlmEvent.Done(StopReason.END_TURN,
+                        usage(request, String.join("", script)))));
+    }
+
+    /** A deterministic chars/4 estimate so callers can exercise usage plumbing offline. */
+    private static Usage usage(LlmRequest request, String output) {
+        long chars = (request.cacheablePrefix() == null ? 0 : request.cacheablePrefix().length())
+                + (request.variableSuffix() == null ? 0 : request.variableSuffix().length());
+        if (request.history() != null) {
+            for (HistoryEntry entry : request.history()) {
+                chars += switch (entry) {
+                    case HistoryEntry.User u -> u.content() == null ? 0 : u.content().length();
+                    case HistoryEntry.Assistant a -> a.content() == null ? 0 : a.content().length();
+                    case HistoryEntry.ToolResults tr -> String.valueOf(tr.results()).length();
+                };
+            }
+        }
+        return new Usage(Math.max(1, chars / 4), Math.max(1, (output == null ? 0 : output.length()) / 4));
     }
 
     // ---- Structured completion (offline, deterministic) ---------------

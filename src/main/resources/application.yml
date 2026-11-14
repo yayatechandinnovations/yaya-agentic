@@ -205,6 +205,33 @@ yaya:
       idle-timeout: PT30M
     llm:
       provider: ${YAYA_LLM_PROVIDER:stub}   # stub | anthropic
+      # Models a profile may pin (profile.model), comma-separated. Empty = every
+      # profile runs on the deployment's model.
+      allowed-models: ${YAYA_LLM_ALLOWED_MODELS:}
+      anthropic:
+        prompt-cache:
+          # cache_control on tools + the stable system prefix + the end of the
+          # conversation. false = send every request uncached.
+          enabled: ${YAYA_LLM_PROMPT_CACHE_ENABLED:true}
+          # Lifetime of the cached tools + system prefix: FIVE_MINUTES (a write
+          # costs 1.25x input) or ONE_HOUR (2x). ONE_HOUR pays off when messages
+          # on a profile arrive more than five minutes apart.
+          ttl: ${YAYA_LLM_PROMPT_CACHE_TTL:FIVE_MINUTES}
+    prompt:
+      # true = also write every tool's input schema into the system prompt, as
+      # before. The schemas already reach the model as tool definitions.
+      tool-schemas-in-prefix: ${YAYA_PROMPT_TOOL_SCHEMAS_IN_PREFIX:false}
+    sessions:
+      # /v1/sessions/* opened with the signed-in user's own token
+      # (docs/guides/admin-panel-sessions.md).
+      messages-per-minute: ${YAYA_SESSIONS_MESSAGES_PER_MINUTE:20}
+      # Sessions one signed-in user may start per minute (a start can call the model).
+      session-starts-per-minute: ${YAYA_SESSIONS_STARTS_PER_MINUTE:10}
+      # Browser origins allowed on /v1/sessions/* for every tenant, on top of each
+      # tenant's own host. Comma-separated; globs allowed (http://localhost:*).
+      extra-origins: ${YAYA_SESSIONS_EXTRA_ORIGINS:}
+      # false = a requested profile is accepted without checking its principalKinds.
+      enforce-principal-kinds: ${YAYA_SESSIONS_ENFORCE_PRINCIPAL_KINDS:true}
     structured-completions:
       # POST /v1/structured-completions (docs/guides/structured-completions.md):
       # per-tenant fixed-window rate limit (Redis) and the overall deadline for

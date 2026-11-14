@@ -63,7 +63,25 @@ public record YayaAgenticProperties(
         }
     }
 
-    public record Llm(String provider) {}
+    /**
+     * {@code allowedModels} is the list a profile's {@code model} is validated
+     * against at registration. Empty = no profile may pin a model; every
+     * profile runs on the deployment's.
+     */
+    public record Llm(String provider, List<String> allowedModels) {
+        @ConstructorBinding
+        public Llm {
+        }
+
+        public Llm(String provider) {
+            this(provider, List.of());
+        }
+
+        public List<String> allowedModels() {
+            return allowedModels == null ? List.of()
+                    : allowedModels.stream().filter(m -> m != null && !m.isBlank()).map(String::trim).toList();
+        }
+    }
 
     public record Cors(List<String> allowedOrigins) {}
 

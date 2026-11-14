@@ -135,11 +135,34 @@ public class AnthropicLlmClient implements LlmClient, StructuredLlmClient {
             // streamed response, so we infer it: any captured tool_use means
             // the model paused for tools, otherwise it ended its reply.
             StopReason stop = seenCalls.isEmpty() ? StopReason.END_TURN : StopReason.TOOL_USE;
-            out.add(new LlmEvent.Done(stop));
+            out.add(new LlmEvent.Done(stop, toUsage(usage)));
             return out;
         });
 
         return tokens.concatWith(tail.flatMapMany(Flux::fromIterable));
+    }
+
+    /**
+     * The settled usage of one streamed round. Anthropic's {@code input_tokens}
+     * excludes cached tokens, so the prompt the round consumed is the sum of
+     * all three counters. Package-private for unit testing.
+     */
+    static Usage toUsage(Object captured) {
+        try {
+            if (captured instanceof org.springframework.ai.anthropic.api.AnthropicApi.Usage u) {
+                long read = nz(u.cacheReadInputTokens());
+                long written = nz(u.cacheCreationInputTokens());
+                return new Usage(nz(u.inputTokens()) + read + written, nz(u.outputTokens()), read, written);
+            }
+            if (captured instanceof org.springframework.ai.chat.metadata.Usage u) {
+                long in = nz(u.getPromptTokens());
+                long out = nz(u.getCompletionTokens());
+                return in + out > 0 ? new Usage(in, out) : null;
+            }
+        } catch (RuntimeException ignored) {
+            // Metering must never break a chat turn.
+        }
+        return null;
     }
 
     // ---- Structured completion (single shot, forced answer shape) ------
@@ -299,8 +322,13 @@ public class AnthropicLlmClient implements LlmClient, StructuredLlmClient {
      * messages, so the breakpoint caches tools + prefix together. The prefix is
      * byte-stable per (tenant, profile, profile_version), so every subsequent
      * round and session on the same profile reads it at ~0.1x.
+     *
+     * A third breakpoint closes the conversation (conversationCacheOptions), so
+     * a multi-round tool turn does not pay again for what the earlier rounds of
+     * the same turn already sent.
      */
-    private Prompt buildPrompt(LlmRequest request) {
+    /** Package-private for unit testing. */
+    Prompt buildPrompt(LlmRequest request) {
         List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
         String prefix = request.cacheablePrefix();
         String suffix = request.variableSuffix();
@@ -311,24 +339,123 @@ public class AnthropicLlmClient implements LlmClient, StructuredLlmClient {
         AnthropicChatOptions.Builder options = AnthropicChatOptions.builder()
                 .toolCallbacks(toCallbacks(request.availableTools()))
                 .internalToolExecutionEnabled(false);
-        AnthropicCacheOptions cacheOptions = cacheOptions();
+        if (request.model() != null && !request.model().isBlank()) options.model(request.model());
+        AnthropicCacheOptions cacheOptions = conversationCacheOptions(request);
         if (cacheOptions != null) options.cacheOptions(cacheOptions);
         return new Prompt(messages, options.build());
     }
 
     /**
-     * The cache configuration for one request, or {@code null} when caching is
+     * Cache configuration of one chat round: the stable prefix (tools + first
+     * system block) plus ONE breakpoint at the end of the conversation, so the
+     * next round of the same turn reads everything this round sent — the
+     * per-turn system block, the history and the earlier tool results — at the
+     * cached rate instead of paying for it again.
+     *
+     * <p>Spring AI's CONVERSATION_HISTORY strategy marks candidate blocks from
+     * the START of the conversation until the four breakpoints run out, which
+     * leaves the newest tool results uncached on a long turn. The content
+     * length function below narrows eligibility to exactly two blocks — the
+     * stable system prefix and the last block of the conversation — so the
+     * breakpoint always sits where the next round can reuse it. Anthropic looks
+     * back from a breakpoint for an earlier cached entry, so one moving
+     * breakpoint is enough.
+     *
+     * <p>The conversation breakpoint keeps the default 5-minute TTL whatever
+     * the prefix uses: it only has to live until the next round, and a longer
+     * TTL may not follow a shorter one in a request (tools → system → messages).
+     * Package-private for unit testing.
+     */
+    AnthropicCacheOptions conversationCacheOptions(LlmRequest request) {
+        if (!promptCacheEnabled) return null;
+        List<HistoryEntry> history = request.history() == null ? List.of() : request.history();
+        // The conversation ends either with tool results (a continuation round)
+        // or with the user's message (the first round of a turn).
+        String lastResult = null;
+        if (!history.isEmpty() && history.get(history.size() - 1) instanceof HistoryEntry.ToolResults tr
+                && !tr.results().isEmpty()) {
+            lastResult = writeJson(tr.results().get(tr.results().size() - 1).value());
+        }
+        int occurrences = 0;
+        if (lastResult != null) {
+            for (HistoryEntry entry : history) {
+                if (!(entry instanceof HistoryEntry.ToolResults tr)) continue;
+                for (ToolResultSpec r : tr.results()) {
+                    if (lastResult.equals(writeJson(r.value()))) occurrences++;
+                }
+            }
+        }
+        boolean endsWithToolResults = lastResult != null;
+        int never = Integer.MAX_VALUE;
+        return AnthropicCacheOptions.builder()
+                .strategy(AnthropicCacheStrategy.CONVERSATION_HISTORY)
+                .multiBlockSystemCaching(true)
+                .messageTypeTtl(org.springframework.ai.chat.messages.MessageType.SYSTEM, prefixTtl())
+                .messageTypeMinContentLength(org.springframework.ai.chat.messages.MessageType.SYSTEM, 1)
+                .messageTypeMinContentLength(org.springframework.ai.chat.messages.MessageType.USER,
+                        endsWithToolResults ? never : 1)
+                .messageTypeMinContentLength(org.springframework.ai.chat.messages.MessageType.ASSISTANT, never)
+                .messageTypeMinContentLength(org.springframework.ai.chat.messages.MessageType.TOOL,
+                        endsWithToolResults ? 1 : never)
+                .contentLengthFunction(new BreakpointSelector(
+                        request.cacheablePrefix(), request.variableSuffix(), lastResult, occurrences))
+                .build();
+    }
+
+    /**
+     * Answers "is this block a breakpoint?" as a content length of 1 or 0 (see
+     * {@link #conversationCacheOptions}). Spring AI asks once per candidate
+     * block, in request order, starting with the system prefix. Only the last
+     * occurrence of the final tool result qualifies, so an identical earlier
+     * result never takes the breakpoint. Not thread-safe by design: one
+     * instance serves one request, built on one thread.
+     */
+    static final class BreakpointSelector implements java.util.function.Function<String, Integer> {
+        private final String prefix;
+        private final String suffix;
+        private final String lastResult;
+        private final int occurrences;
+        private int seen;
+
+        BreakpointSelector(String prefix, String suffix, String lastResult, int occurrences) {
+            this.prefix = prefix;
+            this.suffix = suffix;
+            this.lastResult = lastResult;
+            this.occurrences = occurrences;
+        }
+
+        @Override
+        public Integer apply(String text) {
+            if (text == null) return 0;
+            if (text.equals(prefix)) {
+                seen = 0; // a new pass over the same request (provider retry)
+                return 1;
+            }
+            // The per-turn system block is never a breakpoint of its own.
+            if (text.equals(suffix)) return 0;
+            if (lastResult == null) return 1; // message types are gated by the minimum lengths
+            return text.equals(lastResult) && ++seen == occurrences ? 1 : 0;
+        }
+    }
+
+    private AnthropicCacheTtl prefixTtl() {
+        return "ONE_HOUR".equalsIgnoreCase(promptCacheTtl)
+                ? AnthropicCacheTtl.ONE_HOUR : AnthropicCacheTtl.FIVE_MINUTES;
+    }
+
+    /**
+     * The cache configuration for a single-shot request (structured
+     * completion): tools + the stable system block, no conversation. Returns
+     * {@code null} when caching is
      * disabled (the kill-switch leaves the request byte-identical to the
      * pre-caching behaviour). Package-private for unit testing.
      */
     AnthropicCacheOptions cacheOptions() {
         if (!promptCacheEnabled) return null;
-        AnthropicCacheTtl ttl = "ONE_HOUR".equalsIgnoreCase(promptCacheTtl)
-                ? AnthropicCacheTtl.ONE_HOUR : AnthropicCacheTtl.FIVE_MINUTES;
         return AnthropicCacheOptions.builder()
                 .strategy(AnthropicCacheStrategy.SYSTEM_AND_TOOLS)
                 .multiBlockSystemCaching(true)
-                .messageTypeTtl(org.springframework.ai.chat.messages.MessageType.SYSTEM, ttl)
+                .messageTypeTtl(org.springframework.ai.chat.messages.MessageType.SYSTEM, prefixTtl())
                 .build();
     }
 

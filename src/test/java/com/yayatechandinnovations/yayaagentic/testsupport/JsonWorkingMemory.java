@@ -48,6 +48,12 @@ public final class JsonWorkingMemory implements WorkingMemory {
         if (bag != null) for (String k : keys) bag.remove(k);
     }
 
+    private final java.util.Set<String> claims = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    @Override public boolean claim(Ids.SessionId s, String token) {
+        return claims.add(s.value() + ":" + token);
+    }
+
     private Map<String, String> encode(Map<String, Object> values) {
         Map<String, String> out = new LinkedHashMap<>();
         values.forEach((k, v) -> {

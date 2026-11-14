@@ -25,6 +25,9 @@ _$ProfileRequestImpl _$$ProfileRequestImplFromJson(Map<String, dynamic> json) =>
           const <String, dynamic>{},
       extensions: json['extensions'] as Map<String, dynamic>?,
       defaultStartFlowId: json['defaultStartFlowId'] as String?,
+      model: json['model'] as String?,
+      maxToolRounds: (json['maxToolRounds'] as num?)?.toInt(),
+      metered: json['metered'] as bool?,
     );
 
 Map<String, dynamic> _$$ProfileRequestImplToJson(
@@ -41,6 +44,9 @@ Map<String, dynamic> _$$ProfileRequestImplToJson(
   'metadata': instance.metadata,
   'extensions': instance.extensions,
   'defaultStartFlowId': instance.defaultStartFlowId,
+  'model': instance.model,
+  'maxToolRounds': instance.maxToolRounds,
+  'metered': instance.metered,
 };
 
 _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
@@ -65,6 +71,9 @@ _$ProfileResponseImpl _$$ProfileResponseImplFromJson(
   createdAt: json['createdAt'] as String?,
   extensions: json['extensions'] as Map<String, dynamic>?,
   defaultStartFlowId: json['defaultStartFlowId'] as String?,
+  model: json['model'] as String?,
+  maxToolRounds: (json['maxToolRounds'] as num?)?.toInt(),
+  metered: json['metered'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$$ProfileResponseImplToJson(
@@ -84,4 +93,7 @@ Map<String, dynamic> _$$ProfileResponseImplToJson(
   'createdAt': instance.createdAt,
   'extensions': instance.extensions,
   'defaultStartFlowId': instance.defaultStartFlowId,
+  'model': instance.model,
+  'maxToolRounds': instance.maxToolRounds,
+  'metered': instance.metered,
 };

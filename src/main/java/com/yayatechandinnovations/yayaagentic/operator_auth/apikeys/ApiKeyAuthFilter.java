@@ -44,7 +44,8 @@ import java.util.Map;
  *
  * <p>This filter only engages on operator-plane paths; a {@code yk_} bearer sent
  * to {@code /v1/sessions/**} falls through untouched — API keys do not grant the
- * conversational plane (§2).</p>
+ * conversational plane (§2). The one exception is the read-only session
+ * inspector, an operator view that happens to live under that prefix.</p>
  */
 @Component
 public class ApiKeyAuthFilter implements WebFilter, Ordered {
@@ -53,7 +54,8 @@ public class ApiKeyAuthFilter implements WebFilter, Ordered {
     private static final List<PathPattern> PROTECTED = List.of(
             PARSER.parse("/v1/admin/**"),
             PARSER.parse("/v1/auth/me"),
-            PARSER.parse("/v1/auth/logout"));
+            PARSER.parse("/v1/auth/logout"),
+            PARSER.parse("/v1/sessions/{id}/inspector"));
 
     private static final String BEARER = "Bearer ";
     private static final String YK = "yk_";

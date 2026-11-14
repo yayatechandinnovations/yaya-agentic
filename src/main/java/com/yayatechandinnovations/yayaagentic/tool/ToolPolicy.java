@@ -52,8 +52,44 @@ public record ToolPolicy(
          * an arbitrary tool one-tap. The call still runs the Authorizer chain
          * with the user's own credentials.
          */
-        boolean preconfirmableByAction
+        boolean preconfirmableByAction,
+        /**
+         * The tool may ask the user for a secret (a verification or payment
+         * code) by returning {@code _secretPrompt} in its result. The engine
+         * then holds the call, collects the value through a masked prompt and
+         * runs the same call once more with {@code {secret.value}} set for that
+         * request only. A {@code _secretPrompt} from a tool without this flag
+         * is dropped. See {@code docs/guides/admin-panel-sessions.md} §15.
+         */
+        boolean secretInput,
+        /**
+         * The tool's confirmation may share one card with others: when one
+         * model answer holds two or more confirmable calls of plannable tools,
+         * the engine shows them as the steps of one plan the user agrees to
+         * once, instead of one confirm frame. Meaningful only on a
+         * {@code confirmable} tool; never set it on a {@code secretInput} one.
+         * See {@code docs/guides/admin-panel-sessions.md} §16.
+         */
+        boolean plannable
 ) {
+    /** Back-compat: a tool that is always confirmed on a card of its own. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable, String confirmPrompt,
+                      boolean requiresBancaContext, boolean requiresApprovedQuote,
+                      boolean preconfirmableByAction, boolean secretInput) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, confirmPrompt,
+                requiresBancaContext, requiresApprovedQuote, preconfirmableByAction, secretInput, false);
+    }
+
+    /** Back-compat: a tool that never asks for a secret. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable, String confirmPrompt,
+                      boolean requiresBancaContext, boolean requiresApprovedQuote,
+                      boolean preconfirmableByAction) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, confirmPrompt,
+                requiresBancaContext, requiresApprovedQuote, preconfirmableByAction, false);
+    }
+
     /** Back-compat: not runnable from a bound action without a confirm frame. */
     public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
                       boolean confirmable, boolean clientInvocable, String confirmPrompt,

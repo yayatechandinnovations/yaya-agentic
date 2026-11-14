@@ -34,14 +34,35 @@ public final class AdminDtos {
              *  The framework stores/echoes these but never interprets them. */
             Map<String, Object> extensions,
             /** Nullable id of the Session Start Flow to run by default for this profile. */
-            String defaultStartFlowId
+            String defaultStartFlowId,
+            /** Model for this profile's turns; must be on the deployment's
+             *  allow-list. {@code ""} = the deployment's model. Null (left out) =
+             *  the current version's model; the deployment's for a new profile. */
+            String model,
+            /** Tool-round ceiling per turn, 1..16. Null (left out) = the current
+             *  version's value; 5 for a new profile. */
+            Integer maxToolRounds,
+            /** True = this profile's turns count against the tenant's monthly
+             *  allowance and are refused once it is used up. Boxed on purpose:
+             *  null (left out) = the current version's value (false for a new
+             *  profile), so only an explicit {@code false} switches metering off. */
+            Boolean metered
     ) {
+        /** Back-compat: deployment model, default tool rounds, unmetered. */
+        public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
+                              String systemPromptFragment, List<String> capabilities,
+                              String authBindingId, String language, Map<String, Object> metadata,
+                              Map<String, Object> extensions, String defaultStartFlowId) {
+            this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
+                    authBindingId, language, metadata, extensions, defaultStartFlowId, null, null, null);
+        }
+
         /** Back-compat: a profile with no extensions. */
         public ProfileRequest(String tenant, String id, String displayName, String introOneLiner,
                               String systemPromptFragment, List<String> capabilities,
                               String authBindingId, String language, Map<String, Object> metadata) {
             this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
-                    authBindingId, language, metadata, null, null);
+                    authBindingId, language, metadata, null, null, null, null, null);
         }
 
         /** Back-compat: extensions but no default start flow. */
@@ -50,7 +71,7 @@ public final class AdminDtos {
                               String authBindingId, String language, Map<String, Object> metadata,
                               Map<String, Object> extensions) {
             this(tenant, id, displayName, introOneLiner, systemPromptFragment, capabilities,
-                    authBindingId, language, metadata, extensions, null);
+                    authBindingId, language, metadata, extensions, null, null, null, null);
         }
     }
 
@@ -60,7 +81,8 @@ public final class AdminDtos {
             List<String> capabilities, String authBindingId,
             String language,
             Map<String, Object> metadata, String status, OffsetDateTime createdAt,
-            Map<String, Object> extensions, String defaultStartFlowId
+            Map<String, Object> extensions, String defaultStartFlowId,
+            String model, Integer maxToolRounds, boolean metered
     ) {}
 
     // ---- Capabilities ---------------------------------------------------

@@ -45,12 +45,23 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   final _nameCtrl = TextEditingController();
   final _introCtrl = TextEditingController();
   final _promptCtrl = TextEditingController();
+  // Blank = the deployment's model / the server's default tool rounds.
+  final _modelCtrl = TextEditingController();
+  final _maxToolRoundsCtrl = TextEditingController();
+  bool _metered = false;
   final _capsSelected = <String>{};
   String? _authBinding;
   String _language = 'en';
   String? _defaultStartFlowId;
   bool _saving = false;
   int? _cloningFromVersion;
+
+  /// The profile being cloned, or null for a brand-new one. Everything the
+  /// form has no control for (metadata — which carries `principalKinds` and
+  /// `policy` —, extensions other than the store binding, fields this console
+  /// does not model) is saved from here unchanged; each POST replaces the
+  /// whole profile, so a field left out of the body is a field cleared.
+  ProfileResponse? _cloneSource;
 
   // Commerce binding (nullable on the profile): points this profile at a
   // yaya-sales store. Catalogs/pricing/PSP config live in the yaya-sales
@@ -78,11 +89,14 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         ..clear()
         ..addAll(p.capabilities);
       _authBinding = p.authBindingId;
-      _language =
-          _languageOptions.containsKey(p.language) ? p.language : 'en';
+      _language = p.language;
       _defaultStartFlowId = p.defaultStartFlowId;
+      _modelCtrl.text = p.model ?? '';
+      _maxToolRoundsCtrl.text = p.maxToolRounds?.toString() ?? '';
+      _metered = p.metered;
       _loadCommerce(_storeExtension(p.extensions));
       _cloningFromVersion = p.version;
+      _cloneSource = p;
     });
     showSnack(context,
         'Cloned ${p.id}@${p.version} → will save as v${p.version + 1}');
@@ -91,10 +105,14 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   void _cancelClone() {
     setState(() {
       _cloningFromVersion = null;
+      _cloneSource = null;
       _idCtrl.clear();
       _nameCtrl.clear();
       _introCtrl.clear();
       _promptCtrl.clear();
+      _modelCtrl.clear();
+      _maxToolRoundsCtrl.clear();
+      _metered = false;
       _capsSelected.clear();
       _authBinding = null;
       _language = 'en';
@@ -140,25 +158,32 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     _nameCtrl.dispose();
     _introCtrl.dispose();
     _promptCtrl.dispose();
+    _modelCtrl.dispose();
+    _maxToolRoundsCtrl.dispose();
     _commerceStoreIdCtrl.dispose();
     _commerceCheckoutToolCtrl.dispose();
     super.dispose();
   }
 
-  /// Builds the profile's `extensions` map, or null when the store toggle is
-  /// off. The store payload is nested under the `sales.store` kind; the backend
-  /// stores/echoes the map opaquely.
+  /// Builds the profile's `extensions` map, or null when it ends up empty. The
+  /// form edits only the `sales.store` kind (set from the store controls, or
+  /// removed when the toggle is off); every other kind of the cloned profile,
+  /// and any store-payload key the controls do not cover, is kept as it was.
+  /// The backend stores/echoes the map opaquely.
   Map<String, dynamic>? _buildExtensions() {
-    if (!_commerceEnabled) return null;
-    final storeId = _commerceStoreIdCtrl.text.trim();
-    final checkoutTool = _commerceCheckoutToolCtrl.text.trim();
-    return {
-      _storeKind: {
+    final source = _cloneSource?.extensions;
+    final extensions = <String, dynamic>{...?source}..remove(_storeKind);
+    if (_commerceEnabled) {
+      final storeId = _commerceStoreIdCtrl.text.trim();
+      final checkoutTool = _commerceCheckoutToolCtrl.text.trim();
+      extensions[_storeKind] = {
+        ...?_storeExtension(source),
         'storeId': storeId.isEmpty ? null : storeId,
         'checkoutTool': checkoutTool.isEmpty ? 'checkout' : checkoutTool,
         'cartEnabled': _commerceCartEnabled,
-      },
-    };
+      };
+    }
+    return extensions.isEmpty ? null : extensions;
   }
 
   Future<void> _save() async {
@@ -171,6 +196,14 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       showSnack(context, 'select a tenant first', error: true);
       return;
     }
+    final roundsText = _maxToolRoundsCtrl.text.trim();
+    final rounds = roundsText.isEmpty ? null : int.tryParse(roundsText);
+    if (roundsText.isNotEmpty && (rounds == null || rounds < 1 || rounds > 16)) {
+      showSnack(context, 'max tool rounds must be a number from 1 to 16, or blank',
+          error: true);
+      return;
+    }
+    final model = _modelCtrl.text.trim();
     setState(() => _saving = true);
     try {
       final api = await ref.read(adminApiProvider.future);
@@ -183,8 +216,17 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         capabilities: _capsSelected.toList(),
         authBindingId: _authBinding,
         language: _language,
+        metadata: _cloneSource?.metadata ?? const <String, dynamic>{},
         defaultStartFlowId: _defaultStartFlowId,
         extensions: _buildExtensions(),
+        // The server keeps a field of the latest version when a save leaves
+        // it out, so what the form shows is always sent: an emptied model is
+        // "" (the deployment's model), and emptied rounds on a clone are the
+        // default itself.
+        model: model,
+        maxToolRounds: rounds ?? (_cloneSource == null ? null : 5),
+        metered: _metered,
+        carried: _cloneSource?.raw ?? const <String, dynamic>{},
       ));
       ref.invalidate(profilesProvider);
       if (!mounted) return;
@@ -193,13 +235,17 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
       _nameCtrl.clear();
       _introCtrl.clear();
       _promptCtrl.clear();
+      _modelCtrl.clear();
+      _maxToolRoundsCtrl.clear();
       setState(() {
+        _metered = false;
         _capsSelected.clear();
         _authBinding = null;
         _language = 'en';
         _defaultStartFlowId = null;
         _loadCommerce(null);
         _cloningFromVersion = null;
+        _cloneSource = null;
       });
       showSnack(context,
           wasCloning == null
@@ -337,12 +383,16 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                   labelText: 'response language',
                   helperText: 'the LLM responds in this language regardless of user input',
                 ),
-                items: _languageOptions.entries
-                    .map((e) => DropdownMenuItem(
-                          value: e.key,
-                          child: Text('${e.value}  (${e.key})'),
-                        ))
-                    .toList(),
+                items: [
+                  ..._languageOptions.entries.map((e) => DropdownMenuItem(
+                        value: e.key,
+                        child: Text('${e.value}  (${e.key})'),
+                      )),
+                  // A cloned profile keeps its own tag even when it is not
+                  // one of the options above.
+                  if (!_languageOptions.containsKey(_language))
+                    DropdownMenuItem(value: _language, child: Text(_language)),
+                ],
                 onChanged: (v) => setState(() => _language = v ?? 'en'),
               ),
               const SizedBox(height: 12),
@@ -351,6 +401,34 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                 value: _defaultStartFlowId,
                 label: 'Default start flow (optional)',
                 onChanged: (v) => setState(() => _defaultStartFlowId = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _modelCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'model (optional)',
+                  helperText:
+                      "blank = the deployment's model; must be on the server's allowed-models list",
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _maxToolRoundsCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'max tool rounds per turn (optional)',
+                  helperText: '1–16; blank = 5',
+                ),
+              ),
+              SwitchListTile(
+                value: _metered,
+                onChanged: (v) => setState(() => _metered = v),
+                title: const Text('Metered'),
+                subtitle: const Text(
+                    "Turns count against the tenant's monthly message allowance "
+                    'and are refused once it is used up.',
+                    style: TextStyle(fontSize: 12)),
+                contentPadding: EdgeInsets.zero,
               ),
               const SizedBox(height: 16),
               const Divider(),
@@ -443,6 +521,12 @@ class _ProfileTile extends StatelessWidget {
             value: profile.authBindingId ?? '(none)',
           ),
           DetailRow(label: 'language', value: profile.language),
+          DetailRow(label: 'model', value: profile.model ?? '(deployment default)'),
+          DetailRow(
+            label: 'maxToolRounds',
+            value: profile.maxToolRounds?.toString() ?? '(default)',
+          ),
+          DetailRow(label: 'metered', value: profile.metered ? 'yes' : 'no'),
         ],
       ),
     );

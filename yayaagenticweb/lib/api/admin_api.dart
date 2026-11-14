@@ -120,7 +120,7 @@ class AdminApi {
   }
 
   Future<ProfileResponse> createProfile(ProfileRequest req) async {
-    final res = await _dio.post('/v1/admin/profiles', data: req.toJson());
+    final res = await _dio.post('/v1/admin/profiles', data: req.toWireJson());
     return ProfileResponse.fromJson(_asMap(res.data));
   }
 

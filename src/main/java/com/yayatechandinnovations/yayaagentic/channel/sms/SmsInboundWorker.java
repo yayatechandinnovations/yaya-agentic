@@ -1,8 +1,10 @@
 package com.yayatechandinnovations.yayaagentic.channel.sms;
 
+import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
+import com.yayatechandinnovations.yayaagentic.channel.SecretInboundRedaction;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBinding;
 import com.yayatechandinnovations.yayaagentic.channel.binding.ChannelBindingService;
 import com.yayatechandinnovations.yayaagentic.channel.binding.SessionPolicy;
@@ -116,6 +118,12 @@ public class SmsInboundWorker {
             return;
         }
 
+        // §15 — a code prompt may be waiting in this customer's conversation.
+        // If this message is, or may hold, the code, the stored row gives it
+        // up now: before any branch below can return or fail.
+        var waSenderId = new com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId(senderId.value());
+        final boolean secretInbound = redactIfCode(row, sessions.findOpen(tenant, waSenderId, phone), body);
+
         ChannelEndpointRef endpoint = new ChannelEndpointRef.SmsSenderRef(senderId);
         Optional<ChannelBinding> bindingOpt = bindings.findLowestPriorityActiveForEndpoint(tenant, endpoint);
         if (bindingOpt.isEmpty()) {
@@ -127,7 +135,6 @@ public class SmsInboundWorker {
         SessionPolicy policy = binding.sessionPolicy();
 
         // session continuity — channel_sessions is channel-agnostic since V45.
-        var waSenderId = new com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId(senderId.value());
         ChannelSessionService.Outcome cont = sessions.openOrReuse(tenant, waSenderId, phone, body, policy);
 
         Ids.SessionId sessionId;
@@ -146,7 +153,10 @@ public class SmsInboundWorker {
             fresh = true;
             consumedKeyword = ((ChannelSessionService.Outcome.Open) cont).consumedKeyword();
         }
-        String userText = consumedKeyword ? "" : body;
+        // §15: the engine reads a code out of the text only in the conversation
+        // whose prompt it answers. If this message opens a new one (the other
+        // idled out), the text goes on as the marker.
+        String userText = consumedKeyword ? "" : secretInbound && fresh ? SecretInboundRedaction.MARKER : body;
 
         StartConversationRequest startReq = new StartConversationRequest(
                 tenant, Optional.of(binding.profile()), new com.yayatechandinnovations.yayaagentic
@@ -154,18 +164,18 @@ public class SmsInboundWorker {
         AuthContext auth = new AuthContext(tenant, channelHeaders(phone, senderId, sender, messageSid), Optional.empty());
 
         if (fresh) {
-            StartSessionResult result = engine.start(startReq, auth);
+            StartSessionResult result = engine.start(startReq, auth.onChannel(TurnChannel.SMS));
             sessionId = result.session().id();
             sessions.register(tenant, waSenderId, phone, sessionId);
             dispatcher.dispatchGreeting(tenant, senderId, phone, sessionId,
                     result.greeting(), result.quickReplies());
             if (!userText.isBlank()) {
                 dispatcher.dispatchTurn(tenant, senderId, phone, sessionId,
-                        engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, Map.of()), auth.onChannel(TurnChannel.SMS))));
             }
         } else if (!userText.isBlank()) {
             dispatcher.dispatchTurn(tenant, senderId, phone, sessionId,
-                    engine.send(sessionId, new UserMessage(userText, Map.of()), auth));
+                    com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, Map.of()), auth.onChannel(TurnChannel.SMS))));
         }
 
         markProcessed(row);
@@ -195,8 +205,29 @@ public class SmsInboundWorker {
         inbound.save(row);
     }
 
+    /**
+     * §15 — takes the text out of {@code row} (and saves it) when a code
+     * prompt is waiting in {@code session} and {@code text} is, or may hold,
+     * the code.
+     */
+    private boolean redactIfCode(InboundMessageEntity row, Optional<Ids.SessionId> session, String text) {
+        if (!SecretInboundRedaction.holdsCode(engine, session, text, TurnChannel.SMS)) return false;
+        SecretInboundRedaction.apply(row, json);
+        inbound.save(row);
+        return true;
+    }
+
     private void markFailed(String messageSid, String error) {
         inbound.findById(messageSid).ifPresent(row -> {
+            // A row that failed before the check in the worker still gives up a code.
+            try {
+                redactIfCode(row, sessions.findOpen(new Ids.TenantId(row.getTenantId()),
+                        new com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId(row.getSenderId()),
+                        row.getEndUserPhone()), stringField(row.getRawPayloadJson(), "Body"));
+            } catch (RuntimeException e) {
+                log.warn("SMS inbound: could not check failed row {} for a code: {}",
+                        messageSid, e.getClass().getSimpleName());
+            }
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
             row.setProcessingError(error);
             inbound.save(row);
