@@ -26,6 +26,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
   bool _clientInvocable = false;
   bool _secretInput = false;
   bool _plannable = false;
+  bool _headless = false;
   // Policy keys of the cloned version this form has no control for
   // (confirmPrompt, timeout, preconfirmableByAction, …): kept on save.
   Map<String, dynamic> _clonedPolicy = const {};
@@ -68,6 +69,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       _clientInvocable = t.policy['clientInvocable'] == true;
       _secretInput = t.policy['secretInput'] == true;
       _plannable = t.policy['plannable'] == true;
+      _headless = t.policy['headless'] == true;
       _clonedPolicy = Map<String, dynamic>.from(t.policy);
       _cloningFromVersion = t.version;
     });
@@ -90,6 +92,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
       _confirmable = false;
       _secretInput = false;
       _plannable = false;
+      _headless = false;
       _clonedPolicy = const {};
       _authForwarding = 'NONE';
     });
@@ -179,6 +182,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
           'clientInvocable': _clientInvocable,
           'secretInput': _secretInput,
           'plannable': _plannable,
+          'headless': _headless,
         },
       ));
       ref.invalidate(toolsProvider);
@@ -195,6 +199,7 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
         _clonedPolicy = const {};
         _secretInput = false;
         _plannable = false;
+        _headless = false;
       });
       showSnack(context,
           wasCloning == null
@@ -316,6 +321,18 @@ class _ToolsScreenState extends ConsumerState<ToolsScreen> {
                 'Several confirmable calls of plannable tools in one answer share '
                 'one card the user agrees to once. Needs Confirmable and a '
                 'confirmPrompt; not for a Secret input tool.',
+                style: TextStyle(fontSize: 12)),
+            contentPadding: EdgeInsets.zero,
+          ),
+          SwitchListTile(
+            value: _headless,
+            onChanged: (v) => setState(() => _headless = v),
+            title: const Text('Headless'),
+            subtitle: const Text(
+                'A headless run (a stored question answered with nobody present) '
+                'may call this tool. Only for an HTTP GET that is not Confirmable, '
+                'Client-invocable, Secret input or Plannable; anything else is '
+                'refused on save (headless_not_allowed).',
                 style: TextStyle(fontSize: 12)),
             contentPadding: EdgeInsets.zero,
           ),

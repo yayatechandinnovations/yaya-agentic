@@ -34,6 +34,47 @@ public interface ConversationEngine {
     void end(Ids.SessionId sessionId, AuthContext auth);
 
     /**
+     * Open the conversation of a headless run
+     * ({@code docs/guides/admin-panel-sessions.md} §17): the profile's agent
+     * answering one stored question with nobody present. Unlike
+     * {@link #start} it runs no start flow and resolves nothing — the caller
+     * has verified {@code principal} and chosen the concrete {@code profile}.
+     * The session's channel is {@code TurnChannel.AUTOMATION}; it takes one
+     * {@link #sendHeadless} and never a {@link #send}, a
+     * {@link #dispatchAction} or a {@link #resume}. Default: unsupported.
+     */
+    default StartSessionResult startHeadless(Ids.TenantId tenant, Ids.ProfileId profile,
+                                             com.yayatechandinnovations.yayaagentic.core.Principal principal,
+                                             com.yayatechandinnovations.yayaagentic.headless.HeadlessTurn turn) {
+        throw new UnsupportedOperationException("headless runs not supported by this engine");
+    }
+
+    /**
+     * True when a headless run of {@code profile} would be offered at least
+     * one tool — the same selection {@link #sendHeadless} makes for the turn.
+     * A profile with none has nothing to answer from, so its runs are refused
+     * before they are queued. Default: true (an engine that does not say).
+     */
+    default boolean offersHeadlessTools(com.yayatechandinnovations.yayaagentic.profile.Profile profile) {
+        return true;
+    }
+
+    /**
+     * The one turn of a headless session. The model is offered only the
+     * profile's tools flagged {@code policy.headless} and a call to any other
+     * comes back {@code tool_not_available}; nothing pauses for a person — a
+     * confirmation, a secret prompt, a step-up, an elicitation or an entity
+     * conflict fails the turn with a
+     * {@link com.yayatechandinnovations.yayaagentic.headless.HeadlessStop}
+     * instead, and no pending state is written. The turn is not admitted
+     * against the allowance again: it settles the reservation the
+     * {@code HeadlessTurn} carries. Default: unsupported.
+     */
+    default Flux<TurnEvent> sendHeadless(Ids.SessionId sessionId, UserMessage question, AuthContext auth) {
+        return Flux.error(new UnsupportedOperationException("headless runs not supported by this engine"));
+    }
+
+    /**
      * True when {@code text}, arriving on {@code channel} (a
      * {@link com.yayatechandinnovations.yayaagentic.core.TurnChannel} value),
      * is or may hold the code of the session's secret prompt: the prompt is

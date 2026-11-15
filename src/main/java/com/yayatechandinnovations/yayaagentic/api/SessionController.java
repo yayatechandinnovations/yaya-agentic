@@ -164,8 +164,10 @@ public class SessionController {
                             ? Ids.ProfileId.latest(body.profileId())
                             : new Ids.ProfileId(body.profileId(), body.profileVersion()));
 
+            // The label is the client's own, except the one that marks the
+            // conversation of a headless run: no client can open one of those.
             StartConversationRequest req = new StartConversationRequest(tenant, explicit,
-                    body.channel() == null ? "web" : body.channel(),
+                    body.channel() == null || TurnChannel.isReserved(body.channel()) ? "web" : body.channel(),
                     body.hints() == null ? Map.of() : body.hints());
 
             Optional<ActAs> actAs = Optional.ofNullable(body.actAs());
@@ -312,11 +314,10 @@ public class SessionController {
             enforceOrigin(tenantId, exchange);
             Principal principal = requireIdentified(authenticate(authContext(tenant, exchange)));
 
-            Optional<SessionEntity> found = profileId == null || profileId.isBlank()
-                    ? sessions.findFirstByTenantIdAndPrincipalSubjectAndEndedAtIsNullOrderByCreatedAtDesc(
-                            tenantId, principal.subject())
-                    : sessions.findFirstByTenantIdAndPrincipalSubjectAndProfileIdAndEndedAtIsNullOrderByCreatedAtDesc(
-                            tenantId, principal.subject(), profileId);
+            // Never the conversation of a headless run: a panel must not reopen it.
+            Optional<SessionEntity> found = sessions.findReopenable(tenantId, principal.subject(),
+                    profileId == null || profileId.isBlank() ? null : profileId,
+                    org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst();
             if (found.isEmpty()) return SessionDtos.LatestSessionResponse.none();
 
             SessionEntity row = found.get();
@@ -442,6 +443,9 @@ public class SessionController {
         SessionEntity row = lookup(id);
         Ids.TenantId tenant = new Ids.TenantId(row == null ? "default" : row.getTenantId());
         enforceOrigin(tenant.value(), exchange);
+        // The conversation of a headless run (§17) is nobody's to continue,
+        // read back or close through this API — not even its principal's.
+        if (row != null && TurnChannel.isReserved(row.getChannel())) throw ChatApiException.sessionNotFound();
         AuthContext auth = actAsMaterializer.applyIfPresent(
                 authContext(tenant, exchange), actAsRegistry.get(sessionId));
 

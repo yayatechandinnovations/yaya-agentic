@@ -70,8 +70,29 @@ public record ToolPolicy(
          * {@code confirmable} tool; never set it on a {@code secretInput} one.
          * See {@code docs/guides/admin-panel-sessions.md} §16.
          */
-        boolean plannable
+        boolean plannable,
+        /**
+         * The tool may be called by a headless run — the profile's agent
+         * answering a stored question with nobody present
+         * ({@code docs/guides/admin-panel-sessions.md} §17). A headless run is
+         * offered only the tools that carry this flag, and a call to any other
+         * is refused. It is for reads meant for unattended use: the catalogue
+         * refuses it on a tool that is not an HTTP {@code GET}, or that is
+         * {@code confirmable}, {@code secretInput}, {@code clientInvocable},
+         * {@code plannable} or {@code preconfirmableByAction}.
+         */
+        boolean headless
 ) {
+    /** Back-compat: a tool no headless run may call. */
+    public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
+                      boolean confirmable, boolean clientInvocable, String confirmPrompt,
+                      boolean requiresBancaContext, boolean requiresApprovedQuote,
+                      boolean preconfirmableByAction, boolean secretInput, boolean plannable) {
+        this(timeout, maxRetries, idempotent, confirmable, clientInvocable, confirmPrompt,
+                requiresBancaContext, requiresApprovedQuote, preconfirmableByAction, secretInput, plannable,
+                false);
+    }
+
     /** Back-compat: a tool that is always confirmed on a card of its own. */
     public ToolPolicy(Duration timeout, int maxRetries, boolean idempotent,
                       boolean confirmable, boolean clientInvocable, String confirmPrompt,

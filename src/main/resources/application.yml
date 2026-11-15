@@ -238,6 +238,18 @@ yaya:
       # one request, retry included.
       per-minute: ${YAYA_STRUCTURED_COMPLETIONS_PER_MINUTE:30}
       timeout: ${YAYA_STRUCTURED_COMPLETIONS_TIMEOUT:PT60S}
+    headless:
+      # POST/GET /v1/headless/runs (docs/guides/admin-panel-sessions.md §17):
+      # runs executed at once on this instance, how many accepted runs may wait
+      # for a worker (past it: 429 busy), runs one tenant may have queued or
+      # running (past it: 429 busy) and may submit in an hour (429 rate_limited).
+      workers: ${YAYA_HEADLESS_WORKERS:2}
+      queue: ${YAYA_HEADLESS_QUEUE:20}
+      max-per-tenant: ${YAYA_HEADLESS_MAX_PER_TENANT:2}
+      per-hour: ${YAYA_HEADLESS_PER_HOUR:20}
+      # A finished run keeps its answer this long, and its row this long.
+      answer-ttl: ${YAYA_HEADLESS_ANSWER_TTL:PT24H}
+      row-ttl: ${YAYA_HEADLESS_ROW_TTL:P30D}
     cors:
       allowed-origins:
         - "http://localhost:*"

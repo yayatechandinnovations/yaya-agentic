@@ -207,6 +207,13 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     private final Map<String, TurnMeter> turnMeters = new ConcurrentHashMap<>();
 
+    /**
+     * Headless runs in flight, by the session opened for each (§17). Being in
+     * this map is what makes a session headless: it is offered flagged tools
+     * only, nothing in it waits for a person, and it takes no ordinary turn.
+     */
+    private final Map<Ids.SessionId, com.yayatechandinnovations.yayaagentic.headless.HeadlessTurn> headlessRuns = new ConcurrentHashMap<>();
+
     /** The engine turn whose user message is already stored, per session: one
      *  turn may record several assistant steps but its user message only once. */
     private final Map<Ids.SessionId, String> userTurnRecordedFor = new ConcurrentHashMap<>();
@@ -376,10 +383,124 @@ public class DefaultConversationEngine implements ConversationEngine {
         return new StartSessionResult(session, profileId, greeting, quickReplies, extensions);
     }
 
+    // ---- headless run (admin-panel-sessions.md §17) --------------------------
+
+    @Override
+    public StartSessionResult startHeadless(Ids.TenantId tenant, Ids.ProfileId profileId, Principal principal,
+                                            com.yayatechandinnovations.yayaagentic.headless.HeadlessTurn turn) {
+        if (tenant == null || principal == null || turn == null || profileId == null || profileId.isLatest()) {
+            throw new IllegalArgumentException("a headless run needs a tenant, a verified principal, "
+                    + "a concrete profile version and its turn");
+        }
+        Profile profile = profileRegistry.find(tenant, profileId)
+                .orElseThrow(() -> new IllegalStateException("profile not registered: " + profileId.value()));
+        Session session = new Session(
+                new Ids.SessionId(UUID.randomUUID().toString()),
+                tenant, principal, profile.id(), TurnChannel.AUTOMATION,
+                List.of(), IntentFrame.empty(), Map.of(), Instant.now(), null);
+        ConversationRecorder recorder = recorderRouter.recorderFor(session,
+                new RecorderRouter.RecordingDecisionContext(Map.of()));
+        recorder.onSessionStarted(session, ctx(tenant, principal));
+        headlessRuns.put(session.id(), turn);
+        active.put(session.id(), session);
+        // No start flow, no opening, no menu: nobody reads them.
+        return new StartSessionResult(session, profile.id(), null, List.of(), Map.of());
+    }
+
+    @Override
+    public Flux<TurnEvent> sendHeadless(Ids.SessionId sessionId, UserMessage question, AuthContext auth) {
+        Session session = active.get(sessionId);
+        com.yayatechandinnovations.yayaagentic.headless.HeadlessTurn turn = headlessRuns.get(sessionId);
+        if (session == null || turn == null) {
+            return Flux.error(new IllegalStateException("unknown session: " + sessionId.value()));
+        }
+        Profile profile = profileRegistry.find(session.tenant(), session.profile()).orElseThrow();
+        // The run's message was taken when the run was accepted: this turn
+        // settles that reservation and never admits a second one.
+        TurnMeter meter = new TurnMeter(turn.reservation());
+        Runnable close = () -> {
+            if (meter.closed.get()) return;
+            turn.closed(meter.inputTokens.get(), meter.outputTokens.get(), meter.cacheReadTokens.get(),
+                    meter.modelCalls.get(), meter.counted());
+            closeMeter(meter);
+        };
+        AuthContext onAutomation = (auth == null
+                ? new AuthContext(session.tenant(), Map.of(), Optional.empty()) : auth)
+                .onChannel(TurnChannel.AUTOMATION);
+        Flux<TurnEvent> body;
+        try {
+            body = sendScrubbed(session, profile, question, null, onAutomation, meter);
+        } catch (RuntimeException e) {
+            close.run();
+            throw e;
+        }
+        // Closed before the end reaches the caller, so what the turn consumed
+        // is settled and readable the moment the caller sees it finish.
+        return body.doOnTerminate(close).doOnCancel(close).doFinally(signal -> close.run());
+    }
+
+    private boolean isHeadless(Ids.SessionId sessionId) {
+        return sessionId != null && headlessRuns.containsKey(sessionId);
+    }
+
+    /** A headless run has nobody to ask: the turn fails instead, and nothing is left pending. */
+    private static <T> Flux<T> needsInteraction(String what, ToolDescriptor tool) {
+        return Flux.error(com.yayatechandinnovations.yayaagentic.headless.HeadlessStop.needsInteraction(
+                what + (tool == null ? "" : " (tool " + tool.id().value() + ")")));
+    }
+
+    /** May a headless run call this tool? The flag, and once more what the catalogue checked for it. */
+    private static boolean headlessCallable(ToolDescriptor tool) {
+        com.yayatechandinnovations.yayaagentic.tool.ToolPolicy p = tool == null ? null : tool.policy();
+        return p != null && p.headless() && !p.confirmable() && !p.secretInput()
+                && !p.clientInvocable() && !p.plannable() && !p.preconfirmableByAction();
+    }
+
+    /** The tools a headless run is offered: those of the profile that carry the flag. */
+    private List<LlmClient.ToolDefinition> headlessTools(List<LlmClient.ToolDefinition> base) {
+        List<LlmClient.ToolDefinition> out = new java.util.ArrayList<>();
+        for (LlmClient.ToolDefinition def : base) {
+            if (headlessCallable(catalog.tool(new Ids.ToolId(def.name())).orElse(null))) out.add(def);
+        }
+        return out;
+    }
+
+    @Override
+    public boolean offersHeadlessTools(Profile profile) {
+        return !headlessTools(buildAvailableTools(profile)).isEmpty();
+    }
+
+    /**
+     * The answer to a call a headless run may not make — a tool that is not
+     * flagged, not the profile's, or not there at all. The model is told so
+     * and the run goes on; nothing was dispatched.
+     */
+    private Flux<TurnEvent> headlessRefusalFlow(Ids.ToolId toolId, Map<String, Object> args, String callIdHint,
+                                                Session session, ExecutionContext exec,
+                                                ConversationRecorder recorder, Ids.TurnId turnId,
+                                                UserMessage message) {
+        String callId = callIdHint == null || callIdHint.isBlank() ? UUID.randomUUID().toString() : callIdHint;
+        Map<String, Object> safeArgs = args == null ? Map.of() : args;
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("ok", false);
+        payload.put("reason", "tool_not_available");
+        log.warn("headless run: call to '{}' refused, not available to a headless run (session {})",
+                toolId.value(), session.id().value());
+        Turn.ToolCall call = new Turn.ToolCall(callId, toolId, safeArgs);
+        Turn.ToolResult result = new Turn.ToolResult(callId, Turn.ToolResult.Status.DENIED, payload, null);
+        return Flux.<TurnEvent>just(
+                        new TurnEvent.ToolCall(callId, toolId, safeArgs),
+                        new TurnEvent.ToolResult(callId, Turn.ToolResult.Status.DENIED, payload, null))
+                .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message, "",
+                        List.of(call), List.of(result)));
+    }
+
     @Override
     public Flux<TurnEvent> send(Ids.SessionId sessionId, UserMessage message, AuthContext auth) {
         Session session = active.get(sessionId);
-        if (session == null) {
+        // A headless session takes its one turn through sendHeadless and
+        // nothing else: to every other caller it does not exist.
+        if (session == null || isHeadless(sessionId)) {
             return Flux.error(new IllegalStateException("unknown session: " + sessionId.value()));
         }
         Profile profile = profileRegistry.find(session.tenant(), session.profile()).orElseThrow();
@@ -922,7 +1043,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         // set a 403 status.
         return Flux.defer(() -> {
             Session session = active.get(sessionId);
-            if (session == null) {
+            if (session == null || isHeadless(sessionId)) {
                 return Flux.<TurnEvent>error(new IllegalStateException("unknown session: " + sessionId.value()));
             }
 
@@ -1722,6 +1843,7 @@ public class DefaultConversationEngine implements ConversationEngine {
     @Override
     public void end(Ids.SessionId sessionId, AuthContext auth) {
         Session session = active.remove(sessionId);
+        headlessRuns.remove(sessionId);
         activeIntents.remove(sessionId);
         nextTurnIdx.remove(sessionId);
         lastPromptBySession.remove(sessionId);
@@ -1753,6 +1875,10 @@ public class DefaultConversationEngine implements ConversationEngine {
         RecordedSession rs = recorder.loadSession(sessionId, LoadOptions.verbatim())
                 .orElseThrow(() -> new IllegalStateException("unknown session: " + sessionId.value()));
         Session stored = rs.session();
+        // The conversation of a headless run is never reopened, by anyone (§17).
+        if (TurnChannel.isReserved(stored.channel())) {
+            throw new IllegalStateException("unknown session: " + sessionId.value());
+        }
 
         Principal operator = authenticator.authenticate(auth);
         // Only the rightful owner may resume — a system-participant thread is
@@ -1956,15 +2082,22 @@ public class DefaultConversationEngine implements ConversationEngine {
                                            String earlierSummary,
                                            int round,
                                            java.util.concurrent.atomic.AtomicBoolean anyDispatch) {
+        final com.yayatechandinnovations.yayaagentic.headless.HeadlessTurn headless = headlessRuns.get(session.id());
         if (round >= profile.effectiveMaxToolRounds()) {
+            if (headless != null) {
+                return Flux.error(new com.yayatechandinnovations.yayaagentic.headless.HeadlessStop(com.yayatechandinnovations.yayaagentic.headless.HeadlessStop.TOOL_ROUNDS_EXHAUSTED,
+                        "stopped after " + round + " tool rounds"));
+            }
             String warning = "(stopped — tool-call depth limit reached)";
             return Flux.<TurnEvent>just(new TurnEvent.Token(warning))
                     .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
                             warning, List.of(), List.of()));
         }
 
-        List<LlmClient.ToolDefinition> available = maskAvailableTools(
+        List<LlmClient.ToolDefinition> masked = maskAvailableTools(
                 buildAvailableTools(profile), session.id());
+        // A headless run is offered the flagged tools and nothing else (§17).
+        final List<LlmClient.ToolDefinition> available = headless == null ? masked : headlessTools(masked);
         // §12 enforced structurally: a tool call that already came back DENIED /
         // errored this turn must not be re-dispatched with the same arguments —
         // the action plane will deny it again, and each retry spins another
@@ -1987,6 +2120,13 @@ public class DefaultConversationEngine implements ConversationEngine {
         if (clientContext != null) {
             payload = new PromptBuilder.PromptPayload(payload.cacheablePrefix(),
                     (payload.variableSuffix() == null ? "" : payload.variableSuffix()) + clientContext);
+        }
+        // A headless run is told, in the same per-turn suffix, that nobody is
+        // present and how to answer (§17). The cached prefix is the profile's.
+        if (headless != null && !headless.directive().isBlank()) {
+            payload = new PromptBuilder.PromptPayload(payload.cacheablePrefix(),
+                    (payload.variableSuffix() == null ? "" : payload.variableSuffix())
+                            + "\n\n" + headless.directive());
         }
         // Keep the most recent payload so the inspector endpoint can show
         // exactly what was sent — cacheable prefix vs variable suffix split.
@@ -2044,6 +2184,18 @@ public class DefaultConversationEngine implements ConversationEngine {
                         roundCalls.add(new LlmClient.ToolCallSpec(callId, toolName, args));
                         recordToolCall(session.id(), callId, toolName, args);
                         Ids.ToolId toolId = new Ids.ToolId(toolName);
+                        if (headless != null && available.stream().noneMatch(d -> d.name().equals(toolName))) {
+                            // Named by the model although it was never offered:
+                            // refused here, whatever the tool is or is not.
+                            yield headlessRefusalFlow(toolId, args, callId, session, exec, recorder, turnId,
+                                    message).doOnNext(ev -> {
+                                if (ev instanceof TurnEvent.ToolResult tr) {
+                                    roundResults.add(new LlmClient.ToolResultSpec(tr.callId(),
+                                            llmToolValue(tr.status(), tr.value(), tr.error()), true));
+                                    recordToolResult(session.id(), tr);
+                                }
+                            });
+                        }
                         // Pass the LLM-assigned call id through so the
                         // dispatched ToolResult carries the same id Anthropic
                         // expects in continuation rounds. llmDriven=true so a
@@ -2311,6 +2463,14 @@ public class DefaultConversationEngine implements ConversationEngine {
         // of a held call (§15): handed down as a parameter and attached only
         // to the tool's own request below.
         final ExecutionContext callExec = withSecret(exec, toolDescriptor, secretRun);
+        final boolean headless = isHeadless(session.id());
+
+        // A headless run reaches a tool only through this path, and only a
+        // flagged one: the same refusal as for a tool the model was never
+        // offered, enforced here too whatever proposed the call (§17).
+        if (headless && !headlessCallable(toolDescriptor)) {
+            return headlessRefusalFlow(toolId, args, callIdHint, session, exec, recorder, turnId, message);
+        }
 
         // Live capability gate (enablement UX): a tool reachable only via a
         // switched-off capability (e.g. network play/claim toggled off) is
@@ -2343,6 +2503,8 @@ public class DefaultConversationEngine implements ConversationEngine {
         // unrecoverable provider failures fall through to denialFlow with a
         // user-safe reason. Plain Deny always routes to denialFlow.
         if (decision instanceof AuthzDecision.DenyOfferStepUp stepUp) {
+            // Nobody is there to verify: no cycle is mounted, the run fails.
+            if (headless) return needsInteraction("step-up verification", toolDescriptor);
             return stepUpFlow(toolDescriptor, effectiveArgs, stepUp, personality, session,
                     exec, recorder, turnId, message, callIdHint, llmDriven);
         }
@@ -2361,6 +2523,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         // recursion.
         if (toolDescriptor.policy() != null && toolDescriptor.policy().requiresBancaContext()
                 && !BancaContext.hasActiveContext(workingMemory, session.id())) {
+            if (headless) return needsInteraction("a selection", toolDescriptor);
             return bancaSelectionFlow(profile, personality, session, exec, recorder,
                     turnId, message, callIdHint, llmDriven);
         }
@@ -2375,6 +2538,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         // post-binding shape matches the prior consent reuses it.
         if (!skipConfirm && toolDescriptor.policy() != null && toolDescriptor.policy().confirmable()
                 && !alreadyConsentedThisTurn(session.id(), turnId, toolDescriptor.id(), effectiveArgs)) {
+            if (headless) return needsInteraction("a confirmation", toolDescriptor);
             if (scope != null && scope.held != null) {
                 // One of possibly several confirmable calls of a model answer:
                 // what is shown for it is decided when the answer ends (§16).
@@ -2408,8 +2572,10 @@ public class DefaultConversationEngine implements ConversationEngine {
         return Mono.fromCallable(() -> toolExecutor.execute(toolDescriptor, effectiveArgs, callExec, callIdHint))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(outcome -> switch (outcome) {
-                    case ToolExecutor.Outcome.NeedsInput ni ->
-                            elicitationFlow(toolDescriptor, effectiveArgs, ni, personality, session, exec, recorder, turnId, message);
+                    case ToolExecutor.Outcome.NeedsInput ni -> headless
+                            // The model left a required argument out and nobody can be asked for it.
+                            ? DefaultConversationEngine.<TurnEvent>needsInteraction("an elicitation", toolDescriptor)
+                            : elicitationFlow(toolDescriptor, effectiveArgs, ni, personality, session, exec, recorder, turnId, message);
                     case ToolExecutor.Outcome.Dispatched(var result) -> {
                         // Network link-offer (§4.5): banca_context_set may return a
                         // _confirmRequest asking the engine to raise a confirm
@@ -2418,6 +2584,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                         // a tool_result, so the agentic loop pauses like confirmFlow.
                         Map<String, Object> confirmReq = extractConfirmRequest(
                                 result == null ? null : result.value());
+                        if (headless && (confirmReq != null
+                                || SecretPrompts.split(result == null ? null : result.value()) != null)) {
+                            // A result that asks for a confirmation or a code:
+                            // no frame, no pending slot, the run fails.
+                            yield needsInteraction(confirmReq != null ? "a confirmation asked by a tool result"
+                                    : "a secret prompt", toolDescriptor);
+                        }
                         if (confirmReq != null) {
                             yield linkOfferConfirmFlow(confirmReq, profile.language(), session, exec,
                                     recorder, turnId, message);
@@ -2624,7 +2797,8 @@ public class DefaultConversationEngine implements ConversationEngine {
         if (split == null) {
             return result;
         }
-        if (split.kind() != null) {
+        // A headless run has no client to draw it: the frame is dropped (§17).
+        if (split.kind() != null && !isHeadless(session.id())) {
             pendingUiHints.enqueue(session.id(), split.kind(), split.payload());
         }
         return new Turn.ToolResult(result.callId(), result.status(), split.strippedValue(),
@@ -3787,6 +3961,11 @@ public class DefaultConversationEngine implements ConversationEngine {
                 }
                 case ASK_USER -> {
                     if (conflictHint != null) continue; // only one at a time
+                    if (isHeadless(session.id())) {
+                        // Nobody can choose between the two: nothing is left pending.
+                        throw com.yayatechandinnovations.yayaagentic.headless.HeadlessStop.needsInteraction(
+                                "an entity conflict on '" + capture.name() + "'");
+                    }
                     workingMemory.merge(session.id(), Map.of("pending_entity_conflict", Map.of(
                             "entityName", capture.name(),
                             "incoming", incoming,

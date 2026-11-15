@@ -43,6 +43,11 @@ public class CatalogMapper {
     private static final TypeReference<List<SuggestionRule>> SUGGESTION_LIST = new TypeReference<>() {};
     private static final TypeReference<MenuBlock> MENU_BLOCK = new TypeReference<>() {};
 
+    /** The refusal code of a {@code policy.headless} the rule does not allow. */
+    public static final String HEADLESS_NOT_ALLOWED = "headless_not_allowed";
+
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(CatalogMapper.class);
+
     private final ObjectMapper json;
 
     public CatalogMapper(ObjectMapper json) {
@@ -58,6 +63,18 @@ public class CatalogMapper {
                 : new ToolHandlerRef.Http(readJson(e.getHandlerHttpSpecJson(), HTTP_TOOL_SPEC, null));
 
         ToolPolicy policy = readPolicy(e.getPolicyJson());
+        if (policy.headless()) {
+            // A stored row that carries the flag against the rule (written
+            // before the rule, or straight into the table) is registered
+            // without it: the tool keeps working in conversations and no
+            // headless run is offered it.
+            String problem = headlessProblem(handler, policy);
+            if (problem != null) {
+                LOG.warn("tool '{}' of tenant '{}' is flagged headless but {}; registered without the flag ({})",
+                        e.getId(), e.getTenantId(), problem, HEADLESS_NOT_ALLOWED);
+                policy = withoutHeadless(policy);
+            }
+        }
 
         List<EntityCapture> captures = readJson(e.getCapturesJson(), CAPTURE_LIST, List.of())
                 .stream().map(EntityCaptureSpec::toRuntime).toList();
@@ -89,7 +106,56 @@ public class CatalogMapper {
                 readJson(e.getMenuJson(), MENU_BLOCK, null));
     }
 
+    /**
+     * Why {@code policy.headless} may not be set on a tool with this handler
+     * and policy, or null when it may. A headless run answers with nobody
+     * present, so it is offered reads only: an HTTP {@code GET} that never
+     * waits for a person (docs/guides/admin-panel-sessions.md §17).
+     */
+    public static String headlessProblem(ToolHandlerRef handler, ToolPolicy policy) {
+        if (policy == null || !policy.headless()) return null;
+        if (!(handler instanceof ToolHandlerRef.Http http) || http.spec() == null
+                || http.spec().method() != HttpToolSpec.HttpMethod.GET) {
+            return "its handler is not an HTTP GET";
+        }
+        if (policy.confirmable()) return "it is confirmable";
+        if (policy.secretInput()) return "it may ask for a secret (secretInput)";
+        if (policy.clientInvocable()) return "it is clientInvocable";
+        if (policy.plannable()) return "it is plannable";
+        if (policy.preconfirmableByAction()) return "it is preconfirmableByAction";
+        return null;
+    }
+
+    /**
+     * The check the catalogue API runs before it stores a tool: a row whose
+     * policy asks for {@code headless} against the rule is refused.
+     *
+     * @throws HeadlessNotAllowedException code {@link #HEADLESS_NOT_ALLOWED}
+     */
+    public void requireHeadlessAllowed(ToolEntity e) {
+        ToolHandlerRef handler = "BEAN".equals(e.getHandlerKind())
+                ? new ToolHandlerRef.Bean(e.getHandlerBeanName())
+                : new ToolHandlerRef.Http(readJson(e.getHandlerHttpSpecJson(), HTTP_TOOL_SPEC, null));
+        String problem = headlessProblem(handler, readPolicy(e.getPolicyJson()));
+        if (problem != null) throw new HeadlessNotAllowedException(e.getId(), problem);
+    }
+
+    /** {@code policy.headless} was asked for a tool that may not carry it. */
+    public static final class HeadlessNotAllowedException extends RuntimeException {
+        public HeadlessNotAllowedException(String toolId, String problem) {
+            super("tool '" + toolId + "' cannot be headless: " + problem);
+        }
+
+        public String code() { return HEADLESS_NOT_ALLOWED; }
+    }
+
     // ---- internals ------------------------------------------------------
+
+    private static ToolPolicy withoutHeadless(ToolPolicy p) {
+        return new ToolPolicy(p.timeout(), p.maxRetries(), p.idempotent(), p.confirmable(), p.clientInvocable(),
+                p.confirmPrompt(), p.requiresBancaContext(), p.requiresApprovedQuote(),
+                p.preconfirmableByAction(), p.secretInput(), p.plannable(), false);
+    }
 
     private ToolPolicy readPolicy(String policyJson) {
         if (policyJson == null || policyJson.isBlank() || "{}".equals(policyJson.trim())) {
@@ -107,8 +173,9 @@ public class CatalogMapper {
         boolean preconfirmableByAction = toBool(raw.get("preconfirmableByAction"), false);
         boolean secretInput = toBool(raw.get("secretInput"), false);
         boolean plannable = toBool(raw.get("plannable"), false);
+        boolean headless = toBool(raw.get("headless"), false);
         return new ToolPolicy(timeout, maxRetries, idempotent, confirmable, clientInvocable,
-                confirmPrompt, false, false, preconfirmableByAction, secretInput, plannable);
+                confirmPrompt, false, false, preconfirmableByAction, secretInput, plannable, headless);
     }
 
     private <T> T readJson(String raw, TypeReference<T> type, T fallback) {

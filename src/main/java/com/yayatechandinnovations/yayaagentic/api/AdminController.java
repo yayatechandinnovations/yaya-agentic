@@ -309,6 +309,13 @@ public class AdminController {
             default -> throw badRequest("tool.handler.kind must be BEAN or HTTP");
         }
 
+        // policy.headless is for unattended reads only (admin-panel-sessions.md §17).
+        try {
+            catalogMapper.requireHeadlessAllowed(entity);
+        } catch (com.yayatechandinnovations.yayaagentic.engine.bootstrap.CatalogMapper.HeadlessNotAllowedException e) {
+            throw AdminApiException.badRequest(e.code(), e.getMessage());
+        }
+
         tools.save(entity);
         runtimeCatalog.registerTool(catalogMapper.toDescriptor(entity));
         return ResponseEntity.status(HttpStatus.CREATED).body(toToolResponse(entity));

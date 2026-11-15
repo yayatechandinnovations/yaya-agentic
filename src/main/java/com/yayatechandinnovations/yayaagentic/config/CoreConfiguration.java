@@ -30,6 +30,7 @@ import java.time.Clock;
         com.yayatechandinnovations.yayaagentic.outreach.push.PushProperties.class,
         com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class,
         com.yayatechandinnovations.yayaagentic.structured.StructuredCompletionsProperties.class,
+        com.yayatechandinnovations.yayaagentic.headless.HeadlessRunProperties.class,
         SessionsApiProperties.class})
 @EnableScheduling
 public class CoreConfiguration {

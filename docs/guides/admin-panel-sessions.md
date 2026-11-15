@@ -6,8 +6,9 @@ its logged-in user**, with no second login. This is the contract the app codes
 against. Everything here is covered by `AppSessionsApiTest`,
 `SessionStopSemanticsTest`, `SessionInspectorAccessTest`, `UsageMeterTest`,
 `PrincipalKindsTest`, `PostToolTextHistoryTest`, `HttpToolTemplateSafetyTest`,
-`TurnChannelTest`, and for §15 `SecretPromptApiTest`, `HttpToolSecretHeaderTest`,
-`SecretPromptsTest` and `SecretInputCatalogRoundTripTest`.
+`TurnChannelTest`, for §15 `SecretPromptApiTest`, `HttpToolSecretHeaderTest`,
+`SecretPromptsTest` and `SecretInputCatalogRoundTripTest`, and for §17 the
+`Headless*Test` classes named there.
 
 Base URL: the platform's public URL (`yaya.agentic.public-base-url`). All paths
 below are relative to it.
@@ -217,6 +218,8 @@ are held on the server; the app only sends the decision:
 `GET /v1/sessions/latest?tenant=<tenant>&profileId=<profileId>&history=true`
 
 `profileId` is optional (any profile). `history=false` skips the turns.
+The conversation of a headless run (§17) is never returned here, also while
+the run is still going: it belongs to no screen.
 
 ```json
 {
@@ -469,6 +472,8 @@ what happened before offering a retry.
   when the tenant has none (or an invalid one).
 - On WhatsApp, SMS and the chat app the same refusal is spoken as one fixed
   sentence instead of an `error` event.
+- A headless run (§17) is one message, taken when the run is accepted and
+  given back when the model was never reached.
 
 ## 12. Stopping a turn
 
@@ -566,7 +571,7 @@ not forward the token).
 
 ### `{session.channel}`
 
-The channel of the **current turn**, always one of four values:
+The channel of the **current turn**, always one of five values:
 
 | Value | The turn came from |
 |---|---|
@@ -574,14 +579,16 @@ The channel of the **current turn**, always one of four values:
 | `whatsapp` | A WhatsApp message or button tap. |
 | `sms` | An SMS. |
 | `chat` | The public chat app (`/v1/chat/e/{handle}/…`), including replies to a message the system sent the user there. |
+| `automation` | A headless run (§17): nobody is present. No client can produce it — a session started with the label `automation` is stored as `web` and its turns are `app`. |
 
 It is decided by the endpoint that received the message, tap or reply — never
 by the request body, and not by the `channel` label of §2. A one-tap action
 button reports the channel it was tapped on, which may differ from the one the
 conversation started on. Use it for audit (`"channel":"{session.channel}"` in a
 body, or a header such as `X-Agent-Channel: {session.channel}`) or to let the
-backend decide per surface. Anything that is not WhatsApp, SMS or the chat app
-is `app`.
+backend decide per surface. Anything that is not WhatsApp, SMS, the chat app or
+a headless run is `app`. An endpoint that words its answer by channel treats
+`automation` as a text channel.
 
 ### How values are placed
 
@@ -1021,3 +1028,226 @@ a plan replaced in between does not run. It idles out with the session (30 minut
 to the model in the per-turn part of the prompt while it waits, never in the
 cached part.
 
+## 17. Headless runs
+
+A tenant's backend has a profile's agent answer **one stored question with
+nobody present** — «every Monday, tell me which stations sold less and why» —
+and collects the answer as text. The run acts as one person, with a
+short-lived read-only token the backend mints for that run; it can only read,
+it never waits for anyone, and it costs one message. Covered by
+`HeadlessRunApiTest`, `HeadlessRunAuthenticatorTest`, `HeadlessToolFilterTest`,
+`HeadlessCatalogFlagTest`, `HeadlessNeverPausesTest`, `HeadlessRunMeteringTest`,
+`HeadlessRunLifecycleTest`, `HeadlessSessionHiddenTest`,
+`HeadlessChannelVariableTest`, `HeadlessRunsMigrationTest` and `HeadlessRunTokenLifeTest`.
+
+It is two calls: submit (the answer is `202`, at once) and poll. Nothing is
+pushed back.
+
+### Who may call
+
+Both endpoints take the same three headers, and nothing else admits a request:
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <service JWT>` — HS256, signed with a key the tenant trusts (`tenant_jwt_secrets`, the business's sender credential), with `iss` = that trusted issuer, `exp`, `aud` containing `yaya-agentic`, and `scope` containing `headless:run`. The scheme of `POST /v1/structured-completions`. |
+| `X-Nonce` | A value never sent before by this tenant (a UUID). |
+| `X-Timestamp` | Now, in epoch milliseconds; at most 5 minutes off the platform's clock. |
+
+The tenant is the one whose key verifies the token. It is never read from the
+path or the body, and there is no anonymous fallback: an API key, a console
+cookie, a platform service token or a user's own token is `401`.
+
+### Submit
+
+`POST /v1/headless/runs`, plus `X-Idem-Key` (required, at most 120
+characters) and `Content-Type: application/json`.
+
+```json
+{ "profileId": "owner_ops_v1",
+  "principalToken": "<the run token>",
+  "principalNotAfter": "2026-11-16T12:10:00Z",
+  "question": "¿Qué estaciones vendieron menos esta semana que la anterior y por qué?",
+  "locale": "es",
+  "timeZone": "America/Santo_Domingo",
+  "context": { "automationId": "…", "automationName": "…", "executionId": "…",
+               "scheduledFor": "2026-11-16T12:00:00Z", "test": false },
+  "limits": { "maxAnswerChars": 1800, "deadlineSeconds": 240 } }
+```
+
+| Field | Rule |
+|---|---|
+| `profileId` | Required. The latest version installed for the tenant runs, and is the one recorded. |
+| `principalToken` | Required. A token of the person the run answers for, **as the tenant's trusted issuer signs every staff token** (same issuer, key and pinned claims, §10) and carrying `via: "automation"` and `viaReadOnly: true`. It is forwarded as `Authorization: Bearer …` on each tool call (`authForwarding: PRINCIPAL_TOKEN`) and never renewed, so it must outlive the run: `deadlineSeconds` plus the time the run may wait for a worker — see `principalNotAfter`. |
+| `principalNotAfter` | Optional. When `principalToken` stops being accepted, as an ISO-8601 UTC instant; anything else is `422`. The platform also reads the token's own `exp` and uses the earlier of the two (with neither, nothing is checked). A run is only **started** while `now + deadlineSeconds` is not past it: at submit a token that is already too short is `409 token_expiring`; a run whose wait for a worker used the margin up is closed `failed / token_expiring` when the worker takes it, before a conversation, a model call or a tool call exists, and its message is given back. Nothing is extended or renewed. |
+| `question` | Required, 1–2,000 characters after trimming. |
+| `locale` | Optional, at most 16 characters. Recorded; the instruction of «What the model is told» is in Spanish whatever it says. |
+| `timeZone` | Optional IANA id, default `UTC`. The date the model is told is today's in this zone. |
+| `context` | Optional object, at most 4,000 characters as JSON. Kept with the run for the operator; never shown to the model, never returned. |
+| `limits.maxAnswerChars` | Optional, 200–4,000, default 1,800. |
+| `limits.deadlineSeconds` | Optional, 30–300, default 240. |
+
+Answer `202`:
+
+```json
+{ "runId": "hr_01JCN8Z3V5T2K9Q4W7X6Y0ABCD", "status": "queued" }
+```
+
+`runId` is `hr_` and a 26-character ULID. Sending the same `X-Idem-Key` again
+within 24 hours answers **that same body** — whatever the request now holds
+and whatever state the run has reached — and starts nothing; nothing is
+checked or counted again. After 24 hours the key names a new run.
+
+### Poll
+
+`GET /v1/headless/runs/{runId}` — the three headers (a fresh nonce each time).
+
+```json
+{ "runId": "hr_01JCN8Z3V5T2K9Q4W7X6Y0ABCD",
+  "status": "completed",
+  "answer": "Esta semana bajaron la 12 (−18 %) y la 07 (−9 %)…",
+  "usage": { "inputTokens": 18240, "outputTokens": 412, "cacheReadTokens": 15900,
+             "rounds": 4, "toolCalls": 5 },
+  "tools": ["assistant_me", "report_sales_summary_station", "insight_station"],
+  "startedAt": "2026-11-16T12:00:02.118Z",
+  "finishedAt": "2026-11-16T12:00:31.502Z" }
+```
+
+| Field | When | Meaning |
+|---|---|---|
+| `status` | always | `queued` → `running` → `completed` or `failed`. The last two are final. |
+| `answer` | `completed`, for 24 hours | Plain text, trimmed, at most `maxAnswerChars` characters; a longer one is cut and ends in «…». Absent once erased. |
+| `failure` | `failed` | `{ "code": "…", "message": "…" }`. The message is for a log, not for a person. |
+| `usage` | always | Zeros until the run ends. `rounds` = model calls; `toolCalls` = calls the model made that got a result, refused ones included; tokens as in §11. |
+| `tools` | always | The tools whose call succeeded, each once, in the order first used. `[]` until the run ends. |
+| `startedAt` | once running | When a worker took it. |
+| `finishedAt` | once final | — |
+
+`failure.code`:
+
+| Code | Meaning | A new submit can help |
+|---|---|---|
+| `needs_interaction` | Something came up that only a person could answer: a tool result asked for a confirmation or a code, a tool needed a verification step or an argument the model left out. Nothing was asked and nothing is left pending. | no |
+| `no_answer` | The model wrote nothing, or only questions. | maybe |
+| `tool_rounds_exhausted` | The profile's tool-round ceiling was reached before an answer. | maybe |
+| `deadline_exceeded` | Not finished `deadlineSeconds` after a worker took it. The run is stopped. | yes |
+| `principal_rejected` | The tenant's backend answered `401` to a tool call: the run token expired or was refused. The run stops at that call. | with a new token |
+| `token_expiring` | The run waited for a worker until its token could no longer cover `deadlineSeconds` (`principalNotAfter`). It was never started: no model call, no tool call, `usage` all zeros, no message counted. | yes, with a new token and a new key |
+| `quota_exceeded` | The allowance ran out. In practice this is answered at submit (`409`). | next month |
+| `llm_error` | The model call failed. | yes |
+| `interrupted` | The platform restarted before the run finished, or the run's outcome was never written and housekeeping closed it (still `running` 10 minutes after it started, or still `queued` 60 minutes after it was created — past any deadline a run can have). The token went with the process, so the run cannot be picked up: submit again, with a new key. | yes |
+
+### Errors
+
+Always JSON, `Cache-Control: no-store`: `{ "code": "…", "message": "…" }` (not
+the `error` / `message` pair of §8 — this is a service API).
+
+| Status | `code` | When |
+|---|---|---|
+| 401 | `unauthorized` | No service token, or one that does not verify, has no `exp`, or is not for audience `yaya-agentic`. |
+| 403 | `forbidden` | A valid service token without scope `headless:run`. |
+| 409 | `replay` | `X-Nonce` missing or already used, `X-Timestamp` missing, not a number, or more than 5 minutes off. |
+| 422 | `invalid_request` | The body is not a JSON object, a field breaks a rule of the table above, or `X-Idem-Key` is missing or too long. |
+| 404 | `profile_not_found` | The tenant has no such profile. |
+| 403 | `principal_rejected` | `principalToken` does not pass the tenant's ordinary verification (issuer, signature, expiry, pinned claims), or lacks `via = "automation"` or `viaReadOnly = true`. An ordinary staff token is refused: a run never holds a credential that could write. |
+| 403 | `profile_not_permitted` | The profile's `metadata.principalKinds` does not admit the principal (§10). |
+| 422 | `no_headless_tools` | The profile has no tool a headless run may call (none flagged `policy.headless`). Nothing to answer from, so the run is not accepted. |
+| 409 | `token_expiring` | The token ends (`principalNotAfter`, or its `exp`) less than `deadlineSeconds` from now. Submit again with a fresh token. |
+| 503 | `llm_unavailable` | The deployment has no model configured. |
+| 429 | `rate_limited` | More than 20 submits of the tenant passed the checks above in the current clock hour. `Retry-After` in seconds. |
+| 429 | `busy` | The tenant already has 2 runs queued or running, or the platform's queue (20) is full. `Retry-After: 30`. |
+| 409 | `quota_exceeded` | The month's allowance is used up: `{ "code", "message", "month", "monthlyMessages", "messages" }` (§8). Nothing is queued. |
+| 404 | `run_not_found` | `GET`: no such run, or it is another tenant's, or it is older than 30 days. |
+
+They are checked in that order. A repeated `X-Idem-Key` is answered after the
+`422` checks and before every later one. A refused submit takes no message and
+stores nothing.
+
+### What a run may do
+
+- **Tools.** The model is offered the profile's tools that carry
+  `policy.headless: true`, and no other. A call to any other tool — one of the
+  profile that is not flagged, one of another profile, one that does not
+  exist — never leaves the platform: its result is
+  `{ "ok": false, "reason": "tool_not_available" }` and the run goes on.
+- **The flag.** `policy.headless` is for reads meant for unattended use. The
+  catalogue API (`POST /v1/admin/tools`) refuses it with
+  `400 { "error": "headless_not_allowed", … }` on a tool whose handler is not
+  an HTTP `GET`, or whose policy is `confirmable`, `secretInput`,
+  `clientInvocable`, `plannable` or `preconfirmableByAction`. A stored row
+  that carries it against the rule is loaded without it. The engine checks
+  the policy once more before offering or dispatching. Being a `GET` is not
+  enough: a read that is not meant to run unattended is simply not flagged.
+- **Nothing waits.** No confirmation card, plan, code prompt, verification
+  step, picker or question is ever framed: where a conversation would pause,
+  the run ends `failed / needs_interaction`, and no `pending_confirm`,
+  `pending_plan`, `pending_secret`, `pending_elicit` or
+  `pending_entity_conflict` is written. A `_uiHint` in a tool result is
+  dropped.
+- **No start flow.** The profile's start flow, greeting and menu are not run:
+  the first thing that happens is the question.
+- **No memory of other conversations.** A run begins empty and its working
+  memory is cleared when it ends.
+- **The token.** Only `principalToken` is forwarded. It is not re-minted on a
+  `409 token_refresh_required`, and a `401` ends the run.
+- **`{session.channel}`** is `automation` (§14).
+- **Limits.** The profile's tool-round ceiling; `deadlineSeconds` for the whole
+  run; `maxAnswerChars` for the answer.
+- **The model** is the profile's.
+
+The tenant's backend must hold the other half of the read-only rule: it
+refuses every request that is not a read when the token says `viaReadOnly`.
+
+### What the model is told
+
+The tools and the cached part of the prompt are the profile's, unchanged. One
+paragraph is added to the per-turn part (never the cached one):
+
+> Esta es una ejecución automática: nadie está presente. Responde la pregunta
+> con los datos de las herramientas, en español, en texto simple (sin tablas
+> ni markdown), en {maxAnswerChars} caracteres como máximo. No preguntes nada,
+> no propongas cambios y no ofrezcas hacer nada. Si un dato no está
+> disponible, dilo en una línea. Hoy es {yyyy-MM-dd} ({timeZone}). Empieza por
+> assistant_me.
+
+The list of tools differs from a conversation's, so a run has a prompt-cache
+prefix of its own, shared by the runs of the same profile.
+
+The answer is the text the model wrote after its last tool call. What it wrote
+before a call is working text and is not part of it.
+
+### What it costs
+
+One message of the tenant's month (§11) per run, whatever its rounds — taken
+when the run is accepted, so an allowance that is used up answers `409` and
+nothing runs. The message is given back when the run never reached the model
+(refused for a full queue, closed before a worker took it, or its only model
+call failed with nothing produced). A run that stops later —
+`needs_interaction`, `deadline_exceeded`, `no_answer` — stays counted. Tokens
+are recorded as for a turn. The per-user limits of §8 are not consulted: a run
+has the tenant-wide ceilings of «Errors».
+
+A run that is `interrupted` by a restart keeps its message: the platform
+cannot tell whether the model had been called.
+
+### Where a run is kept, and where its token is not
+
+- `headless_runs` (V91): the run, its question, `context`, the subject of the
+  person, its outcome. The **answer is erased 24 hours** after the run was
+  created and the **row 30 days** after (every 15 minutes).
+- The conversation is recorded like any other (the question, each tool call
+  and result, the answer) under channel `automation`, closed when the run
+  ends, and readable in the operator console. It is **not** returned by
+  `GET /v1/sessions/latest`, and `history`, `messages`, `actions`, `end` and
+  `inspector` answer `404 session_not_found` for it — to its own principal
+  too. It is never reopened.
+- `principalToken` is held by the queued task and the one turn's request
+  context. It is in no table, no log line, no working memory and not in the
+  inspector — which is why a restart ends a run as `interrupted` instead of
+  resuming it.
+
+### Settings
+
+`yaya.agentic.headless.*`: `workers` (2), `queue` (20), `max-per-tenant` (2),
+`per-hour` (20), `answer-ttl` (`PT24H`), `row-ttl` (`P30D`). Live sessions are
+in the process's memory, so runs execute on the instance that accepted them
+(single instance).

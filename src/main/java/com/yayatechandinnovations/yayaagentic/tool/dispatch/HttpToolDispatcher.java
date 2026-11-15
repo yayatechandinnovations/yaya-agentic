@@ -220,7 +220,7 @@ public class HttpToolDispatcher {
                 // minted before the PLAYER_QUERY_OWN upgrade. Re-mint once and
                 // retry exactly once. A second 409 surfaces as a normal error —
                 // the single retry is the guard against refresh→409→refresh.
-                if (ownScoped && isTokenRefreshRequired(e) && tokenRefresher != null) {
+                if (ownScoped && isTokenRefreshRequired(e) && tokenRefresher != null && !unattended(ctx)) {
                     Optional<String> refreshed = tokenRefresher.refresh(ctx);
                     if (refreshed.isPresent()) {
                         headers.put(HttpHeaders.AUTHORIZATION, refreshed.get());
@@ -302,7 +302,7 @@ public class HttpToolDispatcher {
      *  upgrade — skip the extra round-trip). */
     private void maybeProactiveRefresh(ExecutionContext ctx, String responseBody,
                                        Map<String, Object> diag) {
-        if (tokenRefresher == null || responseBody == null || responseBody.isBlank()) return;
+        if (tokenRefresher == null || unattended(ctx) || responseBody == null || responseBody.isBlank()) return;
         if (!bodyFlagsTokenRefreshRequired(responseBody)) return;
         if (accountStateRegistered(ctx)) return;
         tokenRefresher.refresh(ctx).ifPresent(h -> diag.put("tokenRefreshed", true));
@@ -834,7 +834,7 @@ public class HttpToolDispatcher {
                 // A token re-minted earlier this turn (reactive 409 or the
                 // registration fast-path) wins over the inbound one, so the
                 // upgraded PLAYER_QUERY_OWN scope reaches every subsequent call.
-                String token = tokenRefresher == null
+                String token = tokenRefresher == null || unattended(ctx)
                         ? null : tokenRefresher.current(ctx).orElse(null);
                 if (token == null) {
                     token = ctx == null || ctx.attributes() == null
@@ -858,6 +858,15 @@ public class HttpToolDispatcher {
             }
             default -> { /* exhaustive: NONE handled above */ }
         }
+    }
+
+    /**
+     * A headless run (admin-panel-sessions.md §17) forwards the one short-lived
+     * token it was given and nothing else: that token is never re-minted.
+     */
+    private static boolean unattended(ExecutionContext ctx) {
+        Object channel = ctx == null || ctx.attributes() == null ? null : ctx.attributes().get(TurnChannel.ATTRIBUTE);
+        return channel != null && TurnChannel.AUTOMATION.equals(TurnChannel.of(channel.toString(), null));
     }
 
     private static String hmacB64Url(byte[] key, String message) {
