@@ -9,7 +9,7 @@ import 'package:yayaagenticweb/models/admin/channel_binding.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_embedded_signup.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_sender.dart';
 
-Map<String, dynamic> _senderJson(String status, String rawStatus) => {
+Map<String, dynamic> _senderJson(String status, String rawStatus, {String? failure}) => {
       'id': 'snd_test',
       'tenantId': 't1',
       'phoneE164': '+18095551234',
@@ -21,7 +21,11 @@ Map<String, dynamic> _senderJson(String status, String rawStatus) => {
         'vertical': 'RESTAURANT',
       },
       'status': status,
-      'onboarding': {'status': rawStatus, 'twilioSenderSid': 'XE1'},
+      'onboarding': {
+        'status': rawStatus,
+        'twilioSenderSid': 'XE1',
+        'failureMessage': ?failure,
+      },
       'defaultLocale': 'es-DO',
     };
 
@@ -30,12 +34,13 @@ class _FakeAdminApi extends AdminApi {
 
   String status;
   String rawStatus;
+  String? failure;
   String? verifiedCode;
   String? submittedMethod;
 
   @override
   Future<List<WhatsAppSenderResponse>> listWhatsAppSenders(String tenantId) async =>
-      [WhatsAppSenderResponse.fromJson(_senderJson(status, rawStatus))];
+      [WhatsAppSenderResponse.fromJson(_senderJson(status, rawStatus, failure: failure))];
 
   @override
   Future<bool> isWhatsAppSubmitEnabled(String tenantId) async => true;
@@ -148,5 +153,17 @@ void main() {
     expect(find.text('Cancel registration'), findsOneWidget);
     expect(find.text('Remove'), findsNothing);
     expect(find.textContaining('In final review'), findsOneWidget);
+  });
+
+  testWidgets('a rejected sender says why on the collapsed card', (tester) async {
+    final api = _FakeAdminApi('FAILED', 'REJECTED')..failure = 'website must be a valid URL';
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Rejected: website must be a valid URL'), findsOneWidget);
+
+    await _expand(tester);
+    expect(find.text('Why it was rejected'), findsOneWidget);
+    expect(find.text('Fix & resubmit'), findsOneWidget);
   });
 }

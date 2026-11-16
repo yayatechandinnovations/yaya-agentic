@@ -92,17 +92,24 @@ class WhatsAppSenderSubmitTest {
     }
 
     private WhatsAppSenderDtos.SenderResponse createDraft(String phone) {
-        var req = new WhatsAppSenderDtos.SenderRequest(
+        return createDraft(phone, "https://example.com");
+    }
+
+    private WhatsAppSenderDtos.SenderRequest draftRequest(String phone, String website) {
+        return new WhatsAppSenderDtos.SenderRequest(
                 phone,
                 "Submit Test Co",
                 new WhatsAppSenderDtos.BusinessProfileRequest(
                         "Submit Test Inc.", "Submit Test Co", "ops@example.com",
-                        "1 Apple Park Way", "https://example.com", "RETAIL", "Stuff."),
+                        "1 Apple Park Way", website, "RETAIL", "Stuff."),
                 null);
+    }
+
+    private WhatsAppSenderDtos.SenderResponse createDraft(String phone, String website) {
         return client.post()
                 .uri("/v1/admin/tenants/{t}/whatsapp-senders", TENANT)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(req)
+                .bodyValue(draftRequest(phone, website))
                 .exchange()
                 .expectStatus().isCreated()
                 .expectBody(WhatsAppSenderDtos.SenderResponse.class)
@@ -325,6 +332,30 @@ class WhatsAppSenderSubmitTest {
 
         wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
                 .withRequestBody(matchingJsonPath("$.configuration.verification_method", equalTo("voice"))));
+    }
+
+    @Test
+    void a_bare_website_domain_is_sent_to_twilio_with_https() {
+        var sender = createDraft("+15553000011", "test.corillo.do");
+        assertThat(sender.businessProfile().websiteUrl()).isEqualTo("https://test.corillo.do");
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(json(201, "{\"sid\":\"XE_site_011\",\"status\":\"CREATING\"}")));
+
+        submit(sender.id());
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.profile.websites[0].website",
+                        equalTo("https://test.corillo.do"))));
+    }
+
+    @Test
+    void a_website_that_is_not_a_web_address_is_rejected_before_twilio() {
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(draftRequest("+15553000012", "not a website"))
+                .exchange()
+                .expectStatus().isBadRequest();
     }
 
     private WhatsAppSenderDtos.SenderResponse submit(String senderId) {

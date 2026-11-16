@@ -1,9 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
 import 'package:yayaagenticweb/app/selected_tenant.dart';
+import 'package:yayaagenticweb/app/theme.dart';
 import 'package:yayaagenticweb/features/admin/whatsapp_senders/whatsapp_sender_wizard.dart';
 import 'package:yayaagenticweb/models/admin/channel_binding.dart';
 import 'package:yayaagenticweb/models/admin/profile.dart';
@@ -85,6 +87,7 @@ Widget _wizard(_FakeAdminApi api) => ProviderScope(
         currentTenantOrNull.overrideWithValue('t1'),
       ],
       child: MaterialApp(
+        theme: buildAppTheme(),
         home: Builder(
           builder: (context) => Scaffold(
             body: Center(
@@ -125,14 +128,19 @@ Future<void> _tapText(WidgetTester tester, String text) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _fillThroughReview(WidgetTester tester) async {
+Future<void> _fillBusinessProfile(WidgetTester tester, {String website = ''}) async {
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
 
   await _type(tester, 'Legal business name *', 'Test Inc.');
   await _type(tester, 'Business display name *', 'Test Co');
   await _type(tester, 'Contact email *', 'ops@test.example');
+  if (website.isNotEmpty) await _type(tester, 'Website URL', website);
   await _pick(tester, find.byType(DropdownButtonFormField<String>).first, 'Restaurant');
+}
+
+Future<void> _fillThroughReview(WidgetTester tester, {String website = ''}) async {
+  await _fillBusinessProfile(tester, website: website);
   await _tapText(tester, 'Next');
 
   await _type(tester, 'Phone number (E.164) *', '+18095551234');
@@ -147,6 +155,31 @@ Future<void> _fillThroughReview(WidgetTester tester) async {
           matching: find.byType(DropdownButtonFormField<String>)),
       'Support Bot (support@3)');
   await _tapText(tester, 'Next');
+}
+
+/// Text the operator cannot fully read: cut to fewer lines than it needs,
+/// or partly outside a clip — e.g. a floating label sliced by the Stepper.
+/// Text a clip hides completely (inactive steps) is not a problem.
+List<String> _unreadableText(WidgetTester tester) {
+  final problems = <String>[];
+  for (final p in tester.allRenderObjects.whereType<RenderParagraph>()) {
+    if (!p.attached || !p.hasSize) continue;
+    final text = p.text.toPlainText().trim();
+    if (text.isEmpty) continue;
+    final rect = MatrixUtils.transformRect(p.getTransformTo(null), Offset.zero & p.size);
+    var clipped = false;
+    for (RenderObject? node = p.parent; node != null; node = node.parent) {
+      if (node is RenderClipRect && node.clipBehavior != Clip.none && node.hasSize) {
+        final clip = MatrixUtils.transformRect(node.getTransformTo(null), Offset.zero & node.size);
+        final visible = rect.intersect(clip);
+        if (!visible.isEmpty && visible.height < rect.height - 0.5) clipped = true;
+        if (visible.isEmpty) break;
+      }
+    }
+    if (clipped) problems.add('clipped: "$text"');
+    if (p.didExceedMaxLines) problems.add('cut off: "$text"');
+  }
+  return problems;
 }
 
 void main() {
@@ -176,6 +209,58 @@ void main() {
     expect(api.submittedSenderId, 'snd_new');
     expect(api.submittedMethod, 'voice');
     expect(find.textContaining('Submitted for WhatsApp review'), findsOneWidget);
+  });
+
+  testWidgets('a bare website domain is saved with https', (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+    await _fillThroughReview(tester, website: 'test.corillo.do');
+
+    expect(find.text('https://test.corillo.do').hitTestable(), findsOneWidget); // review row
+    await _tapText(tester, 'Save as draft');
+
+    expect(api.created?.businessProfile.websiteUrl, 'https://test.corillo.do');
+  });
+
+  testWidgets('a website that is not a web address stops the business step', (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+    await _fillBusinessProfile(tester, website: 'not a website');
+    await _tapText(tester, 'Next');
+
+    expect(find.textContaining('Website must be a web address'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Phone number (E.164) *').hitTestable(), findsNothing);
+  });
+
+  testWidgets('no step has clipped or cut-off text at laptop width', (tester) async {
+    // Laptop width; tall so every control is on screen and tappable.
+    tester.view.physicalSize = const Size(1280, 2400);
+    addTearDown(tester.view.resetPhysicalSize);
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+
+    // Typing floats each step's first label up onto the field border.
+    await _fillBusinessProfile(tester, website: 'example.com');
+    await tester.ensureVisible(find.widgetWithText(TextField, 'Legal business name *'));
+    await tester.pumpAndSettle();
+    expect(_unreadableText(tester), isEmpty, reason: 'business profile step');
+    await _tapText(tester, 'Next');
+
+    await _type(tester, 'Phone number (E.164) *', '+18095551234');
+    await tester.pumpAndSettle();
+    expect(_unreadableText(tester), isEmpty, reason: 'phone step');
+    await _tapText(tester, 'Next');
+
+    await _type(tester, 'Public display name *', 'Test Co');
+    await tester.ensureVisible(find.widgetWithText(TextField, 'Public display name *'));
+    await tester.pumpAndSettle();
+    expect(_unreadableText(tester), isEmpty, reason: 'display name step');
+    await _tapText(tester, 'Next');
+
+    expect(_unreadableText(tester), isEmpty, reason: 'review step');
   });
 
   testWidgets('a failed submit keeps the saved sender and says what is left to do',

@@ -1,5 +1,8 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import java.net.URI;
+import java.util.Locale;
+
 /**
  * Meta-required business profile attached to every WhatsApp sender. Twilio's
  * Senders API and Meta's Business Manager both consume these fields — they're
@@ -7,7 +10,9 @@ package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
  * {@code PENDING_REVIEW} → {@code ACTIVE} transition.
  *
  * <p>The tenant-facing wizard (§15.1 step 1) collects all of this in step 1.
- * The platform never modifies these on the operator's behalf.
+ * The platform never modifies these on the operator's behalf, except that a
+ * bare website domain gets an {@code https://} scheme — Twilio rejects the
+ * whole registration (63100 "website must be a valid URL") without one.
  *
  * @param vertical Meta-enumerated vertical code (e.g. {@code RETAIL},
  *                 {@code FINANCIAL_SERVICES}). Validation against the Meta
@@ -35,6 +40,32 @@ public record BusinessProfile(
         }
         if (vertical == null || vertical.isBlank()) {
             throw new IllegalArgumentException("vertical must not be blank");
+        }
+        // Normalized here rather than at the API edge so rows saved before
+        // the fix are corrected when they are loaded and resubmitted.
+        websiteUrl = normalizeWebsiteUrl(websiteUrl);
+    }
+
+    public static String normalizeWebsiteUrl(String url) {
+        if (url == null || url.isBlank()) return url;
+        String trimmed = url.trim();
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        return lower.startsWith("https://") || lower.startsWith("http://")
+                ? trimmed
+                : "https://" + trimmed;
+    }
+
+    /** True for a blank website (it is optional) or an http(s) URL with a dotted host. */
+    public static boolean isValidWebsiteUrl(String url) {
+        if (url == null || url.isBlank()) return true;
+        try {
+            URI uri = new URI(normalizeWebsiteUrl(url));
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            return ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                    && host != null && host.contains(".") && !host.endsWith(".");
+        } catch (Exception e) {
+            return false;
         }
     }
 }

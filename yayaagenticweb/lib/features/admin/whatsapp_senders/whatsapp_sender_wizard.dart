@@ -97,6 +97,8 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   // ---- per-step validation ----------------------------------------------
 
   String? _validateBusinessProfile() {
+    final website = normalizeWebsiteUrl(_websiteUrlCtrl.text);
+    if (website != _websiteUrlCtrl.text) _websiteUrlCtrl.text = website;
     if (_legalNameCtrl.text.trim().isEmpty) {
       return 'Legal business name is required.';
     }
@@ -110,7 +112,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     if (_vertical == null) {
       return 'Select the business vertical that best fits your business.';
     }
-    return null;
+    return websiteUrlError(website);
   }
 
   String? _validatePhone() {
@@ -266,6 +268,12 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
 
   // ---- step bodies ------------------------------------------------------
 
+  // The Stepper clips each step's content at its top edge, and an outlined
+  // field paints its floating label above its own box — without this gap
+  // the first field's label is sliced in half.
+  Widget _stepBody(Widget child) =>
+      Padding(padding: const EdgeInsets.only(top: 12), child: child);
+
   Widget _businessProfileStep() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -312,6 +320,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           keyboardType: TextInputType.url,
           decoration: const InputDecoration(
             labelText: 'Website URL',
+            hintText: 'https://example.com',
             helperText: 'Public website where customers can verify your business.',
           ),
         ),
@@ -651,25 +660,25 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
                   title: const Text('Business profile'),
                   isActive: _stepIndex >= 0,
                   state: _stepIndex > 0 ? StepState.complete : StepState.indexed,
-                  content: _businessProfileStep(),
+                  content: _stepBody(_businessProfileStep()),
                 ),
                 Step(
                   title: const Text('Phone number'),
                   isActive: _stepIndex >= 1,
                   state: _stepIndex > 1 ? StepState.complete : StepState.indexed,
-                  content: _phoneStep(),
+                  content: _stepBody(_phoneStep()),
                 ),
                 Step(
                   title: const Text('Display name'),
                   isActive: _stepIndex >= 2,
                   state: _stepIndex > 2 ? StepState.complete : StepState.indexed,
-                  content: _displayNameStep(),
+                  content: _stepBody(_displayNameStep()),
                 ),
                 Step(
                   title: const Text('Review & save'),
                   isActive: _stepIndex >= 3,
                   state: StepState.indexed,
-                  content: _reviewStep(),
+                  content: _stepBody(_reviewStep()),
                 ),
               ],
             ),
@@ -696,12 +705,14 @@ class _ReviewRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 200,
+          Expanded(
+            flex: 2,
             child: Text(label,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(color: outline)),
           ),
+          const SizedBox(width: 12),
           Expanded(
+            flex: 3,
             child: Text(
               value.isEmpty ? (placeholder ?? '—') : value,
               style: const TextStyle(fontSize: 14),

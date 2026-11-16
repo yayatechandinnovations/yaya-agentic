@@ -105,6 +105,10 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
     if (_vertical == null) {
       return 'Select the business vertical that best fits your business.';
     }
+    final website = normalizeWebsiteUrl(_websiteUrlCtrl.text);
+    if (website != _websiteUrlCtrl.text) _websiteUrlCtrl.text = website;
+    final websiteError = websiteUrlError(website);
+    if (websiteError != null) return websiteError;
     if (!_termsAccepted) {
       return 'You must confirm you are authorized to connect this number.';
     }
@@ -259,7 +263,12 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
                   title: const Text('Business & phone details'),
                   isActive: _stepIndex >= 0,
                   state: _stepIndex > 0 ? StepState.complete : StepState.indexed,
-                  content: _detailsStep(),
+                  content: Padding(
+                    // Room for the first field's floating label, which the
+                    // Stepper would otherwise clip.
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _detailsStep(),
+                  ),
                 ),
                 Step(
                   title: const Text('Connect with Meta'),
@@ -342,7 +351,10 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
         TextField(
           controller: _websiteUrlCtrl,
           keyboardType: TextInputType.url,
-          decoration: const InputDecoration(labelText: 'Website URL'),
+          decoration: const InputDecoration(
+            labelText: 'Website URL',
+            hintText: 'https://example.com',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(

@@ -10,6 +10,9 @@ ThemeData buildAppTheme() {
     inputDecorationTheme: const InputDecorationTheme(
       border: OutlineInputBorder(),
       isDense: true,
+      // Unset, helper and error text are cut to one line with an ellipsis.
+      helperMaxLines: 4,
+      errorMaxLines: 4,
     ),
   );
 }

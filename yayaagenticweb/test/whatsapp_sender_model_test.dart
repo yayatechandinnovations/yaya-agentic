@@ -52,4 +52,16 @@ void main() {
     }
     expect(registrationProgressLabel('SOMETHING_NEW'), isNull);
   });
+
+  test('a bare website domain gets https and junk is refused', () {
+    expect(normalizeWebsiteUrl(' test.corillo.do '), 'https://test.corillo.do');
+    expect(normalizeWebsiteUrl('http://example.com'), 'http://example.com');
+    expect(normalizeWebsiteUrl(''), '');
+    expect(websiteUrlError(''), isNull);
+    expect(websiteUrlError('test.corillo.do'), isNull);
+    expect(websiteUrlError('https://example.com/shop?x=1'), isNull);
+    expect(websiteUrlError('not a website'), isNotNull);
+    expect(websiteUrlError('localhost'), isNotNull);
+    expect(websiteUrlError('ftp://example.com'), isNotNull);
+  });
 }

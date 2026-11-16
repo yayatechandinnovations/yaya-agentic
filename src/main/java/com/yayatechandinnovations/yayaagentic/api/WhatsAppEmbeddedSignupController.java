@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppEmbeddedSignupDtos;
 import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppSenderDtos;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.BusinessProfile;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.EmbeddedSignupProperties;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.WhatsAppEmbeddedSignupService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.WhatsAppMessagingAccountService;
@@ -159,6 +160,10 @@ public class WhatsAppEmbeddedSignupController {
         }
         if (body.businessProfile() == null) {
             throw AdminApiException.badRequest("missing_business_profile", "businessProfile required");
+        }
+        if (!BusinessProfile.isValidWebsiteUrl(body.businessProfile().websiteUrl())) {
+            throw AdminApiException.badRequest("bad_business_profile",
+                    "websiteUrl must be a web address such as https://example.com");
         }
     }
 

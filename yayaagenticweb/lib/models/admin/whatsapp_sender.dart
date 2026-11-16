@@ -232,6 +232,29 @@ String? normalizeBusinessVertical(String? code) {
 String businessVerticalLabel(String code) =>
     kBusinessVerticalLabels[normalizeBusinessVertical(code)] ?? code;
 
+/// WhatsApp rejects the whole registration when the website has no scheme,
+/// so a bare domain like `example.com` becomes `https://example.com`.
+String normalizeWebsiteUrl(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return trimmed;
+  final lower = trimmed.toLowerCase();
+  return lower.startsWith('https://') || lower.startsWith('http://')
+      ? trimmed
+      : 'https://$trimmed';
+}
+
+/// Null when [raw] is blank (the website is optional) or a usable web address.
+String? websiteUrlError(String raw) {
+  if (raw.trim().isEmpty) return null;
+  final uri = Uri.tryParse(normalizeWebsiteUrl(raw));
+  final ok = uri != null &&
+      (uri.scheme == 'https' || uri.scheme == 'http') &&
+      uri.host.contains('.') &&
+      !uri.host.endsWith('.') &&
+      !uri.host.contains(' ');
+  return ok ? null : 'Website must be a web address, e.g. https://example.com.';
+}
+
 /// Plain-language progress for the raw registration status WhatsApp reports
 /// while a sender is in flight. Never names the provider behind it.
 String? registrationProgressLabel(String? rawStatus) {
@@ -299,7 +322,7 @@ class SenderStatusInfo {
         return const SenderStatusInfo(
             label: 'Review failed',
             description:
-                'Submission was rejected. Edit the sender and resubmit — the rejection details are shown below.');
+                'WhatsApp did not accept the registration. Use "Fix & resubmit" to correct the details and send it again.');
       case 'REVOKED':
         return const SenderStatusInfo(
             label: 'Revoked',

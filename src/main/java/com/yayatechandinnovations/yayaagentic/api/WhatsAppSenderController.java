@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppSenderDtos;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.BusinessProfile;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
@@ -202,6 +203,10 @@ public class WhatsAppSenderController {
         if (isBlank(bp.displayName()))  throw AdminApiException.badRequest("bad_business_profile", "businessProfile.displayName required");
         if (isBlank(bp.contactEmail())) throw AdminApiException.badRequest("bad_business_profile", "contactEmail required");
         if (isBlank(bp.vertical()))     throw AdminApiException.badRequest("bad_business_profile", "vertical required");
+        if (!BusinessProfile.isValidWebsiteUrl(bp.websiteUrl())) {
+            throw AdminApiException.badRequest("bad_business_profile",
+                    "websiteUrl must be a web address such as https://example.com");
+        }
     }
 
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }

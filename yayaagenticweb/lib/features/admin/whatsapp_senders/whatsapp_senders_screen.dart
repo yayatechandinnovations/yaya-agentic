@@ -357,6 +357,7 @@ class _SenderTile extends StatelessWidget {
     final info = SenderStatusInfo.of(sender.status);
     final inFlight = sender.status == 'SUBMITTING' || sender.status == 'PENDING_REVIEW';
     final progress = inFlight ? registrationProgressLabel(sender.onboarding.status) : null;
+    final rejection = sender.status == 'FAILED' ? sender.onboarding.failureMessage : null;
     Widget spinnerOr(IconData icon) => busy
         ? const SizedBox.square(
             dimension: 16,
@@ -382,12 +383,25 @@ class _SenderTile extends StatelessWidget {
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.tertiary)),
+          if (rejection != null)
+            Text('Rejected: $rejection — open to fix and resubmit',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.error)),
         ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          DetailRow(label: 'Status', value: '${info.label} — ${info.description}'),
+          // DetailRow turns values over 80 characters into a monospace
+          // block; status copy is prose and should wrap like prose.
+          _ProseRow(label: 'Status', value: '${info.label}. ${info.description}'),
+          if (rejection != null) ...[
+            const SizedBox(height: 4),
+            _RejectionNote(message: rejection),
+            const SizedBox(height: 8),
+          ],
           if (progress != null) DetailRow(label: 'Progress', value: progress),
           if (sender.needsVerificationCode) ...[
             const SizedBox(height: 8),
@@ -409,7 +423,7 @@ class _SenderTile extends StatelessWidget {
           if (sender.onboarding.lastPolledAt != null)
             DetailRow(
                 label: 'Last checked', value: sender.onboarding.lastPolledAt!),
-          if (sender.onboarding.failureMessage != null)
+          if (sender.onboarding.failureMessage != null && rejection == null)
             DetailRow(
                 label: 'Review notes',
                 value: sender.onboarding.failureMessage!),
@@ -466,6 +480,78 @@ class _SenderTile extends StatelessWidget {
                 foregroundColor: Theme.of(context).colorScheme.error),
           ),
       ],
+    );
+  }
+}
+
+class _ProseRow extends StatelessWidget {
+  const _ProseRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.outline)),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+}
+
+/// The reason WhatsApp gave for rejecting the registration, shown where the
+/// operator decides what to fix.
+class _RejectionNote extends StatelessWidget {
+  const _RejectionNote({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, color: scheme.onErrorContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Why it was rejected',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: scheme.onErrorContainer)),
+                const SizedBox(height: 2),
+                SelectableText(message,
+                    style: TextStyle(fontSize: 13, color: scheme.onErrorContainer)),
+                const SizedBox(height: 4),
+                Text('Use "Fix & resubmit" to correct it and send it again.',
+                    style: TextStyle(fontSize: 12, color: scheme.onErrorContainer)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

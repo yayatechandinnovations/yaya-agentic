@@ -97,7 +97,8 @@ business days.
 
 | What you see | Do this |
 |---|---|
-| **Review failed** + review notes | **Fix & resubmit** — edit what the notes point at, then submit again. |
+| **Review failed** + "Why it was rejected" | **Fix & resubmit** — edit what the reason points at, then submit again. |
+| "website must be a valid URL" | Senders saved before the website fix kept a bare domain. Open **Fix & resubmit** and submit again; the website now gets `https://` automatically. |
 | Code expired / never arrived | **Cancel registration**, then register the number again (choose **Voice call** if it is a landline). |
 | Stuck on **Submitting** | Nothing reached WhatsApp yet; the platform retries every 5 minutes, or click **Refresh status** to retry now. |
 | "Phone number already registered" | The number is live in another workspace. Removed numbers are free again. |
