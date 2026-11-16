@@ -12,6 +12,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.Optional;
@@ -104,13 +106,40 @@ public class WhatsAppSenderController {
     }
 
     @PostMapping("/{senderId}/submit")
-    public WhatsAppSenderDtos.SenderResponse submit(@PathVariable("tenantId") String tenantId,
-                                                    @PathVariable("senderId") String senderId,
-                                                    ServerWebExchange exchange) {
-        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
-        tenantGuard.requireWritable(tenantId);
-        WhatsAppSender s = senders.submit(new Ids.TenantId(tenantId), new SenderId(senderId));
-        return WhatsAppSenderDtos.SenderResponse.of(s);
+    public Mono<WhatsAppSenderDtos.SenderResponse> submit(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestBody(required = false) WhatsAppSenderDtos.SubmitRequest req,
+            ServerWebExchange exchange) {
+        // A handler with a body resumes on the event loop — the blocking
+        // Twilio call must hop to boundedElastic.
+        return Mono.fromCallable(() -> {
+                    workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+                    tenantGuard.requireWritable(tenantId);
+                    Optional<String> method = Optional.ofNullable(req)
+                            .map(WhatsAppSenderDtos.SubmitRequest::verificationMethod)
+                            .filter(m -> !m.isBlank());
+                    WhatsAppSender s = senders.submit(
+                            new Ids.TenantId(tenantId), new SenderId(senderId), method);
+                    return WhatsAppSenderDtos.SenderResponse.of(s);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @PostMapping("/{senderId}/verify")
+    public Mono<WhatsAppSenderDtos.SenderResponse> verify(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestBody WhatsAppSenderDtos.VerifyRequest req,
+            ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                    workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+                    tenantGuard.requireWritable(tenantId);
+                    WhatsAppSender s = senders.verify(new Ids.TenantId(tenantId),
+                            new SenderId(senderId), req == null ? null : req.code());
+                    return WhatsAppSenderDtos.SenderResponse.of(s);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/{senderId}/sync")

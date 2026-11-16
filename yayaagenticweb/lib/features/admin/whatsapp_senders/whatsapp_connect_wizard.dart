@@ -329,7 +329,7 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'Business vertical *'),
           items: kMetaBusinessVerticals
-              .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+              .map((v) => DropdownMenuItem(value: v, child: Text(businessVerticalLabel(v))))
               .toList(),
           onChanged: (v) => setState(() => _vertical = v),
         ),

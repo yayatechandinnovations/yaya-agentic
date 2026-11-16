@@ -33,6 +33,15 @@ public interface MessagingChannelProvider {
 
     void revokeSender(SenderRef ref, ProviderCreds creds);
 
+    /**
+     * Complete number-ownership verification (§6) with the one-time code the
+     * BSP sent to the phone. Only numbers the BSP doesn't own need this; a
+     * BSP that verifies every number itself never advertises it.
+     */
+    default SenderSyncResult verifySender(SenderRef ref, String verificationCode, ProviderCreds creds) {
+        throw new UnsupportedOperationException("verifySender not supported by " + id());
+    }
+
     /* ------------------------------ Inbound trust (§9) -------------------- */
 
     InboundValidation validateInbound(RawInboundRequest req, SenderTrustMaterial trust);

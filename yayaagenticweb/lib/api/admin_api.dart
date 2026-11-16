@@ -445,10 +445,23 @@ class AdminApi {
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 
+  /// [verificationMethod] is `sms` (default) or `voice` — how WhatsApp
+  /// delivers the ownership code to a number that needs one.
   Future<WhatsAppSenderResponse> submitWhatsAppSender(
-      String tenantId, String senderId) async {
+      String tenantId, String senderId, {String? verificationMethod}) async {
     final res = await _dio.post(
-        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/submit');
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/submit',
+        data: {
+          if (verificationMethod != null) 'verificationMethod': verificationMethod,
+        });
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppSenderResponse> verifyWhatsAppSender(
+      String tenantId, String senderId, String code) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/verify',
+        data: {'code': code});
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 

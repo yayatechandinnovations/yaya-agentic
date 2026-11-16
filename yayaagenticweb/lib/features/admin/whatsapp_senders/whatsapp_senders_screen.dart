@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
@@ -151,17 +152,31 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
                   canSubmit: canSubmit,
                   onEdit: () => _editSender(list[i]),
                   onSubmit: () async {
-                    final confirmed = await _confirm(
-                        'Submit for WhatsApp review?',
-                        'Once submitted, the sender cannot be edited until WhatsApp '
-                            'returns a verdict. This typically takes 1–3 business days.',
-                        'Submit');
-                    if (!confirmed) return;
+                    final method = await showDialog<String>(
+                      context: context,
+                      builder: (_) => const _SubmitDialog(),
+                    );
+                    if (method == null) return;
                     await _runTransition(
                       tenant: tenant,
                       sender: list[i],
-                      call: (api) => api.submitWhatsAppSender(tenant, list[i].id),
-                      successCopy: 'Sender submitted',
+                      call: (api) => api.submitWhatsAppSender(tenant, list[i].id,
+                          verificationMethod: method),
+                      successCopy:
+                          'Submitted. If WhatsApp sends a code to the phone, enter it here.',
+                    );
+                  },
+                  onVerify: () async {
+                    final code = await showDialog<String>(
+                      context: context,
+                      builder: (_) => _VerificationCodeDialog(phoneE164: list[i].phoneE164),
+                    );
+                    if (code == null) return;
+                    await _runTransition(
+                      tenant: tenant,
+                      sender: list[i],
+                      call: (api) => api.verifyWhatsAppSender(tenant, list[i].id, code),
+                      successCopy: 'Code accepted — WhatsApp is finishing the registration.',
                     );
                   },
                   onSuspend: () async {
@@ -187,11 +202,17 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
                     );
                   },
                   onRevoke: () async {
+                    final inFlight = list[i].status == 'SUBMITTING' ||
+                        list[i].status == 'PENDING_REVIEW';
                     final confirmed = await _confirm(
-                        'Remove this sender?',
-                        'The sender will be retired. Historical conversation records '
-                            'are preserved, but the phone number can no longer send or receive.',
-                        'Remove');
+                        inFlight ? 'Cancel this registration?' : 'Remove this sender?',
+                        inFlight
+                            ? 'The registration is withdrawn. You can register the same number '
+                                'again afterwards — for example after fixing the business details.'
+                            : 'The sender will be retired. Historical conversation records '
+                                'are preserved, and the number stops sending and receiving. '
+                                'It can be registered again later.',
+                        inFlight ? 'Cancel registration' : 'Remove');
                     if (!confirmed) return;
                     await _runTransition(
                       tenant: tenant,
@@ -255,7 +276,8 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
               child: const Text(
                 'Register a phone number so your customers can message your business on '
                 'WhatsApp. The wizard guides you through your business profile, the phone '
-                'number, and the public display name, then submits for WhatsApp review.',
+                'number, the public display name and the assistant that answers it, then '
+                'submits for WhatsApp review.',
               ),
             ),
           ],
@@ -312,6 +334,7 @@ class _SenderTile extends StatelessWidget {
     required this.canSubmit,
     required this.onEdit,
     required this.onSubmit,
+    required this.onVerify,
     required this.onSuspend,
     required this.onResume,
     required this.onRevoke,
@@ -323,6 +346,7 @@ class _SenderTile extends StatelessWidget {
   final bool canSubmit;
   final VoidCallback onEdit;
   final VoidCallback onSubmit;
+  final VoidCallback onVerify;
   final VoidCallback onSuspend;
   final VoidCallback onResume;
   final VoidCallback onRevoke;
@@ -331,6 +355,8 @@ class _SenderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = SenderStatusInfo.of(sender.status);
+    final inFlight = sender.status == 'SUBMITTING' || sender.status == 'PENDING_REVIEW';
+    final progress = inFlight ? registrationProgressLabel(sender.onboarding.status) : null;
     Widget spinnerOr(IconData icon) => busy
         ? const SizedBox.square(
             dimension: 16,
@@ -338,7 +364,9 @@ class _SenderTile extends StatelessWidget {
         : Icon(icon, size: 18);
     return EditableRecordCard(
       onCloneEdit: onEdit,
-      leading: _StatusChip(status: sender.status),
+      leading: _StatusChip(
+          status: sender.status,
+          labelOverride: sender.needsVerificationCode ? 'Code needed' : null),
       header: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -346,12 +374,26 @@ class _SenderTile extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall),
           Text(sender.phoneE164,
               style: const TextStyle(fontSize: 13, fontFeatures: [])),
+          // Cards start collapsed; the one action that blocks go-live must
+          // be visible without expanding.
+          if (sender.needsVerificationCode)
+            Text('Action needed — open to enter the WhatsApp verification code',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.tertiary)),
         ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DetailRow(label: 'Status', value: '${info.label} — ${info.description}'),
+          if (progress != null) DetailRow(label: 'Progress', value: progress),
+          if (sender.needsVerificationCode) ...[
+            const SizedBox(height: 8),
+            _VerificationPrompt(phoneE164: sender.phoneE164, busy: busy, onVerify: onVerify),
+            const SizedBox(height: 8),
+          ],
           DetailRow(label: 'Phone', value: sender.phoneE164, mono: true),
           DetailRow(label: 'Display name', value: sender.displayName),
           if (sender.approvedDisplayName != null)
@@ -361,7 +403,7 @@ class _SenderTile extends StatelessWidget {
           DetailRow(
               label: 'Business',
               value:
-                  '${sender.businessProfile.legalName} (${sender.businessProfile.vertical})'),
+                  '${sender.businessProfile.legalName} (${businessVerticalLabel(sender.businessProfile.vertical)})'),
           DetailRow(
               label: 'Default locale', value: sender.defaultLocale, mono: true),
           if (sender.onboarding.lastPolledAt != null)
@@ -397,6 +439,12 @@ class _SenderTile extends StatelessWidget {
                 ? 'Submit for review'
                 : 'Submit unavailable'),
           ),
+        if (sender.status == 'FAILED')
+          FilledButton.tonalIcon(
+            onPressed: busy ? null : onEdit,
+            icon: spinnerOr(Icons.edit_outlined),
+            label: const Text('Fix & resubmit'),
+          ),
         if (sender.status == 'ACTIVE')
           TextButton.icon(
             onPressed: busy ? null : onSuspend,
@@ -413,10 +461,182 @@ class _SenderTile extends StatelessWidget {
           TextButton.icon(
             onPressed: busy ? null : onRevoke,
             icon: spinnerOr(Icons.delete_outline),
-            label: const Text('Remove'),
+            label: Text(inFlight ? 'Cancel registration' : 'Remove'),
             style: TextButton.styleFrom(
                 foregroundColor: Theme.of(context).colorScheme.error),
           ),
+      ],
+    );
+  }
+}
+
+/// How WhatsApp delivers the one-time ownership code. Shared by the wizard's
+/// phone step and the list's submit dialog so both read the same.
+class VerificationMethodSelector extends StatelessWidget {
+  const VerificationMethodSelector({super.key, required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Verification code by', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'sms', icon: Icon(Icons.sms_outlined), label: Text('SMS')),
+            ButtonSegment(value: 'voice', icon: Icon(Icons.call_outlined), label: Text('Voice call')),
+          ],
+          selected: {value},
+          onSelectionChanged: (s) => onChanged(s.first),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'WhatsApp may send a one-time code to this number to confirm you own it — '
+          'keep the phone nearby after submitting. Choose voice call for landlines.',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
+class _SubmitDialog extends StatefulWidget {
+  const _SubmitDialog();
+
+  @override
+  State<_SubmitDialog> createState() => _SubmitDialogState();
+}
+
+class _SubmitDialogState extends State<_SubmitDialog> {
+  String _method = 'sms';
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Submit for WhatsApp review?'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'Once submitted, the sender cannot be edited until WhatsApp returns a verdict — '
+                'from minutes to a few business days.'),
+            const SizedBox(height: 16),
+            VerificationMethodSelector(
+              value: _method,
+              onChanged: (v) => setState(() => _method = v),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, _method), child: const Text('Submit')),
+      ],
+    );
+  }
+}
+
+/// Inline call-to-action on a sender card while WhatsApp waits for the code.
+class _VerificationPrompt extends StatelessWidget {
+  const _VerificationPrompt({required this.phoneE164, required this.busy, required this.onVerify});
+
+  final String phoneE164;
+  final bool busy;
+  final VoidCallback onVerify;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.password_outlined, color: scheme.onTertiaryContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'WhatsApp sent a verification code to $phoneE164 by SMS or voice call. '
+              'Enter it to finish registering the number.',
+              style: TextStyle(color: scheme.onTertiaryContainer, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: busy ? null : onVerify,
+            child: const Text('Enter code'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VerificationCodeDialog extends StatefulWidget {
+  const _VerificationCodeDialog({required this.phoneE164});
+  final String phoneE164;
+
+  @override
+  State<_VerificationCodeDialog> createState() => _VerificationCodeDialogState();
+}
+
+class _VerificationCodeDialogState extends State<_VerificationCodeDialog> {
+  final _codeCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _valid => RegExp(r'^[0-9]{4,8}$').hasMatch(_codeCtrl.text.trim());
+
+  void _submit() {
+    if (_valid) Navigator.pop(context, _codeCtrl.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Enter verification code'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Type the code WhatsApp sent to ${widget.phoneE164}.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _codeCtrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              maxLength: 8,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Verification code',
+                helperText: 'Codes expire after a few minutes.',
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _valid ? _submit : null, child: const Text('Verify')),
       ],
     );
   }
@@ -474,8 +694,9 @@ class _ProvisioningUnavailableBanner extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.status});
+  const _StatusChip({required this.status, this.labelOverride});
   final String status;
+  final String? labelOverride;
 
   Color _bg(ColorScheme s) {
     switch (status) {
@@ -521,7 +742,7 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        SenderStatusInfo.of(status).label,
+        labelOverride ?? SenderStatusInfo.of(status).label,
         style: TextStyle(
             fontSize: 11, fontWeight: FontWeight.w700, color: _fg(scheme)),
       ),

@@ -40,6 +40,10 @@ class WhatsAppSenderResponse {
 
   bool get isEditable => status == 'DRAFT' || status == 'FAILED';
 
+  /// WhatsApp sent a one-time code to the phone and is waiting for it.
+  bool get needsVerificationCode =>
+      status == 'PENDING_REVIEW' && onboarding.status == 'PENDING_VERIFICATION';
+
   factory WhatsAppSenderResponse.fromJson(Map<String, dynamic> json) {
     return WhatsAppSenderResponse(
       id: (json['id'] ?? '') as String,
@@ -184,32 +188,74 @@ class WhatsAppSenderRequest {
       };
 }
 
-/// Meta-allowed business verticals. Source: Meta Business Manager dropdown.
-/// Keeping this list local to the UI lets us ship before Meta changes their
-/// catalog — backend treats the field as a string, so adding rows here never
-/// breaks the wire.
-const List<String> kMetaBusinessVerticals = [
-  'AUTO',
-  'BEAUTY_SPA_SALON',
-  'CLOTHING_AND_APPAREL',
-  'EDUCATION',
-  'ENTERTAINMENT',
-  'EVENT_PLANNING_AND_SERVICE',
-  'FINANCE_AND_BANKING',
-  'FOOD_AND_GROCERY',
-  'GOVERNMENT_AND_POLITICS',
-  'HEALTH_AND_WELLNESS',
-  'HOME_IMPROVEMENT',
-  'HOTEL_AND_LODGING',
-  'NON_PROFIT',
-  'PROFESSIONAL_SERVICES',
-  'PUBLIC_SERVICE',
-  'RESTAURANT',
-  'RETAIL',
-  'SHOPPING_AND_RETAIL',
-  'TRAVEL_AND_TRANSPORTATION',
-  'OTHER',
-];
+/// Business verticals WhatsApp accepts on a sender profile, keyed by the code
+/// the backend stores (it maps each code to WhatsApp's label on submit).
+/// Regulated categories (alcohol, gambling, OTC drugs) are left out on purpose.
+const Map<String, String> kBusinessVerticalLabels = {
+  'AUTO': 'Automotive',
+  'BEAUTY_SPA_SALON': 'Beauty, spa and salon',
+  'CLOTHING_AND_APPAREL': 'Clothing and apparel',
+  'EDUCATION': 'Education',
+  'ENTERTAINMENT': 'Entertainment',
+  'EVENT_PLANNING_AND_SERVICE': 'Event planning and service',
+  'FINANCE_AND_BANKING': 'Finance and banking',
+  'FOOD_AND_GROCERY': 'Food and grocery',
+  'HOTEL_AND_LODGING': 'Hotel and lodging',
+  'MEDICAL_AND_HEALTH': 'Medical and health',
+  'NON_PROFIT': 'Non-profit',
+  'PROFESSIONAL_SERVICES': 'Professional services',
+  'PUBLIC_SERVICE': 'Public service',
+  'RESTAURANT': 'Restaurant',
+  'SHOPPING_AND_RETAIL': 'Shopping and retail',
+  'TRAVEL_AND_TRANSPORTATION': 'Travel and transportation',
+  'OTHER': 'Other',
+};
+
+final List<String> kMetaBusinessVerticals = kBusinessVerticalLabels.keys.toList();
+
+/// Drafts saved under the earlier vertical list carry codes the dropdown no
+/// longer offers; mapping them keeps the dropdown's value in its items.
+const Map<String, String> _legacyVerticals = {
+  'GOVERNMENT_AND_POLITICS': 'PUBLIC_SERVICE',
+  'HEALTH_AND_WELLNESS': 'MEDICAL_AND_HEALTH',
+  'HOME_IMPROVEMENT': 'PROFESSIONAL_SERVICES',
+  'RETAIL': 'SHOPPING_AND_RETAIL',
+};
+
+/// The dropdown-safe vertical for a stored code, or null when unknown.
+String? normalizeBusinessVertical(String? code) {
+  if (code == null || code.isEmpty) return null;
+  final mapped = _legacyVerticals[code] ?? code;
+  return kBusinessVerticalLabels.containsKey(mapped) ? mapped : null;
+}
+
+String businessVerticalLabel(String code) =>
+    kBusinessVerticalLabels[normalizeBusinessVertical(code)] ?? code;
+
+/// Plain-language progress for the raw registration status WhatsApp reports
+/// while a sender is in flight. Never names the provider behind it.
+String? registrationProgressLabel(String? rawStatus) {
+  switch (rawStatus) {
+    case 'CREATING':
+    case 'PENDING':
+      return 'Registering the number with WhatsApp';
+    case 'PENDING_VERIFICATION':
+      return 'Waiting for the verification code sent to the phone';
+    case 'VERIFYING':
+      return 'Checking the verification code';
+    case 'TWILIO_REVIEW':
+      return 'In final review';
+    case 'ONLINE':
+    case 'ONLINE:UPDATING':
+      return 'Live on WhatsApp';
+    case 'OFFLINE':
+      return 'Offline — see the review notes';
+    case 'RETRY_PENDING':
+      return 'Could not reach WhatsApp yet — retrying automatically';
+    default:
+      return null;
+  }
+}
 
 /// Operator-facing status copy. Maps the raw `SenderStatus` enum to the
 /// label, description, and badge color used everywhere in the admin UI.
@@ -238,12 +284,12 @@ class SenderStatusInfo {
         return const SenderStatusInfo(
             label: 'Awaiting WhatsApp review',
             description:
-                'Meta is reviewing the business profile and display name. Usually 1–3 business days.');
+                'WhatsApp is verifying the number and reviewing the display name. Minutes to a few business days.');
       case 'ACTIVE':
         return const SenderStatusInfo(
             label: 'Active',
             description:
-                'Sender is approved and live. Bind it to a profile to start handling messages.');
+                'Sender is approved and live. Messages reach the assistant its routes point to.');
       case 'SUSPENDED':
         return const SenderStatusInfo(
             label: 'Suspended',
@@ -257,7 +303,8 @@ class SenderStatusInfo {
       case 'REVOKED':
         return const SenderStatusInfo(
             label: 'Revoked',
-            description: 'Removed from service. Historical bindings retained read-only.');
+            description:
+                'Removed from service. Historical bindings retained read-only; the number can be registered again.');
       default:
         return SenderStatusInfo(label: status, description: '');
     }

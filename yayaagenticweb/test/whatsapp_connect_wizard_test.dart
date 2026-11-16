@@ -164,7 +164,7 @@ void main() {
     await tester.ensureVisible(dropdown);
     await tester.tap(dropdown);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('RETAIL').last);
+    await tester.tap(find.text('Shopping and retail').last);
     await tester.pumpAndSettle();
 
     final consent = find.byType(CheckboxListTile);

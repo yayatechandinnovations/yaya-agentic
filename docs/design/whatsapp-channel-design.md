@@ -216,6 +216,12 @@ A sender is a small state machine, durably stored. Twilio's WhatsApp Sender API 
 | `FAILED` | no | no | no | Terminal-until-edited. Operator edits → returns to `DRAFT`. |
 | `REVOKED` | no | no | no | Terminal. Historical bindings retained read-only. |
 
+`SUBMITTING` and `PENDING_REVIEW` can also go straight to `REVOKED` (the §15.1 **Cancel sender**): a registration stuck on an expired verification code or a Meta rejection must not lock the number. Uniqueness of `phone_e164` (and of the BSP SID) applies to non-`REVOKED` rows only (V92), so a cancelled or removed number can be registered again; the revoked row stays as history.
+
+**Number verification.** Twilio verifies its own SMS-capable numbers itself. Any other number gets a one-time code from WhatsApp (by SMS, or voice call when the operator picks it at submit — `verificationMethod`), and the sender reports `PENDING_VERIFICATION` while it waits. The platform holds it in `PENDING_REVIEW`; the operator types the code into the sender card and `POST …/verify` hands it to `MessagingChannelProvider.verifySender`, after which the poller carries the sender to `ACTIVE`. Embedded Signup numbers are verified inside Meta's popup and normally skip this.
+
+**Adopting an existing BSP sender.** A Twilio account can't register the same number twice, yet the first sender of a direct account *must* come from the Console's Self Sign-up, and a submit whose response was lost leaves a sender the platform never recorded. `registerSender` therefore looks the number up on the account first; a match is adopted — webhooks re-pointed at the platform (§14.1), profile left untouched so an approved display name isn't re-reviewed — instead of re-created.
+
 The "inbound accepted, no LLM call" behavior on `PENDING_REVIEW` / `SUSPENDED` matters: WhatsApp customers will keep messaging the number; we acknowledge with a templated "we're not available right now" reply *if a template is available*, otherwise we log and drop without 200ing weirdly — same surface area, different copy per state, configured at sender level.
 
 ### 6.2 The `WhatsAppSender` aggregate
@@ -264,7 +270,9 @@ We mint a stable internal `SenderId` at `DRAFT` time. The `twilioSenderSid` is o
 
 ### 6.4 The poller
 
-A scheduled job (`SenderSyncJob`, default every 5m, configurable) sweeps senders in `SUBMITTING` or `PENDING_REVIEW` and calls `MessagingChannelProvider.syncSender`. On state transitions, it publishes `WhatsAppSenderStatusChangedEvent` and the cache-invalidating side-effects fire (binding resolver cache, outbound dispatcher cache). Operators can force a sync via `POST .../sync`.
+A scheduled job (`SenderSyncJob`, default every 5m, configurable) sweeps senders in `SUBMITTING` or `PENDING_REVIEW` and calls `MessagingChannelProvider.syncSender`. A `SUBMITTING` sender with no BSP SID — its registration call failed transiently — is re-driven through `registerSender` instead, once it has sat for 2 minutes (so the sweep never races a submit in flight); the adopt-before-create lookup (§6.1) makes the retry duplicate-safe. On state transitions, it publishes `WhatsAppSenderStatusChangedEvent` and the cache-invalidating side-effects fire (binding resolver cache, outbound dispatcher cache). Operators can force a sync (or that retry) via `POST .../sync`.
+
+Sync reads the Senders v2 shape: the approved name from `profile.name`, rejection detail from `offline_reasons[]` (surfaced as the card's review notes).
 
 Polling is intentionally simple — Twilio also offers status callbacks, but those are best wired up as an **additive** signal (faster updates when available) layered on top of polling (correctness when callbacks are missed). v1 ships the poller; the status-callback endpoint is wired but optional.
 
@@ -290,9 +298,9 @@ yaya:
         # Defaults to ${yaya.agentic.public-base-url}; override only if you
         # terminate Twilio webhooks on a different ingress.
         webhook-base-url: ${yaya.agentic.public-base-url}
-        # Default messaging service SID (Twilio aggregates senders into
-        # messaging services for throughput + sticky-sender). May be empty;
-        # if set, outbound dispatch uses MessagingServiceSid in place of From.
+        # Optional messaging service SID. WhatsApp dispatch always sends
+        # From the sender's own number and only falls back to this when a
+        # send carries no sender phone (see §7.4).
         messaging-service-sid: ${TWILIO_MESSAGING_SERVICE_SID:}
 ```
 
@@ -350,7 +358,7 @@ public class HybridTwilioCredsResolver implements ProviderCredsResolver {
 - One Twilio account to monitor, one billing relationship, one Meta Tech-Provider relationship. The operator is the registered Meta Tech Provider; each tenant's business is registered as a Meta **business** under our Tech Provider — Twilio's Senders API supports this directly.
 - Per-tenant outbound message volume is recorded in `outbound_messages` and aggregated for billing (tenants are billed by us, we are billed by Twilio).
 - A misbehaving tenant (spam, opt-out violations, bad business profile) can be auto-suspended via the existing sender state machine (`status = SUSPENDED`) before Twilio sees enough volume to fault the master account. Detection lives in §17 dashboards; remediation is operator action.
-- All senders share a single Twilio `MessagingServiceSid` (if configured), which is the standard way Twilio handles WhatsApp throughput pooling at scale. Sticky-sender routing keeps a given end user pinned to the sender they originally messaged.
+- Outbound is pinned `From` the sender's own number, never pooled through a shared `MessagingServiceSid`: one platform-wide pool would hold every tenant's numbers, and Twilio's sender selection could answer tenant A's customer from tenant B's number. (Nothing adds senders to a service anyway.) Throughput is per number.
 
 ---
 
@@ -984,11 +992,12 @@ POST   /whatsapp-senders                         create DRAFT (no Twilio call ye
 GET    /whatsapp-senders
 GET    /whatsapp-senders/{sid}
 PUT    /whatsapp-senders/{sid}                   edit DRAFT/FAILED; immutable when ACTIVE
-POST   /whatsapp-senders/{sid}/submit            DRAFT → SUBMITTING → Twilio call
-POST   /whatsapp-senders/{sid}/sync              force a sync poll
+POST   /whatsapp-senders/{sid}/submit            DRAFT → SUBMITTING → Twilio call; optional body { verificationMethod: sms|voice }
+POST   /whatsapp-senders/{sid}/verify            body { code } — the OTP WhatsApp sent to the number (PENDING_VERIFICATION)
+POST   /whatsapp-senders/{sid}/sync              force a sync poll (retries a submission that never reached Twilio)
 POST   /whatsapp-senders/{sid}/suspend           ACTIVE → SUSPENDED
 POST   /whatsapp-senders/{sid}/resume            SUSPENDED → ACTIVE
-POST   /whatsapp-senders/{sid}/revoke            terminal
+POST   /whatsapp-senders/{sid}/revoke            terminal; also cancels an in-flight registration
 GET    /whatsapp-senders/{sid}/onboarding        last poll result, recommended next steps
 
 # Templates
@@ -1049,10 +1058,10 @@ A new top-level nav entry: **Channels** → tabs: `WhatsApp`, `Bindings`, `Templ
 
 Four steps, each saving progress (the sender stays `DRAFT` until "Submit"):
 
-1. **Business profile** — legal name, contact email, address, vertical, website. Field-level validation surfaces stable error codes.
-2. **Phone number** — E.164 input + country selector. The form checks platform-wide uniqueness (it's a real phone, can't double-book) and gives a clean 409 with the offending tenant's display name when relevant — but a tenant operator never sees the phrase "Twilio" in any error.
-3. **Display name** — show the request + a preview of how it appears in WhatsApp; Meta restriction tooltip on display-name rules.
-4. **Review & submit** — final read of everything; **Submit** moves to `SUBMITTING`.
+1. **Business profile** — legal name, contact email, address, vertical, website. Field-level validation surfaces stable error codes. The vertical list is the one Senders v2 accepts; the provider maps the stored code to Twilio's label.
+2. **Phone number** — E.164 input + country selector, plus how WhatsApp sends the verification code (SMS / voice call). The form checks platform-wide uniqueness (it's a real phone, can't double-book) and gives a clean 409 with the offending tenant's display name when relevant — but a tenant operator never sees the phrase "Twilio" in any error.
+3. **Display name** — show the request + a preview of how it appears in WhatsApp; Meta restriction tooltip on display-name rules. New senders also pick the **assistant that answers the number**; saving creates a `MatchAny` binding (§8) to it.
+4. **Review & submit** — final read of everything; **Save & submit** creates the sender, its binding, and moves it to `SUBMITTING` in one click (**Save as draft** stops before the submit).
 
 After submit, the wizard's last screen swaps to a live status panel — note the absence of any BSP-specific vocabulary; the operator sees the WhatsApp/Meta review steps in their own terms:
 

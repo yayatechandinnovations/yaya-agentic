@@ -4,19 +4,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
+import '../../../models/admin/channel_binding.dart';
 import '../../../models/admin/whatsapp_sender.dart';
+import '../channel_bindings/sender_routes_section.dart' show channelBindingsProvider;
+import '../profiles/profiles_screen.dart' show profilesProvider;
 import '../shared/admin_shared.dart';
 import '../flows/start_flow_picker.dart';
-import 'whatsapp_senders_screen.dart' show whatsAppSendersProvider;
+import 'whatsapp_senders_screen.dart'
+    show VerificationMethodSelector, whatsAppSendersProvider, whatsAppSubmitEnabledProvider;
 
 /// 4-step sender registration wizard. Tenants describe their business, pick
-/// a phone number, choose a display name, and review — then we register the
-/// sender as DRAFT. Submitting for WhatsApp review is a separate, explicit
-/// action on the senders list (the wizard never auto-submits).
+/// a phone number, choose a display name and the assistant that answers it,
+/// and review. The last step saves the sender and — unless the operator
+/// picks "Save as draft" — submits it for WhatsApp review in the same click,
+/// routing the number to the chosen assistant so it answers as soon as the
+/// sender goes live.
 ///
 /// Optional [existing] turns the wizard into an editor for a DRAFT/FAILED
 /// sender. The flow is the same — the operator can step through and revise
-/// each field, then save.
+/// each field, then save (and resubmit). Routes on an existing sender are
+/// managed on its card, so the assistant picker only appears for new ones.
 class WhatsAppSenderWizard extends ConsumerStatefulWidget {
   const WhatsAppSenderWizard({super.key, this.existing});
 
@@ -42,11 +49,15 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
 
   // ---- step 2 — phone ----------------------------------------------------
   late final TextEditingController _phoneCtrl;
+  String _verificationMethod = 'sms';
 
   // ---- step 3 — display name --------------------------------------------
   late final TextEditingController _publicDisplayNameCtrl;
   late final TextEditingController _localeCtrl;
   String? _startFlowId;
+  String? _profileSlug; // "<id>@<version>"
+
+  bool get _isNew => widget.existing == null;
 
   @override
   void initState() {
@@ -60,7 +71,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     _addressCtrl = TextEditingController(text: bp.address);
     _websiteUrlCtrl = TextEditingController(text: bp.websiteUrl);
     _aboutCtrl = TextEditingController(text: bp.about);
-    _vertical = bp.vertical.isEmpty ? null : bp.vertical;
+    _vertical = normalizeBusinessVertical(bp.vertical);
 
     _phoneCtrl = TextEditingController(text: existing?.phoneE164 ?? '');
     _publicDisplayNameCtrl =
@@ -151,7 +162,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     setState(() => _stepIndex = (_stepIndex - 1).clamp(0, 3));
   }
 
-  Future<void> _submit() async {
+  Future<void> _save({required bool submitForReview}) async {
     final tenant = ref.read(currentTenantOrNull);
     if (tenant == null) {
       showSnack(context, 'Select a workspace first.', error: true);
@@ -189,26 +200,68 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
       ),
     );
 
+    final AdminApi api;
+    final WhatsAppSenderResponse saved;
     try {
-      final api = await ref.read(adminApiProvider.future);
-      if (widget.existing == null) {
-        await api.createWhatsAppSender(tenant, body);
-      } else {
-        await api.updateWhatsAppSender(tenant, widget.existing!.id, body);
-      }
-      ref.invalidate(whatsAppSendersProvider(tenant));
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      showSnack(
-          context,
-          widget.existing == null
-              ? 'Sender saved as draft. Submit it for WhatsApp review when ready.'
-              : 'Sender updated.');
+      api = await ref.read(adminApiProvider.future);
+      saved = _isNew
+          ? await api.createWhatsAppSender(tenant, body)
+          : await api.updateWhatsAppSender(tenant, widget.existing!.id, body);
     } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        showSnack(context, formatError(e), error: true);
+        setState(() => _saving = false);
+      }
+      return;
     }
+
+    // Past this point the sender exists, so a follow-up failure is reported
+    // with what still needs doing instead of rolling the save back.
+    final followUps = <String>[];
+    if (_isNew && _profileSlug != null) {
+      try {
+        await api.createChannelBinding(tenant, _matchEverythingRoute(saved.id));
+        ref.invalidate(channelBindingsProvider(tenant));
+      } catch (e) {
+        followUps.add('the assistant route could not be added (${formatError(e)}) — add it from the sender card');
+      }
+    }
+    var submitted = false;
+    if (submitForReview) {
+      try {
+        await api.submitWhatsAppSender(tenant, saved.id,
+            verificationMethod: _verificationMethod);
+        submitted = true;
+      } catch (e) {
+        followUps.add('submitting for review failed (${formatError(e)}) — submit it from the list');
+      }
+    }
+
+    ref.invalidate(whatsAppSendersProvider(tenant));
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    if (followUps.isNotEmpty) {
+      showSnack(context, 'Sender saved, but ${followUps.join('; ')}.', error: true);
+    } else if (submitted) {
+      showSnack(context,
+          'Submitted for WhatsApp review. If WhatsApp sends a code to the phone, enter it on the sender card.');
+    } else {
+      showSnack(context,
+          _isNew ? 'Sender saved as draft. Submit it for WhatsApp review when ready.' : 'Sender updated.');
+    }
+  }
+
+  ChannelBindingRequest _matchEverythingRoute(String senderId) {
+    final parts = _profileSlug!.split('@');
+    return ChannelBindingRequest(
+      endpoint: ChannelEndpointWire(kind: 'WHATSAPP_SENDER', id: senderId),
+      profileId: parts[0],
+      profileVersion: int.tryParse(parts.length > 1 ? parts[1] : '1') ?? 1,
+      routing: RoutingRuleWire.matchAny(),
+      sessionPolicy: SessionPolicyWire.defaults(),
+      priority: 100,
+      status: 'ACTIVE',
+    );
   }
 
   // ---- step bodies ------------------------------------------------------
@@ -271,7 +324,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
             helperText: 'The category WhatsApp uses to classify your business.',
           ),
           items: kMetaBusinessVerticals
-              .map((v) => DropdownMenuItem(value: v, child: Text(_humanVertical(v))))
+              .map((v) => DropdownMenuItem(value: v, child: Text(businessVerticalLabel(v))))
               .toList(),
           onChanged: (v) => setState(() => _vertical = v),
         ),
@@ -323,6 +376,11 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
               'Phone numbers are global — each number can be registered to only one '
               'workspace across the entire platform.',
         ),
+        const SizedBox(height: 16),
+        VerificationMethodSelector(
+          value: _verificationMethod,
+          onChanged: (v) => setState(() => _verificationMethod = v),
+        ),
       ],
     );
   }
@@ -353,6 +411,10 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           ),
         ),
         const SizedBox(height: 12),
+        if (_isNew) ...[
+          _assistantPicker(),
+          const SizedBox(height: 12),
+        ],
         StartFlowPicker(
           tenant: ref.read(currentTenantOrNull) ?? 'default',
           value: _startFlowId,
@@ -419,6 +481,46 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     );
   }
 
+  Widget _assistantPicker() {
+    final tenant = ref.read(currentTenantOrNull);
+    return ref.watch(profilesProvider).when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => Text(formatError(e)),
+          data: (all) {
+            final profiles = all.where((p) => p.tenant == tenant).toList();
+            return DropdownButtonFormField<String>(
+              initialValue: _profileSlug,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Assistant that answers this number',
+                helperText: profiles.isEmpty
+                    ? 'No assistants in this workspace yet — you can add a route from the sender card later.'
+                    : 'Every message to this number goes to this assistant. Optional — '
+                        'add finer routes from the sender card later.',
+                helperMaxLines: 3,
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('Decide later')),
+                for (final p in profiles)
+                  DropdownMenuItem(
+                    value: '${p.id}@${p.version}',
+                    child: Text('${p.displayName} (${p.id}@${p.version})',
+                        overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _profileSlug = v),
+            );
+          },
+        );
+  }
+
+  String _assistantLabel() {
+    if (_profileSlug == null) return 'Decide later';
+    final match = (ref.read(profilesProvider).valueOrNull ?? const [])
+        .where((p) => '${p.id}@${p.version}' == _profileSlug);
+    return match.isEmpty ? _profileSlug! : match.first.displayName;
+  }
+
   Widget _reviewStep() {
     if (_saving) {
       return const Center(
@@ -432,15 +534,21 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _ReviewRow(label: 'Phone number', value: _phoneCtrl.text.trim()),
+        _ReviewRow(
+            label: 'Verification code by',
+            value: _verificationMethod == 'voice' ? 'Voice call' : 'SMS'),
         _ReviewRow(label: 'Display name', value: _publicDisplayNameCtrl.text.trim()),
         _ReviewRow(label: 'Default locale', value: _localeCtrl.text.trim()),
+        if (_isNew) _ReviewRow(label: 'Assistant', value: _assistantLabel()),
         const Divider(height: 24),
         _ReviewRow(label: 'Legal business name', value: _legalNameCtrl.text.trim()),
         _ReviewRow(
             label: 'Business display name', value: _businessDisplayNameCtrl.text.trim()),
         _ReviewRow(label: 'Contact email', value: _contactEmailCtrl.text.trim()),
         _ReviewRow(
-            label: 'Vertical', value: _humanVertical(_vertical ?? ''), placeholder: '—'),
+            label: 'Vertical',
+            value: _vertical == null ? '' : businessVerticalLabel(_vertical!),
+            placeholder: '—'),
         if (_addressCtrl.text.trim().isNotEmpty)
           _ReviewRow(label: 'Address', value: _addressCtrl.text.trim()),
         if (_websiteUrlCtrl.text.trim().isNotEmpty)
@@ -449,10 +557,11 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           _ReviewRow(label: 'About', value: _aboutCtrl.text.trim()),
         const SizedBox(height: 12),
         const _InfoNote(
-          icon: Icons.save_outlined,
+          icon: Icons.send_outlined,
           text:
-              'Saving creates the sender as a draft. From the list, you can submit it for '
-              'WhatsApp review when you are ready.',
+              '"Save & submit" sends the sender for WhatsApp review right away. If WhatsApp '
+              'texts or calls the phone with a code, enter it on the sender card. "Save as '
+              'draft" keeps it here so you can submit later.',
         ),
       ],
     );
@@ -467,6 +576,8 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
         body: const Center(child: Text('Select a workspace first.')),
       );
     }
+    final canSubmit = ref.watch(whatsAppSubmitEnabledProvider(tenant))
+        .maybeWhen(data: (ready) => ready, orElse: () => true);
 
     return Scaffold(
       appBar: AppBar(
@@ -500,22 +611,32 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
               controlsBuilder: (context, details) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 16),
-                  child: Row(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       if (_stepIndex < 3)
                         FilledButton(
                           onPressed: _saving ? null : _next,
                           child: const Text('Next'),
                         )
-                      else
-                        FilledButton.icon(
-                          onPressed: _saving ? null : _submit,
+                      else ...[
+                        if (canSubmit)
+                          FilledButton.icon(
+                            onPressed: _saving
+                                ? null
+                                : () => _save(submitForReview: true),
+                            icon: const Icon(Icons.send_outlined),
+                            label: const Text('Save & submit for review'),
+                          ),
+                        OutlinedButton.icon(
+                          onPressed: _saving
+                              ? null
+                              : () => _save(submitForReview: false),
                           icon: const Icon(Icons.save_outlined),
-                          label: Text(widget.existing == null
-                              ? 'Save as draft'
-                              : 'Save changes'),
+                          label: Text(_isNew ? 'Save as draft' : 'Save changes'),
                         ),
-                      const SizedBox(width: 8),
+                      ],
                       if (_stepIndex > 0)
                         TextButton(
                           onPressed: _saving ? null : _back,
@@ -558,15 +679,6 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     );
   }
 
-  static String _humanVertical(String code) {
-    if (code.isEmpty) return '';
-    return code
-        .split('_')
-        .map((w) => w.isEmpty
-            ? w
-            : '${w[0]}${w.substring(1).toLowerCase()}')
-        .join(' ');
-  }
 }
 
 class _ReviewRow extends StatelessWidget {

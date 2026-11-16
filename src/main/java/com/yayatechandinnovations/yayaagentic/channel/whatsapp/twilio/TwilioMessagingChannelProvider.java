@@ -33,6 +33,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -95,26 +96,41 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
                     "Twilio Channel Senders v2 only handles WhatsApp in this build");
         }
 
+        String senderAddress = "whatsapp:" + req.phoneE164();
+        Map<String, Object> webhook = webhookConfig(req);
+
+        // Twilio refuses to register a number twice on one account. The first
+        // sender of a direct account must come from the Console's Self
+        // Sign-up, and a submit whose response was lost leaves a sender we
+        // never recorded — both are adopted instead of re-created.
+        Optional<JsonNode> existing = Optional.empty();
+        try {
+            existing = findSenderByAddress(senderAddress, creds);
+        } catch (Exception e) {
+            log.debug("Twilio sender lookup failed for phone {} (registering fresh): {}",
+                    maskPhone(req.phoneE164()), e.getMessage());
+        }
+        if (existing.isPresent()) {
+            return adoptSender(existing.get(), webhook, req, creds);
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sender_id", "whatsapp:" + req.phoneE164());
+        body.put("sender_id", senderAddress);
         Map<String, Object> configuration = new LinkedHashMap<>();
         // Tech Provider / Embedded Signup path: the WABA captured by Meta's
-        // popup links the sender to the customer's WhatsApp Business Account.
-        // Ownership was already verified inside Embedded Signup, so no
-        // verification method/code is submitted here. Legacy (no WABA)
-        // registrations keep the self-hosted-profile shape unchanged.
+        // popup links the sender to the customer's WhatsApp Business Account,
+        // and ownership was already verified inside the popup.
         Object wabaId = req.providerPayload().get("wabaId");
         if (wabaId instanceof String w && !w.isBlank()) {
             configuration.put("waba_id", w);
+        } else if (req.providerPayload().get("verificationMethod") instanceof String m && !m.isBlank()) {
+            configuration.put("verification_method", m);
         }
-        configuration.put("profile", profileFromPayload(req));
-        body.put("configuration", configuration);
-        body.put("webhook", Map.of(
-                "callback_url", req.webhookUrl(),
-                "callback_method", "POST",
-                "status_callback_url", req.statusCallbackUrl() == null ? "" : req.statusCallbackUrl(),
-                "status_callback_method", "POST"
-        ));
+        if (!configuration.isEmpty()) {
+            body.put("configuration", configuration);
+        }
+        body.put("profile", profileFromPayload(req));
+        body.put("webhook", webhook);
 
         try {
             JsonNode resp = post(messagingUrl(SENDERS_PATH), body, creds, req.idempotencyKey());
@@ -142,10 +158,19 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         try {
             JsonNode resp = get(messagingUrl(SENDERS_PATH + "/" + ref.externalId()), creds);
             String status = text(resp, "status", "UNKNOWN");
-            String approvedName = nullableText(resp.at("/configuration/profile/name"));
-            JsonNode failureNode = resp.at("/properties/failure_reason");
-            String failureCode = nullableText(resp.at("/properties/failure_code"));
-            String failureMessage = nullableText(failureNode);
+            String approvedName = nullableText(resp.at("/profile/name"));
+            String failureCode = null;
+            String failureMessage = null;
+            JsonNode reasons = resp.path("offline_reasons");
+            if (reasons.isArray() && !reasons.isEmpty()) {
+                failureCode = nullableText(reasons.get(0).get("code"));
+                List<String> messages = new java.util.ArrayList<>();
+                for (JsonNode r : reasons) {
+                    String m = nullableText(r.get("message"));
+                    if (m != null) messages.add(m);
+                }
+                failureMessage = messages.isEmpty() ? null : String.join("; ", messages);
+            }
             return new SenderSyncResult(ref, status, approvedName,
                     failureCode, failureMessage, Instant.now());
         } catch (WebClientResponseException e) {
@@ -193,6 +218,29 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
             throw new TwilioApiException(
                     "twilio_transport_error",
                     "Could not reach Twilio to revoke " + ref.externalId() + ": " + e.getMessage());
+        }
+    }
+
+    /* --------------------------- verifySender ---------------------------- */
+
+    @Override
+    public SenderSyncResult verifySender(SenderRef ref, String verificationCode, ProviderCreds creds) {
+        ensureCreds(creds);
+        ensureSameProvider(ref);
+        try {
+            JsonNode resp = postJson(messagingUrl(SENDERS_PATH + "/" + ref.externalId()),
+                    Map.of("configuration", Map.of("verification_code", verificationCode)), creds);
+            return new SenderSyncResult(ref, text(resp, "status", "VERIFYING"),
+                    null, null, null, Instant.now());
+        } catch (WebClientResponseException e) {
+            HttpStatusCode status = e.getStatusCode();
+            boolean retriable = status.is5xxServerError() || status.value() == 429 || status.value() == 408;
+            throw new TwilioApiException(
+                    retriable ? "twilio_unavailable" : "twilio_verification_rejected",
+                    twilioErrorMessage(e));
+        } catch (Exception e) {
+            throw new TwilioApiException("twilio_unavailable",
+                    "Could not reach Twilio to verify " + ref.externalId() + ": " + e.getMessage());
         }
     }
 
@@ -260,18 +308,8 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         org.springframework.util.LinkedMultiValueMap<String, String> form =
                 new org.springframework.util.LinkedMultiValueMap<>();
         form.add("To", "whatsapp:" + msg.recipientE164());
-        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
-            form.add("MessagingServiceSid", tc.messagingServiceSid());
-        } else {
-            Object fromPhone = msg.providerHints().get("fromPhoneE164");
-            if (fromPhone instanceof String s && !s.isBlank()) {
-                form.add("From", "whatsapp:" + s);
-            } else {
-                return new OutboundResult.ProviderFailure(
-                        "no_from_addressing",
-                        "Either Messaging Service SID or providerHints.fromPhoneE164 is required",
-                        false);
-            }
+        if (!addFromAddressing(form, tc, msg.providerHints())) {
+            return noFromAddressing();
         }
         form.add("Body", msg.body() == null ? "" : msg.body());
         Object statusCallback = msg.providerHints().get("statusCallbackUrl");
@@ -290,18 +328,8 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         org.springframework.util.LinkedMultiValueMap<String, String> form =
                 new org.springframework.util.LinkedMultiValueMap<>();
         form.add("To", "whatsapp:" + msg.recipientE164());
-        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
-            form.add("MessagingServiceSid", tc.messagingServiceSid());
-        } else {
-            Object fromPhone = msg.providerHints().get("fromPhoneE164");
-            if (fromPhone instanceof String s && !s.isBlank()) {
-                form.add("From", "whatsapp:" + s);
-            } else {
-                return new OutboundResult.ProviderFailure(
-                        "no_from_addressing",
-                        "Either Messaging Service SID or providerHints.fromPhoneE164 is required",
-                        false);
-            }
+        if (!addFromAddressing(form, tc, msg.providerHints())) {
+            return noFromAddressing();
         }
         // Twilio fetches the media from this (signed, short-lived) URL.
         form.add("MediaUrl", msg.mediaUrl());
@@ -334,18 +362,8 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         org.springframework.util.LinkedMultiValueMap<String, String> form =
                 new org.springframework.util.LinkedMultiValueMap<>();
         form.add("To", "whatsapp:" + msg.recipientE164());
-        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
-            form.add("MessagingServiceSid", tc.messagingServiceSid());
-        } else {
-            Object fromPhone = msg.providerHints().get("fromPhoneE164");
-            if (fromPhone instanceof String s && !s.isBlank()) {
-                form.add("From", "whatsapp:" + s);
-            } else {
-                return new OutboundResult.ProviderFailure(
-                        "no_from_addressing",
-                        "Either Messaging Service SID or providerHints.fromPhoneE164 is required",
-                        false);
-            }
+        if (!addFromAddressing(form, tc, msg.providerHints())) {
+            return noFromAddressing();
         }
         form.add("ContentSid", csid);
         if (!msg.variables().isEmpty()) {
@@ -416,13 +434,8 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         org.springframework.util.LinkedMultiValueMap<String, String> form =
                 new org.springframework.util.LinkedMultiValueMap<>();
         form.add("To", "whatsapp:" + recipientE164);
-        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
-            form.add("MessagingServiceSid", tc.messagingServiceSid());
-        } else if (providerHints.get("fromPhoneE164") instanceof String s && !s.isBlank()) {
-            form.add("From", "whatsapp:" + s);
-        } else {
-            return new OutboundResult.ProviderFailure("no_from_addressing",
-                    "Either Messaging Service SID or providerHints.fromPhoneE164 is required", false);
+        if (!addFromAddressing(form, tc, providerHints)) {
+            return noFromAddressing();
         }
         form.add("ContentSid", contentSid);
         if (variables != null && !variables.isEmpty()) {
@@ -506,21 +519,144 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
 
     /* --------------------------- helpers --------------------------------- */
 
+    /**
+     * Senders v2 vocabulary for {@code profile.vertical}, keyed by the codes the
+     * admin UI stores. The trailing aliases keep drafts saved under the earlier
+     * Meta-style list registrable.
+     */
+    private static final Map<String, String> TWILIO_VERTICALS = Map.ofEntries(
+            Map.entry("AUTO", "Automotive"),
+            Map.entry("BEAUTY_SPA_SALON", "Beauty, Spa and Salon"),
+            Map.entry("CLOTHING_AND_APPAREL", "Clothing and Apparel"),
+            Map.entry("EDUCATION", "Education"),
+            Map.entry("ENTERTAINMENT", "Entertainment"),
+            Map.entry("EVENT_PLANNING_AND_SERVICE", "Event Planning and Service"),
+            Map.entry("FINANCE_AND_BANKING", "Finance and Banking"),
+            Map.entry("FOOD_AND_GROCERY", "Food and Grocery"),
+            Map.entry("HOTEL_AND_LODGING", "Hotel and Lodging"),
+            Map.entry("MEDICAL_AND_HEALTH", "Medical and Health"),
+            Map.entry("NON_PROFIT", "Non-profit"),
+            Map.entry("PROFESSIONAL_SERVICES", "Professional Services"),
+            Map.entry("PUBLIC_SERVICE", "Public Service"),
+            Map.entry("RESTAURANT", "Restaurant"),
+            Map.entry("SHOPPING_AND_RETAIL", "Shopping and Retail"),
+            Map.entry("TRAVEL_AND_TRANSPORTATION", "Travel and Transportation"),
+            Map.entry("OTHER", "Other"),
+            Map.entry("GOVERNMENT_AND_POLITICS", "Public Service"),
+            Map.entry("HEALTH_AND_WELLNESS", "Medical and Health"),
+            Map.entry("HOME_IMPROVEMENT", "Professional Services"),
+            Map.entry("RETAIL", "Shopping and Retail"));
+
+    static String twilioVertical(String code) {
+        if (code == null || code.isBlank()) return "Other";
+        String trimmed = code.trim();
+        String mapped = TWILIO_VERTICALS.get(trimmed.toUpperCase(java.util.Locale.ROOT));
+        if (mapped != null) return mapped;
+        return TWILIO_VERTICALS.containsValue(trimmed) ? trimmed : "Other";
+    }
+
     private Map<String, Object> profileFromPayload(SenderRegistrationRequest req) {
+        Map<String, Object> payload = req.providerPayload();
         Map<String, Object> profile = new LinkedHashMap<>();
-        // Profile fields map from the channel-agnostic providerPayload that
-        // the service layer set per §6.2 (BusinessProfile + displayName).
         profile.put("name", req.displayName());
-        copyIfPresent(req.providerPayload(), "legalName", profile, "vertical");
-        copyIfPresent(req.providerPayload(), "contactEmail", profile, "email");
-        copyIfPresent(req.providerPayload(), "address", profile, "address");
-        copyIfPresent(req.providerPayload(), "vertical", profile, "vertical");
-        copyIfPresent(req.providerPayload(), "about", profile, "description");
-        Object website = req.providerPayload().get("websiteUrl");
-        if (website instanceof String s && !s.isBlank()) {
-            profile.put("websites", List.of(s));
+        copyIfPresent(payload, "about", profile, "about");
+        copyIfPresent(payload, "address", profile, "address");
+        profile.put("vertical", twilioVertical(payload.get("vertical") instanceof String v ? v : null));
+        if (payload.get("contactEmail") instanceof String email && !email.isBlank()) {
+            profile.put("emails", List.of(Map.of("email", email, "label", "Email")));
+        }
+        if (payload.get("websiteUrl") instanceof String site && !site.isBlank()) {
+            profile.put("websites", List.of(Map.of("website", site, "label", "Website")));
         }
         return profile;
+    }
+
+    private static Map<String, Object> webhookConfig(SenderRegistrationRequest req) {
+        return Map.of(
+                "callback_url", req.webhookUrl(),
+                "callback_method", "POST",
+                "status_callback_url", req.statusCallbackUrl() == null ? "" : req.statusCallbackUrl(),
+                "status_callback_method", "POST");
+    }
+
+    private Optional<JsonNode> findSenderByAddress(String senderAddress, ProviderCreds creds) {
+        String next = messagingUrl(SENDERS_PATH + "?Channel=whatsapp&PageSize=1000");
+        for (int page = 0; page < 10 && next != null; page++) {
+            // next_page_url arrives already encoded; URI.create keeps the
+            // PageToken from being encoded a second time.
+            JsonNode resp = buildClient(creds).get()
+                    .uri(java.net.URI.create(next))
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block(HTTP_TIMEOUT);
+            if (resp == null) return Optional.empty();
+            for (JsonNode s : resp.path("senders")) {
+                if (senderAddress.equals(text(s, "sender_id", null))) {
+                    return Optional.of(s);
+                }
+            }
+            next = nullableText(resp.at("/meta/next_page_url"));
+        }
+        return Optional.empty();
+    }
+
+    /** Re-points an existing sender's webhooks at the platform; its profile is
+     *  left untouched so an approved display name isn't sent back to review. */
+    private SenderRegistrationResult adoptSender(JsonNode existing, Map<String, Object> webhook,
+                                                 SenderRegistrationRequest req, ProviderCreds creds) {
+        String sid = text(existing, "sid", null);
+        if (sid == null || sid.isBlank()) {
+            return new SenderRegistrationResult.TransientFailure(
+                    "twilio_bad_response", "Twilio listed the sender without a sid");
+        }
+        try {
+            JsonNode resp = postJson(messagingUrl(SENDERS_PATH + "/" + sid),
+                    Map.of("webhook", webhook), creds);
+            log.info("Adopted existing Twilio WhatsApp sender {} for phone {}",
+                    sid, maskPhone(req.phoneE164()));
+            String status = text(resp, "status", text(existing, "status", "PENDING"));
+            return new SenderRegistrationResult.Accepted(new SenderRef(ProviderId.TWILIO, sid), status);
+        } catch (WebClientResponseException e) {
+            return mapRegistrationHttpError(e);
+        } catch (Exception e) {
+            return new SenderRegistrationResult.TransientFailure("transport_error", e.getMessage());
+        }
+    }
+
+    /**
+     * Pins outbound to the sender's own number. The platform Messaging Service
+     * pool is shared by every tenant's senders, so it is only a fallback for
+     * callers that carry no sender phone.
+     */
+    private static boolean addFromAddressing(org.springframework.util.LinkedMultiValueMap<String, String> form,
+                                             TwilioCreds tc, Map<String, Object> hints) {
+        if (hints.get("fromPhoneE164") instanceof String s && !s.isBlank()) {
+            form.add("From", "whatsapp:" + s);
+            return true;
+        }
+        if (tc.messagingServiceSid() != null && !tc.messagingServiceSid().isBlank()) {
+            form.add("MessagingServiceSid", tc.messagingServiceSid());
+            return true;
+        }
+        return false;
+    }
+
+    private static OutboundResult noFromAddressing() {
+        return new OutboundResult.ProviderFailure(
+                "no_from_addressing",
+                "Either providerHints.fromPhoneE164 or a Messaging Service SID is required",
+                false);
+    }
+
+    private String twilioErrorMessage(WebClientResponseException e) {
+        String body = e.getResponseBodyAsString();
+        try {
+            String msg = nullableText(json.readTree(body).get("message"));
+            if (msg != null) return msg;
+        } catch (Exception ignored) {
+            // non-JSON body — fall back to the raw text
+        }
+        return body == null || body.isBlank() ? "HTTP " + e.getStatusCode().value() : body;
     }
 
     private static void copyIfPresent(Map<String, Object> src, String srcKey,
@@ -556,6 +692,16 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
                 .uri(url)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Idempotency-Key", idempotencyKey)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(HTTP_TIMEOUT);
+    }
+
+    private JsonNode postJson(String url, Object body, ProviderCreds creds) {
+        return buildClient(creds).post()
+                .uri(url)
+                .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(JsonNode.class)

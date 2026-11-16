@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
+import com.yayatechandinnovations.yayaagentic.channel.OutboundFreeform;
 import com.yayatechandinnovations.yayaagentic.channel.SenderRef;
 import com.yayatechandinnovations.yayaagentic.channel.SenderRegistrationRequest;
 import com.yayatechandinnovations.yayaagentic.channel.SenderRegistrationResult;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,6 +78,144 @@ class TwilioMessagingChannelProviderTest {
     }
 
     @Test
+    void register_sends_the_senders_v2_wire_shape() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE1\",\"status\":\"CREATING\"}")));
+
+        provider.registerSender(buildRequest("snd_shape"), creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.sender_id", equalTo("whatsapp:+15551234567")))
+                .withRequestBody(matchingJsonPath("$.profile.name", equalTo("Acme Retail")))
+                .withRequestBody(matchingJsonPath("$.profile.vertical", equalTo("Shopping and Retail")))
+                .withRequestBody(matchingJsonPath("$.profile.about", equalTo("Stuff.")))
+                .withRequestBody(matchingJsonPath("$.profile.emails[0].email", equalTo("ops@acme.com")))
+                .withRequestBody(matchingJsonPath("$.profile.websites[0].website", equalTo("https://acme.com")))
+                .withRequestBody(matchingJsonPath("$.webhook.callback_url",
+                        equalTo("https://hooks.example/v1/channels/whatsapp/twilio/webhook/snd_shape")))
+                .withRequestBody(notMatching(".*\"configuration\".*")));
+    }
+
+    @Test
+    void register_passes_the_chosen_verification_method() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE2\",\"status\":\"CREATING\"}")));
+
+        provider.registerSender(buildRequest("snd_voice", Map.of("verificationMethod", "voice")), creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.configuration.verification_method", equalTo("voice"))));
+    }
+
+    @Test
+    void register_with_a_waba_sends_no_verification_method() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE3\",\"status\":\"CREATING\"}")));
+
+        provider.registerSender(buildRequest("snd_waba",
+                Map.of("wabaId", "WABA42", "verificationMethod", "voice")), creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.configuration.waba_id", equalTo("WABA42")))
+                .withRequestBody(notMatching(".*verification_method.*")));
+    }
+
+    @Test
+    void register_adopts_a_sender_already_on_the_account() {
+        wireMock.stubFor(get(urlPathEqualTo("/v2/Channels/Senders"))
+                .withQueryParam("Channel", equalTo("whatsapp"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {
+                                  "senders": [
+                                    {"sid":"XEother","sender_id":"whatsapp:+15550000000","status":"ONLINE"},
+                                    {"sid":"XEmine","sender_id":"whatsapp:+15551234567","status":"ONLINE"}
+                                  ],
+                                  "meta": {"next_page_url": null}
+                                }
+                                """)));
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders/XEmine"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XEmine\",\"status\":\"ONLINE\"}")));
+
+        SenderRegistrationResult result = provider.registerSender(buildRequest("snd_adopt"), creds);
+
+        assertThat(result).isInstanceOf(SenderRegistrationResult.Accepted.class);
+        SenderRegistrationResult.Accepted acc = (SenderRegistrationResult.Accepted) result;
+        assertThat(acc.senderRef().externalId()).isEqualTo("XEmine");
+        assertThat(acc.bspStatus()).isEqualTo("ONLINE");
+        // Webhooks re-pointed at the platform; the approved profile is left alone.
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders/XEmine"))
+                .withRequestBody(matchingJsonPath("$.webhook.callback_url",
+                        equalTo("https://hooks.example/v1/channels/whatsapp/twilio/webhook/snd_adopt")))
+                .withRequestBody(notMatching(".*\"profile\".*")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo("/v2/Channels/Senders")));
+    }
+
+    @Test
+    void vertical_codes_map_to_twilio_labels() {
+        assertThat(TwilioMessagingChannelProvider.twilioVertical("AUTO")).isEqualTo("Automotive");
+        assertThat(TwilioMessagingChannelProvider.twilioVertical("HEALTH_AND_WELLNESS")).isEqualTo("Medical and Health");
+        assertThat(TwilioMessagingChannelProvider.twilioVertical("Restaurant")).isEqualTo("Restaurant");
+        assertThat(TwilioMessagingChannelProvider.twilioVertical("SOMETHING_NEW")).isEqualTo("Other");
+        assertThat(TwilioMessagingChannelProvider.twilioVertical(null)).isEqualTo("Other");
+    }
+
+    @Test
+    void verify_posts_the_code_and_returns_the_new_status() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders/XE9"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE9\",\"status\":\"VERIFYING\"}")));
+
+        SenderSyncResult result = provider.verifySender(new SenderRef(provider.id(), "XE9"), "123456", creds);
+
+        assertThat(result.bspStatus()).isEqualTo("VERIFYING");
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders/XE9"))
+                .withRequestBody(matchingJsonPath("$.configuration.verification_code", equalTo("123456"))));
+    }
+
+    @Test
+    void verify_rejected_code_throws_a_rejection() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders/XE9"))
+                .willReturn(aResponse().withStatus(400)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"code\":63100,\"message\":\"Invalid verification code\"}")));
+        try {
+            provider.verifySender(new SenderRef(provider.id(), "XE9"), "000000", creds);
+            assertThat(true).as("expected verify to throw").isFalse();
+        } catch (TwilioMessagingChannelProvider.TwilioApiException e) {
+            assertThat(e.code()).isEqualTo("twilio_verification_rejected");
+            assertThat(e.getMessage()).contains("Invalid verification code");
+        }
+    }
+
+    @Test
+    void outbound_sends_from_the_senders_own_number_even_with_a_messaging_service() {
+        wireMock.stubFor(post(urlEqualTo("/2010-04-01/Accounts/AC1234/Messages.json"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"SM1\"}")));
+
+        provider.sendFreeform(new SenderRef(provider.id(), "XE9"),
+                new OutboundFreeform("+15557654321", "hi", Optional.empty(),
+                        Map.of("fromPhoneE164", "+15551234567")),
+                creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/2010-04-01/Accounts/AC1234/Messages.json"))
+                .withRequestBody(containing("From=whatsapp%3A%2B15551234567"))
+                .withRequestBody(notMatching(".*MessagingServiceSid.*")));
+    }
+
+    @Test
     void register_rejected_when_twilio_returns_400_with_code() {
         wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
                 .willReturn(aResponse()
@@ -130,9 +270,8 @@ class TwilioMessagingChannelProviderTest {
                                 {
                                   "sid": "SR1234",
                                   "status": "ONLINE",
-                                  "configuration": {
-                                    "profile": { "name": "Acme Retail" }
-                                  }
+                                  "profile": { "name": "Acme Retail" },
+                                  "offline_reasons": null
                                 }
                                 """)));
 
@@ -153,20 +292,23 @@ class TwilioMessagingChannelProviderTest {
                         .withBody("""
                                 {
                                   "sid": "SR1234",
-                                  "status": "FAILED",
-                                  "properties": {
-                                    "failure_code": "DISPLAY_NAME_REJECTED",
-                                    "failure_reason": "Display name does not match the business."
-                                  }
+                                  "status": "OFFLINE",
+                                  "offline_reasons": [
+                                    {"code": "63110", "message": "Display name does not match the business.",
+                                     "more_info": "https://www.twilio.com/docs/errors/63110"},
+                                    {"code": "63111", "message": "Business profile incomplete."}
+                                  ]
                                 }
                                 """)));
 
         SenderSyncResult result = provider.syncSender(
                 new SenderRef(provider.id(), "SR1234"), creds);
 
-        assertThat(result.bspStatus()).isEqualTo("FAILED");
-        assertThat(result.lastFailureCode()).isEqualTo("DISPLAY_NAME_REJECTED");
-        assertThat(result.lastFailureMessage()).contains("does not match the business");
+        assertThat(result.bspStatus()).isEqualTo("OFFLINE");
+        assertThat(result.lastFailureCode()).isEqualTo("63110");
+        assertThat(result.lastFailureMessage())
+                .contains("does not match the business")
+                .contains("Business profile incomplete");
     }
 
     @Test
@@ -223,19 +365,25 @@ class TwilioMessagingChannelProviderTest {
     }
 
     private SenderRegistrationRequest buildRequest(String idem) {
+        return buildRequest(idem, Map.of());
+    }
+
+    private SenderRegistrationRequest buildRequest(String idem, Map<String, Object> extra) {
+        Map<String, Object> payload = new java.util.HashMap<>(Map.of(
+                "legalName", "Acme Retail Inc.",
+                "contactEmail", "ops@acme.com",
+                "address", "1 Apple Park Way",
+                "websiteUrl", "https://acme.com",
+                "vertical", "RETAIL",
+                "about", "Stuff."));
+        payload.putAll(extra);
         return new SenderRegistrationRequest(
                 new ChannelKind.WhatsApp(),
                 "+15551234567",
                 "Acme Retail",
                 "https://hooks.example/v1/channels/whatsapp/twilio/webhook/" + idem,
                 "https://hooks.example/v1/channels/whatsapp/twilio/status-callback/" + idem,
-                Map.of(
-                        "legalName", "Acme Retail Inc.",
-                        "contactEmail", "ops@acme.com",
-                        "address", "1 Apple Park Way",
-                        "websiteUrl", "https://acme.com",
-                        "vertical", "RETAIL",
-                        "about", "Stuff."),
+                payload,
                 idem);
     }
 

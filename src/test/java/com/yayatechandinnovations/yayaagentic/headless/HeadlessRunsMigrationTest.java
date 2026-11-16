@@ -48,7 +48,8 @@ class HeadlessRunsMigrationTest {
             at.update("INSERT INTO tenants (id, display_name, code, owner_user_id) VALUES ('bancadh', 'Banca DH', 'bancadh', '00000000-0000-0000-0000-000000000001')");
             at.update("INSERT INTO tenant_usage_monthly (tenant_id, month, messages) VALUES ('bancadh', '2026-11', 41)");
 
-            MigrateResult to91 = flyway(url, null).migrate();
+            // Pinned to 91 so later migrations don't change what this step applies.
+            MigrateResult to91 = flyway(url, "91").migrate();
 
             assertThat(to91.success).isTrue();
             assertThat(to91.migrations).extracting(m -> m.version).containsExactly("91");
@@ -76,7 +77,8 @@ class HeadlessRunsMigrationTest {
             at.update("DELETE FROM tenants WHERE id = 'bancadh'");
             assertThat(store.find("bancadh", "hr_A")).isEmpty();
 
-            // Nothing left to apply, and the script itself can run again.
+            // Later migrations apply on top, and then nothing is left to apply.
+            assertThat(flyway(url, null).migrate().success).isTrue();
             assertThat(flyway(url, null).migrate().migrationsExecuted).isZero();
         } finally {
             jdbc.execute("DROP DATABASE IF EXISTS " + database + " WITH (FORCE)");

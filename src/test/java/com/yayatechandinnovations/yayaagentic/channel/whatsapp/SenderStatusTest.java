@@ -19,16 +19,18 @@ class SenderStatusTest {
     }
 
     @Test
-    void submitting_resolves_to_pending_or_failed() {
+    void submitting_resolves_to_pending_or_failed_or_is_cancelled() {
         assertThat(SenderStatus.SUBMITTING.canTransitionTo(SenderStatus.PENDING_REVIEW)).isTrue();
         assertThat(SenderStatus.SUBMITTING.canTransitionTo(SenderStatus.FAILED)).isTrue();
+        assertThat(SenderStatus.SUBMITTING.canTransitionTo(SenderStatus.REVOKED)).isTrue();
         assertThat(SenderStatus.SUBMITTING.canTransitionTo(SenderStatus.ACTIVE)).isFalse();
     }
 
     @Test
-    void pending_review_resolves_to_active_or_failed() {
+    void pending_review_resolves_to_active_or_failed_or_is_cancelled() {
         assertThat(SenderStatus.PENDING_REVIEW.canTransitionTo(SenderStatus.ACTIVE)).isTrue();
         assertThat(SenderStatus.PENDING_REVIEW.canTransitionTo(SenderStatus.FAILED)).isTrue();
+        assertThat(SenderStatus.PENDING_REVIEW.canTransitionTo(SenderStatus.REVOKED)).isTrue();
         assertThat(SenderStatus.PENDING_REVIEW.canTransitionTo(SenderStatus.SUSPENDED)).isFalse();
     }
 

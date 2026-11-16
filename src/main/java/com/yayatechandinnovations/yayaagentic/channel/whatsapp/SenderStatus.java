@@ -34,8 +34,10 @@ public enum SenderStatus {
     public Set<SenderStatus> legalTransitions() {
         return switch (this) {
             case DRAFT          -> Set.of(SUBMITTING, REVOKED);
-            case SUBMITTING     -> Set.of(PENDING_REVIEW, FAILED);
-            case PENDING_REVIEW -> Set.of(ACTIVE, FAILED);
+            // In-flight senders can be cancelled (§15.1 "Cancel sender") — a
+            // number stuck waiting on a code must not be locked forever.
+            case SUBMITTING     -> Set.of(PENDING_REVIEW, FAILED, REVOKED);
+            case PENDING_REVIEW -> Set.of(ACTIVE, FAILED, REVOKED);
             case ACTIVE         -> Set.of(SUSPENDED, REVOKED);
             case SUSPENDED      -> Set.of(ACTIVE, REVOKED);
             case FAILED         -> Set.of(DRAFT, REVOKED);    // edit → returns to DRAFT

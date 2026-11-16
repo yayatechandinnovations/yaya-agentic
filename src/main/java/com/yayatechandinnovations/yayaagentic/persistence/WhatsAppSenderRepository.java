@@ -12,11 +12,17 @@ public interface WhatsAppSenderRepository extends JpaRepository<WhatsAppSenderEn
 
     Optional<WhatsAppSenderEntity> findByTenantIdAndId(String tenantId, String id);
 
-    /** Phone numbers are globally unique in {@code whatsapp_senders} (UNIQUE
-     *  constraint in V25). This lookup IS cross-tenant by design — it backs
-     *  the create-time conflict check and the inbound-webhook sender resolve. */
-    @WorkspaceUnscoped("phone_e164 is globally unique; lookup must cross workspaces")
-    Optional<WhatsAppSenderEntity> findByPhoneE164(String phoneE164);
+    /** A phone number belongs to at most one non-revoked sender platform-wide
+     *  (partial UNIQUE index, V92); revoked rows stay as history and free the
+     *  number for re-registration. Cross-tenant by design — it backs the
+     *  create-time conflict check and Embedded Signup's draft reuse. */
+    @WorkspaceUnscoped("phone_e164 is globally unique among live senders; lookup must cross workspaces")
+    Optional<WhatsAppSenderEntity> findFirstByPhoneE164AndStatusNot(String phoneE164, String status);
+
+    @WorkspaceUnscoped("phone_e164 is globally unique among live senders; lookup must cross workspaces")
+    default Optional<WhatsAppSenderEntity> findLiveByPhoneE164(String phoneE164) {
+        return findFirstByPhoneE164AndStatusNot(phoneE164, "REVOKED");
+    }
 
     /** Used by the W2 poller: sweeps senders across all tenants. Cross-tenant
      *  by design — the poller is platform infrastructure, not a tenant-facing

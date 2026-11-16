@@ -6,7 +6,9 @@
 > Tenants never see, configure, or learn about Twilio.
 >
 > **Companion:** `docs/design/whatsapp-channel-design.md` §7 (platform-
-> singleton decision) and §7.3 (BYO escape hatch).
+> singleton decision) and §7.3 (BYO escape hatch). For the step-by-step
+> "onboard a customer's number" flow, follow
+> **`docs/guides/whatsapp-sender-registration.md`**.
 
 ---
 
@@ -71,20 +73,16 @@ breaking webhook signing.
 > your secrets manager *immediately*. If lost, delete the key and make a
 > new one.
 
-### 1.4 Capture (or create) a **Messaging Service SID**
+### 1.4 Messaging Service — not needed for WhatsApp
 
-A Messaging Service is Twilio's container that pools senders for
-throughput and sticky-sender routing. v1 of yaya-agentic uses one
-Messaging Service for the entire platform, and every WhatsApp sender is
-attached to it on registration.
-
-1. Console → **Messaging → Services → Create Messaging Service**.
-2. **Friendly name:** `yaya-agentic-whatsapp`.
-3. **Use case:** *Notify my users* (or whatever matches your bot pattern).
-4. Skip the "Sender pool" step — yaya-agentic attaches senders during the
-   sender-registration flow, not here.
-5. Note the **Service SID** (starts with `MG…`, 34 chars). Bind to
-   `yaya.agentic.channels.twilio.messaging-service-sid`.
+A Messaging Service pools senders for throughput and sticky-sender routing.
+**WhatsApp doesn't use one:** every reply goes out `From` the sender's own
+number, because one platform-wide pool holds every tenant's numbers and Twilio
+would be free to answer a customer of tenant A from tenant B's number. The
+platform never adds senders to a service either. Leave
+`yaya.agentic.channels.twilio.messaging-service-sid` unset unless another
+channel needs it; WhatsApp only falls back to it for a send that carries no
+sender phone.
 
 ---
 
@@ -103,7 +101,7 @@ attached to it on registration.
 
 | Property                                                | Default                              | Recommended in prod |
 |---|---|---|
-| `yaya.agentic.channels.twilio.messaging-service-sid`    | (none — uses `From` directly)        | Set it. Gives you Twilio's throughput pooling + sticky-sender routing for free. |
+| `yaya.agentic.channels.twilio.messaging-service-sid`    | (none — uses `From` directly)        | Leave unset for WhatsApp — replies always use the sender's own number (§1.4). |
 | `yaya.agentic.channels.twilio.webhook-base-url`         | `${yaya.agentic.public-base-url}`    | Override only if you terminate Twilio webhooks on a different ingress than the rest of the platform. |
 
 ### 2.3 application.yaml
@@ -184,18 +182,27 @@ form-validation layer.
 > tenants' Meta businesses are nested under. From Twilio's side this is
 > the **WhatsApp Business Account (WABA)** linkage.
 
-### 3.1 Register as a Twilio Tech Provider
+### 3.1 Register the first sender with Self Sign-up
 
-1. Console → **Messaging → WhatsApp → Senders → Add WhatsApp Sender**.
+Twilio requires the **first** WhatsApp sender of a direct account to be
+registered through **Self Sign-up** in its Console — that is what links your
+Meta Business Manager + WABA to the account. Senders API registrations (what
+the platform does) only work after it.
+
+1. Console → **Messaging → Senders → WhatsApp senders → Create new sender**.
 2. Twilio walks you through the **Meta Business connection** wizard:
    - Sign in with the Facebook account that controls your Meta Business
      Manager.
-   - Confirm Twilio as a Solution Partner / Tech Provider with `messaging`
-     and `whatsapp_business_management` scopes.
-3. Capture your **WhatsApp Business Account ID** if Twilio surfaces it
-   for diagnostics — yaya-agentic stores Twilio's `SenderSid` (`SR…`),
-   not the WABA id, but the latter is occasionally needed when filing
-   support tickets.
+   - Create or select the WABA and register a number.
+3. Capture your **WhatsApp Business Account ID** for support tickets —
+   yaya-agentic stores Twilio's sender SID (`XE…`), not the WABA id.
+
+You don't have to burn a number on this step: register the **same number**
+through the admin console's sender wizard afterwards. On submit the platform
+looks the number up on the account, finds the Self Sign-up sender and
+**adopts** it — re-points its webhooks at the platform (§4) without touching
+its approved profile — instead of trying to create it twice. The same lookup
+makes a submit whose response was lost safe to retry.
 
 > ⏱️ **First-time Meta business verification is slow.** Per Meta's docs,
 > first-business approval is 1–3 business days; subsequent senders under
@@ -218,6 +225,8 @@ the platform calls Twilio's Senders API with:
 WebhookUrl      = ${webhook-base-url}/v1/channels/whatsapp/twilio/webhook/{senderId}
 StatusCallback  = ${webhook-base-url}/v1/channels/whatsapp/twilio/status-callback/{senderId}
 ```
+
+An adopted sender (§3.1) gets the same two URLs written onto it at submit.
 
 You **must not** override these in the Twilio Console after submission —
 Twilio replays `MessageSid` retries against whatever URL is configured
@@ -337,10 +346,13 @@ model (tenant-owned account + billing) remains unimplemented.
 | `Twilio not configured — WhatsApp channel is disabled` on boot | At least one of `account-sid`, `api-key-sid`, `api-key-secret` is unset | Set all three env vars + redeploy |
 | `Twilio readiness probe returned HTTP 401` on boot   | Wrong API key SID / Secret pairing | Re-create the API key in §1.3 and redeploy |
 | Submit shows `provider_not_ready` in the admin UI    | Same as above — the resolver couldn't return creds | Same as above |
-| Sender stuck in `SUBMITTING` for > 5 min             | Twilio API call hangs OR `auth-token` is unset (poller can't sync) | Check logs for `Twilio registerSender transport failure`; verify `auth-token` |
+| Sender stuck in `SUBMITTING` for > 5 min             | The registration call keeps failing transiently (the poller retries it every sweep; **Refresh status** retries now) | Check logs for `Twilio registerSender transport failure` / `registerSender threw` |
+| Card shows **Code needed** (Twilio status `PENDING_VERIFICATION`) | The number isn't a Twilio SMS number, so WhatsApp sent an OTP to it | Operator opens the card → **Enter code**. Expired/never arrived → **Cancel registration** and register again (Voice call for landlines) |
+| "phone number … is already registered to another sender" | The number is live (not removed) in some workspace | Removed senders free their number; remove the old one first |
 | Inbound webhook 403s with `signature_mismatch`       | Auth Token rotated without redeploy, OR `webhook-base-url` doesn't match what Twilio actually called | Verify `auth-token` matches Console; verify `webhook-base-url` matches the URL Twilio configured for the sender |
 | Inbound webhook 403s with `auth_token_unset`         | `yaya.agentic.channels.twilio.auth-token` is unset | Set the env var + redeploy |
-| Sender flips to `FAILED` immediately on submit       | Meta rejected the business profile or display name | The rejection reason is on the sender row — operator edits the wizard and resubmits |
+| Sender flips to `FAILED` immediately on submit       | Meta rejected the business profile or display name | The rejection reason is on the sender row — operator clicks **Fix & resubmit** |
+| Sender goes `SUSPENDED` with review notes            | Twilio reports it `OFFLINE`; its `offline_reasons` become the card's review notes | Act on the notes; contact Twilio support with the WABA id if unclear |
 
 ---
 

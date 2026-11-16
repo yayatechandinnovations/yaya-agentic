@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -23,6 +25,7 @@ import java.util.List;
 public class SenderSyncJob {
 
     private static final Logger log = LoggerFactory.getLogger(SenderSyncJob.class);
+    private static final Duration SUBMIT_RETRY_GRACE = Duration.ofMinutes(2);
 
     private final WhatsAppSenderService senders;
     private final ProviderCredsResolver credsResolver;
@@ -57,9 +60,16 @@ public class SenderSyncJob {
         List<WhatsAppSender> inFlight = senders.findInFlight();
         if (inFlight.isEmpty()) return;
         log.info("WhatsApp sender poller: syncing {} in-flight senders", inFlight.size());
+        Instant retryCutoff = Instant.now().minus(SUBMIT_RETRY_GRACE);
         for (WhatsAppSender sender : inFlight) {
             try {
-                senders.syncOne(sender);
+                if (sender.onboarding().twilioSenderSid() != null) {
+                    senders.syncOne(sender);
+                } else if (sender.updatedAt() == null || sender.updatedAt().isBefore(retryCutoff)) {
+                    // The grace window keeps the sweep from racing a submit
+                    // whose BSP call is still in flight.
+                    senders.retrySubmit(sender);
+                }
             } catch (RuntimeException e) {
                 // Per-sender failures don't abort the sweep. The next pass
                 // will pick the row back up; meanwhile we surface enough to

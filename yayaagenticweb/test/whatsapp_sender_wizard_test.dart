@@ -1,0 +1,194 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:yayaagenticweb/api/admin_api.dart';
+import 'package:yayaagenticweb/app/selected_tenant.dart';
+import 'package:yayaagenticweb/features/admin/whatsapp_senders/whatsapp_sender_wizard.dart';
+import 'package:yayaagenticweb/models/admin/channel_binding.dart';
+import 'package:yayaagenticweb/models/admin/profile.dart';
+import 'package:yayaagenticweb/models/admin/start_flow.dart';
+import 'package:yayaagenticweb/models/admin/whatsapp_sender.dart';
+
+class _FakeAdminApi extends AdminApi {
+  _FakeAdminApi() : super(Dio());
+
+  WhatsAppSenderRequest? created;
+  ChannelBindingRequest? binding;
+  String? submittedSenderId;
+  String? submittedMethod;
+  bool failSubmit = false;
+
+  @override
+  Future<List<ProfileResponse>> listProfiles({String tenant = 'default'}) async => [
+        ProfileResponse.fromJson({
+          'id': 'support',
+          'version': 3,
+          'tenant': 't1',
+          'displayName': 'Support Bot',
+          'introOneLiner': '',
+          'systemPromptFragment': '',
+        }),
+      ];
+
+  @override
+  Future<List<StartFlowResponse>> listStartFlows(String tenantId) async => const [];
+
+  @override
+  Future<bool> isWhatsAppSubmitEnabled(String tenantId) async => true;
+
+  @override
+  Future<WhatsAppSenderResponse> createWhatsAppSender(
+      String tenantId, WhatsAppSenderRequest body) async {
+    created = body;
+    return WhatsAppSenderResponse.fromJson({
+      'id': 'snd_new',
+      'tenantId': tenantId,
+      'phoneE164': body.phoneE164,
+      'displayName': body.displayName,
+      'businessProfile': body.businessProfile.toJson(),
+      'status': 'DRAFT',
+      'onboarding': const <String, dynamic>{},
+      'defaultLocale': body.defaultLocale ?? 'en-US',
+    });
+  }
+
+  @override
+  Future<ChannelBindingResponse> createChannelBinding(
+      String tenantId, ChannelBindingRequest body) async {
+    binding = body;
+    return ChannelBindingResponse.fromJson({...body.toJson(), 'id': 1, 'tenantId': tenantId});
+  }
+
+  @override
+  Future<WhatsAppSenderResponse> submitWhatsAppSender(String tenantId, String senderId,
+      {String? verificationMethod}) async {
+    if (failSubmit) throw StateError('upstream down');
+    submittedSenderId = senderId;
+    submittedMethod = verificationMethod;
+    return WhatsAppSenderResponse.fromJson({
+      'id': senderId,
+      'tenantId': tenantId,
+      'phoneE164': created!.phoneE164,
+      'displayName': created!.displayName,
+      'businessProfile': created!.businessProfile.toJson(),
+      'status': 'PENDING_REVIEW',
+      'onboarding': {'status': 'CREATING'},
+      'defaultLocale': 'en-US',
+    });
+  }
+}
+
+Widget _wizard(_FakeAdminApi api) => ProviderScope(
+      overrides: [
+        adminApiProvider.overrideWith((ref) async => api),
+        currentTenantOrNull.overrideWithValue('t1'),
+      ],
+      child: MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const WhatsAppSenderWizard())),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+Future<void> _type(WidgetTester tester, String label, String value) async {
+  final field = find.widgetWithText(TextField, label).hitTestable();
+  await tester.ensureVisible(field);
+  await tester.enterText(field, value);
+  await tester.pump();
+}
+
+Future<void> _pick(WidgetTester tester, Finder dropdown, String option) async {
+  await tester.ensureVisible(dropdown);
+  // Tap the button, not the field — the field's bounds include its helper text.
+  await tester.tap(find.descendant(
+      of: dropdown, matching: find.byWidgetPredicate((w) => w is DropdownButton)));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(option).last);
+  await tester.pumpAndSettle();
+}
+
+/// The vertical Stepper keeps every step in the tree (inactive ones behind
+/// IgnorePointer), so only a hit-testable match is the live one.
+Future<void> _tapText(WidgetTester tester, String text) async {
+  final target = find.text(text).hitTestable().first;
+  await tester.ensureVisible(target);
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _fillThroughReview(WidgetTester tester) async {
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+
+  await _type(tester, 'Legal business name *', 'Test Inc.');
+  await _type(tester, 'Business display name *', 'Test Co');
+  await _type(tester, 'Contact email *', 'ops@test.example');
+  await _pick(tester, find.byType(DropdownButtonFormField<String>).first, 'Restaurant');
+  await _tapText(tester, 'Next');
+
+  await _type(tester, 'Phone number (E.164) *', '+18095551234');
+  await _tapText(tester, 'Voice call');
+  await _tapText(tester, 'Next');
+
+  await _type(tester, 'Public display name *', 'Test Co');
+  await _pick(
+      tester,
+      find.ancestor(
+          of: find.text('Assistant that answers this number'),
+          matching: find.byType(DropdownButtonFormField<String>)),
+      'Support Bot (support@3)');
+  await _tapText(tester, 'Next');
+}
+
+void main() {
+  setUp(() {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    binding.platformDispatcher.views.first.physicalSize = const Size(1600, 2400);
+    binding.platformDispatcher.views.first.devicePixelRatio = 1.0;
+  });
+
+  testWidgets('save & submit creates the sender, routes it, and submits by voice',
+      (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+    await _fillThroughReview(tester);
+
+    expect(find.text('Voice call').hitTestable(), findsOneWidget); // review row
+    await _tapText(tester, 'Save & submit for review');
+
+    expect(api.created?.phoneE164, '+18095551234');
+    expect(api.created?.businessProfile.vertical, 'RESTAURANT');
+    expect(api.binding?.endpoint.id, 'snd_new');
+    expect(api.binding?.endpoint.kind, 'WHATSAPP_SENDER');
+    expect(api.binding?.profileId, 'support');
+    expect(api.binding?.profileVersion, 3);
+    expect(api.binding?.routing.kind, 'MatchAny');
+    expect(api.submittedSenderId, 'snd_new');
+    expect(api.submittedMethod, 'voice');
+    expect(find.textContaining('Submitted for WhatsApp review'), findsOneWidget);
+  });
+
+  testWidgets('a failed submit keeps the saved sender and says what is left to do',
+      (tester) async {
+    final api = _FakeAdminApi()..failSubmit = true;
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+    await _fillThroughReview(tester);
+
+    await _tapText(tester, 'Save & submit for review');
+
+    expect(api.created, isNotNull);
+    expect(api.binding, isNotNull);
+    expect(find.textContaining('submit it from the list'), findsOneWidget);
+  });
+}

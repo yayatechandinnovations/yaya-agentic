@@ -32,6 +32,14 @@ public final class WhatsAppSenderDtos {
         }
     }
 
+    /** Optional body for POST {@code .../submit}. {@code verificationMethod}
+     *  is {@code sms} (default) or {@code voice} — how WhatsApp delivers the
+     *  ownership code to a number that needs one. */
+    public record SubmitRequest(String verificationMethod) {}
+
+    /** Body for POST {@code .../verify}: the one-time code WhatsApp sent. */
+    public record VerifyRequest(String code) {}
+
     /** Mirrors {@link BusinessProfile} but as a wire DTO (Jackson-friendly). */
     public record BusinessProfileRequest(
             String legalName,

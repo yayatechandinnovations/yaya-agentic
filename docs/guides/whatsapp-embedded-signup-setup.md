@@ -163,7 +163,8 @@ safely without a state transition. Outbound sending is gated on the internal
 | 409 `phone_in_use` | The number is registered to another workspace's sender. |
 | 503 `subaccount_provisioning_unavailable` | Transient Twilio outage — the attempt stays resumable; retry from the wizard. |
 | Attempt `FAILED` with sanitized message | Twilio/Meta rejected the sender (policy, display name). Fix the input and retry — the same attempt resumes; no duplicates are created. |
-| Sender stuck in `PENDING_REVIEW` | Meta business review can take days. `POST .../sync` polls on demand; the poller sweeps every 5 min. |
+| Sender stuck in `PENDING_REVIEW` | Meta business review can take days. `POST .../sync` polls on demand; the poller sweeps every 5 min. If the card shows **Code needed** (Twilio `PENDING_VERIFICATION`), enter the OTP WhatsApp sent to the number — `POST .../whatsapp-senders/{id}/verify`. |
+| Number needs to be connected again after removal | Removed (revoked) senders free their number; run Connect WhatsApp again — a fresh sender row is created. |
 | Inbound 403 `signature_mismatch` on a connected sender | The signing token is the **subaccount** auth token; if the subaccount token was rotated in Twilio, the stored token no longer matches — reconnect the account. |
 
 ## 8. Disconnect / rollback

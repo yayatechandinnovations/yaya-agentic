@@ -55,6 +55,7 @@ public class WhatsAppSenderService {
 
     private static final Logger log = LoggerFactory.getLogger(WhatsAppSenderService.class);
     private static final Pattern E164 = Pattern.compile("^\\+[1-9][0-9]{6,17}$");
+    private static final Pattern VERIFICATION_CODE = Pattern.compile("^[0-9]{4,8}$");
     private static final TypeReference<Map<String, Object>> METADATA_TYPE = new TypeReference<>() {};
     private static final String INBOUND_WEBHOOK_PATH    = "/v1/channels/whatsapp/twilio/webhook/";
     private static final String STATUS_CALLBACK_PATH    = "/v1/channels/whatsapp/twilio/status-callback/";
@@ -128,7 +129,7 @@ public class WhatsAppSenderService {
                     "phone numbers in +1 555 010X XXXX are reserved for the platform's simulated playground sender");
         }
 
-        repo.findByPhoneE164(phoneE164).ifPresent(existing -> {
+        repo.findLiveByPhoneE164(phoneE164).ifPresent(existing -> {
             throw AdminApiException.conflict("phone_in_use",
                     "phone number " + phoneE164 + " is already registered to another sender");
         });
@@ -198,14 +199,14 @@ public class WhatsAppSenderService {
     /** Tenant-scoped lookup by phone — backs the embedded-signup idempotent
      *  reuse of an existing draft for the same number. */
     public Optional<WhatsAppSender> findByPhoneInTenant(Ids.TenantId tenant, String phoneE164) {
-        return repo.findByPhoneE164(phoneE164)
+        return repo.findLiveByPhoneE164(phoneE164)
                 .filter(e -> e.getTenantId().equals(tenant.value()))
                 .map(this::toDomain);
     }
 
     /** Cross-tenant existence check for phone-conflict validation. */
     public Optional<Ids.TenantId> findTenantForPhone(String phoneE164) {
-        return repo.findByPhoneE164(phoneE164).map(e -> new Ids.TenantId(e.getTenantId()));
+        return repo.findLiveByPhoneE164(phoneE164).map(e -> new Ids.TenantId(e.getTenantId()));
     }
 
     /* ---------------------------- edit DRAFT/FAILED ----------------------- */
@@ -229,7 +230,7 @@ public class WhatsAppSenderService {
         validateDisplayName(displayName);
 
         if (!entity.getPhoneE164().equals(phoneE164)) {
-            repo.findByPhoneE164(phoneE164)
+            repo.findLiveByPhoneE164(phoneE164)
                     .filter(other -> !other.getId().equals(entity.getId()))
                     .ifPresent(other -> {
                         throw AdminApiException.conflict("phone_in_use",
@@ -264,11 +265,21 @@ public class WhatsAppSenderService {
      *       Twilio sender SID</li>
      *   <li>{@code Rejected}        → SUBMITTING → FAILED + persist failure
      *       message (operator edits, resubmits)</li>
-     *   <li>{@code TransientFailure} → leave as SUBMITTING; the poller will
-     *       retry the registration on its next pass</li>
+     *   <li>{@code TransientFailure} → leave as SUBMITTING; the poller (or
+     *       the operator's Refresh) re-drives the registration</li>
      * </ul>
      */
     public WhatsAppSender submit(Ids.TenantId tenant, SenderId id) {
+        return submit(tenant, id, Optional.empty());
+    }
+
+    /**
+     * @param verificationMethod how the BSP delivers the ownership code to a
+     *                           number it doesn't own — {@code sms} (default)
+     *                           or {@code voice} for landlines
+     */
+    public WhatsAppSender submit(Ids.TenantId tenant, SenderId id, Optional<String> verificationMethod) {
+        verificationMethod.ifPresent(WhatsAppSenderService::validateVerificationMethod);
         if (!credsResolver.isReady()) {
             throw AdminApiException.conflict("provider_not_ready",
                     "WhatsApp provisioning is not configured on this instance.");
@@ -277,22 +288,76 @@ public class WhatsAppSenderService {
         // tx 1 — DRAFT/FAILED → SUBMITTING, all in one short DB round trip
         WhatsAppSender pending = beginSubmit(tenant, id);
 
-        // outside tx — call Twilio
+        // outside tx — call Twilio; tx 2 folds the verdict back into the row
+        return registerAndFinish(pending, verificationMethod);
+    }
+
+    /**
+     * Re-drive a sender left in SUBMITTING with no BSP SID — a submit whose
+     * call failed transiently. Safe to repeat: the provider adopts a sender
+     * the BSP already created for this number instead of duplicating it.
+     */
+    public WhatsAppSender retrySubmit(WhatsAppSender sender) {
+        if (sender.status() != SenderStatus.SUBMITTING || sender.onboarding().twilioSenderSid() != null) {
+            throw AdminApiException.conflict("not_retryable",
+                    "only a submission that is still waiting to reach WhatsApp can be retried");
+        }
+        return registerAndFinish(sender, Optional.empty());
+    }
+
+    private WhatsAppSender registerAndFinish(WhatsAppSender pending, Optional<String> verificationMethod) {
         SenderRef refForRetry = pending.onboarding().twilioSenderSid() == null
                 ? null
                 : new SenderRef(twilio.id(), pending.onboarding().twilioSenderSid());
 
-        SenderRegistrationRequest req = buildRegistrationRequest(pending);
+        SenderRegistrationRequest req = buildRegistrationRequest(pending, verificationMethod);
         SenderRegistrationResult result;
         try {
             result = twilio.registerSender(req, credsResolver.resolve(pending));
         } catch (RuntimeException e) {
-            log.warn("Twilio registerSender threw for sender {}: {}", id.value(), e.getMessage());
+            log.warn("Twilio registerSender threw for sender {}: {}", pending.id().value(), e.getMessage());
             result = new SenderRegistrationResult.TransientFailure("transport_error", e.getMessage());
         }
+        return finishSubmit(pending.tenant(), pending.id(), result, refForRetry);
+    }
 
-        // tx 2 — fold the verdict back into the row
-        return finishSubmit(tenant, id, result, refForRetry);
+    /**
+     * Complete number-ownership verification with the one-time code WhatsApp
+     * sent to the phone. Only a sender the BSP reports as
+     * {@code PENDING_VERIFICATION} is waiting on one; the poller then carries
+     * it on to ACTIVE.
+     */
+    public WhatsAppSender verify(Ids.TenantId tenant, SenderId id, String code) {
+        String digits = code == null ? "" : code.replaceAll("[\\s-]", "");
+        if (!VERIFICATION_CODE.matcher(digits).matches()) {
+            throw AdminApiException.badRequest("bad_verification_code",
+                    "enter the numeric code WhatsApp sent to the phone number");
+        }
+        WhatsAppSender sender = requireForTenant(tenant, id);
+        String sid = sender.onboarding().twilioSenderSid();
+        if (sender.status() != SenderStatus.PENDING_REVIEW || sid == null) {
+            throw AdminApiException.conflict("not_awaiting_verification",
+                    "this sender is not waiting for a verification code");
+        }
+        if (!credsResolver.isReady()) {
+            throw AdminApiException.conflict("provider_not_ready",
+                    "WhatsApp provisioning is not configured on this instance.");
+        }
+        SenderSyncResult result;
+        try {
+            result = twilio.verifySender(new SenderRef(twilio.id(), sid), digits,
+                    credsResolver.resolve(sender));
+        } catch (TwilioMessagingChannelProvider.TwilioApiException e) {
+            log.warn("WhatsApp verification failed for sender {}: {} {}", id.value(), e.code(), e.getMessage());
+            if ("twilio_verification_rejected".equals(e.code())) {
+                throw AdminApiException.badRequest("verification_rejected",
+                        "WhatsApp did not accept that code. Check it and try again — codes expire after a few minutes.");
+            }
+            throw new AdminApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "verification_unavailable",
+                    "WhatsApp verification is temporarily unavailable — try again in a minute.");
+        }
+        return applySyncResult(tenant, id, result);
     }
 
     @Transactional
@@ -353,7 +418,9 @@ public class WhatsAppSenderService {
      */
     public WhatsAppSender forceSync(Ids.TenantId tenant, SenderId id) {
         WhatsAppSender sender = requireForTenant(tenant, id);
-        if (sender.onboarding().twilioSenderSid() == null) {
+        boolean awaitingRetry = sender.status() == SenderStatus.SUBMITTING
+                && sender.onboarding().twilioSenderSid() == null;
+        if (sender.onboarding().twilioSenderSid() == null && !awaitingRetry) {
             throw AdminApiException.conflict("not_submitted",
                     "sender has not been submitted to WhatsApp yet — there is nothing to sync");
         }
@@ -361,7 +428,7 @@ public class WhatsAppSenderService {
             throw AdminApiException.conflict("provider_not_ready",
                     "WhatsApp provisioning is not configured on this instance.");
         }
-        return syncOne(sender);
+        return awaitingRetry ? retrySubmit(sender) : syncOne(sender);
     }
 
     /** Driven by both forceSync (synchronous) and SenderSyncJob (scheduled). */
@@ -402,13 +469,15 @@ public class WhatsAppSenderService {
         return saved;
     }
 
-    /** Senders the poller should sweep — currently in flight at the BSP. */
+    /** Senders the poller should sweep — in flight at the BSP, plus
+     *  submissions still waiting to reach it ({@link #retrySubmit}). */
     public List<WhatsAppSender> findInFlight() {
         return repo.findByStatusIn(List.of(
                 SenderStatus.SUBMITTING.name(),
                 SenderStatus.PENDING_REVIEW.name()))
                 .stream()
-                .filter(e -> e.getTwilioSenderSid() != null)
+                .filter(e -> e.getTwilioSenderSid() != null
+                        || SenderStatus.SUBMITTING.name().equals(e.getStatus()))
                 .map(this::toDomain)
                 .toList();
     }
@@ -447,8 +516,10 @@ public class WhatsAppSenderService {
 
     /* ---------------------------- helpers --------------------------------- */
 
-    private SenderRegistrationRequest buildRegistrationRequest(WhatsAppSender sender) {
+    private SenderRegistrationRequest buildRegistrationRequest(WhatsAppSender sender,
+                                                               Optional<String> verificationMethod) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        verificationMethod.ifPresent(m -> payload.put("verificationMethod", m));
         BusinessProfile b = sender.business();
         payload.put("legalName", b.legalName());
         payload.put("contactEmail", b.contactEmail());
@@ -561,6 +632,13 @@ public class WhatsAppSenderService {
         if (phoneE164 == null || !E164.matcher(phoneE164).matches()) {
             throw AdminApiException.badRequest("bad_phone",
                     "phoneE164 must be E.164 (+ followed by 7–18 digits, first digit 1–9)");
+        }
+    }
+
+    private static void validateVerificationMethod(String method) {
+        if (!"sms".equals(method) && !"voice".equals(method)) {
+            throw AdminApiException.badRequest("bad_verification_method",
+                    "verificationMethod must be 'sms' or 'voice'");
         }
     }
 
