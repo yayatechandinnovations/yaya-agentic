@@ -82,7 +82,7 @@ class WhatsAppOutreachLegTest {
     @Test
     void outside_the_window_sends_the_approved_template_with_document_header_and_action_payloads() {
         when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any())).thenReturn(Optional.empty());
-        when(templates.findApproved(TENANT, new SenderId(WA), "sl_undo_request_v1", "es"))
+        when(templates.findApproved(TENANT, sender, "sl_undo_request_v1", "es"))
                 .thenReturn(Optional.of(template("DOCUMENT", 6, List.of("Aprobar", "Rechazar", "Ver detalle"))));
 
         var outcome = leg.deliver(request(List.of(new WhatsAppOutreachLeg.Media("asset1", "ticket 12.pdf",
@@ -176,8 +176,8 @@ class WhatsAppOutreachLegTest {
         StringBuilder body = new StringBuilder("Solicitud");
         for (int i = 1; i <= n; i++) body.append(" v").append(i).append(": {{").append(i).append("}}");
         body.append(".");
-        return new WhatsAppTemplate(new TemplateId(1L), TENANT, new SenderId(WA), "sl_undo_request_v1", "es",
+        return new WhatsAppTemplate(new TemplateId(1L), "platform", "sl_undo_request_v1", "es",
                 TemplateCategory.UTILITY, body.toString(), n, null, "HXtemplate", TemplateStatus.APPROVED,
-                null, null, null, null, header, buttons);
+                null, null, null, null, header, buttons, false);
     }
 }

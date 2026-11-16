@@ -26,6 +26,7 @@ import '../features/admin/system_senders/system_senders_screen.dart';
 import '../features/admin/sms/sms_admin_screen.dart';
 import '../features/admin/whatsapp_opt_outs/whatsapp_opt_outs_screen.dart';
 import '../features/admin/whatsapp_senders/whatsapp_senders_screen.dart';
+import '../features/admin/whatsapp_templates/whatsapp_shared_templates_screen.dart';
 import '../features/admin/whatsapp_templates/whatsapp_templates_screen.dart';
 import '../features/api_keys/presentation/api_keys_screen.dart';
 import '../features/auth/application/auth_controller.dart';
@@ -105,6 +106,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/forum', builder: (_, _) => const ForumScreen()),
           GoRoute(path: '/admin/system-senders', builder: (_, __) => const SystemSendersScreen()),
           GoRoute(path: '/admin/whatsapp-templates', builder: (_, __) => const WhatsAppTemplatesScreen()),
+          GoRoute(path: '/admin/whatsapp-shared-templates', builder: (_, _) => const WhatsAppSharedTemplatesScreen()),
           GoRoute(path: '/admin/receipt-templates', builder: (_, _) => const ReceiptTemplatesScreen()),
           GoRoute(path: '/admin/whatsapp-opt-outs', builder: (_, __) => const WhatsAppOptOutsScreen()),
           GoRoute(path: '/admin/recording-strategies', builder: (_, __) => const RecordingStrategiesScreen()),
@@ -305,6 +307,9 @@ const _navItems = <_NavEntry>[
         platformOnly: true),
     _NavItem('Operator auth', Icons.security_outlined, Icons.security, '/admin/operator-auth',
         platformOnly: true),
+    _NavItem('Shared WhatsApp templates', Icons.share_outlined, Icons.share,
+        '/admin/whatsapp-shared-templates',
+        platformOnly: true),
   ]),
 
   // App-level config (backend base URL) — the conventional bottom item.
@@ -318,6 +323,7 @@ const _navItems = <_NavEntry>[
 const _platformOnlyRoutes = <String>{
   '/admin/tenants',
   '/admin/operator-auth',
+  '/admin/whatsapp-shared-templates',
 };
 
 class _AppShell extends ConsumerWidget {

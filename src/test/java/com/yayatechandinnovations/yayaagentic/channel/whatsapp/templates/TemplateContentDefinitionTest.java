@@ -21,14 +21,18 @@ import static org.mockito.Mockito.mock;
 class TemplateContentDefinitionTest {
 
     private final WhatsAppTemplateService service = new WhatsAppTemplateService(
-            mock(WhatsAppTemplateRepository.class), mock(WhatsAppSenderService.class),
+            mock(WhatsAppTemplateRepository.class),
+            mock(com.yayatechandinnovations.yayaagentic.persistence.WhatsAppTemplateHolderRepository.class),
+            mock(com.yayatechandinnovations.yayaagentic.persistence.WhatsAppTemplateHolderEventRepository.class),
+            mock(WhatsAppSenderService.class),
+            mock(com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.WhatsAppMessagingAccountService.class),
             mock(TwilioMessagingChannelProvider.class), mock(ProviderCredsResolver.class),
             new ObjectMapper(), "https://hub.example");
 
     @Test
     @SuppressWarnings("unchecked")
     void document_template_is_a_card_with_variable_media_and_button_payloads() {
-        WhatsAppTemplateEntity e = new WhatsAppTemplateEntity("t", "wa", "sl_undo_request_v1", "es",
+        WhatsAppTemplateEntity e = new WhatsAppTemplateEntity("platform", "t", "sl_undo_request_v1", "es",
                 "UTILITY", "Solicitud {{1}} pendiente.\nBoleto {{2}}.", 2);
         e.setHeaderKind("DOCUMENT");
         e.setButtonsJson("[\"Aprobar\",\"Rechazar\"]");

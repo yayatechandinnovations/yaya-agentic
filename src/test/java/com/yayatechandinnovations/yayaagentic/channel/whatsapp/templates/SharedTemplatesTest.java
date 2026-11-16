@@ -1,0 +1,373 @@
+package com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
+import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
+import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppSenderDtos;
+import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppTemplateDtos;
+import com.yayatechandinnovations.yayaagentic.channel.ProviderCreds;
+import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.WhatsAppTemplateService.Caller;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.WhatsAppTemplateService.Declaration;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider.ApprovalState;
+import com.yayatechandinnovations.yayaagentic.core.Ids;
+import com.yayatechandinnovations.yayaagentic.operator_auth.ratelimit.LoginRateLimiter;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppMessagingAccountEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppMessagingAccountRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository;
+import com.yayatechandinnovations.yayaagentic.operator_auth.TestAuthDance;
+import com.yayatechandinnovations.yayaagentic.support.TestcontainersConfiguration;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.reactive.server.WebTestClient;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
+
+/**
+ * whatsapp-shared-templates-design.md §4–§5: one template per WhatsApp account,
+ * used by the workspaces that hold it; platform admins decide who holds what.
+ * The provider is a mock, so submissions are counted.
+ */
+@SpringBootTest(webEnvironment = RANDOM_PORT)
+@Import(TestcontainersConfiguration.class)
+@TestPropertySource(properties = {
+        "yaya.agentic.llm.provider=stub",
+        "spring.ai.anthropic.api-key="
+})
+class SharedTemplatesTest {
+
+    private static final Caller PLATFORM = new Caller(true, "test:platform");
+    private static final Caller WORKSPACE = new Caller(false, "test:workspace");
+    private static final AtomicInteger PHONES = new AtomicInteger(1000);
+
+    @Autowired WebTestClient client;
+    @Autowired LoginRateLimiter rateLimiter;
+    @Autowired WhatsAppTemplateService templates;
+    @Autowired WhatsAppSenderService senders;
+    @Autowired WhatsAppSenderRepository senderRows;
+    @Autowired WhatsAppMessagingAccountRepository accountRows;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired ObjectMapper json;
+
+    @MockitoBean TwilioMessagingChannelProvider twilio;
+    @MockitoBean(name = "tenantSubaccountTwilioCredsResolver") ProviderCredsResolver creds;
+
+    private Ids.TenantId a;
+    private Ids.TenantId b;
+    private Ids.TenantId c;
+    private SenderId senderA;
+    private SenderId senderB;
+    private SenderId senderC;
+
+    @BeforeEach
+    void setUp() {
+        rateLimiter.resetAll();
+        client = TestAuthDance.asBootstrap(client);
+        String run = UUID.randomUUID().toString().substring(0, 8);
+        a = tenant("shared-a-" + run);
+        b = tenant("shared-b-" + run);
+        c = tenant("shared-c-" + run);
+        senderA = sender(a);
+        senderB = sender(b);
+        senderC = sender(c);
+
+        when(creds.isReady()).thenReturn(true);
+        when(creds.resolveForAccount(any())).thenReturn(mock(ProviderCreds.class));
+        when(twilio.findContentByName(anyString(), any())).thenReturn(Optional.empty());
+        when(twilio.createContent(anyMap(), any())).thenReturn("HX" + run);
+        when(twilio.requestWhatsAppApproval(anyString(), anyString(), anyString(), any()))
+                .thenReturn(new ApprovalState("pending", null));
+        clearInvocations(twilio);
+    }
+
+    @Test
+    void a_platform_declaration_shares_an_existing_template_and_a_workspace_one_is_refused() {
+        Declaration d = declaration("sl_alert_" + suffix(), "Alerta {{1}}.");
+        WhatsAppTemplate first = templates.declare(a, senderA, d, WORKSPACE);
+        assertThat(first.status()).isEqualTo(TemplateStatus.DRAFT);
+        assertThat(first.accountKey()).isEqualTo(TemplateAccounts.PLATFORM);
+        assertThat(first.shared()).isFalse();
+
+        // A workspace admin learns only that the name is in use.
+        assertConflict(() -> templates.declare(b, senderB, d, WORKSPACE), "template_name_taken");
+        assertConflict(() -> templates.declare(b, senderB, declaration(d.name(), "Otra {{1}}."), WORKSPACE),
+                "template_name_taken");
+        assertConflict(() -> templates.create(b, senderB, d.name(), "es", TemplateCategory.UTILITY,
+                "Otra.", WORKSPACE), "template_name_taken");
+        assertThat(templates.listForSender(b, senderB)).isEmpty();
+
+        WhatsAppTemplate joined = templates.declare(b, senderB, d, PLATFORM);
+        assertThat(joined.id()).isEqualTo(first.id());
+        assertThat(joined.shared()).isTrue();
+        assertThat(templates.listForSender(a, senderA)).singleElement()
+                .satisfies(t -> assertThat(t.shared()).isTrue());
+        assertThat(templates.listForSender(b, senderB)).extracting(WhatsAppTemplate::id)
+                .containsExactly(first.id());
+        assertThat(templates.listForSender(c, senderC)).isEmpty();
+        // Declaring it again changes nothing.
+        assertThat(templates.declare(b, senderB, d, PLATFORM).id()).isEqualTo(first.id());
+        assertThat(holders(first)).containsExactly(a.value(), b.value());
+    }
+
+    @Test
+    void new_wording_is_for_the_sole_holder_or_a_platform_admin() {
+        String name = "sl_edit_" + suffix();
+        WhatsAppTemplate first = templates.declare(a, senderA, declaration(name, "Uno {{1}}."), WORKSPACE);
+        // The only holder rewrites its own draft.
+        WhatsAppTemplate edited = templates.declare(a, senderA, declaration(name, "Dos {{1}}."), WORKSPACE);
+        assertThat(edited.id()).isEqualTo(first.id());
+        assertThat(edited.body()).isEqualTo("Dos {{1}}.");
+
+        templates.declare(b, senderB, declaration(name, "Dos {{1}}."), PLATFORM);
+        assertConflict(() -> templates.declare(a, senderA, declaration(name, "Tres {{1}}."), WORKSPACE),
+                "not_editable");
+        assertConflict(() -> templates.update(a, senderA, first.id(), "Tres.", TemplateCategory.UTILITY,
+                WORKSPACE), "not_editable");
+        WhatsAppTemplate byPlatform = templates.declare(a, senderA, declaration(name, "Tres {{1}}."), PLATFORM);
+        assertThat(byPlatform.body()).isEqualTo("Tres {{1}}.");
+        assertThat(templates.listForSender(b, senderB)).singleElement()
+                .satisfies(t -> assertThat(t.body()).isEqualTo("Tres {{1}}."));
+
+        // Once WhatsApp has it, nobody rewrites it under the same name.
+        templates.submit(a, senderA, first.id());
+        assertConflict(() -> templates.declare(a, senderA, declaration(name, "Cuatro {{1}}."), PLATFORM),
+                "not_editable");
+    }
+
+    @Test
+    void a_template_reaches_the_provider_once_and_only_holders_send_it() {
+        Declaration d = declaration("sl_once_" + suffix(), "Aviso {{1}}.");
+        WhatsAppTemplate t = templates.declare(a, senderA, d, PLATFORM);
+        templates.declare(b, senderB, d, PLATFORM);
+
+        assertThat(templates.submit(a, senderA, t.id()).status()).isEqualTo(TemplateStatus.SUBMITTED);
+        // The second workspace's one-click finds it submitted: nothing more goes out.
+        assertThat(templates.submit(b, senderB, t.id()).status()).isEqualTo(TemplateStatus.SUBMITTED);
+        verify(twilio, times(1)).createContent(anyMap(), any());
+        verify(twilio, times(1)).requestWhatsAppApproval(anyString(), eq(d.name()), anyString(), any());
+        // A workspace that does not hold it cannot submit or even see it.
+        assertThatThrownBy(() -> templates.submit(c, senderC, t.id()))
+                .isInstanceOfSatisfying(AdminApiException.class,
+                        e -> assertThat(e.code()).isEqualTo("template_not_found"));
+
+        assertThat(templates.findApproved(a, senderOf(a, senderA), d.name(), "es")).isEmpty();
+        when(twilio.fetchWhatsAppApproval(anyString(), any())).thenReturn(new ApprovalState("approved", null));
+        assertThat(templates.syncSender(b, senderB)).singleElement()
+                .satisfies(row -> assertThat(row.status()).isEqualTo(TemplateStatus.APPROVED));
+        assertThat(templates.findApproved(a, senderOf(a, senderA), d.name(), "es")).isPresent();
+        assertThat(templates.findApproved(b, senderOf(b, senderB), d.name(), "es")).isPresent();
+        assertThat(templates.findApproved(c, senderOf(c, senderC), d.name(), "es")).isEmpty();
+
+        clearInvocations(twilio);
+        assertThat(templates.submit(b, senderB, t.id()).status()).isEqualTo(TemplateStatus.APPROVED);
+        verify(twilio, never()).requestWhatsAppApproval(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void stopping_use_removes_one_workspace_and_an_approved_template_stays_in_the_account() {
+        Declaration d = declaration("sl_keep_" + suffix(), "Aviso {{1}}.");
+        WhatsAppTemplate t = templates.declare(a, senderA, d, PLATFORM);
+        templates.declare(b, senderB, d, PLATFORM);
+        templates.submit(a, senderA, t.id());
+        when(twilio.fetchWhatsAppApproval(anyString(), any())).thenReturn(new ApprovalState("approved", null));
+        templates.syncSender(a, senderA);
+
+        templates.delete(b, senderB, t.id(), WORKSPACE);
+        assertThat(templates.findApproved(b, senderOf(b, senderB), d.name(), "es")).isEmpty();
+        assertThat(templates.findApproved(a, senderOf(a, senderA), d.name(), "es")).isPresent();
+
+        templates.delete(a, senderA, t.id(), WORKSPACE);
+        assertThat(holders(t)).isEmpty();
+        var unheld = templates.listForAccount(TemplateAccounts.PLATFORM).stream()
+                .filter(row -> row.template().id().equals(t.id())).findFirst();
+        assertThat(unheld).isPresent();
+        assertThat(unheld.get().template().status()).isEqualTo(TemplateStatus.APPROVED);
+        assertConflict(() -> templates.deleteForAccount(TemplateAccounts.PLATFORM, t.id()), "not_deletable");
+
+        // A platform admin hands it to another workspace without a new approval.
+        clearInvocations(twilio);
+        templates.share(TemplateAccounts.PLATFORM, t.id(), c, PLATFORM);
+        assertThat(templates.findApproved(c, senderOf(c, senderC), d.name(), "es")).isPresent();
+        verify(twilio, never()).requestWhatsAppApproval(anyString(), anyString(), anyString(), any());
+        assertThat(jdbc.queryForList("SELECT action || ':' || tenant_id FROM whatsapp_template_holder_events "
+                + "WHERE template_id = ? ORDER BY id", String.class, t.id().value()))
+                .containsExactly("SHARED:" + a.value(), "SHARED:" + b.value(), "UNSHARED:" + b.value(),
+                        "UNSHARED:" + a.value(), "SHARED:" + c.value());
+
+        // A draft nobody holds any more is simply gone.
+        WhatsAppTemplate draft = templates.declare(a, senderA, declaration("sl_gone_" + suffix(), "Hola {{1}}."),
+                WORKSPACE);
+        templates.delete(a, senderA, draft.id(), WORKSPACE);
+        assertThat(templates.listForAccount(TemplateAccounts.PLATFORM))
+                .noneMatch(row -> row.template().id().equals(draft.id()));
+    }
+
+    @Test
+    void a_workspaces_own_account_keeps_its_templates_to_itself() {
+        String account = "wma_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+        accountRows.saveAndFlush(new WhatsAppMessagingAccountEntity(account, c.value(),
+                "waba-" + account, "Own Brand", "ACTIVE"));
+        jdbc.update("UPDATE whatsapp_senders SET messaging_account_id = ? WHERE id = ?", account, senderC.value());
+
+        // The same name as on the platform account is a separate template there.
+        Declaration d = declaration("sl_own_" + suffix(), "Aviso {{1}}.");
+        WhatsAppTemplate onPlatform = templates.declare(a, senderA, d, WORKSPACE);
+        WhatsAppTemplate onOwn = templates.declare(c, senderC, d, WORKSPACE);
+        assertThat(onOwn.id()).isNotEqualTo(onPlatform.id());
+        assertThat(onOwn.accountKey()).isEqualTo(account);
+
+        assertConflict(() -> templates.share(account, onOwn.id(), a, PLATFORM), "holder_not_allowed");
+        assertThatThrownBy(() -> templates.listForAccount("wma_missing"))
+                .isInstanceOfSatisfying(AdminApiException.class,
+                        e -> assertThat(e.code()).isEqualTo("whatsapp_account_not_found"));
+        // A platform-account template is not reachable through the other account.
+        assertThatThrownBy(() -> templates.share(account, onPlatform.id(), c, PLATFORM))
+                .isInstanceOfSatisfying(AdminApiException.class,
+                        e -> assertThat(e.code()).isEqualTo("template_not_found"));
+        // The account is the workspace's own: it takes back an approved template it
+        // stopped using without anyone sharing it.
+        templates.submit(c, senderC, onOwn.id());
+        when(twilio.fetchWhatsAppApproval(anyString(), any())).thenReturn(new ApprovalState("approved", null));
+        templates.syncSender(c, senderC);
+        templates.delete(c, senderC, onOwn.id(), WORKSPACE);
+        assertThat(templates.findApproved(c, senderOf(c, senderC), d.name(), "es")).isEmpty();
+        assertThat(templates.declare(c, senderC, d, WORKSPACE).id()).isEqualTo(onOwn.id());
+        assertThat(templates.findApproved(c, senderOf(c, senderC), d.name(), "es")).isPresent();
+
+        assertThat(templates.listAccounts()).extracting(WhatsAppTemplateService.Account::accountKey)
+                .startsWith(TemplateAccounts.PLATFORM).contains(account);
+    }
+
+    @Test
+    void platform_admin_routes_declare_share_and_list() {
+        String name = "sl_http_" + suffix();
+        var decl = new WhatsAppTemplateDtos.TemplateDeclaration(name, "es", TemplateCategory.UTILITY, "NONE",
+                "Aviso {{1}}.", List.of(), new WhatsAppTemplateDtos.Samples(List.of("x"), null));
+        var declared = client.put()
+                .uri("/v1/admin/whatsapp-accounts/platform/templates/by-name/{n}", name)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(decl).exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppTemplateDtos.AccountTemplateResponse.class).returnResult().getResponseBody();
+        assertThat(declared.holders()).isEmpty();
+        assertThat(declared.status()).isEqualTo(TemplateStatus.DRAFT);
+
+        var shared = client.put()
+                .uri("/v1/admin/whatsapp-accounts/platform/templates/{id}/holders/{t}", declared.id(), a.value())
+                .exchange().expectStatus().isOk()
+                .expectBody(WhatsAppTemplateDtos.AccountTemplateResponse.class).returnResult().getResponseBody();
+        assertThat(shared.holders()).extracting(WhatsAppTemplateDtos.HolderResponse::tenantId)
+                .containsExactly(a.value());
+        client.put()
+                .uri("/v1/admin/whatsapp-accounts/platform/templates/{id}/holders/{t}", declared.id(), "no-such")
+                .exchange().expectStatus().isBadRequest();
+
+        // The workspace sees it through its sender, as before.
+        var listed = client.get()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates", a.value(), senderA.value())
+                .exchange().expectStatus().isOk()
+                .expectBodyList(WhatsAppTemplateDtos.TemplateResponse.class).returnResult().getResponseBody();
+        assertThat(listed).extracting(WhatsAppTemplateDtos.TemplateResponse::name).contains(name);
+        assertThat(listed).allSatisfy(t -> {
+            assertThat(t.tenantId()).isEqualTo(a.value());
+            assertThat(t.senderId()).isEqualTo(senderA.value());
+        });
+
+        client.get().uri("/v1/admin/whatsapp-accounts").exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$[0].accountKey").isEqualTo("platform");
+        client.delete()
+                .uri("/v1/admin/whatsapp-accounts/platform/templates/{id}/holders/{t}", declared.id(), a.value())
+                .exchange().expectStatus().isOk();
+        client.delete().uri("/v1/admin/whatsapp-accounts/platform/templates/{id}", declared.id())
+                .exchange().expectStatus().isNoContent();
+
+        // A platform admin's declaration of a name another workspace holds shares it
+        // (the bootstrap operator is one).
+        Declaration taken = declaration("sl_key_" + suffix(), "Aviso {{1}}.");
+        templates.declare(a, senderA, taken, WORKSPACE);
+        var again = new WhatsAppTemplateDtos.TemplateDeclaration(taken.name(), "es", TemplateCategory.UTILITY,
+                "NONE", "Aviso {{1}}.", List.of(), new WhatsAppTemplateDtos.Samples(List.of("ejemplo"), null));
+        client.put()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/by-name/{n}",
+                        b.value(), senderB.value(), taken.name())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(again).exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppTemplateDtos.TemplateResponse.class)
+                .value(t -> assertThat(t.shared()).isTrue());
+    }
+
+    /* ------------------------------ helpers ------------------------------- */
+
+    private static String suffix() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+    }
+
+    private static Declaration declaration(String name, String body) {
+        return new Declaration(name, "es", TemplateCategory.UTILITY, "NONE", body, List.of(),
+                List.of("ejemplo"), null);
+    }
+
+    private static void assertConflict(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String code) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(AdminApiException.class,
+                e -> assertThat(e.code()).isEqualTo(code));
+    }
+
+    private List<String> holders(WhatsAppTemplate t) {
+        return jdbc.queryForList("SELECT tenant_id FROM whatsapp_template_holders WHERE template_id = ? "
+                + "ORDER BY tenant_id", String.class, t.id().value());
+    }
+
+    private WhatsAppSender senderOf(Ids.TenantId tenant, SenderId id) {
+        return senders.requireForTenant(tenant, id);
+    }
+
+    private Ids.TenantId tenant(String id) {
+        var req = new AdminDtos.TenantRequest(id, id, "https://" + id + ".example",
+                List.of(), List.of(), true, null, null, Map.of());
+        client.post().uri("/v1/admin/tenants").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(req).exchange().expectStatus().isCreated();
+        return new Ids.TenantId(id);
+    }
+
+    private SenderId sender(Ids.TenantId tenant) {
+        var req = new WhatsAppSenderDtos.SenderRequest(
+                "+1555" + (9000000 + PHONES.incrementAndGet()) , "Shared Co",
+                new WhatsAppSenderDtos.BusinessProfileRequest(
+                        "Shared Inc.", "Shared Co", "ops@shared.example",
+                        "Address", "https://shared.example", "RETAIL", "Stuff."),
+                null);
+        var res = client.post().uri("/v1/admin/tenants/{t}/whatsapp-senders", tenant.value())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(req).exchange()
+                .expectStatus().isCreated()
+                .expectBody(WhatsAppSenderDtos.SenderResponse.class).returnResult().getResponseBody();
+        return new SenderId(res.id());
+    }
+}

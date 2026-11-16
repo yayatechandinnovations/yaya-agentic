@@ -213,7 +213,7 @@ public class WhatsAppOutreachLeg {
                                  com.yayatechandinnovations.yayaagentic.channel.ProviderCreds creds) {
         DeliveryRequest.TemplateRef ref = r.template();
         if (ref == null) return Outcome.fallback("no_template");
-        Optional<WhatsAppTemplate> found = templates.findApproved(r.tenant(), new SenderId(sender.id().value()),
+        Optional<WhatsAppTemplate> found = templates.findApproved(r.tenant(), sender,
                 ref.name(), ref.language());
         if (found.isEmpty() || found.get().bspContentSid() == null) return Outcome.fallback("template_not_approved");
         WhatsAppTemplate t = found.get();

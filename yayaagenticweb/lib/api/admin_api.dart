@@ -770,6 +770,68 @@ class AdminApi {
         '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/$templateId');
   }
 
+  // ---- WhatsApp account templates (platform admins) ------------------
+
+  Future<List<WhatsAppAccountResponse>> listWhatsAppAccounts() async {
+    final res = await _dio.get('/v1/admin/whatsapp-accounts');
+    return (res.data as List)
+        .map((e) => WhatsAppAccountResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<List<WhatsAppAccountTemplate>> listWhatsAppAccountTemplates(
+      String accountKey) async {
+    final res =
+        await _dio.get('/v1/admin/whatsapp-accounts/$accountKey/templates');
+    return (res.data as List)
+        .map((e) => WhatsAppAccountTemplate.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<List<WhatsAppAccountTemplate>> syncWhatsAppAccountTemplates(
+      String accountKey) async {
+    final res = await _dio
+        .post('/v1/admin/whatsapp-accounts/$accountKey/templates/sync');
+    return (res.data as List)
+        .map((e) => WhatsAppAccountTemplate.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<WhatsAppAccountTemplate> declareWhatsAppAccountTemplate(
+      String accountKey, WhatsAppTemplateDeclaration body) async {
+    final res = await _dio.put(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/by-name/${body.name}',
+        data: body.toJson());
+    return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppAccountTemplate> submitWhatsAppAccountTemplate(
+      String accountKey, int templateId) async {
+    final res = await _dio.post(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId/submit');
+    return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  }
+
+  Future<void> deleteWhatsAppAccountTemplate(
+      String accountKey, int templateId) async {
+    await _dio
+        .delete('/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId');
+  }
+
+  Future<WhatsAppAccountTemplate> shareWhatsAppTemplate(
+      String accountKey, int templateId, String tenantId) async {
+    final res = await _dio.put(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId/holders/$tenantId');
+    return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  }
+
+  Future<WhatsAppAccountTemplate> unshareWhatsAppTemplate(
+      String accountKey, int templateId, String tenantId) async {
+    final res = await _dio.delete(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId/holders/$tenantId');
+    return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  }
+
   // ---- WhatsApp opt-outs ---------------------------------------------
 
   Future<List<ChannelOptOutResponse>> listOptOuts(

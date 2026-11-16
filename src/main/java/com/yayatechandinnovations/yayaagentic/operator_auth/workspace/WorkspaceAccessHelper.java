@@ -105,6 +105,36 @@ public class WorkspaceAccessHelper {
         return pinned.value();
     }
 
+    /**
+     * True for a platform-admin operator and for a platform-scope API key —
+     * the callers that may act across workspaces.
+     */
+    public boolean isPlatformAdmin(ServerWebExchange exchange) {
+        return OperatorContext.current(exchange).map(OperatorIdentity::isPlatformAdmin).orElse(false);
+    }
+
+    /**
+     * Gate for surfaces that are not workspace-scoped at all.
+     *
+     * @throws ResponseStatusException 401 without an operator, 403 for anyone
+     *         who is not a platform admin
+     */
+    public void requirePlatformAdmin(ServerWebExchange exchange) {
+        if (OperatorContext.current(exchange).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no_operator_on_exchange");
+        }
+        if (!isPlatformAdmin(exchange)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "platform_admin_required");
+        }
+    }
+
+    /** Audit identity of the caller: the operator's source and subject. */
+    public String actorOf(ServerWebExchange exchange) {
+        return OperatorContext.current(exchange)
+                .map(op -> op.source().name().toLowerCase(java.util.Locale.ROOT) + ":" + op.subject())
+                .orElse("unknown");
+    }
+
     private static String legacyDefault(String tenant) {
         return (tenant == null || tenant.isBlank()) ? "default" : tenant;
     }

@@ -66,6 +66,14 @@ public class WhatsAppMessagingAccountService {
         return repo.findById(id).map(WhatsAppMessagingAccountService::toDomain);
     }
 
+    /** Every connected account, for the platform-admin template view. */
+    public List<WhatsAppMessagingAccount> listAll() {
+        return repo.findAll().stream()
+                .map(WhatsAppMessagingAccountService::toDomain)
+                .sorted(java.util.Comparator.comparing(WhatsAppMessagingAccount::createdAt))
+                .toList();
+    }
+
     /** Cross-tenant WABA lookup backing the ownership-conflict check. */
     public Optional<WhatsAppMessagingAccount> findByWaba(String wabaId) {
         return repo.findByWabaId(wabaId).map(WhatsAppMessagingAccountService::toDomain);

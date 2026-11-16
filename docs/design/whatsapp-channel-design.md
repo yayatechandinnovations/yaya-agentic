@@ -733,6 +733,10 @@ The status-callback path also has a signature verification — same `webhookSecr
 
 ### 11.1 Templates
 
+> **Superseded 2026-11-16** by `whatsapp-shared-templates-design.md`: a template is a row tied
+> to a WhatsApp account + locale + name (`account_key`), and `whatsapp_template_holders` records
+> which workspaces may use it. The shape below is the original per-sender one.
+
 A template is a row tied to a sender + locale + name:
 
 ```

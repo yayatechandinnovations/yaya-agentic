@@ -50,6 +50,21 @@ public class TenantSubaccountTwilioCredsResolver implements ProviderCredsResolve
             throw new ProviderNotConfiguredException(
                     "messaging account tenant mismatch for sender " + sender.id().value());
         }
+        return subaccountCreds(account);
+    }
+
+    @Override
+    public ProviderCreds resolveForAccount(String messagingAccountId) throws ProviderNotConfiguredException {
+        if (messagingAccountId == null) {
+            return platform.resolveForAccount(null);
+        }
+        WhatsAppMessagingAccount account = accounts.findById(messagingAccountId)
+                .orElseThrow(() -> new ProviderNotConfiguredException(
+                        "messaging account " + messagingAccountId + " does not exist"));
+        return subaccountCreds(account);
+    }
+
+    private ProviderCreds subaccountCreds(WhatsAppMessagingAccount account) {
         if (!account.status().isOperational() || account.twilioSubaccountSid() == null) {
             throw new ProviderNotConfiguredException(
                     "messaging account " + account.id() + " is not operational ("

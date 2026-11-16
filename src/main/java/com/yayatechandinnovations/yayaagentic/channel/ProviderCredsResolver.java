@@ -23,6 +23,16 @@ public interface ProviderCredsResolver {
     ProviderCreds resolve(WhatsAppSender sender) throws ProviderNotConfiguredException;
 
     /**
+     * Credentials of a WhatsApp account without going through one of its
+     * senders — templates belong to the account
+     * (whatsapp-shared-templates-design.md §3.3).
+     *
+     * @param messagingAccountId a workspace's own messaging account, or
+     *                           {@code null} for the platform account
+     */
+    ProviderCreds resolveForAccount(String messagingAccountId) throws ProviderNotConfiguredException;
+
+    /**
      * Cheap pre-flight check the controllers and the WhatsApp wizard use to
      * gate {@code submit}. Returns false when the platform isn't ready to
      * speak to the BSP.

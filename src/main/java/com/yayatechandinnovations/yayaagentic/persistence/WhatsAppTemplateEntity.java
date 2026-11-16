@@ -12,11 +12,13 @@ public class WhatsAppTemplateEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "tenant_id", nullable = false, length = 64)
-    private String tenantId;
+    /** {@code platform}, or the id of a workspace's own messaging account. */
+    @Column(name = "account_key", nullable = false, length = 64)
+    private String accountKey;
 
-    @Column(name = "sender_id", nullable = false, length = 64)
-    private String senderId;
+    /** Audit only: the workspace that first declared it; null when declared from the console. */
+    @Column(name = "created_by_tenant", length = 64)
+    private String createdByTenant;
 
     @Column(name = "name", nullable = false, length = 128)
     private String name;
@@ -68,10 +70,10 @@ public class WhatsAppTemplateEntity {
 
     protected WhatsAppTemplateEntity() {}
 
-    public WhatsAppTemplateEntity(String tenantId, String senderId, String name, String locale,
+    public WhatsAppTemplateEntity(String accountKey, String createdByTenant, String name, String locale,
                                   String category, String body, int placeholderCount) {
-        this.tenantId = tenantId;
-        this.senderId = senderId;
+        this.accountKey = accountKey;
+        this.createdByTenant = createdByTenant;
         this.name = name;
         this.locale = locale;
         this.category = category;
@@ -80,8 +82,8 @@ public class WhatsAppTemplateEntity {
     }
 
     public Long getId() { return id; }
-    public String getTenantId() { return tenantId; }
-    public String getSenderId() { return senderId; }
+    public String getAccountKey() { return accountKey; }
+    public String getCreatedByTenant() { return createdByTenant; }
     public String getName() { return name; }
     public String getLocale() { return locale; }
     public String getCategory() { return category; }

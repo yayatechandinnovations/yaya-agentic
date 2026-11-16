@@ -25,6 +25,12 @@ public class PlatformSingletonTwilioCredsResolver implements ProviderCredsResolv
 
     @Override
     public ProviderCreds resolve(WhatsAppSender sender) {
+        return resolveForAccount(null);
+    }
+
+    /** Always the platform credential: this resolver knows no other account. */
+    @Override
+    public ProviderCreds resolveForAccount(String messagingAccountId) {
         if (!props.isConfigured()) {
             throw new ProviderNotConfiguredException(
                     "Twilio is not configured — set yaya.agentic.channels.twilio.{account-sid,api-key-sid,api-key-secret}");

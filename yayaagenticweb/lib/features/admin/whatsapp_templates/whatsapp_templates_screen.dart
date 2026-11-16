@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
+import '../../auth/application/auth_controller.dart';
+import '../../auth/models/auth_state.dart';
 import '../../../models/admin/whatsapp_template.dart';
 import '../shared/admin_shared.dart';
 import '../whatsapp_senders/whatsapp_senders_screen.dart' show whatsAppSendersProvider;
@@ -155,10 +157,15 @@ class _WhatsAppTemplatesScreenState
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text('Remove this template?'),
-            content: Text(row.status == 'APPROVED'
-                ? 'Approved templates cannot be deleted — they will be paused '
-                    'instead, keeping the audit trail.'
+            title: Text(row.staysInAccount
+                ? 'Stop using this template?'
+                : 'Remove this template?'),
+            content: Text(row.staysInAccount
+                ? 'This workspace will no longer be able to send '
+                    '${row.name} (${row.locale}). The template itself stays '
+                    'on the WhatsApp account'
+                    '${row.shared ? ' for the other workspaces that use it' : ''}; '
+                    'a platform admin can share it with this workspace again.'
                 : '${row.name} (${row.locale}) will be removed.'),
             actions: [
               TextButton(
@@ -166,8 +173,7 @@ class _WhatsAppTemplatesScreenState
                   child: const Text('Cancel')),
               FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child:
-                      Text(row.status == 'APPROVED' ? 'Pause' : 'Remove')),
+                  child: Text(row.staysInAccount ? 'Stop using' : 'Remove')),
             ],
           ),
         ) ??
@@ -178,7 +184,10 @@ class _WhatsAppTemplatesScreenState
       await api.deleteWhatsAppTemplate(tenant, _senderId!, row.id);
       ref.invalidate(
           whatsAppTemplatesProvider((tenant: tenant, sender: _senderId!)));
-      if (mounted) showSnack(context, 'Template removed');
+      if (mounted) {
+        showSnack(context,
+            row.staysInAccount ? 'This workspace no longer uses the template' : 'Template removed');
+      }
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
     }
@@ -196,7 +205,8 @@ class _WhatsAppTemplatesScreenState
       title: 'WhatsApp templates',
       subtitle:
           'Pre-approved message templates for re-engagement outside the 24-hour '
-          'service window. Each template is reviewed by WhatsApp before it can be used.',
+          'service window. Each template is reviewed by WhatsApp once per WhatsApp '
+          'account; a platform admin can share an approved one with other workspaces.',
       list: senders.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Text(formatError(e),
@@ -207,7 +217,7 @@ class _WhatsAppTemplatesScreenState
           if (eligible.isEmpty) {
             return const Center(
                 child: Text(
-                    'Register a WhatsApp sender first; templates are scoped to each sender.'));
+                    'Register a WhatsApp sender first; templates live on the WhatsApp account a sender uses.'));
           }
           if (_senderId == null && eligible.isNotEmpty) {
             _senderId = eligible.first.id;
@@ -300,6 +310,9 @@ class _WhatsAppTemplatesScreenState
 
   Widget _templateList(String tenant) {
     if (_senderId == null) return const SizedBox.shrink();
+    final auth = ref.watch(authProvider);
+    final platformAdmin =
+        auth is AuthAuthenticated && auth.operator.platformAdmin;
     final templates = ref.watch(
         whatsAppTemplatesProvider((tenant: tenant, sender: _senderId!)));
     return templates.when(
@@ -313,7 +326,10 @@ class _WhatsAppTemplatesScreenState
         return ListView.separated(
           itemBuilder: (_, i) => _TemplateTile(
             row: list[i],
-            onEdit: list[i].isEditable ? () => _loadIntoForm(list[i]) : null,
+            // Wording shared with other workspaces is a platform admin's to change.
+            onEdit: list[i].isEditable && (!list[i].shared || platformAdmin)
+                ? () => _loadIntoForm(list[i])
+                : null,
             onSubmit: list[i].canSubmit ? () => _submit(list[i]) : null,
             onDelete: () => _delete(list[i]),
           ),
@@ -343,12 +359,31 @@ class _TemplateTile extends StatelessWidget {
     final info = TemplateStatusInfo.of(row.status);
     return EditableRecordCard(
       onCloneEdit: onEdit ?? () {},
-      leading: _StatusBadge(status: row.status),
+      leading: TemplateStatusBadge(status: row.status),
       header: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${row.name} (${row.locale})',
-              style: Theme.of(context).textTheme.titleSmall),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text('${row.name} (${row.locale})',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+              if (row.shared) ...[
+                const SizedBox(width: 8),
+                const Tooltip(
+                  message:
+                      'Other workspaces on the same WhatsApp account use this template too.',
+                  child: Chip(
+                    label: Text('Shared', style: TextStyle(fontSize: 11)),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ],
+          ),
           Text('${row.category} · ${row.placeholderCount} placeholder${row.placeholderCount == 1 ? '' : 's'}',
               style: const TextStyle(fontSize: 12)),
         ],
@@ -376,7 +411,7 @@ class _TemplateTile extends StatelessWidget {
         TextButton.icon(
           onPressed: onDelete,
           icon: const Icon(Icons.delete_outline, size: 18),
-          label: Text(row.status == 'APPROVED' ? 'Pause' : 'Remove'),
+          label: Text(row.staysInAccount ? 'Stop using' : 'Remove'),
           style: TextButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error),
         ),
@@ -385,8 +420,8 @@ class _TemplateTile extends StatelessWidget {
   }
 }
 
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
+class TemplateStatusBadge extends StatelessWidget {
+  const TemplateStatusBadge({super.key, required this.status});
   final String status;
 
   Color _bg(ColorScheme s) {

@@ -10,6 +10,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.tenant.TenantGuard;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -40,8 +41,8 @@ public class WhatsAppTemplateController {
                                                             ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.VIEWER);
         tenantGuard.requireExists(tenantId);
-        return templates.listForSender(new Ids.TenantId(tenantId), new SenderId(senderId))
-                .stream().map(WhatsAppTemplateDtos.TemplateResponse::of).toList();
+        return respond(templates.listForSender(new Ids.TenantId(tenantId), new SenderId(senderId)),
+                tenantId, senderId);
     }
 
     @PostMapping
@@ -55,9 +56,9 @@ public class WhatsAppTemplateController {
         validateCreate(req);
         WhatsAppTemplate saved = templates.create(
                 new Ids.TenantId(tenantId), new SenderId(senderId),
-                req.name(), req.locale(), req.category(), req.body());
+                req.name(), req.locale(), req.category(), req.body(), caller(exchange));
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(WhatsAppTemplateDtos.TemplateResponse.of(saved));
+                .body(WhatsAppTemplateDtos.TemplateResponse.of(saved, tenantId, senderId));
     }
 
     @PutMapping("/{templateId}")
@@ -74,13 +75,17 @@ public class WhatsAppTemplateController {
         }
         TemplateCategory cat = req.category() == null ? TemplateCategory.UTILITY : req.category();
         WhatsAppTemplate updated = templates.update(
-                new Ids.TenantId(tenantId), new TemplateId(templateId), req.body(), cat);
-        return WhatsAppTemplateDtos.TemplateResponse.of(updated);
+                new Ids.TenantId(tenantId), new SenderId(senderId), new TemplateId(templateId),
+                req.body(), cat, caller(exchange));
+        return WhatsAppTemplateDtos.TemplateResponse.of(updated, tenantId, senderId);
     }
 
     /**
      * Declarative upsert by name — how an integration's provisioning converges
      * the templates its catalog declares (whatsapp-ops-integration-design.md §14.6).
+     * On an account several workspaces send from, a platform admin's (or a
+     * platform-scope key's) declaration of a template that already exists
+     * shares it with this workspace (whatsapp-shared-templates-design.md §4.2).
      */
     @PutMapping("/by-name/{name}")
     public WhatsAppTemplateDtos.TemplateResponse declare(
@@ -91,17 +96,19 @@ public class WhatsAppTemplateController {
             ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
-        if (req == null) throw AdminApiException.badRequest("missing_body", "body required");
-        if (req.name() != null && !req.name().equals(name)) {
-            throw AdminApiException.badRequest("name_mismatch", "body name differs from the path");
+        WhatsAppTemplateService.Declaration declaration = declaration(name, req);
+        WhatsAppTemplateService.Caller caller = caller(exchange);
+        Ids.TenantId tenant = new Ids.TenantId(tenantId);
+        SenderId sender = new SenderId(senderId);
+        WhatsAppTemplate saved;
+        try {
+            saved = templates.declare(tenant, sender, declaration, caller);
+        } catch (DataIntegrityViolationException raced) {
+            // Another workspace of the same account declared the name at the
+            // same moment; the second look finds its row.
+            saved = templates.declare(tenant, sender, declaration, caller);
         }
-        var samples = req.samples();
-        WhatsAppTemplate saved = templates.declare(new Ids.TenantId(tenantId), new SenderId(senderId),
-                new WhatsAppTemplateService.Declaration(name, req.language(), req.category(), req.header(),
-                        req.body(), req.buttons(),
-                        samples == null ? null : samples.body(),
-                        samples == null ? null : samples.mediaFilename()));
-        return WhatsAppTemplateDtos.TemplateResponse.of(saved);
+        return WhatsAppTemplateDtos.TemplateResponse.of(saved, tenantId, senderId);
     }
 
     @PostMapping("/sync")
@@ -111,8 +118,8 @@ public class WhatsAppTemplateController {
             ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
-        return templates.syncSender(new Ids.TenantId(tenantId), new SenderId(senderId))
-                .stream().map(WhatsAppTemplateDtos.TemplateResponse::of).toList();
+        return respond(templates.syncSender(new Ids.TenantId(tenantId), new SenderId(senderId)),
+                tenantId, senderId);
     }
 
     @PostMapping("/{templateId}/submit")
@@ -124,10 +131,11 @@ public class WhatsAppTemplateController {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         WhatsAppTemplate submitted = templates.submit(
-                new Ids.TenantId(tenantId), new TemplateId(templateId));
-        return WhatsAppTemplateDtos.TemplateResponse.of(submitted);
+                new Ids.TenantId(tenantId), new SenderId(senderId), new TemplateId(templateId));
+        return WhatsAppTemplateDtos.TemplateResponse.of(submitted, tenantId, senderId);
     }
 
+    /** The workspace stops using the template; other holders keep it. */
     @DeleteMapping("/{templateId}")
     public ResponseEntity<Void> delete(
             @PathVariable("tenantId") String tenantId,
@@ -136,8 +144,35 @@ public class WhatsAppTemplateController {
             ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
-        templates.delete(new Ids.TenantId(tenantId), new TemplateId(templateId));
+        templates.delete(new Ids.TenantId(tenantId), new SenderId(senderId),
+                new TemplateId(templateId), caller(exchange));
         return ResponseEntity.noContent().build();
+    }
+
+    private WhatsAppTemplateService.Caller caller(ServerWebExchange exchange) {
+        return new WhatsAppTemplateService.Caller(workspaceAccess.isPlatformAdmin(exchange),
+                workspaceAccess.actorOf(exchange));
+    }
+
+    private static List<WhatsAppTemplateDtos.TemplateResponse> respond(List<WhatsAppTemplate> rows,
+                                                                       String tenantId, String senderId) {
+        return rows.stream()
+                .map(t -> WhatsAppTemplateDtos.TemplateResponse.of(t, tenantId, senderId))
+                .toList();
+    }
+
+    /** The service's declaration of a request body (§14.5); the path's name wins. */
+    static WhatsAppTemplateService.Declaration declaration(String name,
+                                                           WhatsAppTemplateDtos.TemplateDeclaration req) {
+        if (req == null) throw AdminApiException.badRequest("missing_body", "body required");
+        if (req.name() != null && !req.name().equals(name)) {
+            throw AdminApiException.badRequest("name_mismatch", "body name differs from the path");
+        }
+        var samples = req.samples();
+        return new WhatsAppTemplateService.Declaration(name, req.language(), req.category(), req.header(),
+                req.body(), req.buttons(),
+                samples == null ? null : samples.body(),
+                samples == null ? null : samples.mediaFilename());
     }
 
     private static void validateCreate(WhatsAppTemplateDtos.TemplateRequest req) {
