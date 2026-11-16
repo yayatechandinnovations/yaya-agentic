@@ -552,7 +552,8 @@ public class WhatsAppSenderService {
     private SenderStatus mapBspStatusToInternal(SenderStatus current, SenderSyncResult result) {
         // Twilio Channel Senders v2 lifecycle statuses we map to internal:
         //   ONLINE   → ACTIVE
-        //   OFFLINE  → SUSPENDED   (Twilio took it down for compliance)
+        //   OFFLINE  → SUSPENDED for a live sender (Twilio took it down);
+        //              stays in review mid-registration (see below)
         //   FAILED   → FAILED
         //   PENDING* → PENDING_REVIEW (still in flight)
         if (current == SenderStatus.REVOKED) return current;       // terminal
@@ -563,7 +564,15 @@ public class WhatsAppSenderService {
         }
         return switch (raw) {
             case "ONLINE", "ONLINE:UPDATING", "ACTIVE", "VERIFIED" -> SenderStatus.ACTIVE;
-            case "OFFLINE", "SUSPENDED"                   -> SenderStatus.SUSPENDED;
+            // Twilio also reports OFFLINE (with an offline_reason) while a new
+            // registration is stalled — e.g. before the WhatsApp code is
+            // entered. Suspending it would offer "Resume" for a number that
+            // never went live and hide the code entry, so it stays in review.
+            case "OFFLINE", "SUSPENDED" -> switch (current) {
+                case ACTIVE     -> SenderStatus.SUSPENDED;
+                case SUBMITTING -> SenderStatus.PENDING_REVIEW;
+                default         -> current;
+            };
             case "FAILED", "REJECTED"                     -> SenderStatus.FAILED;
             // In-flight Senders v2 states (Meta / Twilio still working) — a
             // just-registered sender lands in PENDING_REVIEW; an already

@@ -358,6 +358,10 @@ class _SenderTile extends StatelessWidget {
     final inFlight = sender.status == 'SUBMITTING' || sender.status == 'PENDING_REVIEW';
     final progress = inFlight ? registrationProgressLabel(sender.onboarding.status) : null;
     final rejection = sender.status == 'FAILED' ? sender.onboarding.failureMessage : null;
+    // SUBMITTING failures are our own retries, not something WhatsApp said.
+    final inFlightProblem =
+        sender.status == 'PENDING_REVIEW' ? sender.onboarding.failureMessage : null;
+    final codeHint = !sender.needsVerificationCode && sender.canEnterVerificationCode;
     Widget spinnerOr(IconData icon) => busy
         ? const SizedBox.square(
             dimension: 16,
@@ -383,6 +387,12 @@ class _SenderTile extends StatelessWidget {
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.tertiary)),
+          if (codeHint)
+            Text('Got a code from WhatsApp? Open to enter it',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.tertiary)),
           if (rejection != null)
             Text('Rejected: $rejection — open to fix and resubmit',
                 style: TextStyle(
@@ -399,13 +409,33 @@ class _SenderTile extends StatelessWidget {
           _ProseRow(label: 'Status', value: '${info.label}. ${info.description}'),
           if (rejection != null) ...[
             const SizedBox(height: 4),
-            _RejectionNote(message: rejection),
+            _ProblemNote(
+              title: 'Why it was rejected',
+              message: rejection,
+              hint: 'Use "Fix & resubmit" to correct it and send it again.',
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (inFlightProblem != null) ...[
+            const SizedBox(height: 4),
+            _ProblemNote(
+              title: 'WhatsApp reported a problem',
+              message: inFlightProblem,
+              hint: 'If WhatsApp sent a code to the phone, enter it below. If no code '
+                  'arrived or it expired, cancel the registration and register the '
+                  'number again to get a new one.',
+            ),
             const SizedBox(height: 8),
           ],
           if (progress != null) DetailRow(label: 'Progress', value: progress),
-          if (sender.needsVerificationCode) ...[
+          if (sender.canEnterVerificationCode || sender.needsVerificationCode) ...[
             const SizedBox(height: 8),
-            _VerificationPrompt(phoneE164: sender.phoneE164, busy: busy, onVerify: onVerify),
+            _VerificationPrompt(
+              phoneE164: sender.phoneE164,
+              confirmed: sender.needsVerificationCode,
+              busy: busy,
+              onVerify: onVerify,
+            ),
             const SizedBox(height: 8),
           ],
           DetailRow(label: 'Phone', value: sender.phoneE164, mono: true),
@@ -423,7 +453,9 @@ class _SenderTile extends StatelessWidget {
           if (sender.onboarding.lastPolledAt != null)
             DetailRow(
                 label: 'Last checked', value: sender.onboarding.lastPolledAt!),
-          if (sender.onboarding.failureMessage != null && rejection == null)
+          if (sender.onboarding.failureMessage != null &&
+              rejection == null &&
+              inFlightProblem == null)
             DetailRow(
                 label: 'Review notes',
                 value: sender.onboarding.failureMessage!),
@@ -510,12 +542,14 @@ class _ProseRow extends StatelessWidget {
   }
 }
 
-/// The reason WhatsApp gave for rejecting the registration, shown where the
-/// operator decides what to fix.
-class _RejectionNote extends StatelessWidget {
-  const _RejectionNote({required this.message});
+/// What WhatsApp reported going wrong, shown where the operator decides
+/// what to do next.
+class _ProblemNote extends StatelessWidget {
+  const _ProblemNote({required this.title, required this.message, required this.hint});
 
+  final String title;
   final String message;
+  final String hint;
 
   @override
   Widget build(BuildContext context) {
@@ -536,7 +570,7 @@ class _RejectionNote extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Why it was rejected',
+                Text(title,
                     style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
@@ -545,7 +579,7 @@ class _RejectionNote extends StatelessWidget {
                 SelectableText(message,
                     style: TextStyle(fontSize: 13, color: scheme.onErrorContainer)),
                 const SizedBox(height: 4),
-                Text('Use "Fix & resubmit" to correct it and send it again.',
+                Text(hint,
                     style: TextStyle(fontSize: 12, color: scheme.onErrorContainer)),
               ],
             ),
@@ -632,9 +666,17 @@ class _SubmitDialogState extends State<_SubmitDialog> {
 
 /// Inline call-to-action on a sender card while WhatsApp waits for the code.
 class _VerificationPrompt extends StatelessWidget {
-  const _VerificationPrompt({required this.phoneE164, required this.busy, required this.onVerify});
+  const _VerificationPrompt({
+    required this.phoneE164,
+    required this.confirmed,
+    required this.busy,
+    required this.onVerify,
+  });
 
   final String phoneE164;
+  /// WhatsApp reported it is waiting for the code, rather than it maybe
+  /// being on its way.
+  final bool confirmed;
   final bool busy;
   final VoidCallback onVerify;
 
@@ -653,8 +695,11 @@ class _VerificationPrompt extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'WhatsApp sent a verification code to $phoneE164 by SMS or voice call. '
-              'Enter it to finish registering the number.',
+              confirmed
+                  ? 'WhatsApp sent a verification code to $phoneE164 by SMS or voice call. '
+                      'Enter it to finish registering the number.'
+                  : 'If WhatsApp sent a code to $phoneE164 by SMS or voice call, enter it '
+                      'here to finish registering the number.',
               style: TextStyle(color: scheme.onTertiaryContainer, fontSize: 13),
             ),
           ),

@@ -352,7 +352,8 @@ model (tenant-owned account + billing) remains unimplemented.
 | Inbound webhook 403s with `signature_mismatch`       | Auth Token rotated without redeploy, OR `webhook-base-url` doesn't match what Twilio actually called | Verify `auth-token` matches Console; verify `webhook-base-url` matches the URL Twilio configured for the sender |
 | Inbound webhook 403s with `auth_token_unset`         | `yaya.agentic.channels.twilio.auth-token` is unset | Set the env var + redeploy |
 | Sender flips to `FAILED` immediately on submit       | Meta rejected the business profile or display name | The rejection reason is on the sender row — operator clicks **Fix & resubmit** |
-| Sender goes `SUSPENDED` with review notes            | Twilio reports it `OFFLINE`; its `offline_reasons` become the card's review notes | Act on the notes; contact Twilio support with the WABA id if unclear |
+| Live sender goes `SUSPENDED` with review notes       | Twilio reports it `OFFLINE`; its `offline_reasons` become the card's review notes | Act on the notes; contact Twilio support with the WABA id if unclear |
+| New sender shows "WhatsApp reported a problem"       | Twilio reports `OFFLINE` mid-registration (seen: 410 before the code was entered); it stays in review | Enter the WhatsApp code if one arrived; otherwise **Cancel registration** and register again for a new code |
 
 ---
 

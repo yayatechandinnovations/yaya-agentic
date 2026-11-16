@@ -99,6 +99,8 @@ business days.
 |---|---|
 | **Review failed** + "Why it was rejected" | **Fix & resubmit** — edit what the reason points at, then submit again. |
 | "website must be a valid URL" | Senders saved before the website fix kept a bare domain. Open **Fix & resubmit** and submit again; the website now gets `https://` automatically. |
+| Code arrived but the card has no code box | Open the card: every registration in progress has **Enter code**, whatever WhatsApp reports. |
+| "WhatsApp reported a problem" while registering | Enter the code if one arrived. Otherwise **Cancel registration** and register the number again for a new code. |
 | Code expired / never arrived | **Cancel registration**, then register the number again (choose **Voice call** if it is a landline). |
 | Stuck on **Submitting** | Nothing reached WhatsApp yet; the platform retries every 5 minutes, or click **Refresh status** to retry now. |
 | "Phone number already registered" | The number is live in another workspace. Removed numbers are free again. |

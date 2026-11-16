@@ -166,4 +166,39 @@ void main() {
     expect(find.text('Why it was rejected'), findsOneWidget);
     expect(find.text('Fix & resubmit'), findsOneWidget);
   });
+
+  testWidgets('a registration in progress takes a code before WhatsApp reports waiting for one',
+      (tester) async {
+    final api = _FakeAdminApi('PENDING_REVIEW', 'CREATING');
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Got a code from WhatsApp? Open to enter it'), findsOneWidget);
+    await _expand(tester);
+    final enterCode = find.widgetWithText(FilledButton, 'Enter code');
+    await tester.ensureVisible(enterCode);
+    await tester.tap(enterCode);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '654321');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+
+    expect(api.verifiedCode, '654321');
+  });
+
+  testWidgets('an offline registration shows the problem and still offers the code',
+      (tester) async {
+    final api = _FakeAdminApi('PENDING_REVIEW', 'OFFLINE')
+      ..failure = 'Something went wrong. Please create a support ticket';
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+    await _expand(tester);
+
+    expect(find.text('WhatsApp reported a problem'), findsOneWidget);
+    expect(find.textContaining('Something went wrong'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Enter code'), findsOneWidget);
+    expect(find.text('Cancel registration'), findsOneWidget);
+    expect(find.text('Resume'), findsNothing);
+  });
 }

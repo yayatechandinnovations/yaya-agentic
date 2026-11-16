@@ -44,6 +44,15 @@ class WhatsAppSenderResponse {
   bool get needsVerificationCode =>
       status == 'PENDING_REVIEW' && onboarding.status == 'PENDING_VERIFICATION';
 
+  /// The registration is with WhatsApp and a code may already be on the
+  /// phone. The reported status can lag the SMS or skip the waiting state
+  /// entirely, so code entry never waits for it.
+  bool get canEnterVerificationCode =>
+      status == 'PENDING_REVIEW' &&
+      (onboarding.twilioSenderSid?.isNotEmpty ?? false) &&
+      !const {'VERIFYING', 'TWILIO_REVIEW', 'ONLINE', 'ONLINE:UPDATING'}
+          .contains(onboarding.status);
+
   factory WhatsAppSenderResponse.fromJson(Map<String, dynamic> json) {
     return WhatsAppSenderResponse(
       id: (json['id'] ?? '') as String,
@@ -272,7 +281,7 @@ String? registrationProgressLabel(String? rawStatus) {
     case 'ONLINE:UPDATING':
       return 'Live on WhatsApp';
     case 'OFFLINE':
-      return 'Offline — see the review notes';
+      return 'WhatsApp reported a problem — see below';
     case 'RETRY_PENDING':
       return 'Could not reach WhatsApp yet — retrying automatically';
     default:

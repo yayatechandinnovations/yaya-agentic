@@ -261,6 +261,38 @@ class WhatsAppSenderSubmitTest {
     }
 
     @Test
+    void an_offline_report_mid_registration_keeps_the_sender_in_review_and_takes_the_code() {
+        var sender = createDraft("+15553000013");
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(json(201, "{\"sid\":\"XE_off_013\",\"status\":\"CREATING\"}")));
+        submit(sender.id());
+
+        wireMock.stubFor(get(urlEqualTo("/v2/Channels/Senders/XE_off_013"))
+                .willReturn(json(200, """
+                        {"sid":"XE_off_013","status":"OFFLINE",
+                         "offline_reasons":[{"code":"410","message":"Something went wrong. Please create a support ticket"}]}
+                        """)));
+        var offline = sync(sender.id());
+        assertThat(offline.status().name()).isEqualTo("PENDING_REVIEW");
+        assertThat(offline.onboarding().status()).isEqualTo("OFFLINE");
+        assertThat(offline.onboarding().failureMessage()).contains("Something went wrong");
+
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders/XE_off_013"))
+                .willReturn(json(200, "{\"sid\":\"XE_off_013\",\"status\":\"VERIFYING\"}")));
+        var verifying = client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/{id}/verify", TENANT, sender.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new WhatsAppSenderDtos.VerifyRequest("654321"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppSenderDtos.SenderResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(verifying).isNotNull();
+        assertThat(verifying.status().name()).isEqualTo("PENDING_REVIEW");
+        assertThat(verifying.onboarding().status()).isEqualTo("VERIFYING");
+    }
+
+    @Test
     void verify_rejects_malformed_codes_and_senders_not_waiting_for_one() {
         var sender = createDraft("+15553000007");
         client.post()
