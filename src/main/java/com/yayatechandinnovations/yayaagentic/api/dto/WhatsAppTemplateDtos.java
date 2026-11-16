@@ -36,9 +36,13 @@ public final class WhatsAppTemplateDtos {
             TemplateCategory category
     ) {}
 
+    /** The templates a hide or unhide applies to (whatsapp-shared-templates-design.md §10). */
+    public record TemplateSelection(java.util.List<Long> templateIds) {}
+
     /**
      * A template as one workspace sees it through one of its senders.
      * {@code shared}: other workspaces hold it too (they are never named here).
+     * {@code hidden}: left out of the console lists; who hid it is not said here.
      */
     public record TemplateResponse(
             long             id,
@@ -57,7 +61,8 @@ public final class WhatsAppTemplateDtos {
             java.util.List<String> buttons,
             String           contentSid,
             Instant          lastSyncAt,
-            boolean          shared
+            boolean          shared,
+            boolean          hidden
     ) {
         public static TemplateResponse of(WhatsAppTemplate t, String tenantId, String senderId) {
             return new TemplateResponse(
@@ -77,7 +82,8 @@ public final class WhatsAppTemplateDtos {
                     t.buttons(),
                     t.bspContentSid(),
                     t.lastSyncAt(),
-                    t.shared());
+                    t.shared(),
+                    t.hidden());
         }
     }
 
@@ -89,10 +95,12 @@ public final class WhatsAppTemplateDtos {
             String tenantId,
             String label,
             String status,
-            long   templateCount
+            long   templateCount,
+            long   hiddenCount
     ) {
         public static AccountResponse of(WhatsAppTemplateService.Account a) {
-            return new AccountResponse(a.accountKey(), a.tenantId(), a.label(), a.status(), a.templateCount());
+            return new AccountResponse(a.accountKey(), a.tenantId(), a.label(), a.status(), a.templateCount(),
+                    a.hiddenCount());
         }
     }
 
@@ -115,7 +123,10 @@ public final class WhatsAppTemplateDtos {
             java.util.List<String> buttons,
             String           contentSid,
             Instant          lastSyncAt,
-            java.util.List<HolderResponse> holders
+            java.util.List<HolderResponse> holders,
+            boolean          hidden,
+            Instant          hiddenAt,
+            String           hiddenBy
     ) {
         public static AccountTemplateResponse of(WhatsAppTemplateService.AccountTemplate at) {
             WhatsAppTemplate t = at.template();
@@ -137,7 +148,10 @@ public final class WhatsAppTemplateDtos {
                     t.lastSyncAt(),
                     at.holders().stream()
                             .map(h -> new HolderResponse(h.tenantId(), h.grantedBy(), h.grantedAt()))
-                            .toList());
+                            .toList(),
+                    t.hidden(),
+                    t.hiddenAt(),
+                    t.hiddenBy());
         }
     }
 }

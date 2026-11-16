@@ -26,6 +26,8 @@ public interface WhatsAppTemplateRepository extends JpaRepository<WhatsAppTempla
 
     long countByAccountKey(String accountKey);
 
+    long countByAccountKeyAndHiddenAtIsNotNull(String accountKey);
+
     List<WhatsAppTemplateEntity> findByStatusIn(java.util.Collection<String> statuses);
 
     /** Serialises submissions: one template reaches the provider once. */

@@ -30,6 +30,9 @@ public record WhatsAppTemplate(
         String            headerKind,
         /** Quick-reply button labels, in order; their payloads are send-time variables. */
         List<String>      buttons,
+        /** Left out of the console lists (§10); has no effect on sending. */
+        Instant           hiddenAt,
+        String            hiddenBy,
         /** More than one workspace holds it. Not computed on the send path. */
         boolean           shared
 ) {
@@ -42,5 +45,9 @@ public record WhatsAppTemplate(
         if (status == null) throw new IllegalArgumentException("status required");
         headerKind = headerKind == null || headerKind.isBlank() ? "NONE" : headerKind;
         buttons = buttons == null ? List.of() : List.copyOf(buttons);
+    }
+
+    public boolean hidden() {
+        return hiddenAt != null;
     }
 }

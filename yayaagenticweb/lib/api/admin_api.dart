@@ -770,6 +770,19 @@ class AdminApi {
         '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/$templateId');
   }
 
+  /// Hides ([hidden]) or shows again the templates in the console lists;
+  /// sending is unaffected.
+  Future<List<WhatsAppTemplateResponse>> setWhatsAppTemplatesHidden(
+      String tenantId, String senderId, List<int> templateIds,
+      {required bool hidden}) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/templates/${hidden ? 'hide' : 'unhide'}',
+        data: {'templateIds': templateIds});
+    return (res.data as List)
+        .map((e) => WhatsAppTemplateResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
   // ---- WhatsApp account templates (platform admins) ------------------
 
   Future<List<WhatsAppAccountResponse>> listWhatsAppAccounts() async {
@@ -810,6 +823,17 @@ class AdminApi {
     final res = await _dio.post(
         '/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId/submit');
     return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  }
+
+  Future<List<WhatsAppAccountTemplate>> setWhatsAppAccountTemplatesHidden(
+      String accountKey, List<int> templateIds,
+      {required bool hidden}) async {
+    final res = await _dio.post(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/${hidden ? 'hide' : 'unhide'}',
+        data: {'templateIds': templateIds});
+    return (res.data as List)
+        .map((e) => WhatsAppAccountTemplate.fromJson(_asMap(e)))
+        .toList();
   }
 
   Future<void> deleteWhatsAppAccountTemplate(

@@ -352,6 +352,83 @@ class SharedTemplatesTest {
                 .value(t -> assertThat(t.shared()).isTrue());
     }
 
+    @Test
+    void hiding_changes_only_the_lists_and_a_shared_template_is_a_platform_admins_to_hide() {
+        Declaration oldD = declaration("sl_hide_" + suffix() + "_v1", "Aviso {{1}}.");
+        WhatsAppTemplate old = templates.declare(a, senderA, oldD, PLATFORM);
+        Declaration bothD = declaration("sl_both_" + suffix(), "Hola {{1}}.");
+        WhatsAppTemplate both = templates.declare(a, senderA, bothD, PLATFORM);
+        templates.declare(b, senderB, bothD, PLATFORM);
+        templates.submit(a, senderA, old.id());
+        when(twilio.fetchWhatsAppApproval(anyString(), any())).thenReturn(new ApprovalState("approved", null));
+        templates.syncSender(a, senderA);
+
+        // A template other workspaces hold is not a workspace admin's to hide, and
+        // the call changes nothing else it names.
+        assertConflict(() -> templates.setHidden(a, senderA, List.of(old.id(), both.id()), true, WORKSPACE),
+                "not_hideable");
+        assertThat(templates.listForSender(a, senderA)).noneMatch(WhatsAppTemplate::hidden);
+        assertThatThrownBy(() -> templates.setHidden(b, senderB, List.of(old.id()), true, WORKSPACE))
+                .isInstanceOfSatisfying(AdminApiException.class,
+                        e -> assertThat(e.code()).isEqualTo("template_not_found"));
+
+        // The sole holder hides its own; it is still approved and still sent.
+        assertThat(templates.setHidden(a, senderA, List.of(old.id(), old.id()), true, WORKSPACE))
+                .singleElement().satisfies(t -> {
+                    assertThat(t.hidden()).isTrue();
+                    assertThat(t.hiddenBy()).isEqualTo(WORKSPACE.actor());
+                    assertThat(t.status()).isEqualTo(TemplateStatus.APPROVED);
+                });
+        assertThat(templates.findApproved(a, senderOf(a, senderA), oldD.name(), "es")).isPresent();
+        // Hiding it again keeps who hid it.
+        assertThat(templates.setHidden(a, senderA, List.of(old.id()), true, PLATFORM).get(0).hiddenBy())
+                .isEqualTo(WORKSPACE.actor());
+
+        // A platform admin hides the shared one; every holder's list says so.
+        assertThat(templates.setHiddenForAccount(TemplateAccounts.PLATFORM, List.of(both.id()), true, PLATFORM))
+                .singleElement().satisfies(t -> assertThat(t.template().hidden()).isTrue());
+        assertThat(templates.listForSender(b, senderB)).singleElement()
+                .satisfies(t -> assertThat(t.hidden()).isTrue());
+        assertThat(templates.listAccounts().get(0).hiddenCount()).isGreaterThanOrEqualTo(2);
+
+        templates.setHiddenForAccount(TemplateAccounts.PLATFORM, List.of(old.id(), both.id()), false, PLATFORM);
+        assertThat(templates.listForSender(a, senderA)).noneMatch(WhatsAppTemplate::hidden);
+        assertThat(jdbc.queryForObject("SELECT hidden_by FROM whatsapp_templates WHERE id = ?", String.class,
+                old.id().value())).isNull();
+    }
+
+    @Test
+    void hide_and_unhide_routes() {
+        WhatsAppTemplate t = templates.declare(a, senderA, declaration("sl_route_" + suffix(), "Aviso {{1}}."),
+                WORKSPACE);
+        client.post().uri("/v1/admin/whatsapp-accounts/platform/templates/hide")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("templateIds", List.of(t.id().value())))
+                .exchange().expectStatus().isOk()
+                .expectBodyList(WhatsAppTemplateDtos.AccountTemplateResponse.class)
+                .value(rows -> assertThat(rows).singleElement().satisfies(r -> {
+                    assertThat(r.hidden()).isTrue();
+                    assertThat(r.hiddenAt()).isNotNull();
+                    assertThat(r.hiddenBy()).isNotBlank();
+                }));
+        client.get().uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates", a.value(), senderA.value())
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$[0].hidden").isEqualTo(true);
+
+        client.post().uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/unhide", a.value(), senderA.value())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("templateIds", List.of(t.id().value())))
+                .exchange().expectStatus().isOk()
+                .expectBodyList(WhatsAppTemplateDtos.TemplateResponse.class)
+                .value(rows -> assertThat(rows).singleElement()
+                        .satisfies(r -> assertThat(r.hidden()).isFalse()));
+
+        client.post().uri("/v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/hide", a.value(), senderA.value())
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("templateIds", List.of()))
+                .exchange().expectStatus().isBadRequest();
+        client.post().uri("/v1/admin/whatsapp-accounts/platform/templates/hide")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("templateIds", List.of(Long.MAX_VALUE)))
+                .exchange().expectStatus().isNotFound();
+    }
+
     /* ------------------------------ helpers ------------------------------- */
 
     private static String suffix() {

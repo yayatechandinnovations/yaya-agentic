@@ -8,6 +8,7 @@ import '../../auth/models/auth_state.dart';
 import '../../../models/admin/whatsapp_template.dart';
 import '../shared/admin_shared.dart';
 import '../whatsapp_senders/whatsapp_senders_screen.dart' show whatsAppSendersProvider;
+import 'template_list_kit.dart';
 
 final whatsAppTemplatesProvider = FutureProvider.family<
     List<WhatsAppTemplateResponse>, ({String tenant, String sender})>(
@@ -34,6 +35,8 @@ class _WhatsAppTemplatesScreenState
   String? _senderId;
   int? _editingId;
   bool _saving = false;
+  TemplateListFilter _filter = const TemplateListFilter();
+  final Set<int> _selected = {};
 
   @override
   void dispose() {
@@ -193,6 +196,29 @@ class _WhatsAppTemplatesScreenState
     }
   }
 
+  Future<void> _setHidden(List<int> ids, {required bool hidden}) async {
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null || _senderId == null || ids.isEmpty) return;
+    final n = '${ids.length} template${ids.length == 1 ? '' : 's'}';
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      await api.setWhatsAppTemplatesHidden(tenant, _senderId!, ids, hidden: hidden);
+      ref.invalidate(
+          whatsAppTemplatesProvider((tenant: tenant, sender: _senderId!)));
+      if (!mounted) return;
+      setState(() => _selected.removeAll(ids));
+      showSnack(context,
+          hidden ? '$n hidden. «Show hidden» brings them back.' : '$n back in the list');
+    } catch (e) {
+      if (mounted) showSnack(context, formatError(e), error: true);
+    }
+  }
+
+  Future<void> _hideOlder(List<WhatsAppTemplateResponse> rows, Map<int, String> newer) async {
+    if (!await confirmHideOlderVersions(context, rows, newer)) return;
+    await _setHidden(rows.map((r) => r.id).toList(), hidden: true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final tenant = ref.watch(currentTenantOrNull);
@@ -235,7 +261,10 @@ class _WhatsAppTemplatesScreenState
                           child: Text('${s.displayName} (${s.phoneE164})'),
                         ))
                     .toList(),
-                onChanged: (v) => setState(() => _senderId = v),
+                onChanged: (v) => setState(() {
+                  _senderId = v;
+                  _selected.clear();
+                }),
               ),
               const SizedBox(height: 12),
               Expanded(child: _templateList(tenant)),
@@ -313,28 +342,86 @@ class _WhatsAppTemplatesScreenState
     final auth = ref.watch(authProvider);
     final platformAdmin =
         auth is AuthAuthenticated && auth.operator.platformAdmin;
+    // Hiding marks the template itself, so one other workspaces use is a
+    // platform admin's to hide — as its wording is theirs to change.
+    bool canHide(WhatsAppTemplateResponse r) => !r.shared || platformAdmin;
     final templates = ref.watch(
         whatsAppTemplatesProvider((tenant: tenant, sender: _senderId!)));
     return templates.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Text(formatError(e),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
-      data: (list) {
-        if (list.isEmpty) {
+      data: (all) {
+        if (all.isEmpty) {
           return const Center(child: Text('No templates yet.'));
         }
-        return ListView.separated(
-          itemBuilder: (_, i) => _TemplateTile(
-            row: list[i],
-            // Wording shared with other workspaces is a platform admin's to change.
-            onEdit: list[i].isEditable && (!list[i].shared || platformAdmin)
-                ? () => _loadIntoForm(list[i])
-                : null,
-            onSubmit: list[i].canSubmit ? () => _submit(list[i]) : null,
-            onDelete: () => _delete(list[i]),
-          ),
-          separatorBuilder: (_, i) => const SizedBox(height: 8),
-          itemCount: list.length,
+        final newer = newerVersions(all);
+        final shown = _filter.apply(all);
+        final older = all
+            .where((r) => !r.hidden && newer.containsKey(r.id) && canHide(r))
+            .toList()
+          ..sort(compareTemplates);
+        final selectable = shown.where(canHide).map((r) => r.id).toSet();
+        final selected = _selected.where(selectable.contains).toSet();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TemplateListToolbar(
+              rows: all,
+              filter: _filter,
+              onChanged: (f) => setState(() => _filter = f),
+            ),
+            if (older.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              OlderVersionsBanner(rows: older, onHide: () => _hideOlder(older, newer)),
+            ],
+            const SizedBox(height: 4),
+            TemplateSelectionBar(
+              shown: shown,
+              total: all.length,
+              selectable: selectable,
+              selected: selected,
+              onSelectAll: () => setState(() => _selected.addAll(selectable)),
+              onClear: () => setState(_selected.clear),
+              onHide: () => _setHidden(
+                  shown.where((r) => selected.contains(r.id) && !r.hidden).map((r) => r.id).toList(),
+                  hidden: true),
+              onUnhide: () => _setHidden(
+                  shown.where((r) => selected.contains(r.id) && r.hidden).map((r) => r.id).toList(),
+                  hidden: false),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: shown.isEmpty
+                  ? const Center(child: Text('No template matches.'))
+                  : ListView.separated(
+                      itemBuilder: (_, i) {
+                        final row = shown[i];
+                        return _TemplateTile(
+                          key: ValueKey(row.id),
+                          row: row,
+                          newerVersion: newer[row.id],
+                          selected: selected.contains(row.id),
+                          onSelected: canHide(row)
+                              ? (on) => setState(() =>
+                                  on ? _selected.add(row.id) : _selected.remove(row.id))
+                              : null,
+                          // Wording shared with other workspaces is a platform admin's to change.
+                          onEdit: row.isEditable && (!row.shared || platformAdmin)
+                              ? () => _loadIntoForm(row)
+                              : null,
+                          onSubmit: row.canSubmit ? () => _submit(row) : null,
+                          onHide: canHide(row)
+                              ? () => _setHidden([row.id], hidden: !row.hidden)
+                              : null,
+                          onDelete: () => _delete(row),
+                        );
+                      },
+                      separatorBuilder: (_, i) => const SizedBox(height: 6),
+                      itemCount: shown.length,
+                    ),
+            ),
+          ],
         );
       },
     );
@@ -343,130 +430,70 @@ class _WhatsAppTemplatesScreenState
 
 class _TemplateTile extends StatelessWidget {
   const _TemplateTile({
+    super.key,
     required this.row,
+    required this.newerVersion,
+    required this.selected,
+    required this.onSelected,
     required this.onEdit,
     required this.onSubmit,
+    required this.onHide,
     required this.onDelete,
   });
 
   final WhatsAppTemplateResponse row;
+  final String? newerVersion;
+  final bool selected;
+  final ValueChanged<bool>? onSelected;
   final VoidCallback? onEdit;
   final VoidCallback? onSubmit;
+  final VoidCallback? onHide;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final info = TemplateStatusInfo.of(row.status);
-    return EditableRecordCard(
-      onCloneEdit: onEdit ?? () {},
-      leading: TemplateStatusBadge(status: row.status),
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text('${row.name} (${row.locale})',
-                    style: Theme.of(context).textTheme.titleSmall),
-              ),
-              if (row.shared) ...[
-                const SizedBox(width: 8),
-                const Tooltip(
-                  message:
-                      'Other workspaces on the same WhatsApp account use this template too.',
-                  child: Chip(
-                    label: Text('Shared', style: TextStyle(fontSize: 11)),
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
-            ],
+    final n = row.placeholderCount;
+    return TemplateRowCard(
+      row: row,
+      newerVersion: newerVersion,
+      selected: selected,
+      onSelected: onSelected,
+      notSelectableReason:
+          'Other workspaces use this template too; a platform admin can hide it.',
+      subtitle: '${row.category} · $n placeholder${n == 1 ? '' : 's'}',
+      tags: [
+        if (row.shared)
+          const TemplateTag(
+            label: 'Shared',
+            icon: Icons.groups_outlined,
+            tooltip: 'Other workspaces on the same WhatsApp account use this template too.',
           ),
-          Text('${row.category} · ${row.placeholderCount} placeholder${row.placeholderCount == 1 ? '' : 's'}',
-              style: const TextStyle(fontSize: 12)),
-        ],
-      ),
-      body: Column(
+      ],
+      primaryAction: onSubmit == null
+          ? null
+          : FilledButton.tonal(onPressed: onSubmit, child: const Text('Submit for review')),
+      menu: [
+        if (onEdit != null) TemplateAction('Edit', Icons.edit_outlined, onEdit!),
+        if (onHide != null)
+          TemplateAction(row.hidden ? 'Unhide' : 'Hide',
+              row.hidden ? Icons.visibility_outlined : Icons.visibility_off_outlined, onHide!),
+        TemplateAction(row.staysInAccount ? 'Stop using' : 'Remove', Icons.delete_outline, onDelete,
+            destructive: true),
+      ],
+      details: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DetailRow(label: 'Status', value: '${info.label} — ${info.description}'),
           DetailRow(label: 'Body', value: row.body, mono: true),
           if (row.rejectionReason != null)
             DetailRow(label: 'Rejection reason', value: row.rejectionReason!),
+          if (newerVersion != null) DetailRow(label: 'Replaced by', value: newerVersion!),
           if (row.submittedAt != null)
             DetailRow(label: 'Submitted', value: row.submittedAt!),
           if (row.approvedAt != null)
             DetailRow(label: 'Approved', value: row.approvedAt!),
         ],
-      ),
-      extraActions: [
-        if (onSubmit != null)
-          FilledButton.tonalIcon(
-            onPressed: onSubmit,
-            icon: const Icon(Icons.send, size: 18),
-            label: const Text('Submit for review'),
-          ),
-        TextButton.icon(
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: Text(row.staysInAccount ? 'Stop using' : 'Remove'),
-          style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error),
-        ),
-      ],
-    );
-  }
-}
-
-class TemplateStatusBadge extends StatelessWidget {
-  const TemplateStatusBadge({super.key, required this.status});
-  final String status;
-
-  Color _bg(ColorScheme s) {
-    switch (status) {
-      case 'APPROVED':
-        return s.primaryContainer;
-      case 'SUBMITTED':
-        return s.tertiaryContainer;
-      case 'REJECTED':
-        return s.errorContainer;
-      case 'PAUSED':
-        return s.secondaryContainer;
-      default:
-        return s.surfaceContainerHighest;
-    }
-  }
-
-  Color _fg(ColorScheme s) {
-    switch (status) {
-      case 'APPROVED':
-        return s.onPrimaryContainer;
-      case 'SUBMITTED':
-        return s.onTertiaryContainer;
-      case 'REJECTED':
-        return s.onErrorContainer;
-      case 'PAUSED':
-        return s.onSecondaryContainer;
-      default:
-        return s.onSurfaceVariant;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: _bg(scheme),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        TemplateStatusInfo.of(status).label,
-        style: TextStyle(
-            fontSize: 11, fontWeight: FontWeight.w700, color: _fg(scheme)),
       ),
     );
   }

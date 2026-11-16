@@ -1,7 +1,20 @@
 /// Wire models for `/v1/admin/tenants/{t}/whatsapp-senders/{sid}/templates`.
 library;
 
-class WhatsAppTemplateResponse {
+/// What the template lists search, filter and group on — the same in the
+/// workspace view and the platform-admin account view.
+abstract interface class TemplateListRow {
+  int get id;
+  String get name;
+  String get locale;
+  String get status;
+  String get body;
+
+  /// Left out of the lists unless «Show hidden» is on. Sending is unaffected.
+  bool get hidden;
+}
+
+class WhatsAppTemplateResponse implements TemplateListRow {
   WhatsAppTemplateResponse({
     required this.id,
     required this.tenantId,
@@ -16,16 +29,22 @@ class WhatsAppTemplateResponse {
     this.submittedAt,
     this.approvedAt,
     this.shared = false,
+    this.hidden = false,
   });
 
+  @override
   final int id;
   final String tenantId;
   final String senderId;
+  @override
   final String name;
+  @override
   final String locale;
   final String category;
+  @override
   final String body;
   final int placeholderCount;
+  @override
   final String status;
   final String? rejectionReason;
   final String? submittedAt;
@@ -33,6 +52,9 @@ class WhatsAppTemplateResponse {
 
   /// Other workspaces of the same WhatsApp account use this template too.
   final bool shared;
+
+  @override
+  final bool hidden;
 
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
   bool get isEditable => status == 'DRAFT' || status == 'REJECTED';
@@ -56,6 +78,7 @@ class WhatsAppTemplateResponse {
         submittedAt: json['submittedAt']?.toString(),
         approvedAt: json['approvedAt']?.toString(),
         shared: json['shared'] == true,
+        hidden: json['hidden'] == true,
       );
 }
 
@@ -68,6 +91,7 @@ class WhatsAppAccountResponse {
     required this.label,
     required this.status,
     required this.templateCount,
+    this.hiddenCount = 0,
     this.tenantId,
   });
 
@@ -76,6 +100,7 @@ class WhatsAppAccountResponse {
   final String label;
   final String status;
   final int templateCount;
+  final int hiddenCount;
 
   bool get isPlatform => tenantId == null;
 
@@ -86,6 +111,7 @@ class WhatsAppAccountResponse {
         label: (json['label'] ?? '') as String,
         status: (json['status'] ?? '') as String,
         templateCount: (json['templateCount'] as num?)?.toInt() ?? 0,
+        hiddenCount: (json['hiddenCount'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -107,7 +133,7 @@ class WhatsAppTemplateHolder {
 
 /// A template of a WhatsApp account with every workspace that holds it.
 /// Wire model for `/v1/admin/whatsapp-accounts/{accountKey}/templates`.
-class WhatsAppAccountTemplate {
+class WhatsAppAccountTemplate implements TemplateListRow {
   WhatsAppAccountTemplate({
     required this.id,
     required this.accountKey,
@@ -123,15 +149,23 @@ class WhatsAppAccountTemplate {
     this.rejectionReason,
     this.submittedAt,
     this.approvedAt,
+    this.hidden = false,
+    this.hiddenAt,
+    this.hiddenBy,
   });
 
+  @override
   final int id;
   final String accountKey;
+  @override
   final String name;
+  @override
   final String locale;
   final String category;
+  @override
   final String body;
   final int placeholderCount;
+  @override
   final String status;
   final String headerKind;
   final List<String> buttons;
@@ -139,6 +173,10 @@ class WhatsAppAccountTemplate {
   final String? rejectionReason;
   final String? submittedAt;
   final String? approvedAt;
+  @override
+  final bool hidden;
+  final String? hiddenAt;
+  final String? hiddenBy;
 
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
 
@@ -166,6 +204,9 @@ class WhatsAppAccountTemplate {
         rejectionReason: json['rejectionReason'] as String?,
         submittedAt: json['submittedAt']?.toString(),
         approvedAt: json['approvedAt']?.toString(),
+        hidden: json['hidden'] == true,
+        hiddenAt: json['hiddenAt']?.toString(),
+        hiddenBy: json['hiddenBy'] as String?,
       );
 }
 

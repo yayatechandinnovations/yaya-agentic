@@ -178,6 +178,6 @@ class WhatsAppOutreachLegTest {
         body.append(".");
         return new WhatsAppTemplate(new TemplateId(1L), "platform", "sl_undo_request_v1", "es",
                 TemplateCategory.UTILITY, body.toString(), n, null, "HXtemplate", TemplateStatus.APPROVED,
-                null, null, null, null, header, buttons, false);
+                null, null, null, null, header, buttons, null, null, false);
     }
 }

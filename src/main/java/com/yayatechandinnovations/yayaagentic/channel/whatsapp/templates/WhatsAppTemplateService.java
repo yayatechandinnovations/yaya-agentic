@@ -126,7 +126,7 @@ public class WhatsAppTemplateService {
      * ({@code tenantId} null), or a workspace's own.
      */
     public record Account(String accountKey, String tenantId, String label, String status,
-                          long templateCount) {}
+                          long templateCount, long hiddenCount) {}
 
     /* ------------------------- workspace-facing --------------------------- */
 
@@ -295,16 +295,40 @@ public class WhatsAppTemplateService {
                 .map(e -> toDomain(e, false));
     }
 
+    /**
+     * Leave templates of the sender's account out of the console lists, or
+     * show them again (whatsapp-shared-templates-design.md §10). Display only:
+     * who may send a template and its status do not change. The flag belongs
+     * to the template, so one that other workspaces hold is a platform admin's
+     * to hide — as its wording is theirs to change.
+     */
+    @Transactional
+    public List<WhatsAppTemplate> setHidden(Ids.TenantId tenant, SenderId sender, List<TemplateId> ids,
+                                            boolean hidden, Caller caller) {
+        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        List<WhatsAppTemplateEntity> rows = pick(repo.findHeld(TemplateAccounts.keyOf(s), tenant.value()), ids);
+        List<WhatsAppTemplate> out = toDomain(rows);
+        if (!caller.platformAdmin()) {
+            out.stream().filter(WhatsAppTemplate::shared).findFirst().ifPresent(t -> {
+                throw AdminApiException.conflict("not_hideable", "template '" + t.name()
+                        + "' is shared with other workspaces; only a platform admin can hide it");
+            });
+        }
+        rows.forEach(e -> applyHidden(e, hidden, caller));
+        return toDomain(repo.saveAll(rows));
+    }
+
     /* -------------------------- platform-facing --------------------------- */
 
     /** The platform account, then every connected account. */
     public List<Account> listAccounts() {
         List<Account> out = new ArrayList<>();
         out.add(new Account(TemplateAccounts.PLATFORM, null, "Platform account", "ACTIVE",
-                repo.countByAccountKey(TemplateAccounts.PLATFORM)));
+                repo.countByAccountKey(TemplateAccounts.PLATFORM),
+                repo.countByAccountKeyAndHiddenAtIsNotNull(TemplateAccounts.PLATFORM)));
         for (WhatsAppMessagingAccount a : accounts.listAll()) {
             out.add(new Account(a.id(), a.tenant().value(), a.friendlyName(), a.status().name(),
-                    repo.countByAccountKey(a.id())));
+                    repo.countByAccountKey(a.id()), repo.countByAccountKeyAndHiddenAtIsNotNull(a.id())));
         }
         return out;
     }
@@ -379,6 +403,16 @@ public class WhatsAppTemplateService {
             release(e, tenant.value(), caller);
         }
         return withHolders(List.of(e)).get(0);
+    }
+
+    /** {@link #setHidden} for any template of the account. */
+    @Transactional
+    public List<AccountTemplate> setHiddenForAccount(String accountKey, List<TemplateId> ids, boolean hidden,
+                                                     Caller caller) {
+        requireAccount(accountKey);
+        List<WhatsAppTemplateEntity> rows = pick(repo.findByAccountKeyOrderByNameAscLocaleAsc(accountKey), ids);
+        rows.forEach(e -> applyHidden(e, hidden, caller));
+        return withHolders(repo.saveAll(rows));
     }
 
     /** Remove a template nobody holds and Meta never approved. */
@@ -506,6 +540,29 @@ public class WhatsAppTemplateService {
                 e.getName(), e.getLocale(), tenantId, action, caller.actor(), at));
         log.info("WhatsApp template {} ({}) on account {}: {} workspace {} by {}",
                 e.getName(), e.getLocale(), e.getAccountKey(), action, tenantId, caller.actor());
+    }
+
+    /** The requested rows out of {@code candidates}, all or nothing. */
+    private static List<WhatsAppTemplateEntity> pick(List<WhatsAppTemplateEntity> candidates, List<TemplateId> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw AdminApiException.badRequest("missing_template_ids", "templateIds required");
+        }
+        Map<Long, WhatsAppTemplateEntity> byId = new LinkedHashMap<>();
+        for (WhatsAppTemplateEntity e : candidates) byId.put(e.getId(), e);
+        List<WhatsAppTemplateEntity> out = new ArrayList<>();
+        for (Long id : ids.stream().map(TemplateId::value).distinct().toList()) {
+            WhatsAppTemplateEntity e = byId.get(id);
+            if (e == null) throw AdminApiException.notFound("template_not_found", "no such template " + id);
+            out.add(e);
+        }
+        return out;
+    }
+
+    /** Hiding what is already hidden keeps who hid it and when. */
+    private static void applyHidden(WhatsAppTemplateEntity e, boolean hidden, Caller caller) {
+        if (hidden == (e.getHiddenAt() != null)) return;
+        e.setHiddenAt(hidden ? OffsetDateTime.now(ZoneOffset.UTC) : null);
+        e.setHiddenBy(hidden ? caller.actor() : null);
     }
 
     /** The template, when it lives on the sender's account and the workspace holds it. */
@@ -847,6 +904,8 @@ public class WhatsAppTemplateService {
                 toInstant(entity.getLastSyncAt()),
                 entity.getHeaderKind(),
                 readList(entity.getButtonsJson()),
+                toInstant(entity.getHiddenAt()),
+                entity.getHiddenBy(),
                 shared
         );
     }

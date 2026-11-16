@@ -77,6 +77,23 @@ public class WhatsAppAccountTemplateController {
                 templates.submitForAccount(accountKey, new TemplateId(templateId)));
     }
 
+    /** Leave templates out of the console lists; who may send them does not change. */
+    @PostMapping("/{accountKey}/templates/hide")
+    public List<WhatsAppTemplateDtos.AccountTemplateResponse> hide(
+            @PathVariable("accountKey") String accountKey,
+            @RequestBody WhatsAppTemplateDtos.TemplateSelection req,
+            ServerWebExchange exchange) {
+        return setHidden(accountKey, req, true, exchange);
+    }
+
+    @PostMapping("/{accountKey}/templates/unhide")
+    public List<WhatsAppTemplateDtos.AccountTemplateResponse> unhide(
+            @PathVariable("accountKey") String accountKey,
+            @RequestBody WhatsAppTemplateDtos.TemplateSelection req,
+            ServerWebExchange exchange) {
+        return setHidden(accountKey, req, false, exchange);
+    }
+
     /** Remove a template nobody holds and WhatsApp never approved. */
     @DeleteMapping("/{accountKey}/templates/{templateId}")
     public ResponseEntity<Void> delete(
@@ -111,6 +128,14 @@ public class WhatsAppAccountTemplateController {
         workspaceAccess.requirePlatformAdmin(exchange);
         return WhatsAppTemplateDtos.AccountTemplateResponse.of(templates.unshare(accountKey,
                 new TemplateId(templateId), new Ids.TenantId(tenantId), caller(exchange)));
+    }
+
+    private List<WhatsAppTemplateDtos.AccountTemplateResponse> setHidden(
+            String accountKey, WhatsAppTemplateDtos.TemplateSelection req, boolean hidden,
+            ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
+        return respond(templates.setHiddenForAccount(accountKey,
+                WhatsAppTemplateController.templateIds(req), hidden, caller(exchange)));
     }
 
     private WhatsAppTemplateService.Caller caller(ServerWebExchange exchange) {

@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟢 Implemented 2026-11-16 (stages 1–4), tests green. Not committed, not deployed |
+| **Status** | 🟢 Implemented 2026-11-16 (stages 1–4), committed. §10 listing and hiding (V95) implemented, tests green, not committed |
 | **Owner** | Yenfri Herrera |
 | **Last updated** | 2026-11-16 |
 | **Scope** | Store a WhatsApp template once per WhatsApp Business Account and let several workspaces use it. Platform admins decide which workspace gets which template. Both sender registration paths stay. |
@@ -217,6 +217,7 @@ Platform admins and platform-scope keys only.
 | `DELETE /v1/admin/whatsapp-accounts/{accountKey}/templates/{id}` | Remove a template nobody holds and WhatsApp never approved (`409 template_in_use`, `409 not_deletable`) |
 | `PUT /v1/admin/whatsapp-accounts/{accountKey}/templates/{id}/holders/{tenantId}` | Share with a workspace (`409 holder_not_allowed` per §4.1) |
 | `DELETE /v1/admin/whatsapp-accounts/{accountKey}/templates/{id}/holders/{tenantId}` | Stop sharing |
+| `POST /v1/admin/whatsapp-accounts/{accountKey}/templates/hide` · `/unhide` | Hide templates from the lists, or show them again (§10) |
 
 The route prefix is new. Anyone else gets `403 platform_admin_required`
 (`WorkspaceAccessHelper.requirePlatformAdmin`). Every share and unshare, from these routes or
@@ -315,3 +316,70 @@ Implemented as recommended (owner, 2026-11-16: «have this fully implemented»).
 | D1 | A declare made with a platform-scope key shares the template with that workspace | Yes. The hub's one-click needs no change and no manual step per customer | Sharing only from the console; the one-click fails for the second customer until someone shares |
 | D2 | A workspace admin declares a name that exists with identical content | Refused (`template_name_taken`); a platform admin shares it | Accept it automatically. Less work, but any workspace that knows the wording can attach itself to a template whose pause would hit the others |
 | D3 | Deleting an approved template | Removes the workspace as holder; PAUSED is Meta's state only | Keep today's platform-only PAUSED |
+
+---
+
+## 10. Listing and hiding (V95, 2026-11-16)
+
+### 10.1 The problem
+
+An approved template cannot be removed: WhatsApp keeps it in the account (§4.3). Approved
+wording cannot change either, so an integration publishes new wording under a new name
+(`sl_automation_ask_v1` → `_v2` → `_v3`). After a few rounds, most of an account's list is old
+versions nobody sends. The two pages showed every template as a large card, with no search and
+no way to leave any of them out.
+
+### 10.2 Hidden
+
+`whatsapp_templates` gains `hidden_at` and `hidden_by` (V95). A hidden template is left out of
+both console lists unless «Show hidden» is on. **Hiding only changes the lists.** Holders,
+status and sending stay as they are, and a declaration does not change it. A template that is
+hidden and still sent is allowed.
+
+| Route | Who |
+|---|---|
+| `POST /v1/admin/whatsapp-accounts/{accountKey}/templates/hide` · `/unhide` | Platform admins, any template of the account |
+| `POST /v1/admin/tenants/{t}/whatsapp-senders/{s}/templates/hide` · `/unhide` | Workspace admins, templates their workspace holds alone; platform admins, any template the workspace holds |
+
+Both take `{"templateIds": [..]}`. A request applies to every listed template or to none:
+`404 template_not_found` for an id outside the account or not held by the workspace,
+`409 not_hideable` when a workspace admin names a shared template, `400 missing_template_ids`.
+The flag belongs to the template, so a template shared by several workspaces is a platform
+admin's to hide, the same rule as editing its wording (§4.2). Hiding a template that is already
+hidden keeps the first `hidden_by`.
+
+Responses add `hidden` to both views; the account view also returns `hiddenAt` and `hiddenBy`,
+and `GET /v1/admin/whatsapp-accounts` returns `hiddenCount` per account. The workspace view does
+not say who hid a template.
+
+### 10.3 Older versions
+
+The console reads a name ending in `_vN` as version N of the name before it. A template is an
+**older version** when the same account has a higher version of that name in the same language,
+whatever the status of either. This is a console reading, not a server rule: the server keeps no
+version relation, and a name without a later version is current even if it ends in `_v1`
+(`sl_report_v1`). So «all the v1 templates» are not hidden by default; only the ones that a later
+version replaces.
+
+### 10.4 Console
+
+Both template pages (`whatsapp_templates_screen.dart`, `whatsapp_shared_templates_screen.dart`)
+share one list kit (`template_list_kit.dart`):
+
+- **Toolbar**: search over name and wording; status chips with counts (Approved, Awaiting review,
+  Rejected, Draft, Paused; empty ones are left out); «Show hidden (n)».
+- **Rows**: one compact row per template: status, name, tags (Older version, Hidden, Shared), the
+  next step (Submit for review) on the row, and a ⋮ menu (Edit, Hide/Unhide, Remove/Stop using).
+  The wording, rejection reason, «Replaced by» and, on the platform page, the workspaces open
+  when the row expands. Versions of one name sit together, the newest first. On a narrow pane the
+  status and the next step move under the name.
+- **Older versions banner**: «n templates have a newer version… [Hide older versions]» opens a
+  confirmation that lists each one with the version that replaces it, then hides them in one call.
+- **Selection**: a checkbox per row and «select all shown»; the bar offers Hide, Unhide and Clear.
+  On the workspace page a shared template cannot be selected unless the operator is a platform
+  admin.
+- The account picker shows «(n templates, m hidden)».
+
+Tests: `SharedTemplatesTest` (`hiding_changes_only_the_lists_…`, `hide_and_unhide_routes`),
+`whatsapp_shared_templates_screen_test.dart` and `whatsapp_templates_list_test.dart`
+(`--platform chrome`).

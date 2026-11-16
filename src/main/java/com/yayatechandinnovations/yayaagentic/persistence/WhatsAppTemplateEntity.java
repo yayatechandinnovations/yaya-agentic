@@ -68,6 +68,12 @@ public class WhatsAppTemplateEntity {
     @Column(name = "content_hash", length = 64)
     private String contentHash;
 
+    @Column(name = "hidden_at")
+    private OffsetDateTime hiddenAt;
+
+    @Column(name = "hidden_by", length = 128)
+    private String hiddenBy;
+
     protected WhatsAppTemplateEntity() {}
 
     public WhatsAppTemplateEntity(String accountKey, String createdByTenant, String name, String locale,
@@ -117,4 +123,8 @@ public class WhatsAppTemplateEntity {
     public void setSamplesJson(String v) { this.samplesJson = v; }
     public String getContentHash() { return contentHash; }
     public void setContentHash(String v) { this.contentHash = v; }
+    public OffsetDateTime getHiddenAt() { return hiddenAt; }
+    public void setHiddenAt(OffsetDateTime v) { this.hiddenAt = v; }
+    public String getHiddenBy() { return hiddenBy; }
+    public void setHiddenBy(String v) { this.hiddenBy = v; }
 }

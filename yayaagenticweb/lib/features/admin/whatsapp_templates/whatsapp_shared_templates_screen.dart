@@ -5,7 +5,7 @@ import '../../../api/admin_api.dart';
 import '../../../models/admin/whatsapp_template.dart';
 import '../shared/admin_shared.dart';
 import '../tenants/tenants_screen.dart' show tenantsProvider;
-import 'whatsapp_templates_screen.dart' show TemplateStatusBadge;
+import 'template_list_kit.dart';
 
 /// The WhatsApp accounts that carry templates: the platform's, then each one a
 /// workspace connected itself.
@@ -45,6 +45,8 @@ class _WhatsAppSharedTemplatesScreenState
   String _accountKey = 'platform';
   bool _saving = false;
   bool _syncing = false;
+  TemplateListFilter _filter = const TemplateListFilter();
+  final Set<int> _selected = {};
 
   @override
   void dispose() {
@@ -196,6 +198,26 @@ class _WhatsAppSharedTemplatesScreenState
         'Workspace $tenantId no longer uses the template');
   }
 
+  Future<void> _setHidden(List<int> ids, {required bool hidden}) async {
+    await _run(
+        (api) => api.setWhatsAppAccountTemplatesHidden(_accountKey, ids, hidden: hidden),
+        hidden
+            ? '${_count(ids.length)} hidden. «Show hidden» brings them back.'
+            : '${_count(ids.length)} back in the list');
+    if (mounted) setState(() => _selected.removeAll(ids));
+  }
+
+  Future<void> _hideOlder(List<WhatsAppAccountTemplate> rows, Map<int, String> newer) async {
+    if (!await confirmHideOlderVersions(context, rows, newer)) return;
+    await _setHidden(rows.map((r) => r.id).toList(), hidden: true);
+  }
+
+  static String _count(int n) => '$n template${n == 1 ? '' : 's'}';
+
+  static String _accountLabel(WhatsAppAccountResponse a) =>
+      '${a.isPlatform ? 'Platform account — every workspace without its own' : '${a.label} — workspace ${a.tenantId}'} '
+      '(${_count(a.templateCount)}${a.hiddenCount > 0 ? ', ${a.hiddenCount} hidden' : ''})';
+
   Future<void> _share(WhatsAppAccountTemplate row, WhatsAppAccountResponse account) async {
     final tenantId = await showDialog<String>(
       context: context,
@@ -237,15 +259,17 @@ class _WhatsAppSharedTemplatesScreenState
                       items: accountList
                           .map((a) => DropdownMenuItem(
                                 value: a.accountKey,
-                                child: Text(a.isPlatform
-                                    ? 'Platform account — every workspace without its own '
-                                        '(${a.templateCount})'
-                                    : '${a.label} — workspace ${a.tenantId} '
-                                        '(${a.templateCount})'),
+                                child: Text(_accountLabel(a)),
                               ))
                           .toList(),
-                      onChanged: (v) =>
-                          setState(() => _accountKey = v ?? 'platform'),
+                      selectedItemBuilder: (_) => accountList
+                          .map((a) => Text(_accountLabel(a),
+                              maxLines: 1, overflow: TextOverflow.ellipsis))
+                          .toList(),
+                      onChanged: (v) => setState(() {
+                        _accountKey = v ?? 'platform';
+                        _selected.clear();
+                      }),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -351,20 +375,69 @@ class _WhatsAppSharedTemplatesScreenState
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Text(formatError(e),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
-      data: (list) {
-        if (list.isEmpty) {
+      data: (all) {
+        if (all.isEmpty) {
           return const Center(child: Text('No templates on this account yet.'));
         }
-        return ListView.separated(
-          itemBuilder: (_, i) => _AccountTemplateTile(
-            row: list[i],
-            onSubmit: list[i].canSubmit ? () => _submit(list[i]) : null,
-            onShare: () => _share(list[i], account),
-            onUnshare: (tenantId) => _unshare(list[i], tenantId),
-            onDelete: list[i].canDelete ? () => _delete(list[i]) : null,
-          ),
-          separatorBuilder: (_, i) => const SizedBox(height: 8),
-          itemCount: list.length,
+        final newer = newerVersions(all);
+        final shown = _filter.apply(all);
+        final older = all.where((r) => !r.hidden && newer.containsKey(r.id)).toList()
+          ..sort(compareTemplates);
+        final ids = shown.map((r) => r.id).toSet();
+        final selected = _selected.where(ids.contains).toSet();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TemplateListToolbar(
+              rows: all,
+              filter: _filter,
+              onChanged: (f) => setState(() => _filter = f),
+            ),
+            if (older.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              OlderVersionsBanner(rows: older, onHide: () => _hideOlder(older, newer)),
+            ],
+            const SizedBox(height: 4),
+            TemplateSelectionBar(
+              shown: shown,
+              total: all.length,
+              selectable: ids,
+              selected: selected,
+              onSelectAll: () => setState(() => _selected.addAll(ids)),
+              onClear: () => setState(_selected.clear),
+              onHide: () => _setHidden(
+                  shown.where((r) => selected.contains(r.id) && !r.hidden).map((r) => r.id).toList(),
+                  hidden: true),
+              onUnhide: () => _setHidden(
+                  shown.where((r) => selected.contains(r.id) && r.hidden).map((r) => r.id).toList(),
+                  hidden: false),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: shown.isEmpty
+                  ? const Center(child: Text('No template matches.'))
+                  : ListView.separated(
+                      itemBuilder: (_, i) {
+                        final row = shown[i];
+                        return _AccountTemplateTile(
+                          key: ValueKey(row.id),
+                          row: row,
+                          newerVersion: newer[row.id],
+                          selected: selected.contains(row.id),
+                          onSelected: (on) => setState(
+                              () => on ? _selected.add(row.id) : _selected.remove(row.id)),
+                          onSubmit: row.canSubmit ? () => _submit(row) : null,
+                          onShare: () => _share(row, account),
+                          onUnshare: (tenantId) => _unshare(row, tenantId),
+                          onHide: () => _setHidden([row.id], hidden: !row.hidden),
+                          onDelete: row.canDelete ? () => _delete(row) : null,
+                        );
+                      },
+                      separatorBuilder: (_, i) => const SizedBox(height: 6),
+                      itemCount: shown.length,
+                    ),
+            ),
+          ],
         );
       },
     );
@@ -373,17 +446,26 @@ class _WhatsAppSharedTemplatesScreenState
 
 class _AccountTemplateTile extends StatelessWidget {
   const _AccountTemplateTile({
+    super.key,
     required this.row,
+    required this.newerVersion,
+    required this.selected,
+    required this.onSelected,
     required this.onSubmit,
     required this.onShare,
     required this.onUnshare,
+    required this.onHide,
     required this.onDelete,
   });
 
   final WhatsAppAccountTemplate row;
+  final String? newerVersion;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
   final VoidCallback? onSubmit;
   final VoidCallback onShare;
   final void Function(String tenantId) onUnshare;
+  final VoidCallback onHide;
   final VoidCallback? onDelete;
 
   @override
@@ -391,91 +473,88 @@ class _AccountTemplateTile extends StatelessWidget {
     final theme = Theme.of(context);
     final info = TemplateStatusInfo.of(row.status);
     final n = row.placeholderCount;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final users = row.holders.length;
+    return TemplateRowCard(
+      row: row,
+      newerVersion: newerVersion,
+      selected: selected,
+      onSelected: onSelected,
+      subtitle: [
+        row.category,
+        '$n placeholder${n == 1 ? '' : 's'}',
+        if (row.headerKind != 'NONE') '${row.headerKind.toLowerCase()} header',
+        if (row.buttons.isNotEmpty) 'buttons: ${row.buttons.join(' · ')}',
+      ].join(' · '),
+      primaryAction: onSubmit == null
+          ? null
+          : FilledButton.tonal(onPressed: onSubmit, child: const Text('Submit for review')),
+      trailing: Tooltip(
+        message: users == 0
+            ? 'No workspace can send this template'
+            : 'Used by ${row.holders.map((h) => h.tenantId).join(', ')}',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                TemplateStatusBadge(status: row.status),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('${row.name} (${row.locale})',
-                      style: theme.textTheme.titleSmall),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              [
-                row.category,
-                '$n placeholder${n == 1 ? '' : 's'}',
-                if (row.headerKind != 'NONE') '${row.headerKind.toLowerCase()} header',
-                if (row.buttons.isNotEmpty) 'buttons: ${row.buttons.join(' · ')}',
-              ].join(' · '),
-              style: const TextStyle(fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            DetailRow(label: 'Status', value: '${info.label} — ${info.description}'),
-            DetailRow(label: 'Body', value: row.body, mono: true),
-            if (row.rejectionReason != null)
-              DetailRow(label: 'Rejection reason', value: row.rejectionReason!),
-            const SizedBox(height: 8),
-            Text('Workspaces that use it', style: theme.textTheme.labelMedium),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (row.holders.isEmpty)
-                  Text('None yet — no workspace can send this template.',
-                      style: theme.textTheme.bodySmall),
-                for (final h in row.holders)
-                  Tooltip(
-                    message: 'Shared by ${h.grantedBy}'
-                        '${h.grantedAt == null ? '' : ' on ${h.grantedAt}'}',
-                    child: InputChip(
-                      label: Text(h.tenantId),
-                      deleteIcon: const Icon(Icons.close, size: 16),
-                      deleteButtonTooltipMessage: 'Stop sharing with ${h.tenantId}',
-                      onDeleted: () => onUnshare(h.tenantId),
-                    ),
-                  ),
-                ActionChip(
-                  avatar: const Icon(Icons.add, size: 16),
-                  label: const Text('Share with a workspace'),
-                  onPressed: onShare,
-                ),
-              ],
-            ),
-            if (onSubmit != null || onDelete != null) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  if (onSubmit != null)
-                    FilledButton.tonalIcon(
-                      onPressed: onSubmit,
-                      icon: const Icon(Icons.send, size: 18),
-                      label: const Text('Submit for review'),
-                    ),
-                  const Spacer(),
-                  if (onDelete != null)
-                    TextButton.icon(
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      label: const Text('Remove'),
-                      style: TextButton.styleFrom(
-                          foregroundColor: theme.colorScheme.error),
-                    ),
-                ],
-              ),
-            ],
+            Icon(Icons.groups_outlined,
+                size: 18, color: users == 0 ? theme.colorScheme.outline : null),
+            const SizedBox(width: 4),
+            Text('$users',
+                style: TextStyle(color: users == 0 ? theme.colorScheme.outline : null)),
           ],
         ),
+      ),
+      menu: [
+        TemplateAction(row.hidden ? 'Unhide' : 'Hide',
+            row.hidden ? Icons.visibility_outlined : Icons.visibility_off_outlined, onHide),
+        if (onDelete != null)
+          TemplateAction('Remove', Icons.delete_outline, onDelete!, destructive: true),
+      ],
+      details: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DetailRow(label: 'Status', value: '${info.label} — ${info.description}'),
+          DetailRow(label: 'Body', value: row.body, mono: true),
+          if (row.rejectionReason != null)
+            DetailRow(label: 'Rejection reason', value: row.rejectionReason!),
+          if (newerVersion != null)
+            DetailRow(label: 'Replaced by', value: newerVersion!),
+          if (row.hidden)
+            DetailRow(
+                label: 'Hidden',
+                value: [
+                  if (row.hiddenBy != null) 'by ${row.hiddenBy}',
+                  if (row.hiddenAt != null) 'on ${row.hiddenAt}',
+                ].join(' ')),
+          const SizedBox(height: 8),
+          Text('Workspaces that use it', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (row.holders.isEmpty)
+                Text('None yet — no workspace can send this template.',
+                    style: theme.textTheme.bodySmall),
+              for (final h in row.holders)
+                Tooltip(
+                  message: 'Shared by ${h.grantedBy}'
+                      '${h.grantedAt == null ? '' : ' on ${h.grantedAt}'}',
+                  child: InputChip(
+                    label: Text(h.tenantId),
+                    deleteIcon: const Icon(Icons.close, size: 16),
+                    deleteButtonTooltipMessage: 'Stop sharing with ${h.tenantId}',
+                    onDeleted: () => onUnshare(h.tenantId),
+                  ),
+                ),
+              ActionChip(
+                avatar: const Icon(Icons.add, size: 16),
+                label: const Text('Share with a workspace'),
+                onPressed: onShare,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

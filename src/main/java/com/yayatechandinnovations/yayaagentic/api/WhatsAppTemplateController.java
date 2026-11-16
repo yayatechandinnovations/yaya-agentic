@@ -149,6 +149,47 @@ public class WhatsAppTemplateController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Leave templates out of the console lists, or show them again
+     * (whatsapp-shared-templates-design.md §10). Sending is unaffected.
+     */
+    @PostMapping("/hide")
+    public List<WhatsAppTemplateDtos.TemplateResponse> hide(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestBody WhatsAppTemplateDtos.TemplateSelection req,
+            ServerWebExchange exchange) {
+        return setHidden(tenantId, senderId, req, true, exchange);
+    }
+
+    @PostMapping("/unhide")
+    public List<WhatsAppTemplateDtos.TemplateResponse> unhide(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestBody WhatsAppTemplateDtos.TemplateSelection req,
+            ServerWebExchange exchange) {
+        return setHidden(tenantId, senderId, req, false, exchange);
+    }
+
+    private List<WhatsAppTemplateDtos.TemplateResponse> setHidden(
+            String tenantId, String senderId, WhatsAppTemplateDtos.TemplateSelection req, boolean hidden,
+            ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        return respond(templates.setHidden(new Ids.TenantId(tenantId), new SenderId(senderId),
+                templateIds(req), hidden, caller(exchange)), tenantId, senderId);
+    }
+
+    static List<TemplateId> templateIds(WhatsAppTemplateDtos.TemplateSelection req) {
+        if (req == null || req.templateIds() == null || req.templateIds().isEmpty()) {
+            throw AdminApiException.badRequest("missing_template_ids", "templateIds required");
+        }
+        if (req.templateIds().stream().anyMatch(id -> id == null || id <= 0)) {
+            throw AdminApiException.badRequest("bad_template_id", "templateIds must be positive");
+        }
+        return req.templateIds().stream().map(TemplateId::new).toList();
+    }
+
     private WhatsAppTemplateService.Caller caller(ServerWebExchange exchange) {
         return new WhatsAppTemplateService.Caller(workspaceAccess.isPlatformAdmin(exchange),
                 workspaceAccess.actorOf(exchange));
