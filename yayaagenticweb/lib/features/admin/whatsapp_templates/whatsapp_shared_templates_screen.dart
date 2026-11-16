@@ -102,14 +102,16 @@ class _WhatsAppSharedTemplatesScreenState
     ref.invalidate(whatsAppAccountsProvider);
   }
 
-  Future<void> _run(Future<void> Function(AdminApi api) action, String done) async {
+  Future<bool> _run(Future<void> Function(AdminApi api) action, String done) async {
     try {
       final api = await ref.read(adminApiProvider.future);
       await action(api);
       _refresh();
       if (mounted) showSnack(context, done);
+      return true;
     } catch (e) {
       if (mounted) showSnack(context, formatError(e), error: true);
+      return false;
     }
   }
 
@@ -199,12 +201,12 @@ class _WhatsAppSharedTemplatesScreenState
   }
 
   Future<void> _setHidden(List<int> ids, {required bool hidden}) async {
-    await _run(
+    final done = await _run(
         (api) => api.setWhatsAppAccountTemplatesHidden(_accountKey, ids, hidden: hidden),
         hidden
             ? '${_count(ids.length)} hidden. «Show hidden» brings them back.'
             : '${_count(ids.length)} back in the list');
-    if (mounted) setState(() => _selected.removeAll(ids));
+    if (done && mounted) setState(() => _selected.removeAll(ids));
   }
 
   Future<void> _hideOlder(List<WhatsAppAccountTemplate> rows, Map<int, String> newer) async {
@@ -218,14 +220,20 @@ class _WhatsAppSharedTemplatesScreenState
       '${a.isPlatform ? 'Platform account — every workspace without its own' : '${a.label} — workspace ${a.tenantId}'} '
       '(${_count(a.templateCount)}${a.hiddenCount > 0 ? ', ${a.hiddenCount} hidden' : ''})';
 
-  Future<void> _share(WhatsAppAccountTemplate row, WhatsAppAccountResponse account) async {
-    final tenantId = await showDialog<String>(
+  Future<void> _share(List<WhatsAppAccountTemplate> rows, WhatsAppAccountResponse account) async {
+    final tenantIds = await showDialog<List<String>>(
       context: context,
-      builder: (_) => _SharePicker(row: row, account: account),
+      builder: (_) => _SharePicker(rows: rows, account: account),
     );
-    if (tenantId == null) return;
-    await _run((api) => api.shareWhatsAppTemplate(_accountKey, row.id, tenantId),
-        'Shared with workspace $tenantId');
+    if (tenantIds == null || tenantIds.isEmpty) return;
+    final ids = rows.map((r) => r.id).toList();
+    final what = rows.length == 1 ? rows.single.name : _count(rows.length);
+    final whom = tenantIds.length == 1
+        ? 'workspace ${tenantIds.single}'
+        : '${tenantIds.length} workspaces';
+    final done = await _run((api) => api.shareWhatsAppTemplates(_accountKey, ids, tenantIds),
+        'Shared $what with $whom');
+    if (done && mounted) setState(() => _selected.removeAll(ids));
   }
 
   @override
@@ -411,6 +419,8 @@ class _WhatsAppSharedTemplatesScreenState
               onUnhide: () => _setHidden(
                   shown.where((r) => selected.contains(r.id) && r.hidden).map((r) => r.id).toList(),
                   hidden: false),
+              onShare: () =>
+                  _share(shown.where((r) => selected.contains(r.id)).toList(), account),
             ),
             const SizedBox(height: 4),
             Expanded(
@@ -427,7 +437,7 @@ class _WhatsAppSharedTemplatesScreenState
                           onSelected: (on) => setState(
                               () => on ? _selected.add(row.id) : _selected.remove(row.id)),
                           onSubmit: row.canSubmit ? () => _submit(row) : null,
-                          onShare: () => _share(row, account),
+                          onShare: () => _share([row], account),
                           onUnshare: (tenantId) => _unshare(row, tenantId),
                           onHide: () => _setHidden([row.id], hidden: !row.hidden),
                           onDelete: row.canDelete ? () => _delete(row) : null,
@@ -560,12 +570,12 @@ class _AccountTemplateTile extends StatelessWidget {
   }
 }
 
-/// Picks the workspace to share a template with. A workspace's own account
+/// Picks the workspaces to share templates with. A workspace's own account
 /// only ever serves that workspace.
 class _SharePicker extends ConsumerStatefulWidget {
-  const _SharePicker({required this.row, required this.account});
+  const _SharePicker({required this.rows, required this.account});
 
-  final WhatsAppAccountTemplate row;
+  final List<WhatsAppAccountTemplate> rows;
   final WhatsAppAccountResponse account;
 
   @override
@@ -573,16 +583,23 @@ class _SharePicker extends ConsumerStatefulWidget {
 }
 
 class _SharePickerState extends ConsumerState<_SharePicker> {
-  String? _tenantId;
+  final _chosen = <String>{};
+  String _query = '';
+
+  /// How many of the templates the workspace already uses.
+  int _holding(String tenantId) =>
+      widget.rows.where((r) => r.holders.any((h) => h.tenantId == tenantId)).length;
 
   @override
   Widget build(BuildContext context) {
     final tenants = ref.watch(tenantsProvider);
-    final held = widget.row.holders.map((h) => h.tenantId).toSet();
+    final rows = widget.rows;
+    final single = rows.length == 1;
+    final n = _chosen.length;
     return AlertDialog(
-      title: Text('Share ${widget.row.name}'),
+      title: Text(single ? 'Share ${rows.single.name}' : 'Share ${rows.length} templates'),
       content: SizedBox(
-        width: 420,
+        width: 460,
         child: tenants.when(
           loading: () => const SizedBox(
               height: 80, child: Center(child: CircularProgressIndicator())),
@@ -590,38 +607,56 @@ class _SharePickerState extends ConsumerState<_SharePicker> {
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
           data: (all) {
             final candidates = all
-                .where((t) => !held.contains(t.id))
+                .where((t) => t.status != 'ARCHIVED')
                 .where((t) =>
                     widget.account.isPlatform || t.id == widget.account.tenantId)
                 .toList()
               ..sort((x, y) => x.id.compareTo(y.id));
-            if (candidates.isEmpty) {
-              return Text(widget.account.isPlatform
-                  ? 'Every workspace already uses this template.'
-                  : 'This account belongs to workspace ${widget.account.tenantId}, '
-                      'which already uses this template.');
-            }
+            final q = _query.trim().toLowerCase();
+            final listed = candidates
+                .where((t) =>
+                    q.isEmpty ||
+                    t.id.toLowerCase().contains(q) ||
+                    t.displayName.toLowerCase().contains(q))
+                .toList();
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                    'The workspace can send this template from its numbers on this '
-                    'account. No new WhatsApp review is needed.'),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: _tenantId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Workspace'),
-                  items: candidates
-                      .map((t) => DropdownMenuItem(
-                            value: t.id,
-                            child: Text(t.displayName == t.id
-                                ? t.id
-                                : '${t.displayName} (${t.id})'),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setState(() => _tenantId = v),
+                Text(single
+                    ? 'The workspaces you pick can send this template from their numbers on '
+                        'this account. No new WhatsApp review is needed.'
+                    : 'Each workspace you pick can send all ${rows.length} from its numbers on '
+                        'this account. No new WhatsApp review is needed.'),
+                if (!widget.account.isPlatform)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                        'This account belongs to workspace ${widget.account.tenantId}; '
+                        'its templates serve only that workspace.',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                if (candidates.length > 8) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      prefixIcon: Icon(Icons.search, size: 20),
+                      hintText: 'Find a workspace',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (v) => setState(() => _query = v),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final t in listed) _tile(t.id, t.displayName),
+                    ],
+                  ),
                 ),
               ],
             );
@@ -633,10 +668,30 @@ class _SharePickerState extends ConsumerState<_SharePicker> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel')),
         FilledButton(
-            onPressed:
-                _tenantId == null ? null : () => Navigator.pop(context, _tenantId),
-            child: const Text('Share')),
+            onPressed: n == 0 ? null : () => Navigator.pop(context, _chosen.toList()..sort()),
+            child: Text(n == 0 ? 'Share' : 'Share with $n workspace${n == 1 ? '' : 's'}')),
       ],
+    );
+  }
+
+  Widget _tile(String id, String displayName) {
+    final total = widget.rows.length;
+    final has = _holding(id);
+    // Nothing left to share with a workspace that already uses them all.
+    final complete = has == total;
+    return CheckboxListTile(
+      dense: true,
+      controlAffinity: ListTileControlAffinity.leading,
+      value: complete || _chosen.contains(id),
+      onChanged: complete
+          ? null
+          : (v) => setState(() => v == true ? _chosen.add(id) : _chosen.remove(id)),
+      title: Text(displayName == id ? id : '$displayName ($id)'),
+      subtitle: has == 0
+          ? null
+          : Text(complete
+              ? (total == 1 ? 'Already uses it' : 'Already uses all $total')
+              : 'Already uses $has of $total'),
     );
   }
 }

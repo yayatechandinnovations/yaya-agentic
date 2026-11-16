@@ -177,17 +177,17 @@ public class WhatsAppTemplateController {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         return respond(templates.setHidden(new Ids.TenantId(tenantId), new SenderId(senderId),
-                templateIds(req), hidden, caller(exchange)), tenantId, senderId);
+                templateIds(req == null ? null : req.templateIds()), hidden, caller(exchange)), tenantId, senderId);
     }
 
-    static List<TemplateId> templateIds(WhatsAppTemplateDtos.TemplateSelection req) {
-        if (req == null || req.templateIds() == null || req.templateIds().isEmpty()) {
+    static List<TemplateId> templateIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
             throw AdminApiException.badRequest("missing_template_ids", "templateIds required");
         }
-        if (req.templateIds().stream().anyMatch(id -> id == null || id <= 0)) {
+        if (ids.stream().anyMatch(id -> id == null || id <= 0)) {
             throw AdminApiException.badRequest("bad_template_id", "templateIds must be positive");
         }
-        return req.templateIds().stream().map(TemplateId::new).toList();
+        return ids.stream().map(TemplateId::new).toList();
     }
 
     private WhatsAppTemplateService.Caller caller(ServerWebExchange exchange) {

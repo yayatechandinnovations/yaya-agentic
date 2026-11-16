@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟢 Implemented 2026-11-16 (stages 1–4), committed. §10 listing and hiding (V95) implemented, tests green, not committed |
+| **Status** | 🟢 Implemented 2026-11-16 (stages 1–4) and §10 listing and hiding (V95), committed and deployed. §10.5 sharing several at once implemented, tests green, not committed |
 | **Owner** | Yenfri Herrera |
 | **Last updated** | 2026-11-16 |
 | **Scope** | Store a WhatsApp template once per WhatsApp Business Account and let several workspaces use it. Platform admins decide which workspace gets which template. Both sender registration paths stay. |
@@ -218,6 +218,7 @@ Platform admins and platform-scope keys only.
 | `PUT /v1/admin/whatsapp-accounts/{accountKey}/templates/{id}/holders/{tenantId}` | Share with a workspace (`409 holder_not_allowed` per §4.1) |
 | `DELETE /v1/admin/whatsapp-accounts/{accountKey}/templates/{id}/holders/{tenantId}` | Stop sharing |
 | `POST /v1/admin/whatsapp-accounts/{accountKey}/templates/hide` · `/unhide` | Hide templates from the lists, or show them again (§10) |
+| `POST /v1/admin/whatsapp-accounts/{accountKey}/templates/share` | Share several templates with several workspaces at once (§10.5) |
 
 The route prefix is new. Anyone else gets `403 platform_admin_required`
 (`WorkspaceAccessHelper.requirePlatformAdmin`). Every share and unshare, from these routes or
@@ -375,11 +376,33 @@ share one list kit (`template_list_kit.dart`):
   status and the next step move under the name.
 - **Older versions banner**: «n templates have a newer version… [Hide older versions]» opens a
   confirmation that lists each one with the version that replaces it, then hides them in one call.
-- **Selection**: a checkbox per row and «select all shown»; the bar offers Hide, Unhide and Clear.
-  On the workspace page a shared template cannot be selected unless the operator is a platform
-  admin.
+- **Selection**: a checkbox per row and «select all shown»; the bar offers Hide, Unhide and Clear,
+  and on the platform page «Share…» (§10.5). On the workspace page a shared template cannot be
+  selected unless the operator is a platform admin.
 - The account picker shows «(n templates, m hidden)».
 
-Tests: `SharedTemplatesTest` (`hiding_changes_only_the_lists_…`, `hide_and_unhide_routes`),
+### 10.5 Sharing several at once
+
+`POST /v1/admin/whatsapp-accounts/{accountKey}/templates/share` with
+`{"templateIds": [..], "tenantIds": [..]}` gives every listed workspace every listed template.
+Platform admins only, as the other routes of §5. One request is all or nothing:
+`404 template_not_found` for a template outside the account, `400` for an unknown or blank
+workspace or an empty list, `409 holder_not_allowed` when a workspace's own account would be
+shared with another workspace (§4.1). A workspace that already holds a template keeps its grant,
+and each new pair writes one `SHARED` event, as a single share does. The single-template
+`PUT …/holders/{tenantId}` stays for API clients.
+
+The console uses this call for both ways in:
+
+- **Selection bar → «Share…»** on the platform page, for the selected templates.
+- **«Share with a workspace»** on one template's row.
+
+Both open one picker: a checkbox per workspace (archived ones are left out; a search field when
+there are more than eight), each marked «Already uses k of n». A workspace that already uses
+every selected template cannot be picked. The button reads «Share with m workspaces». The
+selection clears when the share succeeds and stays when it fails.
+
+Tests: `SharedTemplatesTest` (`hiding_changes_only_the_lists_…`, `hide_and_unhide_routes`,
+`several_templates_are_shared_with_several_workspaces_in_one_go`),
 `whatsapp_shared_templates_screen_test.dart` and `whatsapp_templates_list_test.dart`
 (`--platform chrome`).

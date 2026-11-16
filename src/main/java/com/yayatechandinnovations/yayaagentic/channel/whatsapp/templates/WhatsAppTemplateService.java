@@ -384,16 +384,36 @@ public class WhatsAppTemplateService {
     /** Let a workspace use a template (§4.1: an own account is never shared outside its workspace). */
     @Transactional
     public AccountTemplate share(String accountKey, TemplateId id, Ids.TenantId tenant, Caller caller) {
+        return shareAll(accountKey, List.of(id), List.of(tenant), caller).get(0);
+    }
+
+    /**
+     * Let every listed workspace use every listed template (§10.5). All or
+     * nothing: one template outside the account, or one workspace §4.1 does
+     * not allow, and nobody is shared anything. A workspace that already
+     * holds a template keeps it as it is.
+     */
+    @Transactional
+    public List<AccountTemplate> shareAll(String accountKey, List<TemplateId> ids, List<Ids.TenantId> tenants,
+                                          Caller caller) {
         Optional<WhatsAppMessagingAccount> own = requireAccount(accountKey);
-        if (own.isPresent() && !own.get().tenant().equals(tenant)) {
+        if (tenants == null || tenants.isEmpty()) {
+            throw AdminApiException.badRequest("missing_tenant_ids", "tenantIds required");
+        }
+        List<String> tenantIds = tenants.stream().map(Ids.TenantId::value).distinct().toList();
+        if (own.isPresent() && tenantIds.stream().anyMatch(t -> !own.get().tenant().value().equals(t))) {
             throw AdminApiException.conflict("holder_not_allowed",
                     "this WhatsApp account belongs to one workspace; its templates cannot be shared with another");
         }
-        WhatsAppTemplateEntity e = requireInAccount(accountKey, id);
-        if (!holders.existsByTemplateIdAndTenantId(e.getId(), tenant.value())) {
-            hold(e, tenant.value(), caller);
+        List<WhatsAppTemplateEntity> rows = pick(repo.findByAccountKeyOrderByNameAscLocaleAsc(accountKey), ids);
+        Set<String> held = new java.util.HashSet<>();
+        for (WhatsAppTemplateHolderEntity h : holdersOf(rows)) held.add(h.getTemplateId() + "|" + h.getTenantId());
+        for (WhatsAppTemplateEntity e : rows) {
+            for (String tenantId : tenantIds) {
+                if (!held.contains(e.getId() + "|" + tenantId)) hold(e, tenantId, caller);
+            }
         }
-        return withHolders(List.of(e)).get(0);
+        return withHolders(rows);
     }
 
     @Transactional

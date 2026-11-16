@@ -39,6 +39,9 @@ public final class WhatsAppTemplateDtos {
     /** The templates a hide or unhide applies to (whatsapp-shared-templates-design.md §10). */
     public record TemplateSelection(java.util.List<Long> templateIds) {}
 
+    /** Every listed workspace gets every listed template (whatsapp-shared-templates-design.md §10.5). */
+    public record TemplateShare(java.util.List<Long> templateIds, java.util.List<String> tenantIds) {}
+
     /**
      * A template as one workspace sees it through one of its senders.
      * {@code shared}: other workspaces hold it too (they are never named here).

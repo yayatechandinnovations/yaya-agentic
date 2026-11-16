@@ -66,12 +66,19 @@ class _FakeAdminApi extends AdminApi {
       ];
 
   @override
-  Future<WhatsAppAccountTemplate> shareWhatsAppTemplate(
-      String accountKey, int templateId, String tenantId) async {
-    calls.add('share:$accountKey:$templateId:$tenantId');
-    final row = rows.firstWhere((r) => r['id'] == templateId);
-    (row['holders'] as List).add({'tenantId': tenantId, 'grantedBy': 'me', 'grantedAt': null});
-    return WhatsAppAccountTemplate.fromJson(row);
+  Future<List<WhatsAppAccountTemplate>> shareWhatsAppTemplates(
+      String accountKey, List<int> templateIds, List<String> tenantIds) async {
+    calls.add('share:$accountKey:$templateIds:$tenantIds');
+    final changed = rows.where((r) => templateIds.contains(r['id'])).toList();
+    for (final row in changed) {
+      final holders = row['holders'] as List;
+      for (final t in tenantIds) {
+        if (holders.every((h) => h['tenantId'] != t)) {
+          holders.add({'tenantId': t, 'grantedBy': 'me', 'grantedAt': null});
+        }
+      }
+    }
+    return changed.map(WhatsAppAccountTemplate.fromJson).toList();
   }
 
   @override
@@ -93,6 +100,13 @@ class _FakeAdminApi extends AdminApi {
   }
 }
 
+class _FailingShareApi extends _FakeAdminApi {
+  @override
+  Future<List<WhatsAppAccountTemplate>> shareWhatsAppTemplates(
+          String accountKey, List<int> templateIds, List<String> tenantIds) async =>
+      throw Exception('holder_not_allowed');
+}
+
 /// The row card of a template, by its title.
 Finder _row(String title) =>
     find.ancestor(of: find.text(title), matching: find.byType(TemplateRowCard));
@@ -110,6 +124,9 @@ Future<List<String>> _menu(WidgetTester tester, String title) async {
       .map((i) => ((i.child as ListTile).title as Text).data!)
       .toList();
 }
+
+CheckboxListTile _workspace(WidgetTester tester, String title) =>
+    tester.widget<CheckboxListTile>(find.widgetWithText(CheckboxListTile, title));
 
 Widget _wrap(_FakeAdminApi api) => ProviderScope(
       overrides: [adminApiProvider.overrideWith((ref) async => api)],
@@ -144,17 +161,18 @@ void main() {
     await _open(tester, 'sl_ops_alert_v1 (es)');
     expect(find.widgetWithText(InputChip, 'fastcash'), findsOneWidget);
 
-    // Share the approved one: the workspace that already has it is not offered.
+    // Share the approved one: the workspace that already has it cannot be picked.
     await tester.tap(find.widgetWithText(ActionChip, 'Share with a workspace').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    expect(find.text('Share sl_ops_alert_v1'), findsOneWidget);
+    expect(_workspace(tester, 'Fast Cash (fastcash)').onChanged, isNull);
+    expect(find.text('Already uses it'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Share')).onPressed, isNull);
+    await tester.tap(find.text('Test (test)'));
     await tester.pumpAndSettle();
-    expect(find.text('Fast Cash (fastcash)'), findsNothing);
-    await tester.tap(find.text('Test (test)').last);
+    await tester.tap(find.widgetWithText(FilledButton, 'Share with 1 workspace'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Share'));
-    await tester.pumpAndSettle();
-    expect(api.calls, ['share:platform:1:test']);
+    expect(api.calls, ['share:platform:[1]:[test]']);
     expect(find.widgetWithText(InputChip, 'test'), findsOneWidget);
 
     // Stop sharing asks first.
@@ -276,6 +294,64 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.calls, ['hide:platform:[4, 1]']);
     expect(find.text('No template matches.'), findsOneWidget);
+  });
+
+  testWidgets('a selection of templates is shared with several workspaces at once', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final api = _FakeAdminApi([
+      _template(1, 'sl_ops_alert_v1', 'APPROVED', ['fastcash']),
+      _template(4, 'sl_ops_alert_v2', 'APPROVED', ['fastcash']),
+      _template(2, 'sl_draft_v1', 'DRAFT', []),
+    ]);
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Select all shown'));
+    await tester.pumpAndSettle();
+    expect(find.text('3 selected'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Share…'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Share 3 templates'), findsOneWidget);
+    // A workspace that has some of them can still be given the rest.
+    expect(find.text('Already uses 2 of 3'), findsOneWidget);
+    expect(_workspace(tester, 'Fast Cash (fastcash)').onChanged, isNotNull);
+    await tester.tap(find.text('Test (test)'));
+    await tester.tap(find.text('Fast Cash (fastcash)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Share with 2 workspaces'));
+    await tester.pumpAndSettle();
+
+    // Shown order: versions of a name together, the newest first.
+    expect(api.calls, ['share:platform:[2, 4, 1]:[fastcash, test]']);
+    expect(find.text('3 templates'), findsOneWidget);
+    expect(find.text('Shared 3 templates with 2 workspaces'), findsOneWidget);
+    await tester.tap(find.text('sl_draft_v1 (es)'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(InputChip, 'fastcash'), findsOneWidget);
+    expect(find.widgetWithText(InputChip, 'test'), findsOneWidget);
+  });
+
+  testWidgets('a share that fails keeps the selection', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final api = _FailingShareApi();
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Select all shown'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Share…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test (test)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Share with 1 workspace'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 selected'), findsOneWidget);
   });
 
   test('a workspace template says when removing it only takes the workspace off', () {

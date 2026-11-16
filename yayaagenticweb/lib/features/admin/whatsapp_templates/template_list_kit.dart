@@ -306,6 +306,7 @@ class TemplateSelectionBar extends StatelessWidget {
     required this.onClear,
     required this.onHide,
     required this.onUnhide,
+    this.onShare,
   });
 
   final List<TemplateListRow> shown;
@@ -319,13 +320,16 @@ class TemplateSelectionBar extends StatelessWidget {
   final VoidCallback onHide;
   final VoidCallback onUnhide;
 
+  /// Offered only where the caller decides who uses a template.
+  final VoidCallback? onShare;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final picked = shown.where((r) => selected.contains(r.id)).toList();
     final all = selectable.isNotEmpty && selectable.every(selected.contains);
-    return SizedBox(
-      height: 40,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 40),
       child: Row(
         children: [
           Tooltip(
@@ -338,31 +342,45 @@ class TemplateSelectionBar extends StatelessWidget {
                   : (_) => picked.isEmpty ? onSelectAll() : onClear(),
             ),
           ),
-          if (picked.isEmpty)
-            Expanded(
-              child: Text(
-                shown.length == total
-                    ? '$total template${total == 1 ? '' : 's'}'
-                    : 'Showing ${shown.length} of $total',
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-              ),
-            )
-          else ...[
-            Expanded(child: Text('${picked.length} selected', style: theme.textTheme.labelLarge)),
-            if (picked.any((r) => !r.hidden))
-              TextButton.icon(
-                onPressed: onHide,
-                icon: const Icon(Icons.visibility_off_outlined, size: 18),
-                label: const Text('Hide'),
-              ),
-            if (picked.any((r) => r.hidden))
-              TextButton.icon(
-                onPressed: onUnhide,
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: const Text('Unhide'),
-              ),
-            TextButton(onPressed: onClear, child: const Text('Clear')),
-          ],
+          Expanded(
+            child: picked.isEmpty
+                ? Text(
+                    shown.length == total
+                        ? '$total template${total == 1 ? '' : 's'}'
+                        : 'Showing ${shown.length} of $total',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                  )
+                // The actions move under the count when the pane is narrow.
+                : Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 4,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text('${picked.length} selected', style: theme.textTheme.labelLarge),
+                      ),
+                      if (onShare != null)
+                        TextButton.icon(
+                          onPressed: onShare,
+                          icon: const Icon(Icons.group_add_outlined, size: 18),
+                          label: const Text('Share…'),
+                        ),
+                      if (picked.any((r) => !r.hidden))
+                        TextButton.icon(
+                          onPressed: onHide,
+                          icon: const Icon(Icons.visibility_off_outlined, size: 18),
+                          label: const Text('Hide'),
+                        ),
+                      if (picked.any((r) => r.hidden))
+                        TextButton.icon(
+                          onPressed: onUnhide,
+                          icon: const Icon(Icons.visibility_outlined, size: 18),
+                          label: const Text('Unhide'),
+                        ),
+                      TextButton(onPressed: onClear, child: const Text('Clear')),
+                    ],
+                  ),
+          ),
         ],
       ),
     );

@@ -842,11 +842,16 @@ class AdminApi {
         .delete('/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId');
   }
 
-  Future<WhatsAppAccountTemplate> shareWhatsAppTemplate(
-      String accountKey, int templateId, String tenantId) async {
-    final res = await _dio.put(
-        '/v1/admin/whatsapp-accounts/$accountKey/templates/$templateId/holders/$tenantId');
-    return WhatsAppAccountTemplate.fromJson(_asMap(res.data));
+  /// Every workspace in [tenantIds] gets every template in [templateIds];
+  /// all or nothing.
+  Future<List<WhatsAppAccountTemplate>> shareWhatsAppTemplates(
+      String accountKey, List<int> templateIds, List<String> tenantIds) async {
+    final res = await _dio.post(
+        '/v1/admin/whatsapp-accounts/$accountKey/templates/share',
+        data: {'templateIds': templateIds, 'tenantIds': tenantIds});
+    return (res.data as List)
+        .map((e) => WhatsAppAccountTemplate.fromJson(_asMap(e)))
+        .toList();
   }
 
   Future<WhatsAppAccountTemplate> unshareWhatsAppTemplate(

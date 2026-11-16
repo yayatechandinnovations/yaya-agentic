@@ -274,6 +274,8 @@ class SharedTemplatesTest {
         assertThat(onOwn.accountKey()).isEqualTo(account);
 
         assertConflict(() -> templates.share(account, onOwn.id(), a, PLATFORM), "holder_not_allowed");
+        assertConflict(() -> templates.shareAll(account, List.of(onOwn.id()), List.of(c, a), PLATFORM),
+                "holder_not_allowed");
         assertThatThrownBy(() -> templates.listForAccount("wma_missing"))
                 .isInstanceOfSatisfying(AdminApiException.class,
                         e -> assertThat(e.code()).isEqualTo("whatsapp_account_not_found"));
@@ -395,6 +397,51 @@ class SharedTemplatesTest {
         assertThat(templates.listForSender(a, senderA)).noneMatch(WhatsAppTemplate::hidden);
         assertThat(jdbc.queryForObject("SELECT hidden_by FROM whatsapp_templates WHERE id = ?", String.class,
                 old.id().value())).isNull();
+    }
+
+    @Test
+    void several_templates_are_shared_with_several_workspaces_in_one_go() {
+        WhatsAppTemplate t1 = templates.declare(a, senderA, declaration("sl_many_" + suffix(), "Uno {{1}}."),
+                WORKSPACE);
+        WhatsAppTemplate t2 = templates.declare(a, senderA, declaration("sl_many_" + suffix(), "Dos {{1}}."),
+                WORKSPACE);
+
+        // One template outside the account and nobody gets anything.
+        assertThatThrownBy(() -> templates.shareAll(TemplateAccounts.PLATFORM,
+                List.of(t1.id(), new TemplateId(Long.MAX_VALUE)), List.of(b), PLATFORM))
+                .isInstanceOfSatisfying(AdminApiException.class,
+                        e -> assertThat(e.code()).isEqualTo("template_not_found"));
+        assertThat(holders(t1)).containsExactly(a.value());
+
+        var shared = templates.shareAll(TemplateAccounts.PLATFORM, List.of(t1.id(), t2.id(), t1.id()),
+                List.of(b, c, b, a), PLATFORM);
+        assertThat(shared).extracting(row -> row.template().id()).containsExactly(t1.id(), t2.id());
+        assertThat(shared).allSatisfy(row -> assertThat(row.holders()).extracting(WhatsAppTemplateService.Holder::tenantId)
+                .containsExactlyInAnyOrder(a.value(), b.value(), c.value()));
+        assertThat(templates.listForSender(c, senderC)).extracting(WhatsAppTemplate::id)
+                .containsExactlyInAnyOrder(t1.id(), t2.id());
+        // Once per new pair; the workspace that already held them is left alone.
+        String events = "SELECT count(*) FROM whatsapp_template_holder_events WHERE template_id IN (?, ?)";
+        assertThat(jdbc.queryForObject(events, Integer.class, t1.id().value(), t2.id().value())).isEqualTo(6);
+        templates.shareAll(TemplateAccounts.PLATFORM, List.of(t1.id(), t2.id()), List.of(b, c), PLATFORM);
+        assertThat(jdbc.queryForObject(events, Integer.class, t1.id().value(), t2.id().value())).isEqualTo(6);
+
+        client.post().uri("/v1/admin/whatsapp-accounts/platform/templates/share")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("templateIds", List.of(t1.id().value()), "tenantIds", List.of(a.value(), b.value())))
+                .exchange().expectStatus().isOk()
+                .expectBodyList(WhatsAppTemplateDtos.AccountTemplateResponse.class)
+                .value(rows -> assertThat(rows).singleElement().satisfies(r -> assertThat(r.holders())
+                        .extracting(WhatsAppTemplateDtos.HolderResponse::tenantId)
+                        .containsExactlyInAnyOrder(a.value(), b.value(), c.value())));
+        client.post().uri("/v1/admin/whatsapp-accounts/platform/templates/share")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("templateIds", List.of(t1.id().value()), "tenantIds", List.of("no-such")))
+                .exchange().expectStatus().isBadRequest();
+        client.post().uri("/v1/admin/whatsapp-accounts/platform/templates/share")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("templateIds", List.of(t1.id().value()), "tenantIds", List.of()))
+                .exchange().expectStatus().isBadRequest();
     }
 
     @Test

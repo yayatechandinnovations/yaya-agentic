@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -118,6 +119,28 @@ public class WhatsAppAccountTemplateController {
                 new TemplateId(templateId), new Ids.TenantId(tenantId), caller(exchange)));
     }
 
+    /** Share several templates with several workspaces at once; all or nothing. */
+    @PostMapping("/{accountKey}/templates/share")
+    public List<WhatsAppTemplateDtos.AccountTemplateResponse> shareAll(
+            @PathVariable("accountKey") String accountKey,
+            @RequestBody WhatsAppTemplateDtos.TemplateShare req,
+            ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
+        List<TemplateId> ids = WhatsAppTemplateController.templateIds(req == null ? null : req.templateIds());
+        if (req.tenantIds() == null || req.tenantIds().isEmpty()) {
+            throw AdminApiException.badRequest("missing_tenant_ids", "tenantIds required");
+        }
+        List<Ids.TenantId> tenants = new ArrayList<>();
+        for (String t : req.tenantIds()) {
+            if (t == null || t.isBlank()) {
+                throw AdminApiException.badRequest("bad_tenant_id", "tenantIds must not be blank");
+            }
+            tenantGuard.requireExists(t);
+            tenants.add(new Ids.TenantId(t));
+        }
+        return respond(templates.shareAll(accountKey, ids, tenants, caller(exchange)));
+    }
+
     /** Stop sharing the template with a workspace. */
     @DeleteMapping("/{accountKey}/templates/{templateId}/holders/{tenantId}")
     public WhatsAppTemplateDtos.AccountTemplateResponse unshare(
@@ -135,7 +158,8 @@ public class WhatsAppAccountTemplateController {
             ServerWebExchange exchange) {
         workspaceAccess.requirePlatformAdmin(exchange);
         return respond(templates.setHiddenForAccount(accountKey,
-                WhatsAppTemplateController.templateIds(req), hidden, caller(exchange)));
+                WhatsAppTemplateController.templateIds(req == null ? null : req.templateIds()), hidden,
+                caller(exchange)));
     }
 
     private WhatsAppTemplateService.Caller caller(ServerWebExchange exchange) {
