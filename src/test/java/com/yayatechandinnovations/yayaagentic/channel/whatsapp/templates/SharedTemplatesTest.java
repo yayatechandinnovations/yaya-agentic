@@ -193,6 +193,34 @@ class SharedTemplatesTest {
     }
 
     @Test
+    void a_rejected_template_goes_back_to_the_provider_only_after_it_is_reworded() {
+        String name = "sl_rejected_" + suffix();
+        WhatsAppTemplate t = templates.declare(a, senderA, declaration(name, "Clave {{1}}."), PLATFORM);
+        templates.submit(a, senderA, t.id());
+        when(twilio.fetchWhatsAppApproval(anyString(), any()))
+                .thenReturn(new ApprovalState("rejected", "INCORRECT_CATEGORY"));
+        templates.syncSender(a, senderA);
+
+        // The integration converges again with the same wording: the verdict is
+        // returned, and the provider (which refuses a repeated request) is not asked.
+        clearInvocations(twilio);
+        WhatsAppTemplate same = templates.declare(a, senderA, declaration(name, "Clave {{1}}."), PLATFORM);
+        assertThat(same.status()).isEqualTo(TemplateStatus.REJECTED);
+        WhatsAppTemplate again = templates.submit(a, senderA, t.id());
+        assertThat(again.status()).isEqualTo(TemplateStatus.REJECTED);
+        assertThat(again.rejectionReason()).isEqualTo("INCORRECT_CATEGORY");
+        verify(twilio, never()).requestWhatsAppApproval(anyString(), anyString(), anyString(), any());
+        verify(twilio, never()).createContent(anyMap(), any());
+
+        // New wording is a new submission.
+        WhatsAppTemplate reworded = templates.declare(a, senderA,
+                declaration(name, "Tienes asignado el retiro {{1}} en tu ruta de hoy."), PLATFORM);
+        assertThat(reworded.status()).isEqualTo(TemplateStatus.DRAFT);
+        assertThat(templates.submit(a, senderA, t.id()).status()).isEqualTo(TemplateStatus.SUBMITTED);
+        verify(twilio, times(1)).requestWhatsAppApproval(anyString(), eq(name), anyString(), any());
+    }
+
+    @Test
     void stopping_use_removes_one_workspace_and_an_approved_template_stays_in_the_account() {
         Declaration d = declaration("sl_keep_" + suffix(), "Aviso {{1}}.");
         WhatsAppTemplate t = templates.declare(a, senderA, d, PLATFORM);

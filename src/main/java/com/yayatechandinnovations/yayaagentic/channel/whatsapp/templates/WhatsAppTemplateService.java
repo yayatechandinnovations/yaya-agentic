@@ -249,7 +249,8 @@ public class WhatsAppTemplateService {
      * Register the content with Twilio (Content API) and request WhatsApp
      * approval. Meta's verdict arrives through {@link #syncSender} / the sweep.
      * A template that is already submitted or approved is returned as it is:
-     * one template reaches the provider once, whoever holds it.
+     * one template reaches the provider once, whoever holds it. So is a
+     * rejected one whose wording has not changed since the rejection.
      */
     @Transactional
     public WhatsAppTemplate submit(Ids.TenantId tenant, SenderId sender, TemplateId id) {
@@ -408,6 +409,13 @@ public class WhatsAppTemplateService {
         if (!status.canSubmit()) {
             throw AdminApiException.conflict("not_submittable",
                     "template in status " + status + " cannot be submitted");
+        }
+        // Rejected and not reworded since (an edit clears the content sid):
+        // WhatsApp already answered for exactly this content, and the provider
+        // refuses a second approval request for it. The verdict stands.
+        if (status == TemplateStatus.REJECTED && entity.getBspContentSid() != null
+                && !entity.getBspContentSid().isBlank()) {
+            return toDomain(entity);
         }
         if (!credsResolver.isReady()) {
             throw AdminApiException.conflict("provider_not_configured",

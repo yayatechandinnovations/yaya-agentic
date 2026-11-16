@@ -181,6 +181,9 @@ clears the stored content sid, so a reworded template is never resubmitted with 
   It runs once per template: the row is locked for the submission, and a template that is
   already SUBMITTED or APPROVED is returned as it is, so a repeated or concurrent call never
   reaches Twilio. A PAUSED template is `409 not_submittable`.
+  A REJECTED template whose wording has not changed since the rejection is also returned as it
+  is: Twilio answers a second approval request for the same content with 400 (seen 2026-11-16 on
+  `sl_kiosk_collection_code_v2`), so an integration that converges again would only get an error.
 - **Sync** and the scheduled sweep run per template, with the account's credentials.
 - **List** (`GET …/whatsapp-senders/{s}/templates`): the templates of the sender's account that
   the workspace holds. The response keeps its shape and adds `shared: true` when the template
