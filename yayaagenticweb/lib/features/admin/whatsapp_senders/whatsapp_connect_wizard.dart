@@ -11,6 +11,7 @@ import '../../../models/admin/whatsapp_sender.dart';
 import '../shared/admin_shared.dart';
 import 'embedded_signup/embedded_signup_events.dart';
 import 'embedded_signup/signup_launcher.dart';
+import 'sender_logo_picker.dart';
 import 'whatsapp_senders_screen.dart' show whatsAppSendersProvider;
 
 /// Self-service "Connect WhatsApp" wizard (Meta Embedded Signup).
@@ -56,6 +57,7 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
   late final TextEditingController _localeCtrl =
       TextEditingController(text: 'en-US');
   String? _vertical;
+  String _logoUrl = '';
   bool _termsAccepted = false;
 
   // ---- step 2 — Meta signup + backend submission -------------------------
@@ -207,6 +209,7 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
             websiteUrl: _websiteUrlCtrl.text.trim(),
             vertical: _vertical!,
             about: _aboutCtrl.text.trim(),
+            logoUrl: _logoUrl,
           ),
         ),
       );
@@ -361,6 +364,11 @@ class _WhatsAppConnectWizardState extends ConsumerState<WhatsAppConnectWizard> {
           controller: _aboutCtrl,
           maxLength: 139,
           decoration: const InputDecoration(labelText: 'About (profile description)'),
+        ),
+        const SizedBox(height: 4),
+        SenderLogoPicker(
+          url: _logoUrl,
+          onChanged: (url) => setState(() => _logoUrl = url),
         ),
         const SizedBox(height: 12),
         TextField(

@@ -99,6 +99,34 @@ class TwilioMessagingChannelProviderTest {
     }
 
     @Test
+    void register_sends_the_logo_as_the_profile_photo() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE4\",\"status\":\"CREATING\"}")));
+
+        provider.registerSender(buildRequest("snd_logo",
+                Map.of("logoUrl", "https://hooks.example/v1/chat/logos/logo_1/logo.png")), creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.profile.logo_url",
+                        equalTo("https://hooks.example/v1/chat/logos/logo_1/logo.png"))));
+    }
+
+    @Test
+    void register_without_a_logo_sends_no_logo_url() {
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(aResponse().withStatus(201)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"sid\":\"XE5\",\"status\":\"CREATING\"}")));
+
+        provider.registerSender(buildRequest("snd_nologo", Map.of("logoUrl", "")), creds);
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(notMatching(".*logo_url.*")));
+    }
+
+    @Test
     void register_passes_the_chosen_verification_method() {
         wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
                 .willReturn(aResponse().withStatus(201)

@@ -58,6 +58,14 @@ public class ChatLogoController {
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).build()));
     }
 
+    /** Same image under a cosmetic file name: WhatsApp sender profiles hand
+     *  Twilio a logo URL that ends in a file suffix. The id alone selects it. */
+    @GetMapping("/v1/chat/logos/{id}/{filename}")
+    public Mono<ResponseEntity<byte[]>> serveNamed(@PathVariable("id") String id,
+                                                   @PathVariable("filename") String filename) {
+        return serve(id);
+    }
+
     private ResponseEntity<byte[]> ok(ChatLogoEntity logo) {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(logo.getContentType()))

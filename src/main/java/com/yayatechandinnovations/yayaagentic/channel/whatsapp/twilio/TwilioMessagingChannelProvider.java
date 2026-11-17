@@ -561,6 +561,7 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         profile.put("name", req.displayName());
         copyIfPresent(payload, "about", profile, "about");
         copyIfPresent(payload, "address", profile, "address");
+        copyIfPresent(payload, "logoUrl", profile, "logo_url");
         profile.put("vertical", twilioVertical(payload.get("vertical") instanceof String v ? v : null));
         if (payload.get("contactEmail") instanceof String email && !email.isBlank()) {
             profile.put("emails", List.of(Map.of("email", email, "label", "Email")));

@@ -75,7 +75,10 @@ business days.
 1. **Workspace + assistant** — Admin → Tenants: create/select the customer's
    workspace and make sure the assistant (profile) that should answer exists.
 2. **WhatsApp senders → Start sender registration.** Four steps:
-   - **Business profile** — legal name, display name, contact email, vertical.
+   - **Business profile** — legal name, display name, contact email, vertical,
+     and optionally a **profile photo** (square PNG/JPEG, at least 192×192,
+     under 2 MB). The platform hosts it at a public URL and Twilio fetches it
+     at registration; it becomes the number's WhatsApp profile picture.
    - **Phone number** — E.164 (`+18095551234`), not active on any WhatsApp
      app. Pick how WhatsApp sends the verification code: **SMS**, or **Voice
      call** for landlines.
@@ -104,6 +107,7 @@ business days.
 | Code expired / never arrived | **Cancel registration**, then register the number again (choose **Voice call** if it is a landline). |
 | Stuck on **Submitting** | Nothing reached WhatsApp yet; the platform retries every 5 minutes, or click **Refresh status** to retry now. |
 | "Phone number already registered" | The number is live in another workspace. Removed numbers are free again. |
+| Profile photo missing on an adopted number | A number first registered in Twilio's Console is adopted with its existing profile untouched, photo included. Set the photo in the Twilio Console for that sender. |
 
 ## 5. Connect WhatsApp (customers with their own brand)
 

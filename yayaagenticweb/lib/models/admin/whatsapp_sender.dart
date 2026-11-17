@@ -89,6 +89,7 @@ class BusinessProfileFields {
     this.websiteUrl = '',
     required this.vertical,
     this.about = '',
+    this.logoUrl = '',
   });
 
   final String legalName;
@@ -99,6 +100,9 @@ class BusinessProfileFields {
   final String vertical;
   final String about;
 
+  /// WhatsApp profile photo, hosted by the platform (may be root-relative).
+  final String logoUrl;
+
   factory BusinessProfileFields.fromJson(Map<String, dynamic> json) =>
       BusinessProfileFields(
         legalName: (json['legalName'] ?? '') as String,
@@ -108,6 +112,7 @@ class BusinessProfileFields {
         websiteUrl: (json['websiteUrl'] ?? '') as String,
         vertical: (json['vertical'] ?? '') as String,
         about: (json['about'] ?? '') as String,
+        logoUrl: (json['logoUrl'] ?? '') as String,
       );
 
   Map<String, dynamic> toJson() => {
@@ -118,6 +123,7 @@ class BusinessProfileFields {
         'websiteUrl': websiteUrl,
         'vertical': vertical,
         'about': about,
+        'logoUrl': logoUrl,
       };
 
   BusinessProfileFields copyWith({
@@ -128,6 +134,7 @@ class BusinessProfileFields {
     String? websiteUrl,
     String? vertical,
     String? about,
+    String? logoUrl,
   }) =>
       BusinessProfileFields(
         legalName: legalName ?? this.legalName,
@@ -137,6 +144,7 @@ class BusinessProfileFields {
         websiteUrl: websiteUrl ?? this.websiteUrl,
         vertical: vertical ?? this.vertical,
         about: about ?? this.about,
+        logoUrl: logoUrl ?? this.logoUrl,
       );
 
   static BusinessProfileFields empty() =>

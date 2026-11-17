@@ -10,6 +10,7 @@ import '../channel_bindings/sender_routes_section.dart' show channelBindingsProv
 import '../profiles/profiles_screen.dart' show profilesProvider;
 import '../shared/admin_shared.dart';
 import '../flows/start_flow_picker.dart';
+import 'sender_logo_picker.dart';
 import 'whatsapp_senders_screen.dart'
     show VerificationMethodSelector, whatsAppSendersProvider, whatsAppSubmitEnabledProvider;
 
@@ -46,6 +47,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   late final TextEditingController _websiteUrlCtrl;
   late final TextEditingController _aboutCtrl;
   String? _vertical;
+  late String _logoUrl;
 
   // ---- step 2 — phone ----------------------------------------------------
   late final TextEditingController _phoneCtrl;
@@ -72,6 +74,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     _websiteUrlCtrl = TextEditingController(text: bp.websiteUrl);
     _aboutCtrl = TextEditingController(text: bp.about);
     _vertical = normalizeBusinessVertical(bp.vertical);
+    _logoUrl = bp.logoUrl;
 
     _phoneCtrl = TextEditingController(text: existing?.phoneE164 ?? '');
     _publicDisplayNameCtrl =
@@ -199,6 +202,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
         websiteUrl: _websiteUrlCtrl.text.trim(),
         vertical: _vertical!,
         about: _aboutCtrl.text.trim(),
+        logoUrl: _logoUrl,
       ),
     );
 
@@ -348,6 +352,11 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           maxLength: 139,
           minLines: 2,
           maxLines: 4,
+        ),
+        const SizedBox(height: 4),
+        SenderLogoPicker(
+          url: _logoUrl,
+          onChanged: (url) => setState(() => _logoUrl = url),
         ),
       ],
     );
@@ -564,6 +573,10 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           _ReviewRow(label: 'Website', value: _websiteUrlCtrl.text.trim()),
         if (_aboutCtrl.text.trim().isNotEmpty)
           _ReviewRow(label: 'About', value: _aboutCtrl.text.trim()),
+        _ReviewRow(
+            label: 'Profile photo',
+            value: _logoUrl.isEmpty ? '' : 'Uploaded',
+            placeholder: 'None'),
         const SizedBox(height: 12),
         const _InfoNote(
           icon: Icons.send_outlined,

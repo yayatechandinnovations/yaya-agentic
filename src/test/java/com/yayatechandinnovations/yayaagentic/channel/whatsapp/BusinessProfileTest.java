@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BusinessProfileTest {
 
     private static BusinessProfile withWebsite(String website) {
-        return new BusinessProfile("Legal", "Display", "ops@example.com", null, website, "OTHER", null);
+        return new BusinessProfile("Legal", "Display", "ops@example.com", null, website, "OTHER", null, null);
     }
 
     @Test
@@ -34,5 +34,16 @@ class BusinessProfileTest {
         assertThat(BusinessProfile.isValidWebsiteUrl("localhost")).isFalse();
         assertThat(BusinessProfile.isValidWebsiteUrl("ftp://example.com")).isFalse();
         assertThat(BusinessProfile.isValidWebsiteUrl("example.")).isFalse();
+    }
+
+    @Test
+    void logo_validation() {
+        assertThat(BusinessProfile.isValidLogoUrl(null)).isTrue();
+        assertThat(BusinessProfile.isValidLogoUrl("")).isTrue();
+        assertThat(BusinessProfile.isValidLogoUrl("/v1/chat/logos/logo_abc/logo.png")).isTrue();
+        assertThat(BusinessProfile.isValidLogoUrl("https://cdn.example.com/logo.jpg")).isTrue();
+        assertThat(BusinessProfile.isValidLogoUrl("//evil.example/logo.png")).isFalse();
+        assertThat(BusinessProfile.isValidLogoUrl("cdn.example.com/logo.png")).isFalse();
+        assertThat(BusinessProfile.isValidLogoUrl("ftp://example.com/logo.png")).isFalse();
     }
 }

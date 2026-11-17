@@ -16,6 +16,7 @@ class _FakeAdminApi extends AdminApi {
   _FakeAdminApi() : super(Dio());
 
   WhatsAppSenderRequest? created;
+  WhatsAppSenderRequest? updated;
   ChannelBindingRequest? binding;
   String? submittedSenderId;
   String? submittedMethod;
@@ -56,6 +57,22 @@ class _FakeAdminApi extends AdminApi {
   }
 
   @override
+  Future<WhatsAppSenderResponse> updateWhatsAppSender(
+      String tenantId, String senderId, WhatsAppSenderRequest body) async {
+    updated = body;
+    return WhatsAppSenderResponse.fromJson({
+      'id': senderId,
+      'tenantId': tenantId,
+      'phoneE164': body.phoneE164,
+      'displayName': body.displayName,
+      'businessProfile': body.businessProfile.toJson(),
+      'status': 'DRAFT',
+      'onboarding': const <String, dynamic>{},
+      'defaultLocale': body.defaultLocale ?? 'en-US',
+    });
+  }
+
+  @override
   Future<ChannelBindingResponse> createChannelBinding(
       String tenantId, ChannelBindingRequest body) async {
     binding = body;
@@ -81,7 +98,7 @@ class _FakeAdminApi extends AdminApi {
   }
 }
 
-Widget _wizard(_FakeAdminApi api) => ProviderScope(
+Widget _wizard(_FakeAdminApi api, {WhatsAppSenderResponse? existing}) => ProviderScope(
       overrides: [
         adminApiProvider.overrideWith((ref) async => api),
         currentTenantOrNull.overrideWithValue('t1'),
@@ -93,7 +110,7 @@ Widget _wizard(_FakeAdminApi api) => ProviderScope(
             body: Center(
               child: FilledButton(
                 onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const WhatsAppSenderWizard())),
+                    MaterialPageRoute(builder: (_) => WhatsAppSenderWizard(existing: existing))),
                 child: const Text('open'),
               ),
             ),
@@ -118,6 +135,23 @@ Future<void> _pick(WidgetTester tester, Finder dropdown, String option) async {
   await tester.tap(find.text(option).last);
   await tester.pumpAndSettle();
 }
+
+WhatsAppSenderResponse _draftWithLogo() => WhatsAppSenderResponse.fromJson({
+      'id': 'snd_logo',
+      'tenantId': 't1',
+      'phoneE164': '+18095551234',
+      'displayName': 'Test Co',
+      'businessProfile': {
+        'legalName': 'Test Inc.',
+        'displayName': 'Test Co',
+        'contactEmail': 'ops@test.example',
+        'vertical': 'RESTAURANT',
+        'logoUrl': '/v1/chat/logos/logo_1/logo.png',
+      },
+      'status': 'DRAFT',
+      'onboarding': const <String, dynamic>{},
+      'defaultLocale': 'en-US',
+    });
 
 /// The vertical Stepper keeps every step in the tree (inactive ones behind
 /// IgnorePointer), so only a hit-testable match is the live one.
@@ -261,6 +295,40 @@ void main() {
     await _tapText(tester, 'Next');
 
     expect(_unreadableText(tester), isEmpty, reason: 'review step');
+  });
+
+  testWidgets('a saved profile photo is kept when the sender is edited', (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api, existing: _draftWithLogo()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Replace photo').hitTestable(), findsOneWidget);
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Next');
+    expect(find.text('Uploaded').hitTestable(), findsOneWidget); // review row
+    await _tapText(tester, 'Save changes');
+
+    expect(api.updated?.businessProfile.logoUrl, '/v1/chat/logos/logo_1/logo.png');
+  });
+
+  testWidgets('removing the profile photo saves the sender without one', (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api, existing: _draftWithLogo()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await _tapText(tester, 'Remove');
+    expect(find.text('Upload photo').hitTestable(), findsOneWidget);
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Save changes');
+
+    expect(api.updated?.businessProfile.logoUrl, '');
   });
 
   testWidgets('a failed submit keeps the saved sender and says what is left to do',

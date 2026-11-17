@@ -381,6 +381,63 @@ class WhatsAppSenderSubmitTest {
     }
 
     @Test
+    void a_platform_logo_reaches_twilio_as_an_absolute_profile_photo() {
+        var draft = draftRequest("+15553000014", "https://example.com");
+        var bp = draft.businessProfile();
+        var withLogo = new WhatsAppSenderDtos.SenderRequest(draft.phoneE164(), draft.displayName(),
+                new WhatsAppSenderDtos.BusinessProfileRequest(bp.legalName(), bp.displayName(),
+                        bp.contactEmail(), bp.address(), bp.websiteUrl(), bp.vertical(), bp.about(),
+                        "/v1/chat/logos/logo_abc/logo.png"),
+                null);
+        var sender = client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(withLogo)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(WhatsAppSenderDtos.SenderResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(sender.businessProfile().logoUrl()).isEqualTo("/v1/chat/logos/logo_abc/logo.png");
+        wireMock.stubFor(post(urlEqualTo("/v2/Channels/Senders"))
+                .willReturn(json(201, "{\"sid\":\"XE_logo_013\",\"status\":\"CREATING\"}")));
+
+        submit(sender.id());
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/v2/Channels/Senders"))
+                .withRequestBody(matchingJsonPath("$.profile.logo_url",
+                        equalTo("https://hooks.example/v1/chat/logos/logo_abc/logo.png"))));
+    }
+
+    @Test
+    void the_logo_upload_takes_png_or_jpeg_and_serves_it_publicly() {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 1, 2, 3};
+        var uploaded = client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/logos", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new WhatsAppSenderDtos.LogoUploadRequest(
+                        "image/png", java.util.Base64.getEncoder().encodeToString(png)))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(WhatsAppSenderDtos.LogoUploadResponse.class)
+                .returnResult().getResponseBody();
+        assertThat(uploaded.logoUrl()).contains("/v1/chat/logos/").endsWith("/logo.png");
+
+        client.get().uri(java.net.URI.create(uploaded.logoUrl()).getPath())
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentType(MediaType.IMAGE_PNG)
+                .expectBody(byte[].class).isEqualTo(png);
+
+        client.post()
+                .uri("/v1/admin/tenants/{t}/whatsapp-senders/logos", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(new WhatsAppSenderDtos.LogoUploadRequest(
+                        "image/gif", java.util.Base64.getEncoder().encodeToString(png)))
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
     void a_website_that_is_not_a_web_address_is_rejected_before_twilio() {
         client.post()
                 .uri("/v1/admin/tenants/{t}/whatsapp-senders", TENANT)

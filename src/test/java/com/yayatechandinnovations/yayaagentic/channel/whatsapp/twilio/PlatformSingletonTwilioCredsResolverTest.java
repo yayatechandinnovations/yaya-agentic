@@ -83,7 +83,7 @@ class PlatformSingletonTwilioCredsResolverTest {
                 "Acme",
                 null,
                 new BusinessProfile("Acme Inc.", "Acme", "ops@acme.com",
-                        "1 Apple Park Way", "https://acme.com", "RETAIL", "stuff"),
+                        "1 Apple Park Way", "https://acme.com", "RETAIL", "stuff", null),
                 SenderStatus.DRAFT,
                 OnboardingState.empty(),
                 "whsec-irrelevant",

@@ -48,13 +48,27 @@ public final class WhatsAppSenderDtos {
             String address,
             String websiteUrl,
             String vertical,
-            String about
+            String about,
+            String logoUrl
     ) {
+        /** Back-compat: no logo. */
+        public BusinessProfileRequest(String legalName, String displayName, String contactEmail,
+                                      String address, String websiteUrl, String vertical,
+                                      String about) {
+            this(legalName, displayName, contactEmail, address, websiteUrl, vertical, about, null);
+        }
+
         public BusinessProfile toDomain() {
             return new BusinessProfile(legalName, displayName, contactEmail,
-                    address, websiteUrl, vertical, about);
+                    address, websiteUrl, vertical, about, logoUrl);
         }
     }
+
+    /** Body for POST {@code .../logos}: a PNG or JPEG, base64 (a data: URL prefix is tolerated). */
+    public record LogoUploadRequest(String contentType, String dataBase64) {}
+
+    /** The hosted logo to store as {@code businessProfile.logoUrl}. */
+    public record LogoUploadResponse(String logoUrl) {}
 
     /** GET / POST / PUT response. */
     public record SenderResponse(
@@ -80,7 +94,7 @@ public final class WhatsAppSenderDtos {
             BusinessProfile b = s.business();
             BusinessProfileRequest bp = new BusinessProfileRequest(
                     b.legalName(), b.displayName(), b.contactEmail(), b.address(),
-                    b.websiteUrl(), b.vertical(), b.about());
+                    b.websiteUrl(), b.vertical(), b.about(), b.logoUrl());
 
             return new SenderResponse(
                     s.id().value(),

@@ -1,6 +1,7 @@
 package com.yayatechandinnovations.yayaagentic.api;
 
 import com.yayatechandinnovations.yayaagentic.api.dto.WhatsAppSenderDtos;
+import com.yayatechandinnovations.yayaagentic.channel.chat.ChatLogoService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.BusinessProfile;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
@@ -17,6 +18,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -32,16 +35,24 @@ import java.util.Optional;
 @RequestMapping("/v1/admin/tenants/{tenantId}/whatsapp-senders")
 public class WhatsAppSenderController {
 
+    /** WhatsApp profile photos must be PNG or JPEG — Meta rejects the WebP
+     *  and GIF that chat entry-point logos also accept. */
+    private static final Map<String, String> LOGO_EXTENSIONS =
+            Map.of("image/png", "png", "image/jpeg", "jpg");
+
     private final TenantGuard tenantGuard;
     private final WorkspaceAccessHelper workspaceAccess;
     private final WhatsAppSenderService senders;
+    private final ChatLogoService logos;
 
     public WhatsAppSenderController(TenantGuard tenantGuard,
                                     WorkspaceAccessHelper workspaceAccess,
-                                    WhatsAppSenderService senders) {
+                                    WhatsAppSenderService senders,
+                                    ChatLogoService logos) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.senders = senders;
+        this.logos = logos;
     }
 
     @GetMapping
@@ -104,6 +115,31 @@ public class WhatsAppSenderController {
                 Optional.ofNullable(req.defaultLocale()),
                 Optional.ofNullable(req.startFlowId()));
         return WhatsAppSenderDtos.SenderResponse.of(s);
+    }
+
+    /** Hosts the sender's profile photo at a stable public URL for Twilio to
+     *  fetch; the wizard stores the returned URL as {@code businessProfile.logoUrl}. */
+    @PostMapping("/logos")
+    public Mono<WhatsAppSenderDtos.LogoUploadResponse> uploadLogo(
+            @PathVariable("tenantId") String tenantId,
+            @RequestBody WhatsAppSenderDtos.LogoUploadRequest req,
+            ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                    workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+                    tenantGuard.requireWritable(tenantId);
+                    if (req == null) throw AdminApiException.badRequest("missing_body", "request body required");
+                    String contentType = req.contentType() == null
+                            ? "" : req.contentType().trim().toLowerCase(Locale.ROOT);
+                    String extension = LOGO_EXTENSIONS.get(contentType);
+                    if (extension == null) {
+                        throw AdminApiException.badRequest("bad_logo_type", "logo must be PNG or JPEG");
+                    }
+                    ChatLogoService.Stored stored = logos.store(
+                            new Ids.TenantId(tenantId), contentType, req.dataBase64());
+                    return new WhatsAppSenderDtos.LogoUploadResponse(
+                            stored.url() + "/logo." + extension);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/{senderId}/submit")
@@ -206,6 +242,10 @@ public class WhatsAppSenderController {
         if (!BusinessProfile.isValidWebsiteUrl(bp.websiteUrl())) {
             throw AdminApiException.badRequest("bad_business_profile",
                     "websiteUrl must be a web address such as https://example.com");
+        }
+        if (!BusinessProfile.isValidLogoUrl(bp.logoUrl())) {
+            throw AdminApiException.badRequest("bad_business_profile",
+                    "logoUrl must be an uploaded logo or a web address");
         }
     }
 

@@ -535,6 +535,12 @@ public class WhatsAppSenderService {
         String hostBase = twilioProps.webhookBaseUrl() == null || twilioProps.webhookBaseUrl().isBlank()
                 ? yayaProps.publicBaseUrl()
                 : twilioProps.webhookBaseUrl();
+        if (b.logoUrl() != null && !b.logoUrl().isBlank()) {
+            // Twilio downloads the photo itself; a platform-hosted logo may be
+            // stored root-relative, so anchor it on the host Twilio already reaches.
+            String logo = b.logoUrl().trim();
+            payload.put("logoUrl", logo.startsWith("/") ? hostBase + logo : logo);
+        }
         String webhookUrl       = hostBase + INBOUND_WEBHOOK_PATH + sender.id().value();
         String statusCallbackUrl = hostBase + STATUS_CALLBACK_PATH + sender.id().value();
 

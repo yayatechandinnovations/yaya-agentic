@@ -17,6 +17,9 @@ import java.util.Locale;
  * @param vertical Meta-enumerated vertical code (e.g. {@code RETAIL},
  *                 {@code FINANCIAL_SERVICES}). Validation against the Meta
  *                 catalog happens at write time in the service layer.
+ * @param logoUrl  optional profile photo. Usually a platform-hosted logo
+ *                 ({@code /v1/chat/logos/…}, possibly root-relative); Twilio
+ *                 fetches it, so registration sends it as an absolute URL.
  */
 public record BusinessProfile(
         String legalName,
@@ -25,7 +28,8 @@ public record BusinessProfile(
         String address,
         String websiteUrl,
         String vertical,
-        String about
+        String about,
+        String logoUrl
 ) {
 
     public BusinessProfile {
@@ -53,6 +57,16 @@ public record BusinessProfile(
         return lower.startsWith("https://") || lower.startsWith("http://")
                 ? trimmed
                 : "https://" + trimmed;
+    }
+
+    /** True for a blank logo (it is optional), a root-relative platform path,
+     *  or an absolute http(s) URL. */
+    public static boolean isValidLogoUrl(String url) {
+        if (url == null || url.isBlank()) return true;
+        String trimmed = url.trim();
+        if (trimmed.startsWith("/")) return !trimmed.startsWith("//");
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        return (lower.startsWith("https://") || lower.startsWith("http://")) && isValidWebsiteUrl(trimmed);
     }
 
     /** True for a blank website (it is optional) or an http(s) URL with a dotted host. */

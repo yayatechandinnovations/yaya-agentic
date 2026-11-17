@@ -260,7 +260,8 @@ public record BusinessProfile(
     String address,
     String websiteUrl,
     String vertical,                        // Meta-enumerated
-    String about                            // short description
+    String about,                           // short description
+    String logoUrl                          // optional profile photo → Twilio profile.logo_url
 ) {}
 ```
 

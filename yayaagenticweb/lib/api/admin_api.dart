@@ -437,6 +437,17 @@ class AdminApi {
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 
+  /// Upload a sender's profile photo (PNG or JPEG, base64) and get back the
+  /// platform-hosted URL to store as `businessProfile.logoUrl`.
+  Future<String> uploadWhatsAppSenderLogo(
+      String tenantId, String contentType, String dataBase64) async {
+    final res = await _dio.post(
+      '/v1/admin/tenants/$tenantId/whatsapp-senders/logos',
+      data: {'contentType': contentType, 'dataBase64': dataBase64},
+    );
+    return (_asMap(res.data)['logoUrl'] ?? '') as String;
+  }
+
   Future<WhatsAppSenderResponse> updateWhatsAppSender(
       String tenantId, String senderId, WhatsAppSenderRequest body) async {
     final res = await _dio.put(

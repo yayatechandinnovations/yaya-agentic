@@ -165,6 +165,10 @@ public class WhatsAppEmbeddedSignupController {
             throw AdminApiException.badRequest("bad_business_profile",
                     "websiteUrl must be a web address such as https://example.com");
         }
+        if (!BusinessProfile.isValidLogoUrl(body.businessProfile().logoUrl())) {
+            throw AdminApiException.badRequest("bad_business_profile",
+                    "logoUrl must be an uploaded logo or a web address");
+        }
     }
 
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }

@@ -64,4 +64,17 @@ void main() {
     expect(websiteUrlError('localhost'), isNotNull);
     expect(websiteUrlError('ftp://example.com'), isNotNull);
   });
+
+  test('the profile photo travels with the business profile and defaults to none', () {
+    expect(_sender('DRAFT', null).businessProfile.logoUrl, '');
+    final bp = BusinessProfileFields.fromJson({
+      'legalName': 'Test Inc.',
+      'displayName': 'Test Co',
+      'contactEmail': 'ops@test.example',
+      'vertical': 'RETAIL',
+      'logoUrl': '/v1/chat/logos/logo_1/logo.png',
+    });
+    expect(bp.toJson()['logoUrl'], '/v1/chat/logos/logo_1/logo.png');
+    expect(bp.copyWith(logoUrl: '').logoUrl, '');
+  });
 }

@@ -100,7 +100,7 @@ class TenantSubaccountTwilioCredsResolverTest {
         return new WhatsAppSender(
                 new SenderId("snd_test"), TENANT, "+15550001111", "Test Co", null,
                 new BusinessProfile("Test Inc.", "Test Co", "ops@test.example",
-                        null, null, "RETAIL", null),
+                        null, null, "RETAIL", null, null),
                 SenderStatus.ACTIVE, OnboardingState.empty(), "secret", "en-US",
                 Map.of(), Instant.now(), Instant.now(), null, null,
                 null, null, messagingAccountId);

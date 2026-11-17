@@ -138,7 +138,8 @@ public class PlaygroundSenderService {
                 "(simulated)",
                 "https://yaya.local",
                 "PROFESSIONAL_SERVICES",
-                "In-app simulated sender for testing profiles without Twilio");
+                "In-app simulated sender for testing profiles without Twilio",
+                null);
     }
 
     private String writeJson(Object value) {
