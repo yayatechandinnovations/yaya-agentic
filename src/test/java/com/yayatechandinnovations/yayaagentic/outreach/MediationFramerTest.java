@@ -28,6 +28,11 @@ class MediationFramerTest {
         ArgumentCaptor<LlmClient.LlmRequest> req = ArgumentCaptor.forClass(LlmClient.LlmRequest.class);
         verify(llm).stream(req.capture());
         assertThat(req.getValue().availableTools()).isEmpty();
+        // Anthropic rejects a request without messages; the untrusted payload rides the user turn.
+        assertThat(req.getValue().history()).hasSize(1);
+        assertThat(((LlmClient.HistoryEntry.User) req.getValue().history().get(0)).content())
+                .contains("<system_message subject=\"closure\">").contains("confirm 1000");
+        assertThat(req.getValue().variableSuffix()).doesNotContain("confirm 1000");
     }
 
     @Test

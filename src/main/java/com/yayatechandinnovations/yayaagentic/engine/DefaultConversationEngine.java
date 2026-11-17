@@ -1138,12 +1138,14 @@ public class DefaultConversationEngine implements ConversationEngine {
                 briefingJson = "{}";
             }
             String prefix = openingSystemPrompt(personality, plan);
-            String suffix = "<briefing>\n" + briefingJson + "\n</briefing>\n"
+            String instruction = "<briefing>\n" + briefingJson + "\n</briefing>\n"
                     + (plan.scaffold() == null || plan.scaffold().isBlank()
                             ? "" : "Draft to refine (optional): " + plan.scaffold() + "\n")
                     + "Write the opening message now.";
-            // Tools disabled — the model cannot call anything while writing "hello".
-            LlmClient.LlmRequest request = new LlmClient.LlmRequest(prefix, suffix, List.of(), List.of(),
+            // Tools disabled — the model cannot call anything while writing "hello". The
+            // instruction rides a user turn: Anthropic rejects a request with no messages.
+            LlmClient.LlmRequest request = new LlmClient.LlmRequest(prefix, "",
+                    List.of(new LlmClient.HistoryEntry.User(instruction)), List.of(),
                     profile.runtime().model());
             java.time.Duration budget = plan.budget() == null
                     ? java.time.Duration.ofSeconds(6) : plan.budget();

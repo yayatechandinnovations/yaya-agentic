@@ -183,10 +183,13 @@ public class WhatsAppOutreachLeg {
                         InSessionContents.mediaCardVariables(body, mediaPath(r.tenant(), first), buttons),
                         hints, creds);
             } else {
+                // Without buttons the text is the document's caption: one native message.
+                String caption = buttons.isEmpty() ? body : first.filename();
                 OutboundResult media = twilio.sendMedia(ref(sender), new OutboundMedia(r.phoneE164(),
-                        mediaUrl(r.tenant(), first), first.filename(), first.contentType(), first.filename(),
+                        mediaUrl(r.tenant(), first), caption, first.contentType(), first.filename(),
                         hints), creds);
                 if (!(media instanceof OutboundResult.Sent)) return failure(media);
+                if (buttons.isEmpty()) result = media;
             }
         }
         if (result == null && !buttons.isEmpty()) {

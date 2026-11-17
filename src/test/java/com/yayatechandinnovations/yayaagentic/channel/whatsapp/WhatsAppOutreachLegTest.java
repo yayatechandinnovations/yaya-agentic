@@ -1,8 +1,10 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.yayatechandinnovations.yayaagentic.channel.OutboundMedia;
 import com.yayatechandinnovations.yayaagentic.channel.OutboundResult;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCreds;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
+import com.yayatechandinnovations.yayaagentic.channel.ProviderId;
 import com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.TemplateCategory;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.TemplateId;
@@ -71,6 +73,7 @@ class WhatsAppOutreachLegTest {
         when(sender.status()).thenReturn(SenderStatus.ACTIVE);
         when(sender.phoneE164()).thenReturn("+18455336210");
         when(sender.id()).thenReturn(new SenderId(WA));
+        when(sender.onboarding()).thenReturn(OnboardingState.empty());
         when(senders.requireForTenant(TENANT, new SenderId(WA))).thenReturn(sender);
         when(creds.isReady()).thenReturn(true);
         when(creds.resolve(sender)).thenReturn(mock(ProviderCreds.class));
@@ -120,6 +123,28 @@ class WhatsAppOutreachLegTest {
                 .containsEntry("3", "Aprobar").containsEntry("4", "act:a1")
                 .containsEntry("7", "Ver detalle").containsEntry("8", "act:a3");
         verify(templates, never()).findApproved(any(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void inside_the_window_a_report_without_buttons_is_one_document_with_the_text_as_caption() {
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any()))
+                .thenReturn(Optional.of(mock(InboundMessageEntity.class)));
+        when(twilio.id()).thenReturn(ProviderId.TWILIO);
+        when(twilio.sendMedia(any(), any(), any())).thenReturn(new OutboundResult.Sent("MM1", Instant.now()));
+        var report = new WhatsAppOutreachLeg.Request(TENANT, WA, PHONE, "Cuadre por fecha — 17 nov 2026.",
+                List.of(new WhatsAppOutreachLeg.Media("asset1", "cuadre-2026-11-17.pdf", "application/pdf")),
+                List.of(), null);
+
+        var outcome = leg.deliver(report);
+
+        assertThat(outcome.delivered()).isTrue();
+        assertThat(outcome.providerMessageSid()).isEqualTo("MM1");
+        ArgumentCaptor<OutboundMedia> media = ArgumentCaptor.forClass(OutboundMedia.class);
+        verify(twilio).sendMedia(any(), media.capture(), any());
+        assertThat(media.getValue().caption()).isEqualTo("Cuadre por fecha — 17 nov 2026.");
+        assertThat(media.getValue().mediaUrl()).isEqualTo("https://hub.example/v1/media/TOKEN.sig/cuadre-2026-11-17.pdf");
+        verify(twilio, never()).sendContent(anyString(), anyString(), anyMap(), anyMap(), any());
+        verify(twilio, never()).sendFreeform(any(), any(), any());
     }
 
     @Test

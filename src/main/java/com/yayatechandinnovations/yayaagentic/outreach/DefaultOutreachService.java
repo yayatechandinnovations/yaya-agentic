@@ -236,6 +236,7 @@ public class DefaultOutreachService implements OutreachService {
                 : actionService.register(msg.tenant(), outreachId, msg.actions(), target.ownerSubject(), phone);
 
         String fallbackReason = null;
+        String failureCode = null;
         if (msg.delivery().wantsWhatsApp()) {
             if (whatsappLeg == null) {
                 fallbackReason = "provider_not_configured";
@@ -257,13 +258,17 @@ public class DefaultOutreachService implements OutreachService {
                             "SENT", Instant.now()));
                 }
                 fallbackReason = outcome.fallbackReason();
+                failureCode = outcome.failureCode();
                 log.info("outreach {} → chat fallback for {}: {}", outreachId.value(),
                         target.recipientKey(), fallbackReason);
             }
         }
         String sessionId = deliverToChat(msg, sender, target, outreachId, actions);
         var row = recordDelivery(msg, target, outreachId, "CHAT", "CHAT_DELIVERED", fallbackReason);
-        if (row != null) deliveries.save(row);
+        if (row != null) {
+            row.setFailureCode(failureCode);
+            deliveries.save(row);
+        }
         return new Delivered(sessionId, new Delivery("CHAT", fallbackReason, null, "CHAT_DELIVERED", Instant.now()));
     }
 

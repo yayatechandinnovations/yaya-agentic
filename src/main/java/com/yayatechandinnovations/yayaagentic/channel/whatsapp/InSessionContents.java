@@ -68,7 +68,8 @@ public class InSessionContents {
     }
 
     public Optional<String> mediaCard(int buttons, ProviderCreds creds) {
-        if (buttons < 0 || buttons > MAX_BUTTONS || publicBaseUrl.isBlank()) return Optional.empty();
+        // A buttonless card is refused at send time (Twilio 21656); plain media with a caption carries it.
+        if (buttons < 1 || buttons > MAX_BUTTONS || publicBaseUrl.isBlank()) return Optional.empty();
         String name = "yaya_insession_card" + buttons + "_" + VERSION;
         return resolve(name, creds, () -> {
             List<Map<String, Object>> actions = new ArrayList<>();
