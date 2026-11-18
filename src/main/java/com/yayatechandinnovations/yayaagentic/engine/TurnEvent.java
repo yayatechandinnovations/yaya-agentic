@@ -48,7 +48,7 @@ public sealed interface TurnEvent
         public static End of(Ids.TurnId id, int in, int out) { return new End(id, in, out); }
 
         public static UiHint quickReplies(List<String> replies) {
-            return new UiHint("quick_replies", Map.of("items", replies));
+            return QuickReplies.fromLabels(QuickReplies.SOURCE_START, replies);
         }
     }
 }

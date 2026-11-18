@@ -87,6 +87,7 @@ public class OutboundDispatcher {
     private final MediaTokenSigner mediaSigner;
     private final String publicBaseUrl;
     private final InSessionContents inSession;
+    private final OfferedOptionsStore offered;
 
     public OutboundDispatcher(TwilioMessagingChannelProvider twilio,
                               ProviderCredsResolver credsResolver,
@@ -104,7 +105,8 @@ public class OutboundDispatcher {
                               MediaTokenSigner mediaSigner,
                               @Value("${yaya.agentic.channels.twilio.webhook-base-url:${yaya.agentic.public-base-url:}}")
                               String publicBaseUrl,
-                              InSessionContents inSession) {
+                              InSessionContents inSession,
+                              OfferedOptionsStore offered) {
         this.twilio = twilio;
         this.credsResolver = credsResolver;
         this.renderer = renderer;
@@ -120,6 +122,7 @@ public class OutboundDispatcher {
         this.mediaSigner = mediaSigner;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
         this.inSession = inSession;
+        this.offered = offered;
     }
 
     /**
@@ -194,14 +197,8 @@ public class OutboundDispatcher {
         if (greeting == null || greeting.isBlank()) return;
         TurnEvent.UiHint hint = null;
         if (quickReplies != null && !quickReplies.isEmpty()) {
-            List<Map<String, Object>> options = new ArrayList<>();
-            for (int i = 0; i < quickReplies.size(); i++) {
-                Map<String, Object> opt = new LinkedHashMap<>();
-                opt.put("id", "qr_" + i);
-                opt.put("label", quickReplies.get(i));
-                options.add(opt);
-            }
-            hint = new TurnEvent.UiHint("quick_replies", Map.of("options", options));
+            hint = com.yayatechandinnovations.yayaagentic.engine.QuickReplies.fromLabels(
+                    com.yayatechandinnovations.yayaagentic.engine.QuickReplies.SOURCE_START, quickReplies);
         }
         dispatch(tenant, sender, endUserPhone, sessionId, greeting, hint);
     }
@@ -280,6 +277,7 @@ public class OutboundDispatcher {
                     .orElse(sessionId);
             playgroundSink.append(sinkKey, renderedBody, payload);
             metrics.outbound(tenant.value(), sender.value(), "freeform", "playground");
+            rememberOffered(tenant, sender, endUserPhone, sessionId, hint, true, 0);
             return;
         }
         if (!credsResolver.isReady()) {
@@ -300,9 +298,54 @@ public class OutboundDispatcher {
 
         InteractivePayload payload = renderer.render(body, hint,
                 new InteractiveRenderer.RenderContext(new ChannelKind.WhatsApp(), null));
+        sendRendered(tenant, sender, endUserPhone, sessionId, resolved, ref, payload, hint, 0);
+    }
 
+    /**
+     * The next page of a list that did not fit (the «Más…» row, §10.3): sent
+     * straight from the options last offered, without waking the engine.
+     * {@code offered.offset()} is the first option of the page to show.
+     */
+    public void dispatchPage(Ids.TenantId tenant, SenderId sender, String endUserPhone,
+                             OfferedOptionsStore.Offered offered) {
+        if (offered == null || offered.options().isEmpty()) return;
+        Ids.SessionId sessionId = offered.sessionId() == null ? null : new Ids.SessionId(offered.sessionId());
+        TurnEvent.UiHint hint = new TurnEvent.UiHint(
+                com.yayatechandinnovations.yayaagentic.engine.QuickReplies.KIND, offered.payload());
+        String body = "Más opciones";
+        InteractiveRenderer.RenderContext ctx = new InteractiveRenderer.RenderContext(new ChannelKind.WhatsApp(), null);
+        InteractivePayload payload = renderer instanceof DefaultInteractiveRenderer pages
+                ? pages.renderPage(body, hint, offered.offset(), ctx)
+                : renderer.render(body, hint, ctx);
+        if (PlaygroundSenders.isPlayground(sender.value())) {
+            Ids.SessionId sinkKey = sessionId == null ? null : playgroundSessions.clientFor(sessionId)
+                    .map(Ids.SessionId::new).orElse(sessionId);
+            if (sinkKey != null) playgroundSink.append(sinkKey, textFallback(payload, hint), payload);
+            rememberOffered(tenant, sender, endUserPhone, sessionId, hint, true, offered.offset());
+            return;
+        }
+        if (!credsResolver.isReady()) return;
+        WhatsAppSender resolved = senders.requireForTenant(tenant, sender);
+        if (!resolved.status().acceptsOutbound()) return;
+        SenderRef ref = new SenderRef(twilio.id(),
+                resolved.onboarding().twilioSenderSid() == null
+                        ? resolved.id().value()
+                        : resolved.onboarding().twilioSenderSid());
+        sendRendered(tenant, sender, endUserPhone, sessionId, resolved, ref, payload, hint, offered.offset());
+    }
+
+    /** Native buttons, then a native list, then numbered text — and the options go on record for the reply. */
+    private void sendRendered(Ids.TenantId tenant, SenderId sender, String endUserPhone, Ids.SessionId sessionId,
+                              WhatsAppSender resolved, SenderRef ref, InteractivePayload payload,
+                              TurnEvent.UiHint hint, int offset) {
         if (payload instanceof InteractivePayload.Buttons buttons
                 && sendNativeButtons(tenant, sender, endUserPhone, sessionId, resolved, buttons)) {
+            rememberOffered(tenant, sender, endUserPhone, sessionId, hint, false, offset);
+            return;
+        }
+        if (payload instanceof InteractivePayload.ListMessage list
+                && sendNativeList(tenant, sender, endUserPhone, sessionId, resolved, list)) {
+            rememberOffered(tenant, sender, endUserPhone, sessionId, hint, false, offset);
             return;
         }
 
@@ -337,6 +380,61 @@ public class OutboundDispatcher {
         // For multi-chunk sends, the interactive payload (if any) was
         // rendered as text into the last chunk by textFallback.
         // No additional dispatch step needed.
+        rememberOffered(tenant, sender, endUserPhone, sessionId, hint, true, offset);
+    }
+
+    /**
+     * What the person can answer by tapping or by number (§2.6): the options of
+     * a {@code quick_replies} hint that just went out; nothing — and the old set
+     * forgotten — for any other message.
+     */
+    private void rememberOffered(Ids.TenantId tenant, SenderId sender, String endUserPhone,
+                                 Ids.SessionId sessionId, TurnEvent.UiHint hint, boolean numbered, int offset) {
+        if (offered == null) return;
+        if (hint == null || !com.yayatechandinnovations.yayaagentic.engine.QuickReplies.KIND.equals(hint.kind())) {
+            offered.forget(tenant, sender, endUserPhone);
+            return;
+        }
+        Map<String, Object> payload = com.yayatechandinnovations.yayaagentic.engine.QuickReplies.normalise(
+                hint.payload(), com.yayatechandinnovations.yayaagentic.engine.QuickReplies.SOURCE_RULE);
+        offered.remember(tenant, sender, endUserPhone, new OfferedOptionsStore.Offered(
+                sessionId == null ? null : sessionId.value(),
+                com.yayatechandinnovations.yayaagentic.engine.QuickReplies.read(payload), numbered, offset, payload));
+    }
+
+    /**
+     * A native list picker through the in-session Content resource (§2.6).
+     * False when that path is unavailable or Twilio refuses, so the caller
+     * falls back to numbered text — a reply is never lost to a Content error.
+     */
+    private boolean sendNativeList(Ids.TenantId tenant, SenderId sender, String endUserPhone,
+                                   Ids.SessionId sessionId, WhatsAppSender resolved,
+                                   InteractivePayload.ListMessage list) {
+        String text = list.body() == null ? "" : list.body();
+        if (list.footer() != null && !list.footer().isBlank()) text = text + "\n\n" + list.footer();
+        List<InteractivePayload.Row> rows = list.sections().stream().flatMap(s -> s.rows().stream()).toList();
+        if (text.isBlank() || text.length() > InSessionContents.MAX_BODY_CHARS
+                || rows.isEmpty() || rows.size() > InSessionContents.MAX_LIST_ITEMS) {
+            return false;
+        }
+        var creds = credsResolver.resolve(resolved);
+        Optional<String> contentSid = inSession.listPicker(rows.size(), creds);
+        if (contentSid.isEmpty()) return false;
+        List<String[]> items = rows.stream()
+                .map(r -> new String[]{r.title(), r.id(),
+                        r.description() == null || r.description().isBlank() ? r.title() : r.description()})
+                .toList();
+        String button = list.buttonText() == null || list.buttonText().isBlank()
+                ? DefaultInteractiveRenderer.CHOOSE_LABEL : list.buttonText();
+        OutboundResult result = twilio.sendContent(endUserPhone, contentSid.get(),
+                InSessionContents.listPickerVariables(text, button, items), providerHints(resolved), creds);
+        if (!(result instanceof OutboundResult.Sent)) {
+            log.warn("Native list failed for {} ({}); falling back to numbered text", endUserPhone, result);
+            return false;
+        }
+        recordResult(tenant, sender, endUserPhone, sessionId, text, result);
+        metrics.outbound(tenant.value(), sender.value(), "interactive", "sent");
+        return true;
     }
 
     /**
@@ -541,6 +639,9 @@ public class OutboundDispatcher {
         return twilio.sendFreeform(ref, freeform, credsResolver.resolve(resolved));
     }
 
+    /** Hint kinds whose buttons are the turn's only question. */
+    private static final java.util.Set<String> FRAME_KINDS = java.util.Set.of("confirm", "plan", "secret_prompt");
+
     /** Simple accumulator over a {@code Flux<TurnEvent>}. */
     private static final class Buffer {
         final StringBuilder body = new StringBuilder();
@@ -560,6 +661,10 @@ public class OutboundDispatcher {
                     // A running plan's progress is for a card (§16); here the
                     // model's account is the report, and these must not take
                     // the place of the turn's buttons.
+                } else if (com.yayatechandinnovations.yayaagentic.engine.QuickReplies.KIND.equals(h.kind())
+                        && lastHint != null && FRAME_KINDS.contains(lastHint.kind())) {
+                    // One interactive block per message: a frame's buttons are
+                    // the turn's only question; chips of the same turn are dropped.
                 } else {
                     lastHint = h;
                 }

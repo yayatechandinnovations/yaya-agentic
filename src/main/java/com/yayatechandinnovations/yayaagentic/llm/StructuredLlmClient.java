@@ -32,9 +32,14 @@ public interface StructuredLlmClient {
      * @param schemaJson      JSON Schema (type=object) the answer must satisfy
      * @param maxOutputTokens hard cap on generated tokens for this round
      * @param retryHint       non-null on a retry: what was wrong with the previous answer
+     * @param model           overrides the deployment's model for this one round; null keeps it
      */
     record StructuredRequest(String system, String input, String toolName, String schemaJson,
-                             int maxOutputTokens, String retryHint) {
+                             int maxOutputTokens, String retryHint, String model) {
+        public StructuredRequest(String system, String input, String toolName, String schemaJson,
+                                 int maxOutputTokens, String retryHint) {
+            this(system, input, toolName, schemaJson, maxOutputTokens, retryHint, null);
+        }
     }
 
     /**

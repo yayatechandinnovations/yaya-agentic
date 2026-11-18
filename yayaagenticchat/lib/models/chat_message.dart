@@ -19,20 +19,43 @@ class QuickReply {
   final String label;
   final String send;
 
-  const QuickReply({required this.label, required this.send});
+  /// The option's id in the canonical `options` shape (assistant-channels
+  /// design §2.2); null for the legacy `items` / `actions` shapes. When set,
+  /// a tap also sends `{"kind":"option","id":…,"send":…}` as the selection.
+  final String? id;
+
+  /// `primary` / `danger` / `neutral`, or null for the default chip look.
+  final String? style;
+
+  const QuickReply({required this.label, required this.send, this.id, this.style});
 
   /// Legacy label-only chip: what you see is what gets sent.
   const QuickReply.text(String value)
       : label = value,
-        send = value;
+        send = value,
+        id = null,
+        style = null;
 
-  /// Parses one `actions` entry: `{"label":"En PDF","send":"Dame ese …"}`.
-  /// Either side falls back to the other, so a lopsided entry still works.
+  /// Parses one `options` entry (`{id,label,send,style}`) or a legacy
+  /// `actions` entry (`{"label":"En PDF","send":"Dame ese …"}`). Either side
+  /// falls back to the other, so a lopsided entry still works.
   factory QuickReply.fromJson(Map<String, dynamic> j) {
     final label = (j['label'] ?? j['send'] ?? '').toString();
     final send = (j['send'] ?? j['label'] ?? '').toString();
-    return QuickReply(label: label, send: send);
+    final id = j['id']?.toString();
+    final style = j['style']?.toString();
+    return QuickReply(
+        label: label,
+        send: send,
+        id: id == null || id.isEmpty ? null : id,
+        style: style == null || style.isEmpty ? null : style);
   }
+
+  bool get isOption => id != null;
+
+  /// The structured selection a tap on this chip rides with (null for legacy chips).
+  Map<String, Object?>? get selection =>
+      id == null ? null : {'kind': 'option', 'id': id, 'send': send};
 }
 
 /// An action button that BELONGS to a message (owner-ai v3 §D3): approve/deny

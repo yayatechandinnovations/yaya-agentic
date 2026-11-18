@@ -97,6 +97,12 @@ public class StubLlmClient implements LlmClient, StructuredLlmClient {
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
             new com.fasterxml.jackson.databind.ObjectMapper();
 
+    /** The reply suggester's answer tool ({@code engine/suggest/ReplySuggester.TOOL_NAME}): the
+     *  stub answers it with a fixed choice so the chips path runs offline. */
+    static final String SUGGEST_REPLIES_TOOL = "suggest_replies";
+    static final Map<String, Object> CANNED_SUGGESTION =
+            Map.of("kind", "choice", "options", List.of("Sí, hazlo", "Mejor no"));
+
     /** Test hook: when set, decides the answer instead of the schema skeleton. */
     private volatile java.util.function.Function<StructuredRequest, Map<String, Object>> structuredResponder;
 
@@ -122,6 +128,8 @@ public class StubLlmClient implements LlmClient, StructuredLlmClient {
         try {
             output = responder != null
                     ? responder.apply(request)
+                    : SUGGEST_REPLIES_TOOL.equals(request.toolName())
+                    ? CANNED_SUGGESTION
                     : JSON.convertValue(skeleton(JSON.readTree(request.schemaJson())),
                             new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {

@@ -96,7 +96,7 @@ Send `Accept: text/event-stream`.
 | Field | Notes |
 |---|---|
 | `text` | The user's words. May be `""` when `selection` is sent. |
-| `selection` | Answer to a frame (§5, §15, §16). Optional. |
+| `selection` | Answer to a frame (§5, §15, §16), the tap on a bound action (`{kind:"action", actionId}`) or on a quick reply (`{kind:"option", id, send}`: the engine takes `send` — else `text`, else `id` — as the user's words and keeps the tap on the recorded message). Optional. |
 | `clientContext` | What the user has open. Optional; see below. |
 
 ### `clientContext`
@@ -166,12 +166,20 @@ Same engine and same payloads as the chat API.
 | `data_table` | `{title?, columns, rows, totals?}` | A table built from a tool result. |
 | `data_card` | `{title?, rows:[{label,value,type}]}` | A key/value card. |
 | `attachment` | `{assetId, filename, contentType, sizeBytes, url}` | A document. `url` is **relative to the platform base URL** (`/v1/media/<token>`), signed and short-lived; open it by navigation / download, no `Authorization` header needed. |
-| `quick_replies` | `{items:[…], actions?:[{label,send}]}` | Suggested next messages; tapping one sends `send` (or the item) as `text`. |
+| `quick_replies` | `{options:[{id, label, send, style?}], source}` | Suggested next messages (one shape for every producer, `docs/design/chat-experience-design.md` and the assistant-channels design §2.2). Tapping one sends `send` as `text` together with `selection {kind:"option", id, send}`. `send` defaults to `label`, `id` to a slug of the label; `style` is `primary`, `danger` or `neutral` when set. `source` says who produced them: `rule` (a tool's suggestion rules), `start` (a capability's follow-ups or a start flow), `ask` (a tool's `_askUser`, see below), `suggester` (the reply suggester: a model call the engine validated — never over a frame, only when the profile sets `metadata.policy.replySuggestions: true` and the answer ended with a question), `frame`. Older servers sent `{items:[…], actions?:[{label,send}]}`; a client may keep reading those shapes. Transient: not kept in `uiHints`. |
 | `menu` | the profile menu with fresh badges | Same shape as `traits.menu`. |
 | anything a tool emits | — | A tool result field `_uiHint {kind, payload}` is passed through unchanged as a `ui_hint` (and removed from what the model sees). `open_screen` arrives this way: `{screenId, route, args, label, webUrl}`. |
 
 `actions` is not a hint kind on this API; action buttons arrive inside
-`quick_replies.actions`.
+`quick_replies.options`.
+
+A tool result may carry a reserved `_askUser` key — `{kind: "choice|yes_no",
+question, options:[{id,label,send}]}` — handled like `_uiHint`: removed before
+the model sees the result, then emitted as `quick_replies {source:"ask"}` after
+the assistant's final text of that turn. `yes_no` without options is the
+localised «Sí» / «No» pair. The last tool of the turn to ask wins; a pending
+confirm, plan or secret prompt in the same turn suppresses it (the frame's
+buttons are the only question).
 
 ## 5. Confirm or cancel
 

@@ -48,9 +48,15 @@ public final class SessionDtos {
      * typed into a secret prompt (§15 of the guide); empty asks for a new code.
      * It is never printed.
      */
-    public record Selection(String kind, String code, String callId, List<String> itemIds, String value) {
+    public record Selection(String kind, String code, String callId, List<String> itemIds, String value,
+                            String actionId, String id, String send) {
         public Selection(String kind, String code, String callId, List<String> itemIds) {
-            this(kind, code, callId, itemIds, null);
+            this(kind, code, callId, itemIds, null, null, null, null);
+        }
+
+        /** Compat ctor — selections without a bound action or a tapped option. */
+        public Selection(String kind, String code, String callId, List<String> itemIds, String value) {
+            this(kind, code, callId, itemIds, value, null, null, null);
         }
 
         @Override

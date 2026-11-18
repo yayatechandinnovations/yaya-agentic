@@ -563,6 +563,12 @@ class ChatController extends StateNotifier<ChatState> {
   /// resolves the action and runs its tool, and the tap IS the one consent
   /// (§5 R1) — no confirm card follows. A legacy action submits its `send`
   /// text, as before.
+  /// A tap on a quick-reply chip: sends what the chip sends, and — for an
+  /// `options` chip — the `{"kind":"option","id":…,"send":…}` selection, so
+  /// the platform records the tap instead of re-reading the text (§2.2).
+  Future<void> tapQuickReply(QuickReply reply) =>
+      send(reply.send, selection: reply.selection);
+
   Future<void> tapMessageAction(MessageAction action) => action.isBound
       ? send(action.label.isNotEmpty ? action.label : action.send,
           selection: {'kind': 'action', 'actionId': action.actionId})
@@ -712,19 +718,27 @@ class ChatController extends StateNotifier<ChatState> {
 
     switch (kind) {
       case 'quick_replies':
-        // v2 `actions` win when present ({label, send} — owner-ai v2 §5);
-        // otherwise the legacy label-only shapes: {"payload":{"items":[…]}}
-        // and its older variants.
+        // The canonical `options` shape ({id, label, send, style} —
+        // assistant-channels design §2.2) wins when present; then the v2
+        // `actions` ({label, send} — owner-ai v2 §5); otherwise the legacy
+        // label-only shapes: {"payload":{"items":[…]}} and its older variants.
+        final options = payload['options'];
         final actions = payload['actions'];
         final raw = payload['items'] ?? payload['quick_replies'] ?? data['quick_replies'];
-        final replies = actions is List && actions.isNotEmpty
+        final replies = options is List && options.isNotEmpty
             ? [
-                for (final a in actions)
-                  if (a is Map) QuickReply.fromJson(Map<String, dynamic>.from(a)),
+                for (final o in options)
+                  if (o is Map) QuickReply.fromJson(Map<String, dynamic>.from(o))
+                  else if (o is String && o.isNotEmpty) QuickReply.text(o),
               ]
-            : raw is List
-                ? [for (final e in raw) QuickReply.text(e.toString())]
-                : null;
+            : actions is List && actions.isNotEmpty
+                ? [
+                    for (final a in actions)
+                      if (a is Map) QuickReply.fromJson(Map<String, dynamic>.from(a)),
+                  ]
+                : raw is List
+                    ? [for (final e in raw) QuickReply.text(e.toString())]
+                    : null;
         if (replies != null && hasAssistantBubble) {
           buf.quickReplies
             ..clear()

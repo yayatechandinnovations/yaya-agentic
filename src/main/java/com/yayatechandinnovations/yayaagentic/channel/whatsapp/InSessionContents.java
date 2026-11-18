@@ -36,6 +36,8 @@ public class InSessionContents {
     /** Bump when a definition changes so accounts get a fresh resource. */
     private static final String VERSION = "v1";
     public static final int MAX_BUTTONS = 3;
+    /** WhatsApp's cap on list-picker rows. */
+    public static final int MAX_LIST_ITEMS = 10;
     public static final int MAX_BODY_CHARS = 1024;
 
     private final TwilioMessagingChannelProvider twilio;
@@ -65,6 +67,54 @@ public class InSessionContents {
                     "twilio/quick-reply", Map.of("body", "{{1}}", "actions", actions),
                     "twilio/text", Map.of("body", "{{1}}")));
         });
+    }
+
+    /**
+     * A native list picker ({@code twilio/list-picker}, assistant-channels
+     * design §2.6) for 4–10 options or a label too long for a button: body
+     * {{1}}, button text {{2}}, row i title {{3+3i}} / id {{4+3i}} /
+     * description {{5+3i}}. In-session content like {@link #quickReply}: no
+     * Meta approval, one resource per row count.
+     */
+    public Optional<String> listPicker(int items, ProviderCreds creds) {
+        if (items < 1 || items > MAX_LIST_ITEMS) return Optional.empty();
+        String name = "yaya_insession_list" + items + "_" + VERSION;
+        return resolve(name, creds, () -> {
+            List<Map<String, Object>> rows = new ArrayList<>();
+            Map<String, String> vars = new LinkedHashMap<>();
+            vars.put("1", "Mensaje");
+            vars.put("2", "Elegir");
+            for (int i = 0; i < items; i++) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("item", "{{" + (3 + 3 * i) + "}}");
+                row.put("id", "{{" + (4 + 3 * i) + "}}");
+                row.put("description", "{{" + (5 + 3 * i) + "}}");
+                rows.add(row);
+                vars.put(String.valueOf(3 + 3 * i), "Opción " + (i + 1));
+                vars.put(String.valueOf(4 + 3 * i), "opt" + (i + 1));
+                vars.put(String.valueOf(5 + 3 * i), "Descripción " + (i + 1));
+            }
+            Map<String, Object> picker = new LinkedHashMap<>();
+            picker.put("body", "{{1}}");
+            picker.put("button", "{{2}}");
+            picker.put("items", rows);
+            return definition(name, vars, Map.of(
+                    "twilio/list-picker", picker,
+                    "twilio/text", Map.of("body", "{{1}}")));
+        });
+    }
+
+    /** Send-time variables for {@link #listPicker}: each row as {title, id, description}. */
+    public static Map<String, String> listPickerVariables(String body, String button, List<String[]> rows) {
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("1", body);
+        vars.put("2", button);
+        for (int i = 0; i < rows.size(); i++) {
+            vars.put(String.valueOf(3 + 3 * i), rows.get(i)[0]);
+            vars.put(String.valueOf(4 + 3 * i), rows.get(i)[1]);
+            vars.put(String.valueOf(5 + 3 * i), rows.get(i)[2]);
+        }
+        return vars;
     }
 
     public Optional<String> mediaCard(int buttons, ProviderCreds creds) {

@@ -111,6 +111,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     _scrollToBottom();
   }
 
+  void _tapQuickReply(QuickReply reply) {
+    if (reply.send.trim().isEmpty) return;
+    ref.read(chatControllerProvider(widget.handle).notifier).tapQuickReply(reply);
+    _scrollToBottom();
+  }
+
   void _send(String text) {
     // A voice note or attachment is a complete message on its own — text is
     // only required when nothing is attached (chat-experience-design.md §6.4).
@@ -356,7 +362,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         message: state.messages[i],
         accent: accent,
         handle: widget.handle,
-        onQuickReply: _send,
+        onQuickReply: _tapQuickReply,
         onAction: _tapAction,
         // Chips only ride the LATEST bubble (owner-ai v2 §5) — the controller
         // strips stale ones, and this gate is the render-side guarantee.
@@ -493,7 +499,7 @@ class _Bubble extends ConsumerWidget {
   final ChatMessage message;
   final Color accent;
   final String handle;
-  final void Function(String) onQuickReply;
+  final void Function(QuickReply) onQuickReply;
   final void Function(MessageAction) onAction;
 
   /// Only the LATEST bubble may surface quick-reply chips (owner-ai v2 §5).
@@ -685,12 +691,37 @@ class _Bubble extends ConsumerWidget {
             child: Wrap(
               spacing: 8,
               children: message.quickReplies
-                  .map((q) => ActionChip(
-                      label: Text(q.label), onPressed: () => onQuickReply(q.send)))
+                  .map((q) => _QuickReplyChip(reply: q, accent: accent, onTap: onQuickReply))
                   .toList(),
             ),
           ),
       ],
+    );
+  }
+}
+
+/// One quick-reply chip. `style` tints it: primary → accent, danger → error,
+/// neutral / none → the default chip.
+class _QuickReplyChip extends StatelessWidget {
+  const _QuickReplyChip({required this.reply, required this.accent, required this.onTap});
+
+  final QuickReply reply;
+  final Color accent;
+  final void Function(QuickReply) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final Color? tint = switch (reply.style) {
+      'primary' => accent,
+      'danger' => scheme.error,
+      _ => null,
+    };
+    return ActionChip(
+      label: Text(reply.label),
+      side: tint == null ? null : BorderSide(color: tint),
+      labelStyle: tint == null ? null : TextStyle(color: tint, fontWeight: FontWeight.w600),
+      onPressed: () => onTap(reply),
     );
   }
 }
