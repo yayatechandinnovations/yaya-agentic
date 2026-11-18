@@ -801,10 +801,17 @@ public class InboundDispatchWorker {
         return null;
     }
 
-    /** {@code handoff:<sessionId>} or {@code fresh} from a tapped button; null for anything else. */
+    /**
+     * {@code handoff:<sessionId>} or {@code fresh} from a tapped button; null for
+     * anything else. The renderer sends every option as {@code opt:<id>}, so the
+     * prefix is stripped before the id is read.
+     */
     static String handoffTapOf(String payload, String kind) {
         if (payload == null || !"button".equals(kind)) return null;
         String id = payload.trim();
+        if (id.startsWith(DefaultInteractiveRenderer.OPTION_PREFIX)) {
+            id = id.substring(DefaultInteractiveRenderer.OPTION_PREFIX.length()).trim();
+        }
         if (id.equals(FRESH_ID)) return FRESH_ID;
         if (id.startsWith(HANDOFF_PREFIX) && id.length() > HANDOFF_PREFIX.length()) return id;
         return null;

@@ -37,7 +37,7 @@ class HandoffTapTest {
         assertThat(payload).isInstanceOf(InteractivePayload.Buttons.class);
         var buttons = (InteractivePayload.Buttons) payload;
         assertThat(buttons.buttons()).extracting(InteractivePayload.Button::id)
-                .containsExactly("handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d", "fresh");
+                .containsExactly("opt:handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d", "opt:fresh");
         assertThat(buttons.buttons()).extracting(InteractivePayload.Button::title)
                 .containsExactly("Seguir con la app", "Empezar de cero");
         assertThat(offer.payload().get("source")).isEqualTo("start");
@@ -47,6 +47,9 @@ class HandoffTapTest {
         assertThat(InboundDispatchWorker.handoffTapOf("handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d", "button"))
                 .isEqualTo("handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d");
         assertThat(InboundDispatchWorker.handoffTapOf("fresh", "button")).isEqualTo("fresh");
+        assertThat(InboundDispatchWorker.handoffTapOf("opt:handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d", "button"))
+                .isEqualTo("handoff:0b1f6d7e-9d2a-4b7f-8c1d-2e3f4a5b6c7d");
+        assertThat(InboundDispatchWorker.handoffTapOf("opt:fresh", "button")).isEqualTo("fresh");
         assertThat(InboundDispatchWorker.handoffTapOf("handoff:", "button")).isNull();
         assertThat(InboundDispatchWorker.handoffTapOf("handoff:x", "list_row")).isNull();
         assertThat(InboundDispatchWorker.handoffTapOf("act:abc", "button")).isNull();
