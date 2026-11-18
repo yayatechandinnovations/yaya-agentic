@@ -172,6 +172,27 @@
             <version>2.9.2</version>
         </dependency>
 
+        <!-- ZXing: deterministic QR / 1-D barcode reading on chat uploads and
+             inbound WhatsApp photos (assistant-channels design §3.4). Pure
+             Java, no native code. metadata-extractor already arrives with
+             Tika's image module; it is named here because ImageHygiene reads
+             the EXIF orientation with it before re-encoding (EXIF strip). -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.drewnoakes</groupId>
+            <artifactId>metadata-extractor</artifactId>
+            <version>2.19.0</version>
+        </dependency>
+
         <!-- MinIO client: self-hosted, S3-compatible object storage for the
              optional MinioBlobStore (blob-store=minio). Free/local — aligns
              with the self-hosted posture (design §2). -->

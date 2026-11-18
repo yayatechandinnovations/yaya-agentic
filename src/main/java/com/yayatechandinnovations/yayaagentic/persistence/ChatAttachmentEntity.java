@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -35,8 +37,23 @@ public class ChatAttachmentEntity {
     @Column(name = "account_id")
     private UUID accountId;
 
-    @Column(name = "blob_id", nullable = false, length = 128)
+    /** Null once the retention sweep removed the bytes; the row stays so the
+     *  transcript still shows what was sent. */
+    @Column(name = "blob_id", length = 128)
     private String blobId;
+
+    /** Owner of a sessions-API upload (contract C): the daily byte ceiling is
+     *  keyed on it the way the chat keys on {@code accountId}. */
+    @Column(name = "principal_subject", length = 255)
+    private String principalSubject;
+
+    /** Codes read from an image: {@code [{"format":"QR_CODE","text":"…"}]}. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "codes_json", columnDefinition = "jsonb")
+    private String codesJson;
+
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
 
     @Column(name = "filename", nullable = false, length = 255)
     private String filename;
@@ -98,6 +115,10 @@ public class ChatAttachmentEntity {
     public String getTranscript() { return transcript; }
     public String getExtractedText() { return extractedText; }
     public String getTurnId() { return turnId; }
+    public String getPrincipalSubject() { return principalSubject; }
+    public String getCodesJson() { return codesJson; }
+    public Integer getDurationSeconds() { return durationSeconds; }
+    public boolean hasBlob() { return blobId != null; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getReferencedAt() { return referencedAt; }
 
@@ -105,6 +126,12 @@ public class ChatAttachmentEntity {
 
     public void setTranscript(String transcript) { this.transcript = transcript; }
     public void setExtractedText(String extractedText) { this.extractedText = extractedText; }
+    public void setPrincipalSubject(String principalSubject) { this.principalSubject = principalSubject; }
+    public void setCodesJson(String codesJson) { this.codesJson = codesJson; }
+    public void setDurationSeconds(Integer durationSeconds) { this.durationSeconds = durationSeconds; }
+
+    /** The retention sweep took the bytes; the row is kept as a tombstone. */
+    public void dropBlob() { this.blobId = null; }
 
     public void reference(String turnId) {
         this.turnId = turnId;

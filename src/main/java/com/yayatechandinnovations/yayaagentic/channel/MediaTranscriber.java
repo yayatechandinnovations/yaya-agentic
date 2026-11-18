@@ -34,20 +34,38 @@ public interface MediaTranscriber {
         }
     }
 
-    /** Per-call context — limits + auth pass-through for the transcriber. */
+    /**
+     * Per-call context — limits + auth pass-through for the transcriber.
+     * {@code language} is the ISO-639-1 code the speech is expected in (the
+     * tenant or session locale; null = let the model detect it).
+     */
     record TranscriptionContext(
             String tenantId,
             String senderId,
             String messageSid,
             Duration maxAudioDuration,
             long maxBytes,
-            String basicAuthHeader
+            String basicAuthHeader,
+            String language
     ) {
 
         public TranscriptionContext {
             if (maxAudioDuration == null) maxAudioDuration = Duration.ofMinutes(5);
             if (maxBytes <= 0) maxBytes = 16L * 1024 * 1024;
         }
+
+        public TranscriptionContext(String tenantId, String senderId, String messageSid,
+                                    Duration maxAudioDuration, long maxBytes, String basicAuthHeader) {
+            this(tenantId, senderId, messageSid, maxAudioDuration, maxBytes, basicAuthHeader, null);
+        }
+    }
+
+    /**
+     * Transcribe bytes already in hand (an upload, a download the channel made
+     * itself). Default: unsupported — the WhatsApp/BSP contract fetches a URL.
+     */
+    default TranscriptionResult transcribeBytes(byte[] audio, String contentType, TranscriptionContext ctx) {
+        throw new UnsupportedOperationException("this transcriber only takes a media URL");
     }
 
     record TranscriptionResult(

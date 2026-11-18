@@ -128,7 +128,23 @@ yaya:
     # type into their browser (e.g. https://admin.smartlottery.do). Leave
     # the default for local dev where the backend serves the SPA itself.
     public-base-url: ${YAYA_PUBLIC_BASE_URL:http://localhost:8080}
+    # Voice notes and photos (assistant-channels design §3–§4, contract C).
+    transcribe:
+      # whisper-1 (verbose_json, reports the duration) or gpt-4o-mini-transcribe /
+      # gpt-4o-transcribe (json only; the duration comes from the container).
+      model: ${YAYA_TRANSCRIBE_MODEL:whisper-1}
+      # Domain vocabulary that biases recognition; the expected language (ISO-639-1)
+      # when the session gives none.
+      prompt: ${YAYA_TRANSCRIBE_PROMPT:quiniela, palé, tripleta, estación, banca, cuadre, anular, premio, loto}
+      language: ${YAYA_TRANSCRIBE_LANGUAGE:es}
+    voice:
+      # Seconds of voice notes a tenant may transcribe per month; blank = unlimited.
+      monthly-seconds: ${YAYA_VOICE_MONTHLY_SECONDS:3600}
     chat:
+      attachments:
+        # Sent attachments keep their bytes this long; the row stays as a
+        # tombstone so the transcript still shows the name.
+        retention-days: ${YAYA_CHAT_ATTACHMENTS_RETENTION_DAYS:30}
       # Prefix the chat QR / share link is built from (this + the entry-point
       # handle). It MUST point at the public origin that serves the chat web
       # app (yayaagenticchat) — which is independent of this backend's own
@@ -187,7 +203,14 @@ yaya:
         a2p:
           customer-profile-bundle-sid: ${TWILIO_A2P_CUSTOMER_PROFILE_BUNDLE_SID:}
           a2p-profile-bundle-sid:      ${TWILIO_A2P_PROFILE_BUNDLE_SID:}
+      # Inbound media downloads (photos, voice notes, PDFs from the BSP CDN) use
+      # their own buffer: the global codec size stays 4 MB.
+      media:
+        max-in-memory-bytes: ${YAYA_CHANNELS_MEDIA_MAX_IN_MEMORY_BYTES:16777216}
       whatsapp:
+        transcription:
+          # A voice note longer than this gets a fixed reply, not a transcription.
+          max-seconds: ${YAYA_WHATSAPP_VOICE_MAX_SECONDS:120}
         # Meta Embedded Signup + Twilio Tech Provider self-service onboarding.
         # When enabled, every value below plus the parent Twilio account and
         # YAYA_AGENTIC_SECRETS_ENCRYPTION_KEY must be set — boot fails fast

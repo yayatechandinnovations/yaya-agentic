@@ -28,7 +28,17 @@ public interface ChatAttachmentRepository extends JpaRepository<ChatAttachmentEn
     long bytesUploadedSince(@Param("accountId") UUID accountId,
                             @Param("cutoff") OffsetDateTime cutoff);
 
+    /** Sum of bytes a sessions-API subject uploaded since [cutoff] (contract C ceiling). */
+    @Query("select coalesce(sum(a.sizeBytes), 0) from ChatAttachmentEntity a "
+            + "where a.tenantId = :tenantId and a.principalSubject = :subject and a.createdAt >= :cutoff")
+    long bytesUploadedBySubjectSince(@Param("tenantId") String tenantId,
+                                     @Param("subject") String subject,
+                                     @Param("cutoff") OffsetDateTime cutoff);
+
     List<ChatAttachmentEntity> findByAccountId(UUID accountId);
+
+    /** Sent attachments whose bytes outlived the retention window. */
+    List<ChatAttachmentEntity> findByTurnIdIsNotNullAndBlobIdIsNotNullAndReferencedAtBefore(OffsetDateTime cutoff);
 
     /** Blob dedupe is tenant-wide: only drop bytes when the last row referencing
      *  them is gone. */

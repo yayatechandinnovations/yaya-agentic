@@ -113,6 +113,9 @@ public class SessionController {
     private final WorkspaceAccessHelper workspaceAccess;
     private final ChannelHandoffService handoffs;
     private final ObjectProvider<MediaTranscriber> transcriber;
+    // Attachments (tracker contract C): optional so hand-built constructions keep working.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SessionAttachments sessionAttachments;
 
     public SessionController(ConversationEngine engine,
                              OriginEnforcer originEnforcer,
@@ -261,11 +264,25 @@ public class SessionController {
                 attachments.put(DefaultConversationEngine.CLIENT_CONTEXT_KEY, clientContext);
             }
             UserMessage message = new UserMessage(body.text() == null ? "" : body.text(), attachments);
+            // Attachments (contract C): resolved, composed as the chat does, marked
+            // referenced with the turn's id when the turn ends.
+            List<String> attachmentIds = List.of();
+            if (body.attachmentIds() != null && !body.attachmentIds().isEmpty()) {
+                if (sessionAttachments == null || !caller.owned()) {
+                    throw new ChatApiException(HttpStatus.BAD_REQUEST, "attachments_unavailable",
+                            "attachments need a session a signed-in user owns", 0);
+                }
+                SessionAttachments.Composed composed = sessionAttachments.compose(caller.auth().tenant(), id,
+                        caller.row().getProfileId(), body.text(), attachments, body.attachmentIds());
+                message = composed.message();
+                attachmentIds = composed.ids();
+            }
 
             rehydrate(sessionId, caller);
-            return toSse(engine.send(sessionId, message, caller.auth().onChannel(TurnChannel.APP))
-                    .onErrorMap(SessionController::isUnknownSession, e -> ChatApiException.sessionNotFound()),
-                    caller);
+            Flux<TurnEvent> turn = engine.send(sessionId, message, caller.auth().onChannel(TurnChannel.APP))
+                    .onErrorMap(SessionController::isUnknownSession, e -> ChatApiException.sessionNotFound());
+            if (!attachmentIds.isEmpty()) turn = sessionAttachments.markOnEnd(turn, attachmentIds);
+            return toSse(turn, caller);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -493,7 +510,8 @@ public class SessionController {
             enforceOrigin(tenantId, exchange);
             requireIdentified(authenticate(authContext(new Ids.TenantId(tenantId), exchange)));
             UsageMeter.Totals totals = usage.usage(tenantId, null);
-            return new SessionDtos.UsageResponse(totals.month(), totals.messages(), totals.monthlyMessages());
+            return new SessionDtos.UsageResponse(totals.month(), totals.messages(), totals.monthlyMessages(),
+                    totals.voiceSeconds(), usage.voiceMonthlySeconds(), totals.imagesIn());
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -504,11 +522,12 @@ public class SessionController {
      * started by an identified principal, and this caller proved to be that
      * same principal; otherwise it is an anonymous (playground) session.
      */
-    private record Caller(AuthContext auth, SessionEntity row, Principal principal, Profile profile) {
+    record Caller(AuthContext auth, SessionEntity row, Principal principal, Profile profile) {
         boolean owned() { return principal != null; }
     }
 
-    private Caller admit(String id, ServerWebExchange exchange, boolean forTurn) {
+    /** Package-private: the attachments controller admits through the same check. */
+    Caller admit(String id, ServerWebExchange exchange, boolean forTurn) {
         Ids.SessionId sessionId = new Ids.SessionId(id);
         SessionEntity row = lookup(id);
         Ids.TenantId tenant = new Ids.TenantId(row == null ? "default" : row.getTenantId());
@@ -653,6 +672,8 @@ public class SessionController {
     @SuppressWarnings("unchecked")
     private List<SessionDtos.HistoryTurn> display(List<Turn> turns, Ids.TenantId tenant, String defaultChannel) {
         List<SessionDtos.HistoryTurn> out = new ArrayList<>();
+        // The session's attachments, read once: links are re-signed per render.
+        Map<String, com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatAttachmentService.ChatAttachment> known = null;
         for (Turn t : turns) {
             if (t.role() != Turn.Role.USER && t.role() != Turn.Role.ASSISTANT) continue;
             String text = t.content() == null ? "" : t.content();
@@ -663,12 +684,17 @@ public class SessionController {
                     if (o instanceof Map<?, ?> m) hints.add(resign((Map<String, Object>) m, tenant));
                 }
             }
+            List<SessionDtos.AttachmentView> files = List.of();
+            if (sessionAttachments != null && SessionAttachments.hasAttachments(t)) {
+                if (known == null) known = sessionAttachments.known(tenant, t.sessionId().value());
+                files = sessionAttachments.views(t, tenant, known);
+            }
             // A tool step with nothing to show, or a tap with no words.
-            if (text.isBlank() && hints.isEmpty()) continue;
+            if (text.isBlank() && hints.isEmpty() && files.isEmpty()) continue;
             String channel = t.metadata() != null && t.metadata().get("channel") instanceof String c && !c.isBlank()
                     ? c : defaultChannel;
             out.add(new SessionDtos.HistoryTurn(t.role().name().toLowerCase(java.util.Locale.ROOT), text,
-                    t.createdAt() == null ? null : t.createdAt().toString(), hints, channel));
+                    t.createdAt() == null ? null : t.createdAt().toString(), hints, channel, files));
         }
         return out;
     }
