@@ -217,6 +217,53 @@ Voice recordings are duration-capped client-side *and* size/duration-checked ser
 
 The recorder persists attachments as part of the turn (asset ids, not bytes); account deletion (`chat-account-self-service` G4) extends to blob deletion for the account's assets.
 
+### 6.5 Shared with the sessions API; codes, hygiene, voice, retention (2026-11-18)
+
+Built for the assistant's admin panel and WhatsApp
+(`docs/design/assistant-channels-replies-media-voice-design.md` §3–§4; tracker
+contract C in the Smart Lottery repo). The same `ChatAttachmentService`,
+`chat_attachments` table, `BlobStore` and `ChatMessageComposer` now serve two
+front doors:
+
+- **Sessions API.** `POST /v1/sessions/{id}/attachments` (multipart `file`,
+  optional `durationSeconds` hint for voice) admitted by the session's owner
+  (`SessionController.admit`), not by a chat account; `account_id` stays null
+  and the new `chat_attachments.principal_subject` column keys the 150 MB/day
+  ceiling. `MessageRequest.attachmentIds` (≤ 4) on
+  `POST /v1/sessions/{id}/messages`. `HistoryTurn.attachments` carries the
+  turn's files with a fresh signed link per render. Both doors serve bytes
+  through `GET /v1/chat/media/{token}` — the token is the authorization, no
+  header, 15 minutes. Errors: `413 too_large` (also a voice note over 120 s,
+  with a `hint`), `415 unsupported_type` (`hint` «Mándala como JPG o PNG» for
+  HEIC), `429 too_many_uploads` / `quota_exceeded` / `voice_quota_exceeded`,
+  `422 transcription_failed` (audio kept, `id` returned, `transcript` null).
+- **Turn id.** Attachments are marked referenced with the engine turn id the
+  `End` event names (the chat used to write the literal `"sent"`), so
+  `turn_id` is real and the orphan sweep is correct.
+- **Codes.** Every image (upload and WhatsApp inbound) is read for QR / 1-D
+  barcodes with ZXing (`ImageCodes`: original then half size, 300 ms budget);
+  `codes_json` on the row; the composer adds «Código leído en la imagen: …»
+  lines inside the untrusted-data delimiters.
+- **Image hygiene** (`ImageHygiene`). HEIC/HEIF is refused (no JVM decoder;
+  the client converts). JPEG/PNG are re-encoded server-side — EXIF orientation
+  applied first, then EXIF gone, long side capped at 1,600 px. WebP passes
+  through. Applies to uploads and to WhatsApp photos before they reach the model.
+- **Voice.** `[nota de voz, m:ss] <transcript>`; the length comes from the
+  container (`AudioDurations`: OGG/Opus, WebM, MP4/M4A, WAV, MP3) or the
+  transcriber; notes over 120 s are refused before transcription; the
+  transcriber gets `language` (profile/sender locale, default `es`), a
+  domain `prompt` and a configurable model (`yaya.agentic.transcribe.*`).
+  `voice_seconds` and `images_in` are metered per tenant and profile
+  (`UsageMeter`, V96); `yaya.agentic.voice.monthly-seconds` (default 3600,
+  blank = unlimited) refuses new voice notes when used up.
+- **Redaction.** A 6-digit run after «código» in PDF text or a decoded code is
+  masked («••••••»): payment and verification codes never enter the
+  conversation from a file.
+- **Retention.** Sent attachments keep their bytes for
+  `yaya.agentic.chat.attachments.retention-days` (default 30); then the blob
+  goes and the row stays with `blob_id = NULL`, so history still shows the
+  name (no link). The orphan sweep (24 h) is unchanged.
+
 ### 6.4 Client changes
 
 - Composer grows: **attach** (image picker / file picker) and **hold-to-record mic** (`record` package) with slide-to-cancel, elapsed timer, and a 2-minute hard stop; pending-attachment tray with thumbnails above the input.

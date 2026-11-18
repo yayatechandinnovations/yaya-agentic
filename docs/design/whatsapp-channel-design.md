@@ -607,6 +607,40 @@ Beyond a limit, the user gets a templated reply (`"That voice note is longer tha
 
 **Privacy.** Transcripts are stored in `inbound_messages.media_transcripts_json` alongside the audio URL, encrypted at rest via the recorder's `EncryptingRecorder` decorator (same path as `turns.content_json`). The audio bytes themselves are not stored — we re-fetch the signed Twilio URL on-demand for replay/debug, which Twilio rotates out after 24h, so the audio is naturally ephemeral. Tenant operators can disable transcription on a per-sender basis (`whatsapp_senders.metadata_json.transcribeInboundAudio = false`); in that case audio messages are surfaced to the LLM only as `[voice note (not transcribed)]` and the engine asks the user to type instead.
 
+**Inbound media, revised (2026-11-18 — assistant-channels design §3.3, §3.4,
+§3.6, §4.2; tracker contract C).** Nothing is silently dropped any more:
+
+- A message with media and no text is a turn: the text becomes «(foto)»,
+  «(documento: nombre.pdf)» or the transcript, so the engine runs.
+- Photos: `image/*` (not HEIC/HEIF, not WebP stickers) are downloaded with the
+  sender's Twilio Basic auth through `InboundMediaClient` (its own 16 MB
+  in-memory bound — the global codec size stays 4 MB), re-encoded by
+  `ImageHygiene` (orientation kept, EXIF gone, ≤ 1,600 px), read for QR /
+  barcodes (`ImageCodes`); the codes ride the user text inside the
+  untrusted-data markers («Código leído en la imagen: …»), the images go to
+  the model as vision input (≤ 4, 5 MB each).
+- PDFs: downloaded (≤ 15 MB), text extracted with Tika through
+  `ChatAttachmentService.upload`, kept as a `chat_attachments` row of the
+  engine session (`principal_subject = whatsapp:<phone>`), composed as
+  delimited data, marked referenced with the turn id when the turn ends.
+- Fixed replies, no model call: video / stickers (`image/webp`) / contacts /
+  locations → «Todavía no puedo abrir ese tipo de archivo. Mándame una foto,
+  un PDF o una nota de voz.»; HEIC/HEIF → «Mándala como JPG o PNG»; a voice
+  note with no transcriber bean, or one that fails → «No pude escuchar la nota
+  de voz, ¿me lo escribes?»; over 120 s → «La nota de voz es muy larga (máximo
+  2 minutos)»; the tenant's voice allowance used up → «Este mes se agotaron
+  los minutos de voz; escríbeme.». When the message also carries text, the
+  reply is sent and the text still runs. A media-only message that got a fixed
+  reply is stamped `processing_error = media_unsupported`.
+- Voice: the cap is now **120 s**
+  (`yaya.agentic.channels.whatsapp.transcription.max-seconds`); the
+  transcriber receives the sender's locale as `language` and the domain
+  `prompt` (`yaya.agentic.transcribe.*`); the length is read from the
+  container before the API is called; `voice_seconds` and `images_in` are
+  metered per tenant and profile (`UsageMeter`, V96). The table above is
+  superseded where it differs (5 min → 2 min; the monthly quota is
+  `yaya.agentic.voice.monthly-seconds`).
+
 **SPI swap surface.** A future `AnthropicAudioTranscriber` or `LocalWhisperTranscriber` replaces the default by Spring's standard `@Primary` + `@Profile` machinery. Profiles can be picky (a high-trust medical profile that requires HIPAA-eligible transcription would bind a different transcriber) — left as a future per-binding override; out of scope for v1, but the SPI shape doesn't dead-end.
 
 ---

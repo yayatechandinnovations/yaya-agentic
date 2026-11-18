@@ -27,6 +27,7 @@ import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.engine.ActionNotPermittedException;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
+import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
 import com.yayatechandinnovations.yayaagentic.engine.UserMessage;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
 import com.yayatechandinnovations.yayaagentic.persistence.SessionEntity;
@@ -334,13 +335,15 @@ public class PublicChatController {
             return com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, um, auth.onChannel(TurnChannel.CHAT)))
                     .doOnNext(evt -> chatReceipts.maybePersist(
                             evt, ep.tenant(), id, ctx.handle(), walletAccount))
-                    .map(chatAdapter::toSse)
-                    // Single-use: once the turn streamed to completion the
-                    // attachments belong to it; an errored send leaves them
+                    // Single-use: once the turn ends the attachments belong to it,
+                    // under the engine's turn id; an errored send leaves them
                     // unreferenced for the orphan sweep.
-                    .doOnComplete(() -> {
-                        if (!sentIds.isEmpty()) chatAttachments.markReferenced(sentIds, "sent");
-                    });
+                    .doOnNext(evt -> {
+                        if (!sentIds.isEmpty() && evt instanceof TurnEvent.End end) {
+                            chatAttachments.markReferenced(sentIds, end.turnId().value());
+                        }
+                    })
+                    .map(chatAdapter::toSse);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 

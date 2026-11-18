@@ -208,4 +208,34 @@ class UsageMeterTest {
         assertThatThrownBy(() -> QuotaRefusals.spoken(Flux.<TurnEvent>error(new IllegalStateException("x")))
                 .collectList().block()).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void media_is_counted_for_every_profile_and_voice_has_its_own_allowance() {
+        String tenant = newTenant(null);
+        meter.recordVoiceSeconds(tenant, "panel_owner", 14);
+        meter.recordVoiceSeconds(tenant, "customer_chat", 6);
+        meter.recordImagesIn(tenant, "panel_owner", 2);
+
+        UsageMeter.Totals totals = meter.usage(tenant, null);
+        assertThat(totals.voiceSeconds()).isEqualTo(20);
+        assertThat(totals.imagesIn()).isEqualTo(2);
+        assertThat(meter.voiceSecondsUsed(tenant)).isEqualTo(20);
+        assertThat(meter.usageByProfile(tenant, totals.month()))
+                .extracting(UsageMeter.ProfileTotals::profileId, UsageMeter.ProfileTotals::voiceSeconds,
+                        UsageMeter.ProfileTotals::imagesIn)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("customer_chat", 6L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("panel_owner", 14L, 2L));
+        // messages untouched
+        assertThat(totals.messages()).isZero();
+
+        UsageMeter capped = new UsageMeter(jdbc, Clock.systemUTC(), "20");
+        assertThat(capped.voiceMonthlySeconds()).isEqualTo(20);
+        assertThat(capped.hasVoiceAllowance(tenant)).isFalse();
+        assertThat(new UsageMeter(jdbc, Clock.systemUTC(), "21").hasVoiceAllowance(tenant)).isTrue();
+        UsageMeter unlimited = new UsageMeter(jdbc, Clock.systemUTC(), "");
+        assertThat(unlimited.voiceMonthlySeconds()).isNull();
+        assertThat(unlimited.hasVoiceAllowance(tenant)).isTrue();
+        assertThat(UsageMeter.parseAllowance("null")).isNull();
+        assertThat(UsageMeter.parseAllowance("-1")).isNull();
+    }
 }

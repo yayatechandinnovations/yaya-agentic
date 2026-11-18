@@ -6,6 +6,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
 import com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
+import com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatAttachmentService;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ChatMessageComposer;
+import com.yayatechandinnovations.yayaagentic.channel.chat.media.ImageCodes;
+import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
+import com.yayatechandinnovations.yayaagentic.usage.UsageMeter;
+import reactor.core.publisher.Flux;
 import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
 import com.yayatechandinnovations.yayaagentic.channel.SecretInboundRedaction;
@@ -91,8 +98,20 @@ public class InboundDispatchWorker {
     private final ChannelTracing tracing;
     private final com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
             .PlaygroundSessionRegistry playgroundSessions;
-    private final int maxAudioMinutes;
+    private final int maxAudioSeconds;
     private final long maxAudioBytes;
+    // Media (assistant-channels design §3.3): optional so the hand-built worker
+    // tests keep compiling; absent = PDFs are not kept and media is not metered.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ChatAttachmentService chatAttachments;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InboundMediaClient mediaClient;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UsageMeter usageMeter;
+
+    void setChatAttachments(ChatAttachmentService chatAttachments) { this.chatAttachments = chatAttachments; }
+    void setMediaClient(InboundMediaClient mediaClient) { this.mediaClient = mediaClient; }
+    void setUsageMeter(UsageMeter usageMeter) { this.usageMeter = usageMeter; }
     private final StepUpCoordinator stepUp;
     private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator
             authIntegrator;
@@ -123,7 +142,7 @@ public class InboundDispatchWorker {
             ChannelTracing tracing,
             com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground
                     .PlaygroundSessionRegistry playgroundSessions,
-            @Value("${yaya.agentic.channels.whatsapp.transcription.max-minutes:5}") int maxAudioMinutes,
+            @Value("${yaya.agentic.channels.whatsapp.transcription.max-seconds:120}") int maxAudioSeconds,
             @Value("${yaya.agentic.channels.whatsapp.transcription.max-bytes:16777216}") long maxAudioBytes,
             StepUpCoordinator stepUp,
             com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator authIntegrator,
@@ -145,7 +164,7 @@ public class InboundDispatchWorker {
         this.holds = holds;
         this.tracing = tracing;
         this.playgroundSessions = playgroundSessions;
-        this.maxAudioMinutes = maxAudioMinutes;
+        this.maxAudioSeconds = maxAudioSeconds;
         this.maxAudioBytes = maxAudioBytes;
         this.stepUp = stepUp;
         this.authIntegrator = authIntegrator;
@@ -299,9 +318,14 @@ public class InboundDispatchWorker {
             body = sel.label;
         }
 
-        // 2. transcribe audio + mutate body if needed
+        // 2. media gate (§3.3): what the assistant cannot take gets a fixed
+        //    reply, never a silent drop and never a model call for it.
         List<MediaDescriptor> media = extractMedia(raw);
-        TranscriptionOutcome transcription = transcribeIfPresent(row, sender, media);
+        InboundMediaGate.Plan plan = InboundMediaGate.classify(media, raw, transcriber.isPresent(),
+                usageMeter == null || usageMeter.hasVoiceAllowance(row.getTenantId()));
+        List<String> fixedReplies = new ArrayList<>(plan.fixedReplies());
+        // 2a. transcribe audio + mutate body if needed
+        TranscriptionOutcome transcription = transcribeIfPresent(row, sender, plan.audio());
         if (transcription.text != null && !transcription.text.isBlank()) {
             body = body.isBlank()
                     ? transcription.text
@@ -312,11 +336,39 @@ public class InboundDispatchWorker {
                 row.setMediaTranscriptsJson(transcription.transcriptsJson);
                 inbound.save(row);
             }
+        } else if (transcription.failureCode != null) {
+            fixedReplies.add("audio_too_long".equals(transcription.failureCode)
+                    ? InboundMediaGate.VOICE_TOO_LONG_REPLY : InboundMediaGate.VOICE_UNAVAILABLE_REPLY);
         }
         // 2b. inbound photos → the model sees them (vision) and tools can
         //     reference them by URL. See whatsapp-channel-design.md §9.5.
-        List<InboundImageLoader.LoadedImage> images = loadImagesIfAccepted(sender, media);
+        List<InboundImageLoader.LoadedImage> images = loadImagesIfAccepted(sender, plan.images());
         Map<String, Object> attachments = new LinkedHashMap<>(imageAttachments(images));
+        // 2b'. PDFs: downloaded now (sender's Twilio auth, ≤ 15 MB), kept as
+        //      chat_attachments rows once the session is known.
+        List<InboundDocument> documents = downloadDocuments(sender, plan.documents());
+        // 2b''. A message with media and no text is still a turn: the text
+        //       becomes «(foto)», «(documento: x.pdf)» or the transcript; codes
+        //       read from the photos ride inside the untrusted-data markers.
+        String mediaText = mediaText(body, images, documents);
+        if (!fixedReplies.isEmpty()) {
+            Ids.SessionId replyTo = openSession.orElseGet(() -> new Ids.SessionId(UUID.randomUUID().toString()));
+            for (String reply : fixedReplies) {
+                try {
+                    outboundDispatcher.dispatchGreeting(new Ids.TenantId(row.getTenantId()),
+                            new SenderId(row.getSenderId()), row.getEndUserPhone(), replyTo, reply, List.of());
+                } catch (RuntimeException e) {
+                    log.warn("fixed media reply not sent for {}: {}", messageSid, e.getMessage());
+                }
+            }
+            if (body.isBlank() && mediaText.isBlank() && images.isEmpty() && documents.isEmpty()) {
+                row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                row.setProcessingError("media_unsupported");
+                row.setBodyRedacted(body);
+                inbound.save(row);
+                return;
+            }
+        }
         // 2c. §6.5 — a tapped button whose payload names a bound action or a
         //     confirm frame reaches the engine as a structured selection, so the
         //     tap decides exactly that action/frame instead of being re-read as
@@ -371,7 +423,9 @@ public class InboundDispatchWorker {
         // whose prompt it answers. If that conversation is not the one this
         // message continues (it idled out), the text goes on as the marker.
         final boolean codeForEarlierSession = secretInbound && fresh;
-        String userText = consumedKeyword ? "" : codeForEarlierSession ? SecretInboundRedaction.MARKER : body;
+        String userText = consumedKeyword ? "" : codeForEarlierSession ? SecretInboundRedaction.MARKER
+                : mediaText.isBlank() ? body : body.isBlank() ? mediaText : body + "\n\n" + mediaText;
+        recordMediaUsage(row.getTenantId(), binding, images, transcription);
 
         // 5. build inputs for the engine. Leave explicitProfile empty: the bound
         //    profile comes from ChannelProfileResolver (@30) off the channel
@@ -450,7 +504,7 @@ public class InboundDispatchWorker {
             // static greeting double-introduces the bot — the engine reply
             // introduces itself on first contact via the personality "greet"
             // rule. Send only the reply in that case.
-            if (userText.isBlank() && images.isEmpty()) {
+            if (userText.isBlank() && images.isEmpty() && documents.isEmpty()) {
                 outboundDispatcher.dispatchGreeting(
                         new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
@@ -464,7 +518,8 @@ public class InboundDispatchWorker {
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         sessionId,
-                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))));
+                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(
+                                sendTurn(row, sessionId, userText, attachments, documents, auth)));
             }
         } else {
             // §9 step 3e on continuation — refresh the session row's JWT
@@ -477,7 +532,7 @@ public class InboundDispatchWorker {
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             seedContext(row, sessionId, repliedTo);
-            if (!userText.isBlank() || !images.isEmpty()) {
+            if (!userText.isBlank() || !images.isEmpty() || !documents.isEmpty()) {
                 // §6.6 — when an OTP-shaped pending exists for this session,
                 // interpret the inbound as the user's verification code BEFORE
                 // routing to the engine. The LLM never sees the OTP digits.
@@ -491,7 +546,8 @@ public class InboundDispatchWorker {
                                 new SenderId(row.getSenderId()),
                                 row.getEndUserPhone(),
                                 sessionId,
-                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))));
+                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(
+                                        sendTurn(row, sessionId, userText, attachments, documents, auth)));
                     } catch (IllegalStateException stale) {
                         // The channel_sessions row survived a backend restart
                         // but the engine's session didn't. Self-heal: retire
@@ -524,11 +580,11 @@ public class InboundDispatchWorker {
                                 new SenderId(row.getSenderId()),
                                 row.getEndUserPhone(),
                                 healedId,
-                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(healedId, new UserMessage(
+                                com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(sendTurn(row, healedId,
                                         // The prompt went with the lost session; the code must
                                         // not become an ordinary message of the new one.
                                         secretRow ? SecretInboundRedaction.MARKER : userText,
-                                        attachments), auth.onChannel(TurnChannel.WHATSAPP))));
+                                        attachments, documents, auth)));
                     }
                 }
             }
@@ -565,15 +621,22 @@ public class InboundDispatchWorker {
         List<Map<String, Object>> transcripts = new ArrayList<>();
         StringBuilder combined = new StringBuilder();
         String detectedLanguage = null;
+        String failureCode = null;
+        long seconds = 0;
         for (MediaDescriptor m : media) {
-            if (!transcriber.get().supportedContentTypes().contains(m.contentType())) continue;
+            if (!transcriber.get().supportedContentTypes().contains(m.contentType())
+                    && !transcriber.get().supportedContentTypes().contains(InboundMediaGate.bare(m.contentType()))) {
+                failureCode = "unsupported_audio";
+                continue;
+            }
             try {
                 MediaTranscriber.TranscriptionResult result = transcriber.get().transcribe(
                         new MediaTranscriber.InboundMediaRef(URI.create(m.mediaUrl()), m.contentType(), m.size()),
                         new MediaTranscriber.TranscriptionContext(
                                 row.getTenantId(), row.getSenderId(), row.getMessageSid(),
-                                Duration.ofMinutes(maxAudioMinutes), maxAudioBytes,
-                                basicAuthHeader));
+                                Duration.ofSeconds(maxAudioSeconds), maxAudioBytes,
+                                basicAuthHeader, sender.defaultLocale()));
+                if (result.audioDuration() != null) seconds += result.audioDuration().toSeconds();
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("mediaUrl", m.mediaUrl());
                 entry.put("contentType", m.contentType());
@@ -592,12 +655,136 @@ public class InboundDispatchWorker {
                 entry.put("contentType", m.contentType());
                 entry.put("error", e.code() + ": " + e.getMessage());
                 transcripts.add(entry);
+                failureCode = e.code();
             } catch (RuntimeException e) {
                 log.warn("Transcriber failed for {}: {}", m.mediaUrl(), e.getMessage());
+                failureCode = "transcriber_error";
             }
         }
         String json = writeJson(Map.of("items", transcripts));
-        return new TranscriptionOutcome(combined.toString(), detectedLanguage, json);
+        return new TranscriptionOutcome(combined.toString(), detectedLanguage, json, failureCode, seconds);
+    }
+
+    /* ------------------------- media (§3.3, §3.4) --------------------------- */
+
+    /** A PDF downloaded from the BSP CDN, waiting for the session it belongs to. */
+    record InboundDocument(String mediaUrl, String filename, String contentType, byte[] bytes) {}
+
+    private List<InboundDocument> downloadDocuments(WhatsAppSender sender, List<MediaDescriptor> documents) {
+        if (documents == null || documents.isEmpty() || mediaClient == null) return List.of();
+        String basicAuthHeader = basicAuthFor(sender, "document");
+        List<InboundDocument> out = new ArrayList<>();
+        for (MediaDescriptor m : documents) {
+            try {
+                InboundMediaClient.Fetched f = mediaClient.fetchNamed(URI.create(m.mediaUrl()), basicAuthHeader,
+                        ChatAttachmentService.DOCUMENT_MAX_BYTES);
+                String name = f.filename() == null || f.filename().isBlank() ? "documento.pdf" : f.filename();
+                out.add(new InboundDocument(m.mediaUrl(), name, InboundMediaGate.bare(m.contentType()), f.bytes()));
+            } catch (RuntimeException e) {
+                log.warn("Could not fetch inbound document {}: {}", m.mediaUrl(), e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    private String basicAuthFor(WhatsAppSender sender, String what) {
+        try {
+            if (credsResolver.isReady() && credsResolver.resolve(sender) instanceof TwilioCreds tc) {
+                return tc.basicAuthHeader();
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not resolve Twilio creds for {} download (sender {}): {}",
+                    what, sender.id().value(), e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * What a media-only message says, plus the codes read from the photos:
+     * «(foto)» / «(documento: x.pdf)» when there is no text, and one
+     * «Código leído en la imagen» block per photo that had one.
+     */
+    static String mediaText(String body, List<InboundImageLoader.LoadedImage> images,
+                            List<InboundDocument> documents) {
+        StringBuilder sb = new StringBuilder();
+        if (body == null || body.isBlank()) {
+            for (int i = 0; i < (images == null ? 0 : images.size()); i++) {
+                if (!sb.isEmpty()) sb.append('\n');
+                sb.append(InboundMediaGate.PHOTO_PLACEHOLDER);
+            }
+            for (InboundDocument d : documents == null ? List.<InboundDocument>of() : documents) {
+                if (!sb.isEmpty()) sb.append('\n');
+                sb.append("(documento: ").append(d.filename()).append(')');
+            }
+        }
+        for (InboundImageLoader.LoadedImage img : images == null ? List.<InboundImageLoader.LoadedImage>of() : images) {
+            String block = ChatMessageComposer.codesBlock(img.codes());
+            if (block != null) {
+                if (!sb.isEmpty()) sb.append("\n\n");
+                sb.append(block);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Runs the engine turn: PDFs become {@code chat_attachments} rows of this
+     * session and ride the composed message (text inside the untrusted-data
+     * markers, metadata on the user turn), then are marked referenced with the
+     * turn's id when the turn ends.
+     */
+    private Flux<TurnEvent> sendTurn(InboundMessageEntity row, Ids.SessionId sessionId, String userText,
+                                     Map<String, Object> attachments, List<InboundDocument> documents,
+                                     AuthContext auth) {
+        UserMessage message = new UserMessage(userText, attachments);
+        List<String> attachmentIds = List.of();
+        if (documents != null && !documents.isEmpty() && chatAttachments != null) {
+            Ids.TenantId tenant = new Ids.TenantId(row.getTenantId());
+            List<ChatAttachmentService.ChatAttachment> stored = new ArrayList<>();
+            for (InboundDocument d : documents) {
+                try {
+                    stored.add(chatAttachments.upload(tenant, sessionId.value(),
+                            ChatAttachmentService.Uploader.subject("whatsapp:" + row.getEndUserPhone(), null, null, null),
+                            d.filename(), d.bytes()).attachment());
+                } catch (ChatAttachmentService.RejectedException e) {
+                    log.info("inbound document {} not kept: {}", d.filename(), e.code());
+                }
+            }
+            if (!stored.isEmpty()) {
+                UserMessage composed = ChatMessageComposer.compose(userText, stored, id -> null);
+                Map<String, Object> merged = new LinkedHashMap<>(attachments);
+                merged.putAll(composed.attachments());
+                message = new UserMessage(composed.text(), merged);
+                attachmentIds = stored.stream().map(ChatAttachmentService.ChatAttachment::id).toList();
+            }
+        }
+        final List<String> ids = attachmentIds;
+        Flux<TurnEvent> events = engine.send(sessionId, message, auth.onChannel(TurnChannel.WHATSAPP));
+        if (ids.isEmpty()) return events;
+        return events.doOnNext(evt -> {
+            if (evt instanceof TurnEvent.End end) {
+                try {
+                    chatAttachments.markReferenced(ids, end.turnId().value());
+                } catch (RuntimeException e) {
+                    log.warn("could not mark inbound documents referenced: {}", e.getMessage());
+                }
+            }
+        });
+    }
+
+    private void recordMediaUsage(String tenantId, ChannelBinding binding,
+                                  List<InboundImageLoader.LoadedImage> images, TranscriptionOutcome transcription) {
+        if (usageMeter == null) return;
+        String profileId = binding == null || binding.profile() == null ? null : binding.profile().value();
+        try {
+            if (images != null && !images.isEmpty()) usageMeter.recordImagesIn(tenantId, profileId, images.size());
+            if (transcription != null && transcription.seconds > 0
+                    && transcription.text != null && !transcription.text.isBlank()) {
+                usageMeter.recordVoiceSeconds(tenantId, profileId, transcription.seconds);
+            }
+        } catch (RuntimeException e) {
+            log.debug("media usage not recorded: {}", e.toString());
+        }
     }
 
     private void captureEntities(Ids.SessionId session, WhatsAppSender sender,
@@ -912,17 +1099,7 @@ public class InboundDispatchWorker {
             log.info("Sender {} rejects inbound images; {} dropped", sender.id().value(), media.size());
             return List.of();
         }
-        String basicAuthHeader = null;
-        try {
-            if (credsResolver.isReady()
-                    && credsResolver.resolve(sender) instanceof TwilioCreds tc) {
-                basicAuthHeader = tc.basicAuthHeader();
-            }
-        } catch (RuntimeException e) {
-            log.warn("Could not resolve Twilio creds for image download (sender {}): {}",
-                    sender.id().value(), e.getMessage());
-        }
-        return imageLoader.load(media, basicAuthHeader);
+        return imageLoader.load(media, basicAuthFor(sender, "image"));
     }
 
     /**
@@ -1023,9 +1200,11 @@ public class InboundDispatchWorker {
         }
     }
 
-    record TranscriptionOutcome(String text, String detectedLanguage, String transcriptsJson) {
+    /** {@code failureCode} is set when a voice note could not be transcribed; {@code seconds} = audio transcribed. */
+    record TranscriptionOutcome(String text, String detectedLanguage, String transcriptsJson,
+                                String failureCode, long seconds) {
         static TranscriptionOutcome empty() {
-            return new TranscriptionOutcome(null, null, null);
+            return new TranscriptionOutcome(null, null, null, null, 0);
         }
     }
 }

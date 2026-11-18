@@ -2,6 +2,8 @@ package com.yayatechandinnovations.yayaagentic.usage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -38,6 +40,12 @@ import java.util.regex.Pattern;
  * {@code settings.timeZone} on the tenant (an IANA id) — or UTC when the tenant
  * has none or it does not parse.
  *
+ * <p><b>Media.</b> {@code voice_seconds} (audio transcribed) and {@code images_in}
+ * (images given to the model) are the tenant's own media spend and count for
+ * every profile, metered or not; the voice allowance
+ * ({@code yaya.agentic.voice.monthly-seconds}, null = unlimited) refuses new
+ * voice notes once the month's seconds are used (tracker contract C).
+ *
  * <p>Counting must never break a conversation: a storage failure is logged and
  * the turn proceeds unmetered.
  */
@@ -49,10 +57,32 @@ public class UsageMeter {
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
+    private final Integer voiceMonthlySeconds;
 
     public UsageMeter(JdbcTemplate jdbc, Clock clock) {
+        this(jdbc, clock, "3600");
+    }
+
+    @Autowired
+    public UsageMeter(JdbcTemplate jdbc, Clock clock,
+                      @Value("${yaya.agentic.voice.monthly-seconds:3600}") String voiceMonthlySeconds) {
         this.jdbc = jdbc;
         this.clock = clock;
+        this.voiceMonthlySeconds = parseAllowance(voiceMonthlySeconds);
+    }
+
+    /** Blank, {@code null}, {@code unlimited} or a negative number = unlimited. */
+    static Integer parseAllowance(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.equals("null") || v.equals("unlimited") || v.equals("none")) return null;
+        try {
+            int n = Integer.parseInt(v);
+            return n < 0 ? null : n;
+        } catch (NumberFormatException e) {
+            LOG.warn("yaya.agentic.voice.monthly-seconds '{}' is not a number; voice is unlimited", raw);
+            return null;
+        }
     }
 
     /** One admitted turn. {@code reserved} = a message was taken from the tenant's month row. */
@@ -86,10 +116,24 @@ public class UsageMeter {
      * included in {@code inputTokens}.
      */
     public record Totals(String month, long messages, long inputTokens, long outputTokens,
-                         long cacheReadTokens, long cacheCreationTokens, Integer monthlyMessages) {}
+                         long cacheReadTokens, long cacheCreationTokens, Integer monthlyMessages,
+                         long voiceSeconds, long imagesIn) {
+        public Totals(String month, long messages, long inputTokens, long outputTokens,
+                      long cacheReadTokens, long cacheCreationTokens, Integer monthlyMessages) {
+            this(month, messages, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens,
+                    monthlyMessages, 0, 0);
+        }
+    }
 
     public record ProfileTotals(String profileId, boolean metered, long messages, long inputTokens,
-                                long outputTokens, long cacheReadTokens, long cacheCreationTokens) {}
+                                long outputTokens, long cacheReadTokens, long cacheCreationTokens,
+                                long voiceSeconds, long imagesIn) {
+        public ProfileTotals(String profileId, boolean metered, long messages, long inputTokens,
+                             long outputTokens, long cacheReadTokens, long cacheCreationTokens) {
+            this(profileId, metered, messages, inputTokens, outputTokens, cacheReadTokens,
+                    cacheCreationTokens, 0, 0);
+        }
+    }
 
     /**
      * Admit one turn. For a metered profile this takes one message from the
@@ -279,22 +323,90 @@ public class UsageMeter {
         TenantRow row = tenantRow(tenantId);
         String resolved = month == null || month.isBlank() ? month(row.zone()) : requireMonth(month);
         List<Totals> rows = jdbc.query("""
-                SELECT messages, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+                SELECT messages, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                       voice_seconds, images_in
                   FROM tenant_usage_monthly
                  WHERE tenant_id = ? AND month = ?
                 """, (rs, i) -> new Totals(resolved, rs.getLong(1), rs.getLong(2), rs.getLong(3),
-                rs.getLong(4), rs.getLong(5), row.monthlyMessages()), tenantId, resolved);
+                rs.getLong(4), rs.getLong(5), row.monthlyMessages(), rs.getLong(6), rs.getLong(7)),
+                tenantId, resolved);
         return rows.isEmpty() ? new Totals(resolved, 0, 0, 0, 0, 0, row.monthlyMessages()) : rows.get(0);
     }
 
     public List<ProfileTotals> usageByProfile(String tenantId, String month) {
         return jdbc.query("""
                 SELECT profile_id, metered, messages, input_tokens, output_tokens,
-                       cache_read_tokens, cache_creation_tokens
+                       cache_read_tokens, cache_creation_tokens, voice_seconds, images_in
                   FROM profile_usage_monthly
                  WHERE tenant_id = ? AND month = ? ORDER BY profile_id
                 """, (rs, i) -> new ProfileTotals(rs.getString(1), rs.getBoolean(2), rs.getLong(3),
-                rs.getLong(4), rs.getLong(5), rs.getLong(6), rs.getLong(7)), tenantId, requireMonth(month));
+                rs.getLong(4), rs.getLong(5), rs.getLong(6), rs.getLong(7), rs.getLong(8), rs.getLong(9)),
+                tenantId, requireMonth(month));
+    }
+
+    /* ------------------------------- media -------------------------------- */
+
+    /** The month's voice allowance in seconds; null = unlimited. */
+    public Integer voiceMonthlySeconds() {
+        return voiceMonthlySeconds;
+    }
+
+    /** Seconds of audio transcribed this month for the tenant (every profile). */
+    public long voiceSecondsUsed(String tenantId) {
+        try {
+            String month = month(tenantRow(tenantId).zone());
+            List<Long> rows = jdbc.query(
+                    "SELECT voice_seconds FROM tenant_usage_monthly WHERE tenant_id = ? AND month = ?",
+                    (rs, i) -> rs.getLong(1), tenantId, month);
+            return rows.isEmpty() ? 0 : rows.get(0);
+        } catch (DataAccessException e) {
+            return 0;
+        }
+    }
+
+    /** True while another voice note may be transcribed this month. Unknown reads as true. */
+    public boolean hasVoiceAllowance(String tenantId) {
+        if (voiceMonthlySeconds == null) return true;
+        return voiceSecondsUsed(tenantId) < voiceMonthlySeconds;
+    }
+
+    /** Audio transcribed: counted on the tenant's month row and the profile's (when known). */
+    public void recordVoiceSeconds(String tenantId, String profileId, long seconds) {
+        recordMedia(tenantId, profileId, Math.max(0, seconds), 0);
+    }
+
+    /** Images handed to the model as vision input. */
+    public void recordImagesIn(String tenantId, String profileId, long images) {
+        recordMedia(tenantId, profileId, 0, Math.max(0, images));
+    }
+
+    private void recordMedia(String tenantId, String profileId, long seconds, long images) {
+        if (seconds == 0 && images == 0) return;
+        try {
+            String month = month(tenantRow(tenantId).zone());
+            jdbc.update("""
+                    INSERT INTO tenant_usage_monthly (tenant_id, month, messages, voice_seconds, images_in)
+                    VALUES (?, ?, 0, ?, ?)
+                    ON CONFLICT (tenant_id, month) DO UPDATE
+                       SET voice_seconds = tenant_usage_monthly.voice_seconds + EXCLUDED.voice_seconds,
+                           images_in = tenant_usage_monthly.images_in + EXCLUDED.images_in,
+                           updated_at = NOW()
+                    """, tenantId, month, seconds, images);
+            if (profileId != null && !profileId.isBlank()) {
+                jdbc.update("""
+                        INSERT INTO profile_usage_monthly
+                               (tenant_id, profile_id, month, metered, messages, voice_seconds, images_in)
+                        VALUES (?, ?, ?, FALSE, 0, ?, ?)
+                        ON CONFLICT (tenant_id, profile_id, month) DO UPDATE
+                           SET voice_seconds = profile_usage_monthly.voice_seconds + EXCLUDED.voice_seconds,
+                               images_in = profile_usage_monthly.images_in + EXCLUDED.images_in,
+                               updated_at = NOW()
+                        """, tenantId, profileId, month, seconds, images);
+            }
+        } catch (DataAccessException e) {
+            LOG.warn("usage media not recorded for tenant {} profile {} ({})",
+                    tenantId, profileId, e.getClass().getSimpleName());
+        }
     }
 
     /** Null = unlimited. */

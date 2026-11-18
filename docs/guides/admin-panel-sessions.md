@@ -98,6 +98,56 @@ Send `Accept: text/event-stream`.
 | `text` | The user's words. May be `""` when `selection` is sent. |
 | `selection` | Answer to a frame (§5, §15, §16). Optional. |
 | `clientContext` | What the user has open. Optional; see below. |
+| `attachmentIds` | Ids returned by §3a, at most 4, each usable once. Optional. |
+
+### 3a. Attachments (photos, PDFs, voice notes)
+
+Upload first, then name the ids in the message.
+
+`POST /v1/sessions/{sessionId}/attachments` — `multipart/form-data`, part
+`file` (filename matters for the name shown; the type is sniffed from the
+bytes), optional text part `durationSeconds` for a voice note the app
+measured. Same bearer token as the session: only the session's owner may
+upload. → `201`:
+
+```json
+{ "id": "chatatt_…", "kind": "IMAGE|AUDIO|DOCUMENT", "filename": "ticket.jpg",
+  "contentType": "image/jpeg", "sizeBytes": 183020,
+  "transcript": "…", "durationSeconds": 14,
+  "codes": [ { "format": "QR_CODE", "text": "4130552218-7781902345" } ],
+  "extractedTextChars": 0, "url": "/v1/chat/media/<token>" }
+```
+
+- Kinds: images JPEG/PNG/WebP (≤ 10 MB; JPEG/PNG are re-encoded, EXIF
+  removed, long side ≤ 1,600 px), audio OGG/Opus, WebM, M4A/AAC, MP3, WAV
+  (≤ 10 MB and ≤ 120 s), PDF (≤ 15 MB; text extracted). HEIC/HEIF is refused
+  — convert on the device first.
+- `codes`: QR / barcodes read from an image, if any. `transcript`: the voice
+  note's text (Spanish by default, from the profile's language).
+- `url`: the file, served by `GET /v1/chat/media/<token>` with no
+  `Authorization` header — the signed token is the authorization and lasts
+  15 minutes. History (§6) returns a fresh one per render; it is `null` once
+  the bytes were removed (30 days after the message was sent).
+- Limits: 4 per message, 20 uploads per session per hour, 150 MB per user
+  per day. An uploaded file that is never sent is deleted after 24 hours.
+
+| HTTP | code | Client |
+|---|---|---|
+| 413 | `too_large` | Over the size cap, or a voice note over 2 minutes (`hint` says so). |
+| 415 | `unsupported_type` | Not a kind listed above; for HEIC the body carries `hint: "Mándala como JPG o PNG"`. |
+| 429 | `too_many_uploads` | 20 uploads in an hour on this session (`Retry-After`). |
+| 429 | `quota_exceeded` | 150 MB uploaded today by this user. |
+| 429 | `voice_quota_exceeded` | The business's voice minutes of the month are used up; type instead. |
+| 422 | `transcription_failed` | The voice note was kept (`id`, `url`, `durationSeconds` present; `transcript` null); offer «Reintentar» or let the user type. |
+| 403 | `owner_required` | A playground session without a signed-in owner. |
+| 404 | `session_not_found` | Not this user's session. |
+
+In the message, what the model gets: the images as vision input (first two),
+the codes as data lines, the PDF text as data, the voice note as
+`[nota de voz, 0:14] <transcript>`. A 6-digit number after «código» in a PDF
+or a code is masked before the model sees it. A message naming an id that is
+not this session's, or already sent, answers `404 attachment_not_found`; more
+than four, `400 too_many`.
 
 ### `clientContext`
 
@@ -267,6 +317,11 @@ Notes on `turns`:
   `plan_result` (use `pendingPlan`; a finished plan is not replayed — the
   steps that ran are in `lastToolResults` and the model's account is a turn).
   Attachment `url`s are re-signed on every read.
+- A user turn sent with files (§3a) carries `attachments`:
+  `[{ "id", "kind", "filename", "contentType", "sizeBytes", "transcript"?,
+  "durationSeconds"?, "codes"?, "url" }]` — the same shape as the upload
+  response, `url` freshly signed per read, `null` once the bytes were removed
+  by retention (show the name only). Absent or `[]` on text-only turns.
 - Do **not** replay `open_screen` hints from history as navigation.
 
 `GET /v1/sessions/{sessionId}/history` returns `{ sessionId, turns,
@@ -288,12 +343,16 @@ The app does not need to do anything.
 - `GET /v1/sessions/usage?tenant=<tenant>` →
 
 ```json
-{ "month": "2026-11", "messages": 412, "monthlyMessages": 1500 }
+{ "month": "2026-11", "messages": 412, "monthlyMessages": 1500,
+  "voiceSecondsUsed": 840, "voiceSecondsLimit": 3600, "imagesIn": 57 }
 ```
 
   `monthlyMessages: null` = unlimited. What is left = `monthlyMessages -
   messages` (never below 0). Any signed-in user of the tenant may read it.
   Refresh it after each `end` event, or when a `quota_exceeded` error arrives.
+  `voiceSecondsUsed` / `voiceSecondsLimit` (null = unlimited) are the month's
+  voice-note seconds; `imagesIn` the images given to the model. Hide the mic
+  when `voiceSecondsUsed >= voiceSecondsLimit`.
 
 ## 8. Errors and what the client does
 

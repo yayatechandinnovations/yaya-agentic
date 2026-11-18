@@ -37,9 +37,14 @@ public final class SessionDtos {
      * {@code label} — given to the model for this turn only, as unverified
      * context.
      */
-    public record MessageRequest(String text, Selection selection, Map<String, Object> clientContext) {
+    public record MessageRequest(String text, Selection selection, Map<String, Object> clientContext,
+                                 List<String> attachmentIds) {
         public MessageRequest(String text) {
-            this(text, null, null);
+            this(text, null, null, null);
+        }
+
+        public MessageRequest(String text, Selection selection, Map<String, Object> clientContext) {
+            this(text, selection, clientContext, null);
         }
     }
 
@@ -60,9 +65,35 @@ public final class SessionDtos {
     }
 
     /** One display turn of a reopened conversation. {@code uiHints} are the rich
-     *  frames the turn showed, attachment links freshly signed. */
+     *  frames the turn showed, attachment links freshly signed; {@code channel} is the
+     *  channel the turn was born on (nullable); {@code attachments}
+     *  are the files the user sent with the turn (contract C), each with a fresh
+     *  signed {@code url} — null once the bytes were removed by retention. */
     public record HistoryTurn(String role, String text, String createdAt,
-                              List<Map<String, Object>> uiHints) {}
+                              List<Map<String, Object>> uiHints, String channel,
+                              List<AttachmentView> attachments) {
+        public HistoryTurn(String role, String text, String createdAt, List<Map<String, Object>> uiHints) {
+            this(role, text, createdAt, uiHints, null, List.of());
+        }
+
+        public HistoryTurn(String role, String text, String createdAt, List<Map<String, Object>> uiHints,
+                           String channel) {
+            this(role, text, createdAt, uiHints, channel, List.of());
+        }
+    }
+
+    /** An attachment as the panel renders it, in history and on upload. */
+    public record AttachmentView(String id, String kind, String filename, String contentType, long sizeBytes,
+                                 String transcript, Integer durationSeconds,
+                                 List<Map<String, Object>> codes, String url) {}
+
+    /**
+     * {@code POST /v1/sessions/{id}/attachments} → 201 (contract C).
+     * {@code extractedTextChars} = how much text a PDF yielded.
+     */
+    public record AttachmentResponse(String id, String kind, String filename, String contentType,
+                                     long sizeBytes, String transcript, Integer durationSeconds,
+                                     List<Map<String, Object>> codes, int extractedTextChars, String url) {}
 
     /**
      * A tool call that ran and whose result is stored: how a client that
@@ -102,8 +133,19 @@ public final class SessionDtos {
                                   Map<String, Object> pendingPlan,
                                   List<ToolOutcome> lastToolResults) {}
 
-    /** What the caller's tenant has used of its monthly allowance (null = unlimited). */
-    public record UsageResponse(String month, long messages, Integer monthlyMessages) {}
+    /**
+     * What the caller's tenant has used of its monthly allowance (null =
+     * unlimited). {@code voiceSecondsUsed} / {@code voiceSecondsLimit} are the
+     * seconds of voice notes transcribed and the month's allowance
+     * ({@code yaya.agentic.voice.monthly-seconds}; null = unlimited);
+     * {@code imagesIn} counts images given to the model.
+     */
+    public record UsageResponse(String month, long messages, Integer monthlyMessages,
+                                long voiceSecondsUsed, Integer voiceSecondsLimit, long imagesIn) {
+        public UsageResponse(String month, long messages, Integer monthlyMessages) {
+            this(month, messages, monthlyMessages, 0, null, 0);
+        }
+    }
 
     /** Client-initiated action: run one whitelisted tool by id (two doors, one lock, §9). */
     public record ActionRequest(String tool, Map<String, Object> args) {}
