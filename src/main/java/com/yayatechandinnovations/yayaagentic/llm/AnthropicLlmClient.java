@@ -278,16 +278,18 @@ public class AnthropicLlmClient implements LlmClient, StructuredLlmClient {
         messages.add(new SystemMessage(instruction));
         messages.add(new UserMessage(request.input()));
 
+        String model = request.model() == null || request.model().isBlank() ? configuredModel : request.model();
         AnthropicChatOptions.Builder options = AnthropicChatOptions.builder()
                 .toolCallbacks(toCallbacks(List.of(new ToolDefinition(request.toolName(),
                         "Return the final structured result.", request.schemaJson()))))
                 .internalToolExecutionEnabled(false)
                 .maxTokens(request.maxOutputTokens())
-                .toolChoice(acceptsForcedToolChoice(configuredModel)
+                .toolChoice(acceptsForcedToolChoice(model)
                         ? new org.springframework.ai.anthropic.api.AnthropicApi.ToolChoiceTool(
                                 request.toolName(), true)
                         : new org.springframework.ai.anthropic.api.AnthropicApi.ToolChoiceAuto(true));
-        if (acceptsTemperature(configuredModel)) options.temperature(0.0);
+        if (request.model() != null && !request.model().isBlank()) options.model(request.model());
+        if (acceptsTemperature(model)) options.temperature(0.0);
         AnthropicCacheOptions cacheOptions = cacheOptions();
         if (cacheOptions != null) options.cacheOptions(cacheOptions);
         return new Prompt(messages, options.build());

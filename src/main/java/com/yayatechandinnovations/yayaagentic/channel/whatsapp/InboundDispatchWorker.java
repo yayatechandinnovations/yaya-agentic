@@ -100,6 +100,7 @@ public class InboundDispatchWorker {
     private final com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore
             authTokenStore;
     private final com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace;
+    private final OfferedOptionsStore offeredOptions;
     // Optional so the many hand-built worker tests keep compiling (§6.6).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OutreachContextSeeder contextSeeder;
@@ -148,7 +149,9 @@ public class InboundDispatchWorker {
             StepUpCoordinator stepUp,
             com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthIntegrator authIntegrator,
             com.yayatechandinnovations.yayaagentic.channel.auth.SessionAuthTokenStore authTokenStore,
-            com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace) {
+            com.yayatechandinnovations.yayaagentic.channel.auth.ChannelAuthTrace authTrace,
+            OfferedOptionsStore offeredOptions) {
+        this.offeredOptions = offeredOptions;
         this.executor = executor;
         this.inbound = inbound;
         this.senders = senders;
@@ -315,7 +318,27 @@ public class InboundDispatchWorker {
         // the inbound to look like the user typed the label, and stamp the
         // structured ID into hints so a profile can short-circuit on it.
         InteractiveSelection sel = extractInteractiveSelection(raw);
-        if (sel != null) {
+        // A tapped option or a typed number maps back to the options this
+        // person was offered (assistant-channels design §2.6): the engine gets
+        // what the option sends, never the digit.
+        Ids.TenantId tenantId = new Ids.TenantId(row.getTenantId());
+        SenderId senderId = new SenderId(row.getSenderId());
+        OfferedOptionsStore.Offered offeredSet = offeredOptions == null ? null
+                : offeredOptions.recall(tenantId, senderId, row.getEndUserPhone()).orElse(null);
+        OptionReply optionReply = optionReplyFor(sel, body, offeredSet);
+        if (optionReply != null && optionReply.more()) {
+            // «Más…»: the next page goes out and the engine is not woken (§10.3).
+            outboundDispatcher.dispatchPage(tenantId, senderId, row.getEndUserPhone(),
+                    offeredSet.atOffset(offeredSet.offset() + DefaultInteractiveRenderer.FIRST_PAGE_ROWS));
+            row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            row.setBodyRedacted(redact(body, row.getEndUserPhone()));
+            inbound.save(row);
+            return;
+        }
+        if (optionReply != null) {
+            body = optionReply.send();
+            if (offeredOptions != null) offeredOptions.forget(tenantId, senderId, row.getEndUserPhone());
+        } else if (sel != null) {
             body = sel.label;
         }
 
@@ -341,7 +364,7 @@ public class InboundDispatchWorker {
         //     confirm frame reaches the engine as a structured selection, so the
         //     tap decides exactly that action/frame instead of being re-read as
         //     the typed label.
-        Map<String, Object> selection = selectionOf(sel);
+        Map<String, Object> selection = optionReply != null ? optionReply.selection() : selectionOf(sel);
         if (selection != null) attachments.put("_selection", selection);
         // The greeting's offer to continue the app conversation is answered
         // here, never by the model: a tap copies the context or declines it.
@@ -710,7 +733,51 @@ public class InboundDispatchWorker {
         return null;
     }
 
-    private record InteractiveSelection(String id, String label, String kind) {}
+    record InteractiveSelection(String id, String label, String kind) {}
+
+    /** A tapped option or a typed number resolved against what was offered; {@code more} asks for the next page. */
+    record OptionReply(String send, Map<String, Object> selection, boolean more) {}
+
+    /**
+     * §2.6 — {@code ListId} or a button payload {@code opt:<id>} → the offered
+     * option's {@code send}; a reply that is only a number after a numbered-text
+     * list → that row's {@code send}; the «Más…» row → the next page. Null when
+     * the message is none of these (a frame or action button, plain text).
+     */
+    static OptionReply optionReplyFor(InteractiveSelection sel, String body, OfferedOptionsStore.Offered offered) {
+        if (sel != null) {
+            String id = sel.id() == null ? "" : sel.id().trim();
+            if (id.startsWith(DefaultInteractiveRenderer.CONFIRM_PREFIX)
+                    || id.startsWith(DefaultInteractiveRenderer.CANCEL_PREFIX)
+                    || id.startsWith(DefaultInteractiveRenderer.ACTION_PREFIX)) {
+                return null;
+            }
+            boolean names = id.startsWith(DefaultInteractiveRenderer.OPTION_PREFIX) || "list_row".equals(sel.kind());
+            if (!names || id.isEmpty()) return null;
+            Optional<com.yayatechandinnovations.yayaagentic.engine.QuickReplies.Option> found =
+                    OfferedOptionsStore.byId(offered, id);
+            if (found.isPresent()) return reply(found.get());
+            // The offered set is gone (expired, restarted): the tap still names
+            // its option, and its label is what it sends — as before.
+            String bare = id.startsWith(DefaultInteractiveRenderer.OPTION_PREFIX)
+                    ? id.substring(DefaultInteractiveRenderer.OPTION_PREFIX.length()) : id;
+            if (bare.isBlank() || DefaultInteractiveRenderer.MORE_ROW_ID.equals(bare)) return null;
+            String send = sel.label() == null || sel.label().isBlank() ? bare : sel.label();
+            return new OptionReply(send, optionSelection(bare, send), false);
+        }
+        return OfferedOptionsStore.byNumber(offered, body).map(InboundDispatchWorker::reply).orElse(null);
+    }
+
+    private static OptionReply reply(com.yayatechandinnovations.yayaagentic.engine.QuickReplies.Option option) {
+        if (DefaultInteractiveRenderer.MORE_ROW_ID.equals(option.id())) {
+            return new OptionReply(option.send(), null, true);
+        }
+        return new OptionReply(option.send(), optionSelection(option.id(), option.send()), false);
+    }
+
+    static Map<String, Object> optionSelection(String id, String send) {
+        return Map.of("kind", "option", "id", id, "send", send);
+    }
 
     /** Button payload → engine selection (§6.5); null for plain quick replies. */
     private static Map<String, Object> selectionOf(InteractiveSelection sel) {

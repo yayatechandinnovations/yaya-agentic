@@ -69,6 +69,8 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     /** Working-memory slot: the frame an unclear reply dropped this turn (R4). */
     static final String DROPPED_CONFIRM_SLOT = "dropped_confirm";
+    /** A tool's {@code _askUser} of the running turn, offered as chips once the turn's text is done (§2.4). */
+    static final String ASK_USER_SLOT = "pending_ask_user";
     /** Working-memory slot: a tapped bound action waiting for its one input. */
     static final String PENDING_ACTION_ARG_SLOT = "pending_action_arg";
     private static final int MAX_ACTION_ARG_CHARS = 500;
@@ -152,6 +154,14 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     void setBoundActions(BoundActionStore boundActions) {
         this.boundActions = boundActions;
+    }
+
+    // Optional: without a suggester, a question the rules did not cover simply has no chips.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.engine.suggest.ReplySuggester replySuggester;
+
+    void setReplySuggester(com.yayatechandinnovations.yayaagentic.engine.suggest.ReplySuggester replySuggester) {
+        this.replySuggester = replySuggester;
     }
 
     // Optional like the stores above: without a meter a turn still sums its
@@ -515,7 +525,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         }
         Flux<TurnEvent> turn;
         try {
-            turn = sendAdmitted(session, profile, message, auth, meter);
+            turn = finishTurn(sendAdmitted(session, profile, message, auth, meter), session, profile, message, meter);
         } catch (RuntimeException e) {
             closeMeter(meter);
             throw e;
@@ -556,6 +566,10 @@ public class DefaultConversationEngine implements ConversationEngine {
         // out of the message before anything else reads it: from here on the
         // message carries a fixed marker as its text and no selection, so the
         // value cannot reach a recorder, working memory, a prompt or a log.
+        // A tapped quick reply (assistant-channels design §2.2, kind "option"):
+        // what it sends is the user's text for this turn; the tap itself stays
+        // on the recorded message as its _selection.
+        message = withOptionText(message);
         SecretPrompts.Answer secretAnswer = SecretPrompts.answerOf(selectionOf(message));
         if (secretAnswer == null) return sendScrubbed(session, profile, message, null, auth, meter);
         String shownText = secretAnswer.cancel() ? message.text()
@@ -628,8 +642,9 @@ public class DefaultConversationEngine implements ConversationEngine {
         }
 
         // A frame decides only once: the dropped-frame marker (R4) and a consumed
-        // bound action never outlive the turn that produced them.
-        workingMemory.remove(sessionId, DROPPED_CONFIRM_SLOT);
+        // bound action never outlive the turn that produced them. Neither does
+        // a tool's ask: it belongs to the turn whose text it follows.
+        workingMemory.remove(sessionId, DROPPED_CONFIRM_SLOT, ASK_USER_SLOT);
 
         // ---- Bound action (whatsapp-ops-integration-design.md §6.4): a tap on a
         // proactive message's action button. The tap IS the single consent (R1).
@@ -1262,7 +1277,7 @@ public class DefaultConversationEngine implements ConversationEngine {
                 events.add(new TurnEvent.UiHint(pending.uiHintKind(), pending.uiHintPayload()));
             }
             if (!pending.quickReplies().isEmpty()) {
-                events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", pending.quickReplies())));
+                events.add(QuickReplies.fromLabels(QuickReplies.SOURCE_START, pending.quickReplies()));
             }
         } else {
             text = result.greeting() == null ? "" : result.greeting();
@@ -1273,7 +1288,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
             if (!text.isBlank()) events.add(new TurnEvent.Token(text));
             if (result.quickReplies() != null && !result.quickReplies().isEmpty()) {
-                events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", result.quickReplies())));
+                events.add(QuickReplies.fromLabels(QuickReplies.SOURCE_START, result.quickReplies()));
             }
         }
         final String spoken = text;
@@ -1599,13 +1614,14 @@ public class DefaultConversationEngine implements ConversationEngine {
                     "actionId", action.id())));
             String prompt = ask.prompt() == null || ask.prompt().isBlank()
                     ? (es ? "¿Qué motivo le pongo?" : "What should I put?") : ask.prompt();
-            List<Map<String, Object>> options = new java.util.ArrayList<>();
+            List<QuickReplies.Option> options = new java.util.ArrayList<>();
             for (String s : ask.suggestions()) {
-                options.add(Map.of("id", "ask_" + options.size(), "label", s));
+                options.add(new QuickReplies.Option("ask_" + options.size(), s, null));
             }
-            options.add(Map.of("id", "ask_cancel", "label", ConfirmPrompts.cancelLabel(profile.language())));
+            options.add(new QuickReplies.Option("ask_cancel", ConfirmPrompts.cancelLabel(profile.language()),
+                    null, "neutral"));
             return Flux.<TurnEvent>just(new TurnEvent.Token(prompt),
-                            new TurnEvent.UiHint("quick_replies", Map.of("options", options)))
+                            QuickReplies.hint(QuickReplies.SOURCE_ASK, options))
                     .doOnComplete(() -> recordTurns(recorder, session, exec, turnId, message,
                             prompt, List.of(), List.of()));
         }
@@ -1730,6 +1746,114 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     private static String unavailableText(boolean es) {
         return es ? "Esa acción ya no está disponible." : "That action is no longer available.";
+    }
+
+    /**
+     * The user's text for a tapped quick reply ({@code _selection.kind ==
+     * "option"}): its {@code send}, else the label the client sent as text,
+     * else its id. The selection stays on the message, so the record shows
+     * the tap and nothing later reads the text as typed.
+     */
+    private static UserMessage withOptionText(UserMessage message) {
+        Map<String, Object> selection = selectionOf(message);
+        if (selection == null || !"option".equals(String.valueOf(selection.get("kind")))) return message;
+        String send = selection.get("send") == null ? "" : String.valueOf(selection.get("send")).strip();
+        String text = !send.isEmpty() ? send
+                : message.text() != null && !message.text().isBlank() ? message.text()
+                : selection.get("id") == null ? "" : String.valueOf(selection.get("id"));
+        return new UserMessage(text, message.attachments());
+    }
+
+    /** The hint kinds whose buttons are the turn's only question. */
+    private static final java.util.Set<String> FRAME_HINTS =
+            java.util.Set.of("confirm", "plan", SecretPrompts.HINT_KIND);
+
+    /** What the end of a turn needs to know about it. */
+    private static final class TurnTail {
+        /** The text since the last tool event: what the model wrote last. */
+        final StringBuilder text = new StringBuilder();
+        boolean chips;
+        boolean frame;
+    }
+
+    /**
+     * The end of every turn (assistant-channels design §2): quick replies
+     * leave in the one canonical shape whoever produced them; a tool's
+     * {@code _askUser} becomes the chips after the assistant's final text;
+     * and a question nobody gave answers for gets them from the reply
+     * suggester — unless a frame is waiting, whose buttons are the only
+     * question. Chips are transient: nothing here is recorded.
+     */
+    private Flux<TurnEvent> finishTurn(Flux<TurnEvent> turn, Session session, Profile profile,
+                                       UserMessage message, TurnMeter meter) {
+        TurnTail tail = new TurnTail();
+        return turn.concatMap(event -> switch (event) {
+            case TurnEvent.UiHint hint when QuickReplies.KIND.equals(hint.kind()) -> {
+                TurnEvent.UiHint canonical = QuickReplies.normalise(hint, QuickReplies.SOURCE_RULE);
+                if (QuickReplies.read(canonical.payload()).isEmpty()) yield Flux.<TurnEvent>empty();
+                tail.chips = true;
+                yield Flux.<TurnEvent>just(canonical);
+            }
+            case TurnEvent.UiHint hint -> {
+                if (FRAME_HINTS.contains(hint.kind())) tail.frame = true;
+                yield Flux.<TurnEvent>just(hint);
+            }
+            case TurnEvent.Token token -> {
+                tail.text.append(token.text());
+                yield Flux.<TurnEvent>just(token);
+            }
+            case TurnEvent.ToolCall call -> {
+                tail.text.setLength(0);
+                yield Flux.<TurnEvent>just(call);
+            }
+            case TurnEvent.ToolResult result -> {
+                tail.text.setLength(0);
+                yield Flux.<TurnEvent>just(result);
+            }
+            case TurnEvent.End end -> Flux.defer(() -> closingChips(end, tail, session, profile, message, meter));
+            case TurnEvent.Citation citation -> Flux.<TurnEvent>just(citation);
+        });
+    }
+
+    private Flux<TurnEvent> closingChips(TurnEvent.End end, TurnTail tail, Session session, Profile profile,
+                                         UserMessage message, TurnMeter meter) {
+        Ids.SessionId sessionId = session.id();
+        Map<String, Object> wm = workingMemory.get(sessionId);
+        Map<String, Object> ask = pendingMapOf(wm, ASK_USER_SLOT);
+        if (ask != null) workingMemory.remove(sessionId, ASK_USER_SLOT);
+        boolean framePending = tail.frame
+                || pendingMapOf(wm, "pending_confirm") != null
+                || pendingMapOf(wm, PLAN_SLOT) != null
+                || pendingMapOf(wm, SecretPrompts.SLOT) != null;
+        if (framePending) return Flux.<TurnEvent>just(end);
+        if (ask != null) {
+            List<QuickReplies.Option> options = AskUser.options(ask, profile.language());
+            if (!options.isEmpty()) {
+                return Flux.<TurnEvent>just(QuickReplies.hint(QuickReplies.SOURCE_ASK, options), end);
+            }
+        }
+        String spoken = tail.text.toString();
+        if (tail.chips || replySuggester == null || !replySuggester.enabled()
+                || !replySuggestionsAllowed(profile)
+                || !com.yayatechandinnovations.yayaagentic.engine.suggest.ReplySuggester.endsWithQuestion(spoken)) {
+            return Flux.<TurnEvent>just(end);
+        }
+        return replySuggester.suggest(message == null ? "" : message.text(), spoken, profile.language())
+                .flatMapMany(suggestion -> {
+                    // Its tokens ride the turn; it is not a message of the allowance.
+                    if (meter != null) meter.add(suggestion.usage());
+                    return Flux.<TurnEvent>just(QuickReplies.hint(QuickReplies.SOURCE_SUGGESTER, suggestion.options()),
+                            endOf(end.turnId()));
+                })
+                .switchIfEmpty(Flux.<TurnEvent>just(end));
+    }
+
+    /** {@code metadata.policy.replySuggestions} on the profile; false unless set. */
+    static boolean replySuggestionsAllowed(Profile profile) {
+        if (profile == null || profile.metadata() == null
+                || !(profile.metadata().get("policy") instanceof Map<?, ?> policy)) return false;
+        Object flag = policy.get("replySuggestions");
+        return Boolean.TRUE.equals(flag) || "true".equalsIgnoreCase(String.valueOf(flag));
     }
 
     private static UserMessage withoutSelection(UserMessage message) {
@@ -2814,6 +2938,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         // emit it — this is the belt to their suspenders, at the one seam every
         // dispatched OK result passes through before any sink.
         result = redactNetworkSecrets(result);
+        result = takeAskUser(session, result);
         UiHintPassThrough.Split split = result == null
                 ? null : UiHintPassThrough.split(result.value());
         if (split == null) {
@@ -2822,6 +2947,22 @@ public class DefaultConversationEngine implements ConversationEngine {
         // A headless run has no client to draw it: the frame is dropped (§17).
         if (split.kind() != null && !isHeadless(session.id())) {
             pendingUiHints.enqueue(session.id(), split.kind(), split.payload());
+        }
+        return new Turn.ToolResult(result.callId(), result.status(), split.strippedValue(),
+                result.error(), result.capturedEntities(), result.diagnostics());
+    }
+
+    /**
+     * A tool's {@code _askUser} (design §2.4) leaves the result before the
+     * model, the recorder or the client sees it; the engine offers it as chips
+     * when the turn's text is done ({@link #finishTurn}). The last tool of the
+     * turn to ask wins. A headless run has nobody to ask: dropped.
+     */
+    private Turn.ToolResult takeAskUser(Session session, Turn.ToolResult result) {
+        AskUser.Split split = result == null ? null : AskUser.split(result.value());
+        if (split == null) return result;
+        if (split.ask() != null && !isHeadless(session.id())) {
+            workingMemory.merge(session.id(), Map.of(ASK_USER_SLOT, split.ask()));
         }
         return new Turn.ToolResult(result.callId(), result.status(), split.strippedValue(),
                 result.error(), result.capturedEntities(), result.diagnostics());
@@ -3493,11 +3634,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             List<SuggestionRuleEvaluator.Chip> chips = suggestionRuleEvaluator
                     .evaluate(toolDescriptor.suggestions(), recordedResult.value());
             if (!chips.isEmpty()) {
-                suggestionHint = new TurnEvent.UiHint("quick_replies", Map.of(
-                        "items", chips.stream().map(SuggestionRuleEvaluator.Chip::label).toList(),
-                        "actions", chips.stream()
-                                .map(c -> Map.of("label", c.label(), "send", c.send()))
-                                .toList()));
+                suggestionHint = QuickReplies.fromChips(QuickReplies.SOURCE_RULE, chips);
             }
         }
         List<String> followUps = (suggestionHint == null
@@ -3566,7 +3703,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             if (suggestionHint != null) {
                 events.add(suggestionHint);
             } else if (!followUps.isEmpty()) {
-                events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
+                events.add(QuickReplies.fromLabels(QuickReplies.SOURCE_START, followUps));
             }
             final String stepText = secretSpoken == null ? "" : secretSpoken;
             return Flux.fromIterable(events)
@@ -3589,7 +3726,7 @@ public class DefaultConversationEngine implements ConversationEngine {
         if (suggestionHint != null) {
             events.add(suggestionHint);
         } else if (!followUps.isEmpty()) {
-            events.add(new TurnEvent.UiHint("quick_replies", Map.of("items", followUps)));
+            events.add(QuickReplies.fromLabels(QuickReplies.SOURCE_START, followUps));
         }
 
         return Flux.fromIterable(events)

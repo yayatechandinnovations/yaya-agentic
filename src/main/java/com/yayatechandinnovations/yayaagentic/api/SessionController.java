@@ -249,6 +249,11 @@ public class SessionController {
                 // The answer to a secret prompt. The engine takes it out of the
                 // message before anything is stored or shown to the model.
                 if (sel.value() != null) selMap.put("value", sel.value());
+                // A bound action's tap (kind "action") and a tapped quick reply
+                // (kind "option": id + what it sends) — assistant-channels §2.2.
+                if (sel.actionId() != null) selMap.put("actionId", sel.actionId());
+                if (sel.id() != null) selMap.put("id", sel.id());
+                if (sel.send() != null) selMap.put("send", sel.send());
                 attachments.put("_selection", selMap);
             }
             Map<String, Object> clientContext = ClientContexts.validate(body.clientContext());

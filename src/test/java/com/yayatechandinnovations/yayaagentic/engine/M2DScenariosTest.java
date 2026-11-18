@@ -67,8 +67,10 @@ class M2DScenariosTest {
                 .findFirst().orElseThrow();
         assertThat(hint.kind()).isEqualTo("quick_replies");
         @SuppressWarnings("unchecked")
-        List<String> items = (List<String>) hint.payload().get("items");
+        // One canonical shape for every producer (assistant-channels design §2.2).
+        List<String> items = QuickReplies.read(hint.payload()).stream().map(QuickReplies.Option::label).toList();
         assertThat(items).contains("echo something else", "what else can you do?");
+        assertThat(hint.payload().get("source")).isEqualTo("start");
     }
 
     @Test

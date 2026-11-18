@@ -59,7 +59,7 @@ class DefaultInteractiveRendererTest {
         var list = (InteractivePayload.ListMessage) payload;
         assertThat(list.sections().get(0).rows()).hasSize(10);
         assertThat(list.sections().get(0).rows())
-                .noneMatch(r -> r.id().equals(DefaultInteractiveRenderer.MORE_ROW_ID));
+                .noneMatch(r -> r.id().endsWith(DefaultInteractiveRenderer.MORE_ROW_ID));
     }
 
     @Test
@@ -69,7 +69,9 @@ class DefaultInteractiveRendererTest {
         var rows = list.sections().get(0).rows();
         assertThat(rows).hasSize(10);    // 9 real + 1 "More…"
         assertThat(rows.get(rows.size() - 1).id())
-                .isEqualTo(DefaultInteractiveRenderer.MORE_ROW_ID);
+                .isEqualTo(DefaultInteractiveRenderer.OPTION_PREFIX + DefaultInteractiveRenderer.MORE_ROW_ID);
+        assertThat(rows.get(rows.size() - 1).title()).isEqualTo("Más…");
+        assertThat(list.buttonText()).isEqualTo("Elegir");
     }
 
     @Test
@@ -91,7 +93,7 @@ class DefaultInteractiveRendererTest {
         // so no "More…" row should appear.
         assertThat(list.sections().get(0).rows()).hasSize(6);
         assertThat(list.sections().get(0).rows())
-                .noneMatch(r -> r.id().equals(DefaultInteractiveRenderer.MORE_ROW_ID));
+                .noneMatch(r -> r.id().endsWith(DefaultInteractiveRenderer.MORE_ROW_ID));
     }
 
     @Test
@@ -136,5 +138,63 @@ class DefaultInteractiveRendererTest {
         m.put("id", id);
         m.put("label", label);
         return m;
+    }
+
+    // ---- assistant-channels design §2.2 / §2.6 ------------------------------
+
+    @Test
+    void buttons_carry_the_option_prefix_and_the_legacy_shapes_still_render() {
+        var canonical = (InteractivePayload.Buttons) renderer.render("¿Y ahora?",
+                new TurnEvent.UiHint("quick_replies", Map.of("options",
+                        List.of(Map.of("id", "undo", "label", "Anular", "send", "Anular el ticket 4411")),
+                        "source", "rule")), ctx);
+        assertThat(canonical.buttons()).extracting(InteractivePayload.Button::id).containsExactly("opt:undo");
+        assertThat(canonical.buttons()).extracting(InteractivePayload.Button::title).containsExactly("Anular");
+
+        var items = (InteractivePayload.Buttons) renderer.render("¿Y ahora?",
+                new TurnEvent.UiHint("quick_replies", Map.of("items", List.of("Cuadre", "Ver tickets"))), ctx);
+        assertThat(items.buttons()).extracting(InteractivePayload.Button::id).containsExactly("opt:cuadre", "opt:ver_tickets");
+
+        var actions = (InteractivePayload.Buttons) renderer.render("¿Y ahora?",
+                new TurnEvent.UiHint("quick_replies", Map.of("actions",
+                        List.of(Map.of("label", "En PDF", "send", "Mándamelo en PDF")))), ctx);
+        assertThat(actions.buttons()).extracting(InteractivePayload.Button::title).containsExactly("En PDF");
+    }
+
+    @Test
+    void a_yes_no_question_is_two_buttons() {
+        var payload = renderer.render("¿Te lo mando en PDF?",
+                com.yayatechandinnovations.yayaagentic.engine.QuickReplies.hint("ask",
+                        com.yayatechandinnovations.yayaagentic.engine.QuickReplies.yesNo("es")), ctx);
+        var buttons = (InteractivePayload.Buttons) payload;
+        assertThat(buttons.buttons()).extracting(InteractivePayload.Button::id).containsExactly("opt:yes", "opt:no");
+        assertThat(buttons.buttons()).extracting(InteractivePayload.Button::title).containsExactly("Sí", "No");
+    }
+
+    @Test
+    void list_rows_show_what_tapping_sends_as_the_description_within_the_caps() {
+        var options = new ArrayList<Map<String, Object>>();
+        options.add(Map.of("id", "a", "label", "Una etiqueta larga de más de veinte", "send",
+                "Un texto que explica largamente lo que se enviará al tocar esta fila y que supera setenta y dos caracteres"));
+        options.add(Map.of("id", "b", "label", "Corta"));
+        var list = (InteractivePayload.ListMessage) renderer.render("Elige",
+                new TurnEvent.UiHint("quick_replies", Map.of("options", options)), ctx);
+        var rows = list.sections().get(0).rows();
+        assertThat(rows.get(0).id()).isEqualTo("opt:a");
+        assertThat(rows.get(0).title()).hasSize(DefaultInteractiveRenderer.ROW_TITLE_MAX);
+        assertThat(rows.get(0).description()).hasSize(DefaultInteractiveRenderer.ROW_DESCRIPTION_MAX);
+        assertThat(rows.get(1).description()).isNull();
+        assertThat(list.buttonText()).isEqualTo(DefaultInteractiveRenderer.CHOOSE_LABEL);
+    }
+
+    @Test
+    void the_last_page_has_no_more_row_and_a_bad_offset_is_plain_text() {
+        TurnEvent.UiHint hint = hintWith(21);
+        var page2 = (InteractivePayload.ListMessage) renderer.renderPage("Más opciones", hint, 9, ctx);
+        assertThat(page2.sections().get(0).rows()).hasSize(10);   // 9 + «Más…»
+        assertThat(page2.sections().get(0).rows().get(9).id()).endsWith(DefaultInteractiveRenderer.MORE_ROW_ID);
+        var page3 = (InteractivePayload.ListMessage) renderer.renderPage("Más opciones", hint, 18, ctx);
+        assertThat(page3.sections().get(0).rows()).hasSize(3);
+        assertThat(renderer.renderPage("x", hint, 21, ctx)).isInstanceOf(InteractivePayload.PlainText.class);
     }
 }

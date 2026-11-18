@@ -628,30 +628,41 @@ The engine emits a `Flux<TurnEvent>`. For `web-sse`, the SSE controller pipes it
 WhatsApp's interactive API has two shapes the adapter renders natively. The engine emits the SAME `UiHint` events it already emits for the web SSE adapter; the WhatsApp adapter picks the right shape per the constraints below.
 
 ```
-// Inputs (from the engine — channel-agnostic):
+// Inputs (from the engine — channel-agnostic; the one canonical shape of
+// assistant-channels design §2.2, every producer converted by the engine):
 TurnEvent.UiHint(
   kind    = "quick_replies",
   payload = {
     "options": [
-      { "id": "by_category", "label": "By category" },
-      { "id": "show_list",   "label": "Show list"  },
-      { "id": "export",      "label": "Export"     }
+      { "id": "by_category", "label": "By category", "send": "Show me the catalogue by category" },
+      { "id": "show_list",   "label": "Show list",   "send": "Show list" },
+      { "id": "export",      "label": "Export",      "send": "Export" }
     ],
+    "source": "rule|start|ask|suggester|frame",
     "headerText": null,      // optional; rendered as List header when present
     "footerText": null       // optional; rendered as List footer when present
   }
 )
 ```
 
+The renderer also still reads the legacy `items:[…]` / `actions:[{label,send}]`
+shapes (a parked outbound from an older build). Button and row ids carry the
+`opt:` prefix (`opt:<option id>`), so the inbound worker tells an option apart
+from a frame (`confirm:` / `cancel:`) or a bound action (`act:`).
+
 Adapter decision (`InteractiveRenderer.render(UiHint)`):
 
 | Option count | Twilio surface | Notes |
 |---|---|---|
 | **0** | plain text message | nothing to render |
-| **1–3** | `interactive.type=button` with **Quick Reply Buttons** | each button's `id` ≤ 256 chars, `title` ≤ 20 chars |
-| **4–10** | `interactive.type=list` with one section | section title = `payload.headerText` (truncated to 24 chars) or `"Choose"` |
-| **>10** | `interactive.type=list` with **paginated sections** | first 9 options in section 1, the 10th option becomes "More…" → next inbound triggers a new list message with options 10–18, etc. |
-| labels > 20 chars (button mode) | downgrade to `list` | WhatsApp enforces 20-char button title cap |
+| **1–3** | **Quick Reply Buttons** through the in-session `twilio/quick-reply` Content resource (`InSessionContents.quickReply`) | payload `opt:<id>`, `title` ≤ 20 chars; a yes/no question (`_askUser yes_no`, suggester `yes_no`) is the two buttons «Sí» / «No» |
+| **4–10** | **native list picker** through the in-session `twilio/list-picker` resource (`InSessionContents.listPicker`): body, button «Elegir», rows `{id, item ≤ 24, description ≤ 72}` | a row's description is the option's `send` when it differs from its label; if the Content API refuses, the numbered-text fallback below goes out instead |
+| **>10** | list picker, **paginated** | first 9 options + a 10th row «Más…» (`opt:__more__`); the inbound worker answers it with the next page (`renderPage`, offset +9) straight from the options last offered, without waking the engine |
+| labels > 20 chars (button mode) | downgrade to the list picker | WhatsApp enforces 20-char button title cap |
+
+A confirm or plan frame plus chips in the same turn sends the **frame's buttons
+only**: a WhatsApp message carries one interactive block, and the frame is the
+turn's question (`OutboundDispatcher.Buffer` keeps the frame).
 
 Body text comes from the concatenated `Token` stream; the interactive payload is attached as Twilio's `ContentVariables`/`PersistentAction` fields per the Twilio Content API. Citation footnotes (if any) go into the optional `footerText` truncated to WhatsApp's 60-char cap; the rest is recorded but not surfaced.
 
@@ -693,12 +704,30 @@ UserMessage.hints = {
 
 The profile/LLM only ever sees `"By category"` and doesn't have to know about WhatsApp's interactive surface. The structured `id` is available for profiles that want deterministic dispatch — a `LlmRouter` can short-circuit on `interactiveId` before invoking the LLM, saving a turn — but that's a profile-level optimization, not a channel-level requirement.
 
+**Options map back to what was offered** (assistant-channels design §2.6).
+Every outbound with a `quick_replies` hint records its options in Redis for
+20 minutes per (tenant, sender, phone) — `OfferedOptionsStore`, key
+`yaya:wa:offered:<tenant>:<sender>:<phone>` — together with whether they went
+out as numbered text and which page is showing; an outbound without options
+clears the record. On the next inbound:
+
+- a button payload `opt:<id>` or a `ListId` → `selection {kind:"option", id, send}`
+  and the engine's user text is the option's `send` (its label when the record
+  is gone, as before);
+- a reply that is only a number («2») while a **numbered-text** list is on
+  record → that row's `send` — the model never reads «2» as a quantity; after
+  native buttons or once the record expired a digit is just a digit;
+- the «Más…» row (`opt:__more__`, or its number) → the next page goes out and
+  the engine is not woken.
+
+The record is cleared once a tap or a number was consumed.
+
 For the special **"More…" pagination row** (the 10-options-overflow case), the adapter intercepts the inbound, sends the next list page directly, and never wakes the engine — the conversation hasn't actually advanced. The recorder still gets a `channel_event` row so the audit trail shows what the user saw.
 
 ### 10.4 Fallback and template interactions
 
 - **Templates can carry interactive components too** (button templates, list templates). When `send_template` is invoked, the template's BSP-side definition already encodes its interactive payload; the adapter passes through `variables` and lets Twilio render. The `UiHint`-based renderer in §10.2 is the **free-form** path only.
-- **Free-form interactive messages are bound by the 24h service window** like any other free-form message — no special privilege. If outside the window, they get parked in `outbound_pending` and released on the next inbound, just like plain text.
+- **Free-form interactive messages are bound by the 24h service window** like any other free-form message — no special privilege. If outside the window, they get parked in `outbound_pending` (hint payload included) and released on the next inbound, just like plain text; the released hint renders with the same buttons / list picker and records its options then.
 - **Non-WhatsApp BSPs that don't support interactives** at all can register an `InteractiveRenderer` that always returns `PlainText` with numbered options inline — the same numbered-list fallback we'd otherwise have shipped as the default. Twilio doesn't need it.
 
 ### 10.2 The 24-hour service window

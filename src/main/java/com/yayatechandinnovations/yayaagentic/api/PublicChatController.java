@@ -323,6 +323,9 @@ public class PublicChatController {
                 if (sel.callId() != null) selMap.put("callId", sel.callId());
                 if (sel.itemIds() != null) selMap.put("itemIds", sel.itemIds());
                 if (sel.value() != null) selMap.put("value", sel.value());
+                if (sel.actionId() != null) selMap.put("actionId", sel.actionId());
+                if (sel.id() != null) selMap.put("id", sel.id());
+                if (sel.send() != null) selMap.put("send", sel.send());
                 java.util.Map<String, Object> attrs = new java.util.LinkedHashMap<>(um.attachments());
                 attrs.put("_selection", selMap);
                 um = new UserMessage(um.text(), attrs);
