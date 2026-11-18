@@ -131,6 +131,20 @@ public class OutboundDispatcher {
                              String endUserPhone,
                              Ids.SessionId sessionId,
                              Flux<TurnEvent> events) {
+        dispatchTurn(tenant, sender, endUserPhone, sessionId, events, null);
+    }
+
+    /**
+     * Same, with {@code fallbackHint} as the turn's buttons when the engine
+     * showed none — a frame the engine raised (confirm, plan, its own
+     * options) always wins over it.
+     */
+    public void dispatchTurn(Ids.TenantId tenant,
+                             SenderId sender,
+                             String endUserPhone,
+                             Ids.SessionId sessionId,
+                             Flux<TurnEvent> events,
+                             TurnEvent.UiHint fallbackHint) {
         Buffer buffer = new Buffer();
         events
                 .doOnNext(buffer::accept)
@@ -143,7 +157,8 @@ public class OutboundDispatcher {
         }
         if (buffer.body.length() > 0 || buffer.lastHint != null) {
             dispatch(tenant, sender, endUserPhone, sessionId,
-                    collapseRepeatedBody(buffer.body.toString()), buffer.lastHint);
+                    collapseRepeatedBody(buffer.body.toString()),
+                    buffer.lastHint == null ? fallbackHint : buffer.lastHint);
         }
         if (!buffer.attachments.isEmpty()) {
             dispatchAttachments(tenant, sender, endUserPhone, sessionId, buffer.attachments);
@@ -191,9 +206,23 @@ public class OutboundDispatcher {
                                  Ids.SessionId sessionId,
                                  String greeting,
                                  List<String> quickReplies) {
+        dispatchGreeting(tenant, sender, endUserPhone, sessionId, greeting, quickReplies, null);
+    }
+
+    /**
+     * Same, with {@code buttons} taking the place of the profile's quick
+     * replies when given: one interactive message carries one set of buttons.
+     */
+    public void dispatchGreeting(Ids.TenantId tenant,
+                                 SenderId sender,
+                                 String endUserPhone,
+                                 Ids.SessionId sessionId,
+                                 String greeting,
+                                 List<String> quickReplies,
+                                 TurnEvent.UiHint buttons) {
         if (greeting == null || greeting.isBlank()) return;
-        TurnEvent.UiHint hint = null;
-        if (quickReplies != null && !quickReplies.isEmpty()) {
+        TurnEvent.UiHint hint = buttons;
+        if (hint == null && quickReplies != null && !quickReplies.isEmpty()) {
             List<Map<String, Object>> options = new ArrayList<>();
             for (int i = 0; i < quickReplies.size(); i++) {
                 Map<String, Object> opt = new LinkedHashMap<>();
@@ -204,6 +233,16 @@ public class OutboundDispatcher {
             hint = new TurnEvent.UiHint("quick_replies", Map.of("options", options));
         }
         dispatch(tenant, sender, endUserPhone, sessionId, greeting, hint);
+    }
+
+    /** A fixed line the platform says without the model (a hand-off acknowledgement). */
+    public void dispatchText(Ids.TenantId tenant,
+                             SenderId sender,
+                             String endUserPhone,
+                             Ids.SessionId sessionId,
+                             String text) {
+        if (text == null || text.isBlank()) return;
+        dispatch(tenant, sender, endUserPhone, sessionId, text, null);
     }
 
     /**

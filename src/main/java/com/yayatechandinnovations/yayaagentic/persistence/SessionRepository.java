@@ -58,15 +58,18 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     /**
      * The caller's open sessions in a tenant that a client may reopen, newest
-     * first — on one profile ({@code profileId} null = on any). The
-     * conversation of a headless run (channel {@code automation}) is never
-     * among them: it belongs to no screen (admin-panel-sessions.md §17).
+     * first — on one profile ({@code profileId} null = on any) and, when
+     * {@code channel} is given, only those born on that channel label
+     * (admin-panel-sessions.md §6: a panel never reopens a WhatsApp thread).
+     * The conversation of a headless run (channel {@code automation}) is
+     * never among them: it belongs to no screen (§17).
      */
     @Query("""
         select s from SessionEntity s
         where s.tenantId = :tenantId
           and s.principalSubject = :principalSubject
           and (:profileId is null or s.profileId = :profileId)
+          and (:channel is null or s.channel = :channel)
           and s.endedAt is null
           and (s.channel is null or s.channel <> 'automation')
         order by s.createdAt desc
@@ -74,7 +77,34 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     List<SessionEntity> findReopenable(@Param("tenantId") String tenantId,
                                        @Param("principalSubject") String principalSubject,
                                        @Param("profileId") String profileId,
+                                       @Param("channel") String channel,
                                        Pageable pageable);
+
+    default List<SessionEntity> findReopenable(String tenantId, String principalSubject, String profileId,
+                                               Pageable pageable) {
+        return findReopenable(tenantId, principalSubject, profileId, null, pageable);
+    }
+
+    /**
+     * The caller's open sessions on a profile that were born on a channel
+     * other than {@code channel}, newest first — what {@code latest} reports
+     * as {@code elsewhere} (admin-panel-sessions.md §6). A headless run is
+     * never one of them.
+     */
+    @Query("""
+        select s from SessionEntity s
+        where s.tenantId = :tenantId
+          and s.principalSubject = :principalSubject
+          and (:profileId is null or s.profileId = :profileId)
+          and s.endedAt is null
+          and (s.channel is null or (s.channel <> :channel and s.channel <> 'automation'))
+        order by s.createdAt desc
+        """)
+    List<SessionEntity> findOpenElsewhere(@Param("tenantId") String tenantId,
+                                          @Param("principalSubject") String principalSubject,
+                                          @Param("profileId") String profileId,
+                                          @Param("channel") String channel,
+                                          Pageable pageable);
 
     /** Every session for an account — drives GDPR erasure on account delete (§6.3). */
     @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(

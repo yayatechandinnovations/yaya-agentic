@@ -26,9 +26,16 @@ public class ChannelSessionService {
     private static final String CLOSED = "CLOSED";
 
     private final ChannelSessionRepository repo;
+    // Optional so the hand-built worker tests keep constructing this with the repository alone.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.channel.EngineSessionCloser engineSessions;
 
     public ChannelSessionService(ChannelSessionRepository repo) {
         this.repo = repo;
+    }
+
+    void setEngineSessions(com.yayatechandinnovations.yayaagentic.channel.EngineSessionCloser closer) {
+        this.engineSessions = closer;
     }
 
     /**
@@ -131,6 +138,11 @@ public class ChannelSessionService {
         row.setCloseReason(reason);
         row.setClosedAt(OffsetDateTime.now(ZoneOffset.UTC));
         repo.save(row);
+        // The engine session behind the row ends with it (C7): a closed thread
+        // must not stay open for the panel's latest or as "elsewhere".
+        if (engineSessions != null && row.getSessionId() != null) {
+            engineSessions.endIfOpen(new Ids.SessionId(row.getSessionId()), reason);
+        }
     }
 
     private static boolean isNewSessionKeyword(String body, SessionPolicy policy) {

@@ -17,8 +17,11 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
 import com.yayatechandinnovations.yayaagentic.engine.ActionNotPermittedException;
+import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
 import com.yayatechandinnovations.yayaagentic.engine.ConversationEngine;
 import com.yayatechandinnovations.yayaagentic.engine.DefaultConversationEngine;
+import com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService;
+import com.yayatechandinnovations.yayaagentic.engine.handoff.HandoffException;
 import com.yayatechandinnovations.yayaagentic.engine.secret.SecretPrompts;
 import com.yayatechandinnovations.yayaagentic.engine.StartSessionResult;
 import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
@@ -108,6 +111,8 @@ public class SessionController {
     private final ObjectProvider<MediaTokenSigner> mediaTokens;
     private final InspectorService inspector;
     private final WorkspaceAccessHelper workspaceAccess;
+    private final ChannelHandoffService handoffs;
+    private final ObjectProvider<MediaTranscriber> transcriber;
 
     public SessionController(ConversationEngine engine,
                              OriginEnforcer originEnforcer,
@@ -126,7 +131,9 @@ public class SessionController {
                              UsageMeter usage,
                              ObjectProvider<MediaTokenSigner> mediaTokens,
                              InspectorService inspector,
-                             WorkspaceAccessHelper workspaceAccess) {
+                             WorkspaceAccessHelper workspaceAccess,
+                             ChannelHandoffService handoffs,
+                             ObjectProvider<MediaTranscriber> transcriber) {
         this.engine = engine;
         this.originEnforcer = originEnforcer;
         this.sessions = sessions;
@@ -145,6 +152,8 @@ public class SessionController {
         this.mediaTokens = mediaTokens;
         this.inspector = inspector;
         this.workspaceAccess = workspaceAccess;
+        this.handoffs = handoffs;
+        this.transcriber = transcriber;
     }
 
     /* ------------------------------- start -------------------------------- */
@@ -301,24 +310,36 @@ public class SessionController {
 
     /**
      * The caller's most recent open session in {@code tenant} (on
-     * {@code profileId} when given), so a client can reopen where it was.
+     * {@code profileId} when given, born on {@code channel} when given), so a
+     * client can reopen where it was. With a {@code channel}, the response
+     * also names the user's open conversation on another channel, when it is
+     * recent, so the client can offer to continue it here (§6, §18).
      */
     @GetMapping("/latest")
     public Mono<SessionDtos.LatestSessionResponse> latest(
             @RequestParam("tenant") String tenantId,
             @RequestParam(value = "profileId", required = false) String profileId,
             @RequestParam(value = "history", defaultValue = "true") boolean history,
+            @RequestParam(value = "channel", required = false) String channel,
             ServerWebExchange exchange) {
         return Mono.fromSupplier(() -> {
             Ids.TenantId tenant = new Ids.TenantId(tenantId);
             enforceOrigin(tenantId, exchange);
             Principal principal = requireIdentified(authenticate(authContext(tenant, exchange)));
+            String profile = profileId == null || profileId.isBlank() ? null : profileId;
+            String born = channel == null || channel.isBlank() || TurnChannel.isReserved(channel) ? null : channel;
+            SessionDtos.ElsewhereSession elsewhere = born == null ? null
+                    : handoffs.elsewhere(tenantId, principal.subject(), profile, born).map(e ->
+                            new SessionDtos.ElsewhereSession(e.session().getId().toString(), e.channel(),
+                                    e.lastActivityAt().toString(), e.turns(),
+                                    new SessionDtos.ElsewhereSession.Preview(e.userPreview(), e.assistantPreview()),
+                                    e.pending()))
+                    .orElse(null);
 
             // Never the conversation of a headless run: a panel must not reopen it.
-            Optional<SessionEntity> found = sessions.findReopenable(tenantId, principal.subject(),
-                    profileId == null || profileId.isBlank() ? null : profileId,
+            Optional<SessionEntity> found = sessions.findReopenable(tenantId, principal.subject(), profile, born,
                     org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst();
-            if (found.isEmpty()) return SessionDtos.LatestSessionResponse.none();
+            if (found.isEmpty()) return SessionDtos.LatestSessionResponse.none(elsewhere);
 
             SessionEntity row = found.get();
             Ids.SessionId sid = new Ids.SessionId(row.getId().toString());
@@ -334,7 +355,51 @@ public class SessionController {
                     expired ? null : pendingConfirm(sid),
                     expired ? null : pendingSecret(sid),
                     expired ? null : pendingPlan(sid),
-                    lastToolResults(turns));
+                    lastToolResults(turns),
+                    elsewhere);
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * Continue here what the user was doing on another channel: the context of
+     * {@code fromSessionId} is copied into this session as one framed SYSTEM
+     * turn (§18). The source is not touched, and a session takes one hand-off.
+     */
+    @PostMapping("/{id}/handoff")
+    public Mono<SessionDtos.HandoffResponse> handoff(@PathVariable("id") String id,
+                                                     @RequestBody SessionDtos.HandoffRequest body,
+                                                     ServerWebExchange exchange) {
+        return Mono.fromSupplier(() -> {
+            Caller caller = admit(id, exchange, true);
+            if (!caller.owned()) throw ChatApiException.sessionNotFound();
+            if (body == null || body.fromSessionId() == null || body.fromSessionId().isBlank()) {
+                throw new ChatApiException(HttpStatus.BAD_REQUEST, "from_session_required",
+                        "fromSessionId is required", 0);
+            }
+            try {
+                ChannelHandoffService.Result result = handoffs.perform(caller.row(),
+                        new Ids.SessionId(body.fromSessionId().trim()), caller.auth());
+                return new SessionDtos.HandoffResponse(result.fromSessionId().value(), result.fromChannel(),
+                        display(result.carried(), caller.auth().tenant(), result.fromChannel()));
+            } catch (HandoffException refused) {
+                throw new ChatApiException(switch (refused.code()) {
+                    case HandoffException.SESSION_NOT_FOUND -> HttpStatus.NOT_FOUND;
+                    case HandoffException.EXISTS -> HttpStatus.CONFLICT;
+                    case HandoffException.SOURCE_TOO_OLD -> HttpStatus.GONE;
+                    default -> HttpStatus.FORBIDDEN;
+                }, refused.code(), refused.getMessage(), 0);
+            }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** What this platform offers a panel beyond text, so it can hide what is not there (§18). */
+    @GetMapping("/features")
+    public Mono<SessionDtos.FeaturesResponse> features(@RequestParam("tenant") String tenantId,
+                                                       ServerWebExchange exchange) {
+        return Mono.fromSupplier(() -> {
+            enforceOrigin(tenantId, exchange);
+            requireIdentified(authenticate(authContext(new Ids.TenantId(tenantId), exchange)));
+            return new SessionDtos.FeaturesResponse(true, true, transcriber.getIfAvailable() != null, true, true);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -575,8 +640,13 @@ public class SessionController {
 
     /* -------------------------------- history ------------------------------ */
 
-    @SuppressWarnings("unchecked")
     private List<SessionDtos.HistoryTurn> display(List<Turn> turns, Ids.TenantId tenant) {
+        return display(turns, tenant, null);
+    }
+
+    /** {@code defaultChannel} labels turns stored before the channel was recorded on them. */
+    @SuppressWarnings("unchecked")
+    private List<SessionDtos.HistoryTurn> display(List<Turn> turns, Ids.TenantId tenant, String defaultChannel) {
         List<SessionDtos.HistoryTurn> out = new ArrayList<>();
         for (Turn t : turns) {
             if (t.role() != Turn.Role.USER && t.role() != Turn.Role.ASSISTANT) continue;
@@ -590,8 +660,10 @@ public class SessionController {
             }
             // A tool step with nothing to show, or a tap with no words.
             if (text.isBlank() && hints.isEmpty()) continue;
+            String channel = t.metadata() != null && t.metadata().get("channel") instanceof String c && !c.isBlank()
+                    ? c : defaultChannel;
             out.add(new SessionDtos.HistoryTurn(t.role().name().toLowerCase(java.util.Locale.ROOT), text,
-                    t.createdAt() == null ? null : t.createdAt().toString(), hints));
+                    t.createdAt() == null ? null : t.createdAt().toString(), hints, channel));
         }
         return out;
     }

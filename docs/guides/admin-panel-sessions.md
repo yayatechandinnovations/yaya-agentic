@@ -7,8 +7,10 @@ against. Everything here is covered by `AppSessionsApiTest`,
 `SessionStopSemanticsTest`, `SessionInspectorAccessTest`, `UsageMeterTest`,
 `PrincipalKindsTest`, `PostToolTextHistoryTest`, `HttpToolTemplateSafetyTest`,
 `TurnChannelTest`, for §15 `SecretPromptApiTest`, `HttpToolSecretHeaderTest`,
-`SecretPromptsTest` and `SecretInputCatalogRoundTripTest`, and for §17 the
-`Headless*Test` classes named there.
+`SecretPromptsTest` and `SecretInputCatalogRoundTripTest`, for §17 the
+`Headless*Test` classes named there, and for §6 `elsewhere` / §18
+`SessionHandoffApiTest`, `HandoffBlockTest`, `HandoffTapTest` and
+`WhatsAppChannelHandoffE2ETest`.
 
 Base URL: the platform's public URL (`yaya.agentic.public-base-url`). All paths
 below are relative to it.
@@ -215,9 +217,14 @@ are held on the server; the app only sends the decision:
 
 ## 6. Reopen where the user was
 
-`GET /v1/sessions/latest?tenant=<tenant>&profileId=<profileId>&history=true`
+`GET /v1/sessions/latest?tenant=<tenant>&profileId=<profileId>&history=true&channel=admin-app`
 
 `profileId` is optional (any profile). `history=false` skips the turns.
+`channel` is optional: when given, only a session started with that
+`channel` label (§2) is a `RESUMABLE` / `EXPIRED` candidate, so a panel never
+reopens the user's WhatsApp or chat-app thread — those are reported as
+`elsewhere` instead (below, and §18). Without `channel` the newest open
+session is returned whatever its label, as before.
 The conversation of a headless run (§17) is never returned here, also while
 the run is still going: it belongs to no screen.
 
@@ -230,19 +237,35 @@ the run is still going: it belongs to no screen.
   "createdAt": "2026-11-13T13:02:11Z",
   "lastActivityAt": "2026-11-13T13:40:02Z",
   "turns": [
-    { "role": "user", "text": "abre los controles", "createdAt": "…", "uiHints": [] },
+    { "role": "user", "text": "abre los controles", "createdAt": "…", "uiHints": [], "channel": "admin-app" },
     { "role": "assistant", "text": "", "createdAt": "…",
-      "uiHints": [ { "kind": "open_screen", "payload": { "…": "…" } } ] },
-    { "role": "assistant", "text": "Abrí los controles.", "createdAt": "…", "uiHints": [] }
+      "uiHints": [ { "kind": "open_screen", "payload": { "…": "…" } } ], "channel": "admin-app" },
+    { "role": "assistant", "text": "Abrí los controles.", "createdAt": "…", "uiHints": [], "channel": "admin-app" }
   ],
   "pendingConfirm": null,
   "pendingSecret": null,
   "pendingPlan": null,
   "lastToolResults": [
     { "callId": "toolu_01", "tool": "open_screen", "status": "OK", "createdAt": "…" }
-  ]
+  ],
+  "elsewhere": {
+    "sessionId": "9c41…", "channel": "whatsapp",
+    "lastActivityAt": "2026-11-18T14:02:11Z", "turns": 9,
+    "preview": { "user": "Qué pasó con el ticket 4411…", "assistant": "El ticket 4411 está confirmado…" },
+    "pending": "confirm"
+  }
 }
 ```
+
+`elsewhere` (only computed when `channel` was sent; `null` when there is
+none) is the user's other open conversation on this profile, born on a
+different channel, with a turn in the last 24 hours — the newest if several.
+A headless run never counts. `preview` is the last user and assistant text,
+each cut to 160 characters; `pending` is `confirm`, `plan` or `secret` while
+that conversation still waits for an answer there, else `null`. The panel
+shows it as a one-line suggestion («Conversación en WhatsApp hace 12 min —
+[Continuar aquí] [Ignorar]») and never opens it by itself: «Continuar aquí»
+is the hand-off of §18.
 
 `lastToolResults` lists the tool calls that **finished** after the user's last
 stored message (`status`: `OK`, `DENIED` or `FAILED`), `[]` when there are
@@ -258,6 +281,11 @@ was running (§12). A confirmed change appears under the `callId` of its
 
 Notes on `turns`:
 
+- `channel` is the label of the surface each turn came in on (`admin-app`,
+  `whatsapp`, `chat`, `sms`, `console`, …): the session's own label (§2) for
+  a turn on this API, the channel's name elsewhere. It is `null` on turns
+  stored before it was recorded. The same field is on `history` and on the
+  `carried` turns of a hand-off (§18).
 - One user message can be followed by several assistant entries (a step that
   showed hints, then the closing text). Entries with neither text nor hints
   are omitted.
@@ -1251,3 +1279,84 @@ cannot tell whether the model had been called.
 `per-hour` (20), `answer-ttl` (`PT24H`), `row-ttl` (`P30D`). Live sessions are
 in the process's memory, so runs execute on the instance that accepted them
 (single instance).
+
+## 18. Continuing a conversation from another channel (hand-off)
+
+Sessions stay **one per channel**: what the user says on WhatsApp is in a
+`whatsapp` session, what they say in the panel is in an `admin-app` one, and
+neither is ever reopened from the other side (`latest` with `channel`, §6).
+When the user wants to go on here with what they were doing there, the panel
+asks for a **hand-off by copy**:
+
+`POST /v1/sessions/{sessionId}/handoff` `{ "fromSessionId": "<the elsewhere session>" }`
+→ `200`
+
+```json
+{
+  "fromSessionId": "9c41…", "fromChannel": "whatsapp",
+  "carried": [
+    { "role": "user", "text": "Qué pasó con el ticket 4411", "createdAt": "…", "uiHints": [], "channel": "whatsapp" },
+    { "role": "assistant", "text": "El ticket 4411 está confirmado.", "createdAt": "…", "uiHints": [], "channel": "whatsapp" }
+  ]
+}
+```
+
+What it does:
+
+- Both sessions must belong to the caller (same tenant, same subject, same
+  profile); the target must be live (the usual `409 session_ended` /
+  `session_expired` otherwise) and have had **no hand-off yet**; the source
+  must have had activity within 7 days — an `EXPIRED` source is fine, its
+  summary is stored.
+- The platform builds a block from the source: its rolling summary, if any,
+  plus the last 12 user/assistant turns rendered one per line as
+  `[hh:mm canal] Usuario|Asistente: texto` (hours in UTC; rich frames and
+  attachments as one-line notes), cut to about 2,000 tokens with the newest
+  kept. It is appended to the target as **one `SYSTEM` turn** with
+  `metadata.origin = "CHANNEL_HANDOFF"` and
+  `metadata.handoff = { fromSessionId, fromChannel, throughTurnIdx }`, framed
+  to the model as data, followed by a fixed instruction: the person continues
+  here what they were doing on the other channel; if a confirmation, plan or
+  code was pending there, say so in one line and propose it again here if
+  they want — nothing from the other channel counts as confirmed.
+- The source session is not touched: it keeps its own thread, its own policy
+  and its own pending frame (which the target never answers).
+- `carried` are the copied turns as `HistoryTurn`s with `channel`, for the
+  panel to draw as a collapsed block («Desde WhatsApp · 9 mensajes») above
+  the new conversation. They are **not** returned by `history` / `latest`
+  (those keep user and assistant turns only), so a panel that reopens the
+  target later shows the conversation without the copied block.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `from_session_required` | No `fromSessionId`. |
+| 403 | `handoff_not_allowed` | The source is another user's, on another profile, the target itself, or a headless run. |
+| 404 | `session_not_found` | Unknown source (or one in another tenant); unknown target, or not this user's. |
+| 409 | `handoff_exists` | The target already received a hand-off. |
+| 409 | `session_ended` / `session_expired` | The target is not live. |
+| 410 | `source_too_old` | The source had no activity in the last 7 days. |
+
+The other direction works the same way, bounded: when WhatsApp opens a new
+conversation and the same person had an `admin-app` session with a turn in
+the last 2 hours, the greeting carries two buttons, «Seguir con la app»
+(payload `handoff:<sessionId>`) and «Empezar de cero» (`fresh`), emitted as
+`quick_replies { options: [...], source: "start" }`. The tap runs this same
+hand-off into the WhatsApp session and is answered with a fixed line, without
+the model. Closing a WhatsApp conversation (idle timeout, `#new` / `restart`)
+now ends its engine session (`ended_at` set), so a dead thread never counts
+as open anywhere.
+
+### What a panel can rely on
+
+`GET /v1/sessions/features?tenant=<tenant>` (bearer, any signed-in user) →
+
+```json
+{ "handoff": true, "attachments": true, "voice": false, "listPicker": true, "replySuggestions": true }
+```
+
+`voice` is true only when the platform has a transcriber configured. A panel
+hides the paperclip and the microphone when the flag is false or the endpoint
+answers 404 (an older platform).
+
+Covered by `SessionHandoffApiTest`, `HandoffBlockTest`, `HandoffTapTest` and
+`WhatsAppChannelHandoffE2ETest`.

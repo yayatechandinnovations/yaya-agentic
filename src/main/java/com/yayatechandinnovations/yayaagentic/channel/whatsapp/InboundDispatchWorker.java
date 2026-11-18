@@ -4,6 +4,7 @@ import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
+import com.yayatechandinnovations.yayaagentic.engine.TurnEvent;
 import com.yayatechandinnovations.yayaagentic.auth.stepup.StepUpCoordinator;
 import com.yayatechandinnovations.yayaagentic.channel.ChannelKind;
 import com.yayatechandinnovations.yayaagentic.channel.MediaTranscriber;
@@ -102,8 +103,27 @@ public class InboundDispatchWorker {
     // Optional so the many hand-built worker tests keep compiling (§6.6).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OutreachContextSeeder contextSeeder;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService handoffs;
 
     void setContextSeeder(OutreachContextSeeder seeder) { this.contextSeeder = seeder; }
+
+    void setHandoffs(com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService service) {
+        this.handoffs = service;
+    }
+
+    /** Button payloads of the greeting's offer to continue the app conversation (C5). */
+    static final String HANDOFF_PREFIX = "handoff:";
+    static final String FRESH_ID = "fresh";
+    /** WhatsApp caps a button title at 20 characters; longer labels fall back to a list. */
+    static final String HANDOFF_LABEL = "Seguir con la app";
+    static final String FRESH_LABEL = "Empezar de cero";
+    static final String HANDOFF_OFFER_LINE = "¿Seguimos con lo que estabas haciendo en la app?";
+    static final String HANDOFF_DONE = "Listo, seguimos aquí. ¿Qué hacemos?";
+    static final String HANDOFF_FAILED = "No pude traer esa conversación; seguimos desde aquí. ¿Qué hacemos?";
+    static final String FRESH_DONE = "Perfecto, empezamos de cero. ¿Qué hacemos?";
+    /** After this, WhatsApp has no place to keep the offer; the greeting is the usual one. */
+    static final java.time.Duration APP_RECENT = java.time.Duration.ofHours(2);
 
     public InboundDispatchWorker(
             @Qualifier("channelDispatchExecutor") ThreadPoolTaskExecutor executor,
@@ -323,6 +343,9 @@ public class InboundDispatchWorker {
         //     the typed label.
         Map<String, Object> selection = selectionOf(sel);
         if (selection != null) attachments.put("_selection", selection);
+        // The greeting's offer to continue the app conversation is answered
+        // here, never by the model: a tap copies the context or declines it.
+        final String handoffTap = sel == null ? null : handoffTapOf(sel.id(), sel.kind());
         String repliedTo = raw.get("OriginalRepliedMessageSid") instanceof String s && !s.isBlank() ? s : null;
 
         // 3. binding resolution — supplies the session policy + profile id
@@ -450,21 +473,29 @@ public class InboundDispatchWorker {
             // static greeting double-introduces the bot — the engine reply
             // introduces itself on first contact via the personality "greet"
             // rule. Send only the reply in that case.
-            if (userText.isBlank() && images.isEmpty()) {
+            if (handoffTap != null) {
+                answerHandoffTap(row, sessionId, handoffTap, auth);
+            } else if (userText.isBlank() && images.isEmpty()) {
+                // C5: the user was in the app a moment ago — offer to continue it here.
+                TurnEvent.UiHint offer = handoffOffer(row, result.session());
                 outboundDispatcher.dispatchGreeting(
                         new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         sessionId,
-                        result.greeting(),
-                        result.quickReplies());
+                        offer == null ? result.greeting() : withOfferLine(result.greeting()),
+                        result.quickReplies(),
+                        offer);
             } else {
+                // The same offer rides the reply when the first message already said something.
+                TurnEvent.UiHint offer = handoffOffer(row, result.session());
                 outboundDispatcher.dispatchTurn(
                         new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         sessionId,
-                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))));
+                        com.yayatechandinnovations.yayaagentic.usage.QuotaRefusals.spoken(engine.send(sessionId, new UserMessage(userText, attachments), auth.onChannel(TurnChannel.WHATSAPP))),
+                        offer);
             }
         } else {
             // §9 step 3e on continuation — refresh the session row's JWT
@@ -477,7 +508,9 @@ public class InboundDispatchWorker {
             captureEntities(sessionId, sender, row, transcription, policy);
             applyPlaygroundPreElevationIfPresent(rawForAuth, row, sessionId);
             seedContext(row, sessionId, repliedTo);
-            if (!userText.isBlank() || !images.isEmpty()) {
+            if (handoffTap != null) {
+                answerHandoffTap(row, sessionId, handoffTap, auth);
+            } else if (!userText.isBlank() || !images.isEmpty()) {
                 // §6.6 — when an OTP-shaped pending exists for this session,
                 // interpret the inbound as the user's verification code BEFORE
                 // routing to the engine. The LLM never sees the OTP digits.
@@ -699,6 +732,76 @@ public class InboundDispatchWorker {
             return Map.of("kind", "cancel", "callId", id.substring(DefaultInteractiveRenderer.CANCEL_PREFIX.length()));
         }
         return null;
+    }
+
+    /** {@code handoff:<sessionId>} or {@code fresh} from a tapped button; null for anything else. */
+    static String handoffTapOf(String payload, String kind) {
+        if (payload == null || !"button".equals(kind)) return null;
+        String id = payload.trim();
+        if (id.equals(FRESH_ID)) return FRESH_ID;
+        if (id.startsWith(HANDOFF_PREFIX) && id.length() > HANDOFF_PREFIX.length()) return id;
+        return null;
+    }
+
+    static TurnEvent.UiHint handoffOfferHint(Ids.SessionId appSession) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("options", List.of(
+                option(HANDOFF_PREFIX + appSession.value(), HANDOFF_LABEL),
+                option(FRESH_ID, FRESH_LABEL)));
+        payload.put("source", "start");
+        return new TurnEvent.UiHint("quick_replies", payload);
+    }
+
+    private static Map<String, Object> option(String id, String label) {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("id", id);
+        o.put("label", label);
+        o.put("send", label);
+        return o;
+    }
+
+    static String withOfferLine(String greeting) {
+        String base = greeting == null ? "" : greeting.strip();
+        return base.isEmpty() ? HANDOFF_OFFER_LINE : base + "\n\n" + HANDOFF_OFFER_LINE;
+    }
+
+    /** The two buttons when the same person had an app conversation in the last two hours (C5). */
+    private TurnEvent.UiHint handoffOffer(InboundMessageEntity row,
+                                          com.yayatechandinnovations.yayaagentic.core.Session session) {
+        if (handoffs == null || session == null || session.principal() == null) return null;
+        try {
+            return handoffs.recentOn(row.getTenantId(), session.principal().subject(),
+                            session.profile() == null ? null : session.profile().value(), "admin-app", APP_RECENT)
+                    .map(InboundDispatchWorker::handoffOfferHint)
+                    .orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("hand-off offer skipped for session {}: {}", session.id().value(), e.toString());
+            return null;
+        }
+    }
+
+    /** Runs the hand-off the user tapped (or declines it) and answers with a fixed line — no model call. */
+    private void answerHandoffTap(InboundMessageEntity row, Ids.SessionId sessionId, String tap,
+                                  AuthContext auth) {
+        String reply;
+        if (FRESH_ID.equals(tap)) {
+            reply = FRESH_DONE;
+        } else if (handoffs == null) {
+            reply = HANDOFF_FAILED;
+        } else {
+            reply = HANDOFF_FAILED;
+            try {
+                handoffs.perform(sessionId, new Ids.SessionId(tap.substring(HANDOFF_PREFIX.length())),
+                        auth.onChannel(TurnChannel.WHATSAPP));
+                reply = HANDOFF_DONE;
+            } catch (com.yayatechandinnovations.yayaagentic.engine.handoff.HandoffException refused) {
+                log.info("hand-off into {} refused: {}", sessionId.value(), refused.code());
+            } catch (RuntimeException e) {
+                log.warn("hand-off into {} failed: {}", sessionId.value(), e.toString());
+            }
+        }
+        outboundDispatcher.dispatchText(new Ids.TenantId(row.getTenantId()), new SenderId(row.getSenderId()),
+                row.getEndUserPhone(), sessionId, reply);
     }
 
     private void seedContext(InboundMessageEntity row, Ids.SessionId sessionId, String repliedTo) {
