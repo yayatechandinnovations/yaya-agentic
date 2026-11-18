@@ -42,7 +42,7 @@ in-document `$ref`s · `maxOutputTokens` optional, default 1500, clamped to [64,
 | 422 | `{"error":"schema_violation","detail":"…"}` | answer broke the schema twice (one retry) |
 | 429 | `{"error":"rate_limited"}` + `Retry-After` | tenant over its per-minute limit |
 | 502 | `{"error":"upstream_failure"}` | provider error or deadline exceeded |
-| 503 | `{"error":"llm_unavailable"}` | provider without structured support (`openai`) |
+| 503 | `{"error":"llm_unavailable"}` | no structured client registered for `YAYA_LLM_PROVIDER` |
 
 ```bash
 curl -X POST https://<yaya-host>/v1/structured-completions \
@@ -54,7 +54,10 @@ curl -X POST https://<yaya-host>/v1/structured-completions \
 ## Operating it
 - `yaya.agentic.structured-completions.per-minute` (default 30, per tenant, Redis
   fixed window) and `.timeout` (default `PT60S`, retry included).
-- `YAYA_LLM_PROVIDER=anthropic` for real answers; `stub` returns the smallest
-  object the schema allows with `model: "stub"` (offline tests only).
+- `YAYA_LLM_PROVIDER=anthropic` or `openai` for real answers (Anthropic: forced
+  `tool_choice` where the model allows it, prompt cache on the system block; OpenAI:
+  forced `tool_choice`, `max_completion_tokens`, `cacheReadTokens` from
+  `prompt_tokens_details.cached_tokens`); `stub` returns the smallest object the
+  schema allows with `model: "stub"` (offline tests only).
 - One log line per call (`structured-completion tenant=… task=… outcome=…`) plus Micrometer
   `structured_completions_total` / `structured_completion_{input,output}_tokens_total` by `tenant`, `task`.

@@ -10,8 +10,10 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
@@ -43,11 +45,16 @@ import java.util.Map;
  * dispatch ({@link StopReason#TOOL_USE}); otherwise it ended its reply
  * ({@link StopReason#END_TURN}). MAX_TOKENS would require a deeper hook
  * into the response metadata; it's not load-bearing for the engine loop.</p>
+ *
+ * <p>Also the {@link StructuredLlmClient} for {@code yaya.agentic.llm.provider=openai}:
+ * the same bean serves both interfaces, so the reply suggester and
+ * {@code POST /v1/structured-completions} find a real provider on an OpenAI
+ * deployment instead of only the stub.</p>
  */
 @Component
 @org.springframework.context.annotation.Primary
 @ConditionalOnProperty(name = "yaya.agentic.llm.provider", havingValue = "openai")
-public class OpenAiLlmClient implements LlmClient {
+public class OpenAiLlmClient implements LlmClient, StructuredLlmClient {
 
     private static final TypeReference<Map<String, Object>> STRING_MAP = new TypeReference<>() {};
 
@@ -55,6 +62,13 @@ public class OpenAiLlmClient implements LlmClient {
 
     private final ChatModel chatModel;
     private final ObjectMapper json;
+
+    // The model the deployment runs (same key Spring AI's OpenAI autoconfig
+    // binds). Only reported back by the structured-completion path when the
+    // provider's response carries no model id. Field injection so plain `new`
+    // in unit tests needs no configuration.
+    @Value("${spring.ai.openai.chat.options.model:}")
+    private String configuredModel;
 
     public OpenAiLlmClient(ChatModel chatModel, ObjectMapper json) {
         this.chatModel = chatModel;
@@ -115,6 +129,104 @@ public class OpenAiLlmClient implements LlmClient {
             // Metering must never break a chat turn.
         }
     }
+
+    // ---- Structured completion (single shot, forced answer shape) ------
+
+    @Override
+    public String provider() { return "openai"; }
+
+    @Override
+    public StructuredResult complete(StructuredRequest request) {
+        // Streamed and collected, not chatModel.call(): streaming is the
+        // transport every chat turn already uses in production (see stream()),
+        // and Spring AI merges the tool-call deltas into one chunk for us.
+        List<org.springframework.ai.chat.model.ChatResponse> chunks;
+        try {
+            chunks = chatModel.stream(structuredPrompt(request)).collectList().block();
+        } catch (RuntimeException e) {
+            // Class name only — provider error bodies can echo request content.
+            throw new StructuredLlmException("openai call failed: " + e.getClass().getSimpleName(), e);
+        }
+        if (chunks == null || chunks.isEmpty()) throw new StructuredLlmException("openai returned no response", null);
+
+        Map<String, Object> output = null;
+        boolean truncated = false;
+        long input = 0, outputTokens = 0, cacheRead = 0;
+        String model = null;
+        for (var response : chunks) {
+            if (response == null) continue;
+            for (var generation : response.getResults()) {
+                if (generation == null) continue;
+                var meta = generation.getMetadata();
+                // Spring AI reports the enum name (LENGTH), the wire says `length`.
+                if (meta != null && "length".equalsIgnoreCase(meta.getFinishReason())) truncated = true;
+                AssistantMessage out = generation.getOutput();
+                if (out == null || out.getToolCalls() == null || output != null) continue;
+                for (var tc : out.getToolCalls()) {
+                    if (request.toolName().equals(tc.name())) {
+                        output = parseStructuredArgs(tc.arguments());
+                        break;
+                    }
+                }
+            }
+            var metadata = response.getMetadata();
+            if (metadata == null) continue;
+            if (metadata.getModel() != null && !metadata.getModel().isBlank()) model = metadata.getModel();
+            var usage = metadata.getUsage();
+            if (usage == null) continue;
+            if (usage.getNativeUsage() instanceof OpenAiApi.Usage u) {
+                // Unlike Anthropic, OpenAI's prompt_tokens already INCLUDES the
+                // cached ones; cached_tokens is a breakdown, not an addend.
+                input = nz(u.promptTokens());
+                outputTokens = nz(u.completionTokens());
+                cacheRead = u.promptTokensDetails() == null ? 0 : nz(u.promptTokensDetails().cachedTokens());
+            } else if (nz(usage.getPromptTokens()) + nz(usage.getCompletionTokens()) > 0) {
+                input = nz(usage.getPromptTokens());
+                outputTokens = nz(usage.getCompletionTokens());
+            }
+        }
+        if (model == null || model.isBlank()) model = configuredModel;
+        return new StructuredResult(output, truncated, input, outputTokens, cacheRead, 0, model);
+    }
+
+    /** Package-private for unit testing. */
+    Prompt structuredPrompt(StructuredRequest request) {
+        List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
+        if (request.system() != null && !request.system().isBlank()) {
+            messages.add(new SystemMessage(request.system()));
+        }
+        String instruction = AnthropicLlmClient.STRUCTURED_INSTRUCTION.formatted(request.toolName());
+        if (request.retryHint() != null && !request.retryHint().isBlank()) {
+            instruction += "\nYour previous answer was rejected: " + request.retryHint()
+                    + "\nAnswer again and fix it.";
+        }
+        messages.add(new SystemMessage(instruction));
+        messages.add(new UserMessage(request.input()));
+
+        OpenAiChatOptions.Builder options = OpenAiChatOptions.builder()
+                .toolCallbacks(toCallbacks(List.of(new ToolDefinition(request.toolName(),
+                        "Return the final structured result.", request.schemaJson()))))
+                .internalToolExecutionEnabled(false)
+                // max_completion_tokens, not max_tokens: the reasoning models
+                // (o-series, gpt-5) reject the legacy knob with a 400, and the
+                // gpt-4o family accepts both.
+                .maxCompletionTokens(request.maxOutputTokens())
+                .toolChoice(OpenAiApi.ChatCompletionRequest.ToolChoiceBuilder.function(request.toolName()));
+        if (request.model() != null && !request.model().isBlank()) options.model(request.model());
+        return new Prompt(messages, options.build());
+    }
+
+    /** Unlike {@link #parseArgs}: unparseable arguments are "no answer", not an empty object. */
+    private Map<String, Object> parseStructuredArgs(String argumentsJson) {
+        if (argumentsJson == null || argumentsJson.isBlank()) return null;
+        try {
+            return json.readValue(argumentsJson, STRING_MAP);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    private static long nz(Integer v) { return v == null ? 0 : v; }
 
     // ---- Prompt translation -------------------------------------------
 
