@@ -185,6 +185,50 @@ class ReplyChipsScenariosTest {
     }
 
     @Test
+    void a_tools_ask_takes_the_place_of_the_rule_chips_of_the_same_turn() {
+        // Verification 5H D1: a vision-identified ticket answered with write chips
+        // («Anular») AND an _askUser («Sí, es el N») must offer only the ask.
+        asker.answer.set(Map.of("ok", true,
+                "_uiHint", Map.of("kind", "quick_replies", "payload", Map.of("source", "rule", "options",
+                        List.of(Map.of("id", "void", "label", "Anular", "style", "danger"),
+                                Map.of("id", "open", "label", "Ver en la app")))),
+                "_askUser", Map.of("kind", "yes_no", "question", "¿Es el ticket 1234567890?",
+                        "options", List.of(Map.of("id", "yes", "label", "Sí, es el …890", "send", "Sí, es el ticket 1234567890"),
+                                Map.of("id", "no", "label", "No, es otro")))));
+        llm.tool("c1", ASKER.value(), Map.of()).say("Veo el ticket …890. ¿Es ese?");
+        Ids.SessionId sid = start(plain);
+
+        List<TurnEvent> turn = drain(sid, "mira esta foto", null);
+
+        List<TurnEvent.UiHint> chips = chips(turn);
+        assertThat(chips).hasSize(1);
+        assertThat(chips.get(0).payload().get("source")).isEqualTo("ask");
+        assertThat(QuickReplies.read(chips.get(0).payload())).extracting(QuickReplies.Option::id).containsExactly("yes", "no");
+        assertThat(turn.get(turn.size() - 2)).isSameAs(chips.get(0));
+        assertThat(turn.get(turn.size() - 1)).isInstanceOf(TurnEvent.End.class);
+    }
+
+    @Test
+    void rule_chips_without_an_ask_leave_after_the_final_text() {
+        asker.answer.set(Map.of("ok", true,
+                "_uiHint", Map.of("kind", "quick_replies", "payload", Map.of("source", "rule", "options",
+                        List.of(Map.of("id", "void", "label", "Anular"), Map.of("id", "open", "label", "Ver en la app"))))));
+        llm.tool("c1", ASKER.value(), Map.of()).say("Ticket confirmado. ¿Qué quieres hacer?");
+        stub.setStructuredResponder(r -> { throw new AssertionError("the suggester must not run over rule chips"); });
+        Ids.SessionId sid = start(suggesting);
+
+        List<TurnEvent> turn = drain(sid, "busca el ticket", null);
+
+        List<String> kinds = turn.stream().map(e -> e.getClass().getSimpleName()).toList();
+        assertThat(kinds).containsExactly("ToolCall", "ToolResult", "Token", "UiHint", "End");
+        List<TurnEvent.UiHint> chips = chips(turn);
+        assertThat(chips).hasSize(1);
+        assertThat(chips.get(0).payload().get("source")).isEqualTo("rule");
+        assertThat(QuickReplies.read(chips.get(0).payload())).extracting(QuickReplies.Option::label)
+                .containsExactly("Anular", "Ver en la app");
+    }
+
+    @Test
     void a_frame_in_the_same_turn_suppresses_the_ask() {
         asker.answer.set(Map.of("ok", true, "_askUser", Map.of("kind", "yes_no")));
         llm.round(Flux.just(new LlmClient.LlmEvent.ToolUseProposal("c1", ASKER.value(), Map.of()),

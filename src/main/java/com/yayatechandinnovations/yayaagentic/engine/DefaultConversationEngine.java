@@ -1772,10 +1772,24 @@ public class DefaultConversationEngine implements ConversationEngine {
     private static final class TurnTail {
         /** The text since the last tool event: what the model wrote last. */
         final StringBuilder text = new StringBuilder();
+        /**
+         * Rule and start chips of the turn, held back until it ends: a tool's
+         * {@code _askUser} is the turn's question and takes their place
+         * (a vision-identified ticket must be confirmed before «Anular» is
+         * offered); otherwise they leave after the assistant's final text.
+         */
+        final List<TurnEvent.UiHint> held = new ArrayList<>();
         boolean chips;
         boolean frame;
         /** Only a tool can leave an {@code _askUser} slot behind, so only then is it read. */
         boolean toolRan;
+
+        Flux<TurnEvent> flush() {
+            if (held.isEmpty()) return Flux.empty();
+            List<TurnEvent> out = new ArrayList<>(held);
+            held.clear();
+            return Flux.fromIterable(out);
+        }
     }
 
     /**
@@ -1794,10 +1808,16 @@ public class DefaultConversationEngine implements ConversationEngine {
                 TurnEvent.UiHint canonical = QuickReplies.normalise(hint, QuickReplies.SOURCE_RULE);
                 if (QuickReplies.read(canonical.payload()).isEmpty()) yield Flux.<TurnEvent>empty();
                 tail.chips = true;
-                yield Flux.<TurnEvent>just(canonical);
+                tail.held.add(canonical);
+                yield Flux.<TurnEvent>empty();
             }
             case TurnEvent.UiHint hint -> {
-                if (FRAME_HINTS.contains(hint.kind())) tail.frame = true;
+                if (FRAME_HINTS.contains(hint.kind())) {
+                    // The frame's buttons are the turn's only question; chips
+                    // already produced keep their place before it.
+                    tail.frame = true;
+                    yield Flux.concat(tail.flush(), Flux.<TurnEvent>just(hint));
+                }
                 yield Flux.<TurnEvent>just(hint);
             }
             case TurnEvent.Token token -> {
@@ -1821,10 +1841,11 @@ public class DefaultConversationEngine implements ConversationEngine {
     private Flux<TurnEvent> closingChips(TurnEvent.End end, TurnTail tail, Session session, Profile profile,
                                          UserMessage message, TurnMeter meter) {
         // Every turn ends here, so working memory is read only when something
-        // could come of it: a frame or chips already out settle the turn; the
-        // ask slot exists only after a tool ran; the pending-frame check only
+        // could come of it: a frame settles the turn; the ask slot exists only
+        // after a tool ran, and its chips take the place of the held rule or
+        // start chips (verification 5H D1); the pending-frame check only
         // matters when the suggester would otherwise add chips.
-        if (tail.frame || tail.chips) return Flux.<TurnEvent>just(end);
+        if (tail.frame) return Flux.<TurnEvent>just(end);
         Ids.SessionId sessionId = session.id();
         Map<String, Object> wm = null;
         if (tail.toolRan) {
@@ -1832,13 +1853,15 @@ public class DefaultConversationEngine implements ConversationEngine {
             Map<String, Object> ask = pendingMapOf(wm, ASK_USER_SLOT);
             if (ask != null) {
                 workingMemory.remove(sessionId, ASK_USER_SLOT);
-                if (framePending(wm)) return Flux.<TurnEvent>just(end);
+                if (framePending(wm)) return Flux.concat(tail.flush(), Flux.<TurnEvent>just(end));
                 List<QuickReplies.Option> options = AskUser.options(ask, profile.language());
                 if (!options.isEmpty()) {
+                    tail.held.clear();
                     return Flux.<TurnEvent>just(QuickReplies.hint(QuickReplies.SOURCE_ASK, options), end);
                 }
             }
         }
+        if (tail.chips) return Flux.concat(tail.flush(), Flux.<TurnEvent>just(end));
         String spoken = tail.text.toString();
         if (replySuggester == null || !replySuggester.enabled()
                 || !replySuggestionsAllowed(profile)

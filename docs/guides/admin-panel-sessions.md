@@ -229,9 +229,12 @@ A tool result may carry a reserved `_askUser` key — `{kind: "choice|yes_no",
 question, options:[{id,label,send}]}` — handled like `_uiHint`: removed before
 the model sees the result, then emitted as `quick_replies {source:"ask"}` after
 the assistant's final text of that turn. `yes_no` without options is the
-localised «Sí» / «No» pair. The last tool of the turn to ask wins; a pending
-confirm, plan or secret prompt in the same turn suppresses it (the frame's
-buttons are the only question).
+localised «Sí» / «No» pair. The last tool of the turn to ask wins, and the ask
+takes the place of any `rule` or `start` chips of the same turn (a ticket the
+model identified from a photo is confirmed before «Anular» is offered); rule
+and start chips also leave after the final text. A pending confirm, plan or
+secret prompt in the same turn suppresses the ask (the frame's buttons are the
+only question).
 
 ## 5. Confirm or cancel
 
