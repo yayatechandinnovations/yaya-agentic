@@ -266,22 +266,23 @@ public class SessionController {
             UserMessage message = new UserMessage(body.text() == null ? "" : body.text(), attachments);
             // Attachments (contract C): resolved, composed as the chat does, marked
             // referenced with the turn's id when the turn ends.
-            List<String> attachmentIds = List.of();
+            SessionAttachments.Composed composed = null;
             if (body.attachmentIds() != null && !body.attachmentIds().isEmpty()) {
                 if (sessionAttachments == null || !caller.owned()) {
                     throw new ChatApiException(HttpStatus.BAD_REQUEST, "attachments_unavailable",
                             "attachments need a session a signed-in user owns", 0);
                 }
-                SessionAttachments.Composed composed = sessionAttachments.compose(caller.auth().tenant(), id,
+                composed = sessionAttachments.compose(caller.auth().tenant(), id,
                         caller.row().getProfileId(), body.text(), attachments, body.attachmentIds());
                 message = composed.message();
-                attachmentIds = composed.ids();
             }
 
             rehydrate(sessionId, caller);
             Flux<TurnEvent> turn = engine.send(sessionId, message, caller.auth().onChannel(TurnChannel.APP))
                     .onErrorMap(SessionController::isUnknownSession, e -> ChatApiException.sessionNotFound());
-            if (!attachmentIds.isEmpty()) turn = sessionAttachments.markOnEnd(turn, attachmentIds);
+            if (composed != null) {
+                turn = sessionAttachments.markOnEnd(turn, composed, caller.auth().tenant(), caller.row().getProfileId());
+            }
             return toSse(turn, caller);
         }).subscribeOn(Schedulers.boundedElastic());
     }

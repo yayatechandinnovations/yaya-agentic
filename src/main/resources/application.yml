@@ -207,6 +207,9 @@ yaya:
       # their own buffer: the global codec size stays 4 MB.
       media:
         max-in-memory-bytes: ${YAYA_CHANNELS_MEDIA_MAX_IN_MEMORY_BYTES:16777216}
+        # Hosts media may be fetched from, besides Twilio's own (*.twilio.com,
+        # *.twiliocdn.com, HTTPS only). Comma-separated suffixes; empty in prod.
+        allowed-hosts: ${YAYA_CHANNELS_MEDIA_ALLOWED_HOSTS:}
       whatsapp:
         transcription:
           # A voice note longer than this gets a fixed reply, not a transcription.

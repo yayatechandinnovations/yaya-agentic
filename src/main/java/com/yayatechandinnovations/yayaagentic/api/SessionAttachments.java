@@ -47,8 +47,12 @@ public class SessionAttachments {
         return service;
     }
 
-    /** The engine-facing message plus the ids it carries (to be marked referenced when the turn ends). */
-    public record Composed(UserMessage message, List<String> ids) {}
+    /**
+     * The engine-facing message, the ids it carries (marked referenced when
+     * the turn ends) and how many pictures the model will see (metered when
+     * the turn ends — a turn refused before the model ran shows no image).
+     */
+    public record Composed(UserMessage message, List<String> ids, int images) {}
 
     /**
      * Resolves {@code ids} (this session's, unreferenced, ≤ 4), composes the
@@ -69,15 +73,8 @@ public class SessionAttachments {
         Map<String, Object> merged = new LinkedHashMap<>(composed.attachments());
         if (extra != null) merged.putAll(extra);
         int images = composed.attachments().get(ChatMessageComposer.IMAGES_KEY) instanceof List<?> l ? l.size() : 0;
-        if (images > 0) {
-            try {
-                usage.recordImagesIn(tenant.value(), profileId, images);
-            } catch (RuntimeException e) {
-                LOG.debug("images_in not recorded: {}", e.toString());
-            }
-        }
         return new Composed(new UserMessage(composed.text(), merged),
-                atts.stream().map(ChatAttachmentService.ChatAttachment::id).toList());
+                atts.stream().map(ChatAttachmentService.ChatAttachment::id).toList(), images);
     }
 
     /**
@@ -86,14 +83,30 @@ public class SessionAttachments {
      * assistant's first recorded step carries). An errored send leaves them
      * unreferenced for the orphan sweep.
      */
-    public Flux<TurnEvent> markOnEnd(Flux<TurnEvent> events, List<String> ids) {
-        if (ids == null || ids.isEmpty()) return events;
+    /**
+     * On {@code End}: the attachments are marked referenced and the pictures
+     * the model saw are metered as {@code images_in}. A turn that errors or is
+     * refused (quota, 409) ends without the event and counts nothing.
+     */
+    public Flux<TurnEvent> markOnEnd(Flux<TurnEvent> events, Composed composed, Ids.TenantId tenant,
+                                     String profileId) {
+        List<String> ids = composed == null || composed.ids() == null ? List.of() : composed.ids();
+        int images = composed == null ? 0 : composed.images();
+        if (ids.isEmpty() && images <= 0) return events;
         return events.doOnNext(evt -> {
-            if (evt instanceof TurnEvent.End end) {
+            if (!(evt instanceof TurnEvent.End end)) return;
+            if (!ids.isEmpty()) {
                 try {
                     service.markReferenced(ids, end.turnId().value());
                 } catch (RuntimeException e) {
                     LOG.warn("could not mark attachments {} referenced: {}", ids, e.toString());
+                }
+            }
+            if (images > 0 && tenant != null) {
+                try {
+                    usage.recordImagesIn(tenant.value(), profileId, images);
+                } catch (RuntimeException e) {
+                    LOG.debug("images_in not recorded: {}", e.toString());
                 }
             }
         });

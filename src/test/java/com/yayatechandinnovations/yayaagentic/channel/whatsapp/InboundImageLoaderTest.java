@@ -41,13 +41,28 @@ class InboundImageLoaderTest {
     }
 
     @Test
+    void a_photo_declaring_more_than_the_decode_ceiling_is_dropped_before_any_decode() {
+        byte[] bomb = com.yayatechandinnovations.yayaagentic.testsupport.TestMedia.pngDeclaring(30_000, 30_000);
+        cdn.stubFor(get(urlEqualTo("/m/bomb"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "image/png").withBody(bomb)));
+        InboundImageLoader loader = new InboundImageLoader(
+                com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient.direct("localhost"), 4, 5L * 1024 * 1024);
+
+        List<InboundImageLoader.LoadedImage> images = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(5),
+                () -> loader.load(List.of(new Media(url("/m/bomb"), "image/png", bomb.length)), null));
+
+        assertThat(images).isEmpty();
+    }
+
+    @Test
     void loads_images_with_basic_auth_and_skips_non_images() {
         byte[] jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 1, 2, 3};
         cdn.stubFor(get(urlEqualTo("/m/1"))
                 .withHeader("Authorization", equalTo("Basic dXNlcjpwYXNz"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "image/jpeg").withBody(jpeg)));
 
-        InboundImageLoader loader = new InboundImageLoader(com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient.direct(), 4, 5L * 1024 * 1024);
+        InboundImageLoader loader = new InboundImageLoader(com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient.direct("localhost"), 4, 5L * 1024 * 1024);
         List<InboundImageLoader.LoadedImage> images = loader.load(List.of(
                 new Media(url("/m/1"), "image/jpeg", 0),
                 new Media(url("/m/audio"), "audio/ogg; codecs=opus", 0)), "Basic dXNlcjpwYXNz");
@@ -81,7 +96,7 @@ class InboundImageLoaderTest {
         cdn.stubFor(get(urlEqualTo("/m/big")).willReturn(aResponse().withStatus(200).withBody(big)));
         cdn.stubFor(get(urlEqualTo("/m/404")).willReturn(aResponse().withStatus(404)));
 
-        InboundImageLoader loader = new InboundImageLoader(com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient.direct(), 2, 32);
+        InboundImageLoader loader = new InboundImageLoader(com.yayatechandinnovations.yayaagentic.channel.InboundMediaClient.direct("localhost"), 2, 32);
         List<InboundImageLoader.LoadedImage> images = loader.load(List.of(
                 new Media(url("/m/404"), "image/png", 0),
                 new Media(url("/m/big"), "image/png", 0),

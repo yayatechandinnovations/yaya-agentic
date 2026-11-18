@@ -39,10 +39,16 @@ final class InboundMediaGate {
 
     /**
      * @param transcriberPresent whether a transcriber bean exists
-     * @param voiceAllowed       whether the tenant still has voice seconds this month
+     * @param voiceAllowed       whether the tenant still has voice seconds this month —
+     *                           asked only when a voice note is present (it costs SQL)
      */
     static Plan classify(List<InboundDispatchWorker.MediaDescriptor> media, Map<String, Object> raw,
                          boolean transcriberPresent, boolean voiceAllowed) {
+        return classify(media, raw, transcriberPresent, () -> voiceAllowed);
+    }
+
+    static Plan classify(List<InboundDispatchWorker.MediaDescriptor> media, Map<String, Object> raw,
+                         boolean transcriberPresent, java.util.function.BooleanSupplier voiceAllowed) {
         List<InboundDispatchWorker.MediaDescriptor> images = new ArrayList<>();
         List<InboundDispatchWorker.MediaDescriptor> audio = new ArrayList<>();
         List<InboundDispatchWorker.MediaDescriptor> documents = new ArrayList<>();
@@ -58,7 +64,7 @@ final class InboundMediaGate {
                 images.add(m);
             } else if (ct.startsWith("audio/")) {
                 if (!transcriberPresent) replies.add(VOICE_UNAVAILABLE_REPLY);
-                else if (!voiceAllowed) replies.add(VOICE_QUOTA_REPLY);
+                else if (!voiceAllowed.getAsBoolean()) replies.add(VOICE_QUOTA_REPLY);
                 else audio.add(m);
             } else if (ct.equals("application/pdf")) {
                 documents.add(m);

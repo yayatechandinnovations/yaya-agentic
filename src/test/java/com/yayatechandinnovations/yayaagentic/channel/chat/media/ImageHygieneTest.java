@@ -6,8 +6,11 @@ import org.junit.jupiter.api.Test;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /** Server-side image hygiene (design §3.6): EXIF gone, orientation kept, long side capped, WebP untouched. */
 class ImageHygieneTest {
@@ -32,6 +35,35 @@ class ImageHygieneTest {
         int bottom = img.getRGB(10, 35);
         assertThat((top >> 16) & 0xFF).isGreaterThan(150);      // red channel on top
         assertThat((bottom >> 8) & 0xFF).isGreaterThan(150);    // green channel at the bottom
+    }
+
+    @Test
+    void aPictureDeclaringMoreThanTheCeilingIsRefusedFromItsHeader() {
+        byte[] bomb = TestMedia.pngDeclaring(30_000, 30_000);
+        assertThat(bomb.length).isLessThan(100);
+        // Decoding 900 MP would take gigabytes; the header alone decides, in no time.
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () ->
+                assertThatThrownBy(() -> ImageHygiene.normalize(bomb, "image/png"))
+                        .isInstanceOf(ImageHygiene.ImageTooLargeException.class)
+                        .hasMessageContaining("30000x30000"));
+        assertThat(ImageHygiene.declaredSize(bomb)).contains(new ImageHygiene.Dimensions(30_000, 30_000));
+        assertThat(ImageHygiene.declaredSize(TestMedia.heic())).isEmpty();              // no reader: passes untouched
+        assertThat(new ImageHygiene.Dimensions(12_001, 10).withinLimits()).isFalse();   // a side over 12,000
+        assertThat(new ImageHygiene.Dimensions(8_000, 6_000).withinLimits()).isFalse(); // 48 MP
+        assertThat(new ImageHygiene.Dimensions(8_000, 5_000).withinLimits()).isTrue();  // 40 MP exactly
+        // The ceiling applies whatever the declared type says.
+        assertThatThrownBy(() -> ImageHygiene.normalize(bomb, "image/webp"))
+                .isInstanceOf(ImageHygiene.ImageTooLargeException.class);
+    }
+
+    @Test
+    void theDecodedPictureRidesWithTheReencodedBytes() {
+        ImageHygiene.Normalized out = ImageHygiene.normalize(TestMedia.png(64, 48), "image/png");
+        assertThat(out.reencoded()).isTrue();
+        assertThat(out.image()).isNotNull();
+        assertThat(out.image().getWidth()).isEqualTo(64);
+        assertThat(out.image().getHeight()).isEqualTo(48);
+        assertThat(ImageHygiene.normalize(TestMedia.heic(), "image/heic").image()).isNull();
     }
 
     @Test

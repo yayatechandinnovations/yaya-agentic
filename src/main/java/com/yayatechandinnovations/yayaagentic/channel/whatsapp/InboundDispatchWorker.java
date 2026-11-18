@@ -365,7 +365,7 @@ public class InboundDispatchWorker {
         //    reply, never a silent drop and never a model call for it.
         List<MediaDescriptor> media = extractMedia(raw);
         InboundMediaGate.Plan plan = InboundMediaGate.classify(media, raw, transcriber.isPresent(),
-                usageMeter == null || usageMeter.hasVoiceAllowance(row.getTenantId()));
+                () -> usageMeter == null || usageMeter.hasVoiceAllowance(row.getTenantId()));
         List<String> fixedReplies = new ArrayList<>(plan.fixedReplies());
         // 2a. transcribe audio + mutate body if needed
         TranscriptionOutcome transcription = transcribeIfPresent(row, sender, plan.audio());

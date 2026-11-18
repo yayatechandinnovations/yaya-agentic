@@ -18,6 +18,14 @@ public final class AudioDurations {
 
     private AudioDurations() {}
 
+    /**
+     * Every chunk/box/element walk must move forward on each step and gives up
+     * after this many steps: a crafted size (an unsigned 32-bit value that
+     * casts negative, an EBML size with low bits that cancel the header) used
+     * to leave the position unchanged and spin forever.
+     */
+    static final int MAX_STEPS = 10_000;
+
     /** Whole seconds, rounded up, or empty when the container says nothing usable. */
     public static OptionalInt parse(byte[] bytes, String contentType) {
         if (bytes == null || bytes.length < 16) return OptionalInt.empty();
@@ -69,14 +77,18 @@ public final class AudioDurations {
         // Vorbis carries its rate in the identification header.
         double rate = 48_000;
         long preSkip = 0;
-        int first = 0;
-        int segments = b[first + 26] & 0xFF;
-        int headerEnd = first + 27 + segments;
+        // A page header is 27 bytes plus the segment table; a truncated first
+        // page says nothing usable.
+        if (b.length < 27) return -1;
+        int segments = b[26] & 0xFF;
+        int headerEnd = 27 + segments;
+        if (headerEnd > b.length) return -1;
         if (headerEnd + 19 <= b.length && startsWith(b, headerEnd, "OpusHead")) {
             preSkip = le16(b, headerEnd + 10);
         } else if (headerEnd + 16 <= b.length && startsWith(b, headerEnd + 1, "vorbis")) {
             rate = le32(b, headerEnd + 12);
         }
+        if (rate <= 0) return -1;
         // Last page: its granule position is the total samples.
         int last = lastIndexOf(b, "OggS");
         if (last < 0 || last + 14 > b.length) return -1;
@@ -94,57 +106,71 @@ public final class AudioDurations {
     private static final long ID_DURATION = 0x4489L;
 
     private static double webm(byte[] b) {
-        int pos = 0;
-        while (pos < b.length) {
+        long pos = 0;
+        for (int step = 0; step < MAX_STEPS && pos < b.length; step++) {
             long[] id = vint(b, pos, true);
             if (id == null) return -1;
-            long[] size = vint(b, (int) id[1], false);
+            long[] size = vint(b, id[1], false);
             if (size == null) return -1;
-            int dataStart = (int) size[1];
+            long dataStart = size[1];
             long dataLen = size[0] < 0 ? b.length - dataStart : size[0];
+            if (dataLen < 0) return -1;
+            long next = Math.min(b.length, dataStart + dataLen);
             if (id[0] == ID_SEGMENT) {
-                return webmInfo(b, dataStart, (int) Math.min(b.length, dataStart + dataLen));
+                return webmInfo(b, dataStart, next);
             }
-            pos = (int) Math.min(b.length, dataStart + dataLen);
+            if (next <= pos) return -1;
+            pos = next;
         }
         return -1;
     }
 
-    private static double webmInfo(byte[] b, int from, int to) {
-        int pos = from;
-        while (pos < to) {
+    private static double webmInfo(byte[] b, long from, long to) {
+        long pos = from;
+        for (int step = 0; step < MAX_STEPS && pos < to; step++) {
             long[] id = vint(b, pos, true);
             if (id == null) return -1;
-            long[] size = vint(b, (int) id[1], false);
+            long[] size = vint(b, id[1], false);
             if (size == null) return -1;
-            int dataStart = (int) size[1];
+            long dataStart = size[1];
             long dataLen = size[0] < 0 ? to - dataStart : size[0];
+            if (dataLen < 0) return -1;
+            long next = Math.min(to, dataStart + dataLen);
             if (id[0] == ID_INFO) {
-                double scale = 1_000_000;
-                double duration = -1;
-                int p = dataStart;
-                int end = (int) Math.min(to, dataStart + dataLen);
-                while (p < end) {
-                    long[] cid = vint(b, p, true);
-                    if (cid == null) break;
-                    long[] csize = vint(b, (int) cid[1], false);
-                    if (csize == null || csize[0] < 0) break;
-                    int cs = (int) csize[1];
-                    int cl = (int) csize[0];
-                    if (cid[0] == ID_TIMECODE_SCALE) scale = uint(b, cs, cl);
-                    if (cid[0] == ID_DURATION) duration = cl == 4 ? beFloat(b, cs) : cl == 8 ? beDouble(b, cs) : -1;
-                    p = cs + cl;
-                }
-                return duration <= 0 ? -1 : duration * scale / 1_000_000_000d;
+                return webmInfoChildren(b, dataStart, next);
             }
-            pos = (int) Math.min(to, dataStart + dataLen);
+            if (next <= pos) return -1;
+            pos = next;
         }
         return -1;
+    }
+
+    private static double webmInfoChildren(byte[] b, long from, long end) {
+        double scale = 1_000_000;
+        double duration = -1;
+        long p = from;
+        for (int step = 0; step < MAX_STEPS && p < end; step++) {
+            long[] cid = vint(b, p, true);
+            if (cid == null) break;
+            long[] csize = vint(b, cid[1], false);
+            if (csize == null || csize[0] < 0) break;
+            long cs = csize[1];
+            long cl = csize[0];
+            long next = cs + cl;
+            if (next <= p || next > end) break;
+            if (cid[0] == ID_TIMECODE_SCALE && cl <= 8) scale = uint(b, (int) cs, (int) cl);
+            if (cid[0] == ID_DURATION) {
+                duration = cl == 4 ? beFloat(b, (int) cs) : cl == 8 ? beDouble(b, (int) cs) : -1;
+            }
+            p = next;
+        }
+        return duration <= 0 ? -1 : duration * scale / 1_000_000_000d;
     }
 
     /** EBML variable-size integer: {value, nextOffset}; -1 value = unknown size. */
-    private static long[] vint(byte[] b, int pos, boolean keepMarker) {
-        if (pos >= b.length) return null;
+    private static long[] vint(byte[] b, long at, boolean keepMarker) {
+        if (at < 0 || at >= b.length) return null;
+        int pos = (int) at;
         int first = b[pos] & 0xFF;
         if (first == 0) return null;
         int len = Integer.numberOfLeadingZeros(first) - 23;
@@ -166,35 +192,40 @@ public final class AudioDurations {
     }
 
     private static double mp4Boxes(byte[] b, int from, int to) {
-        int pos = from;
-        while (pos + 8 <= to) {
-            long size = be32(b, pos);
-            String type = new String(b, pos + 4, 4, StandardCharsets.ISO_8859_1);
+        long pos = from;
+        for (int step = 0; step < MAX_STEPS && pos + 8 <= to; step++) {
+            int at = (int) pos;
+            long size = be32(b, at);
+            String type = new String(b, at + 4, 4, StandardCharsets.ISO_8859_1);
             int header = 8;
             if (size == 1) {
                 if (pos + 16 > to) return -1;
-                size = be64(b, pos + 8);
+                size = be64(b, at + 8);
                 header = 16;
             } else if (size == 0) {
+                // A zero size means "to the end of the file" — this is the last box.
                 size = to - pos;
             }
             if (size < header) return -1;
-            int end = (int) Math.min(to, pos + size);
+            long next = Math.min(to, pos + size);
+            if (next <= pos) return -1;
+            int end = (int) next;
             if (type.equals("moov")) {
-                return mp4Boxes(b, pos + header, end);
+                return mp4Boxes(b, at + header, end);
             }
             if (type.equals("mvhd")) {
-                int version = b[pos + header] & 0xFF;
+                if (at + header + 32 > to) return -1;
+                int version = b[at + header] & 0xFF;
                 if (version == 1) {
-                    double timescale = be32(b, pos + header + 20);
-                    double duration = be64(b, pos + header + 24);
+                    double timescale = be32(b, at + header + 20);
+                    double duration = be64(b, at + header + 24);
                     return timescale <= 0 ? -1 : duration / timescale;
                 }
-                double timescale = be32(b, pos + header + 12);
-                double duration = be32(b, pos + header + 16);
+                double timescale = be32(b, at + header + 12);
+                double duration = be32(b, at + header + 16);
                 return timescale <= 0 ? -1 : duration / timescale;
             }
-            pos = end;
+            pos = next;
         }
         return -1;
     }
@@ -202,18 +233,21 @@ public final class AudioDurations {
     /* ------------------------------- WAV ---------------------------------- */
 
     private static double wav(byte[] b) {
-        int pos = 12;
+        long pos = 12;
         long byteRate = 0;
         long dataSize = -1;
-        while (pos + 8 <= b.length) {
-            String id = new String(b, pos, 4, StandardCharsets.ISO_8859_1);
-            long size = le32(b, pos + 4);
-            if (id.equals("fmt ") && pos + 20 <= b.length) byteRate = le32(b, pos + 16);
+        for (int step = 0; step < MAX_STEPS && pos + 8 <= b.length; step++) {
+            int at = (int) pos;
+            String id = new String(b, at, 4, StandardCharsets.ISO_8859_1);
+            long size = le32(b, at + 4);
+            if (id.equals("fmt ") && pos + 20 <= b.length) byteRate = le32(b, at + 16);
             if (id.equals("data")) {
                 dataSize = Math.min(size, b.length - pos - 8);
                 break;
             }
-            pos += 8 + (int) size + (size % 2);
+            long next = pos + 8 + size + (size % 2);
+            if (next <= pos) return -1;
+            pos = next;
         }
         return byteRate <= 0 || dataSize <= 0 ? -1 : (double) dataSize / byteRate;
     }
@@ -238,8 +272,10 @@ public final class AudioDurations {
         int pos = 0;
         if (startsWith(b, 0, "ID3") && b.length > 10) {
             int size = ((b[6] & 0x7F) << 21) | ((b[7] & 0x7F) << 14) | ((b[8] & 0x7F) << 7) | (b[9] & 0x7F);
+            if (10L + size >= b.length) return -1;
             pos = 10 + size;
         }
+        // One byte per step, bounded by the upload cap: the sync scan cannot spin.
         while (pos + 4 <= b.length && !isMp3Sync(b, pos)) pos++;
         if (pos + 4 > b.length) return -1;
         int h1 = b[pos + 1] & 0xFF;

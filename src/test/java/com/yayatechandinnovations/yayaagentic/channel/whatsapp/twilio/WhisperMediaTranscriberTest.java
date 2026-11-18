@@ -44,7 +44,7 @@ class WhisperMediaTranscriberTest {
     }
 
     private WhisperMediaTranscriber transcriber(String model) {
-        return new WhisperMediaTranscriber(InboundMediaClient.direct(), new ObjectMapper(), "sk-test",
+        return new WhisperMediaTranscriber(InboundMediaClient.direct("localhost"), new ObjectMapper(), "sk-test",
                 "http://localhost:" + server.port(), model, WhisperMediaTranscriber.DEFAULT_PROMPT, "es");
     }
 

@@ -9,6 +9,7 @@ import com.yayatechandinnovations.yayaagentic.engine.bootstrap.HelloWorldProfile
 import com.yayatechandinnovations.yayaagentic.engine.bootstrap.M0Catalog;
 import com.yayatechandinnovations.yayaagentic.llm.LlmClient;
 import com.yayatechandinnovations.yayaagentic.llm.StubLlmClient;
+import com.yayatechandinnovations.yayaagentic.memory.WorkingMemory;
 import com.yayatechandinnovations.yayaagentic.profile.Capability;
 import com.yayatechandinnovations.yayaagentic.profile.Profile;
 import com.yayatechandinnovations.yayaagentic.profile.ProfileRegistry;
@@ -30,17 +31,22 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * Assistant-channels design §2 at the engine seam: every producer's
@@ -68,6 +74,7 @@ class ReplyChipsScenariosTest {
     @Autowired ScriptedLlmClient llm;
     @Autowired StubLlmClient stub;
     @Autowired AskerTool asker;
+    @MockitoSpyBean WorkingMemory workingMemory;
 
     private final String run = UUID.randomUUID().toString().substring(0, 8);
     private final Ids.CapabilityId capability = new Ids.CapabilityId("chips-cap-" + run);
@@ -105,6 +112,37 @@ class ReplyChipsScenariosTest {
     @AfterEach
     void clear() {
         stub.setStructuredResponder(null);
+        org.mockito.Mockito.reset(workingMemory);
+    }
+
+    /* --------------------------- the turn's end is cheap ---------------------- */
+
+    @Test
+    void a_plain_text_turn_reads_no_working_memory_when_it_closes() {
+        List<StackTraceElement[]> reads = new CopyOnWriteArrayList<>();
+        doAnswer(inv -> {
+            reads.add(new Throwable().getStackTrace());
+            return inv.callRealMethod();
+        }).when(workingMemory).get(any());
+        Ids.SessionId sid = start(plain);
+
+        llm.say("Hola, ¿en qué te ayudo?");
+        reads.clear();
+        List<TurnEvent> turn = drain(sid, "hola", null);
+        assertThat(turn.get(turn.size() - 1)).isInstanceOf(TurnEvent.End.class);
+        assertThat(reads).noneMatch(ReplyChipsScenariosTest::fromClosingChips);
+
+        // Positive control: after a tool ran, the ask slot is read there.
+        asker.answer.set(Map.of("ok", true, "_askUser", Map.of("kind", "yes_no", "question", "¿Lo mando?")));
+        llm.tool("c1", ASKER.value(), Map.of()).say("¿Te lo mando?");
+        reads.clear();
+        turn = drain(sid, "mándamelo", null);
+        assertThat(chips(turn)).hasSize(1);
+        assertThat(reads).anyMatch(ReplyChipsScenariosTest::fromClosingChips);
+    }
+
+    private static boolean fromClosingChips(StackTraceElement[] stack) {
+        return Arrays.stream(stack).anyMatch(f -> f.getMethodName().equals("closingChips"));
     }
 
     /* ------------------------------- _askUser -------------------------------- */

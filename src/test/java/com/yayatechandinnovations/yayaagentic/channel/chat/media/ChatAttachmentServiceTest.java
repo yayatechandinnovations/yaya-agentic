@@ -25,6 +25,8 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -73,6 +75,19 @@ class ChatAttachmentServiceTest {
     }
 
     /* ---------------- contract C: subjects, HEIC, codes, voice, retention ---------------- */
+
+    @Test
+    void aPictureDeclaringMoreThanTheDecodeCeilingIs415WithTheHintAndIsNeverDecoded() {
+        byte[] bomb = TestMedia.pngDeclaring(30_000, 30_000);
+        assertThatThrownBy(() -> service().upload(tenant, "s1", subject(), "huge.png", bomb))
+                .isInstanceOf(ChatAttachmentService.RejectedException.class)
+                .satisfies(e -> {
+                    ChatAttachmentService.RejectedException r = (ChatAttachmentService.RejectedException) e;
+                    assertThat(r.code()).isEqualTo("unsupported_type");
+                    assertThat(r.hint()).isEqualTo(ImageHygiene.TOO_BIG_HINT);
+                });
+        verify(blobStore, never()).store(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyLong());
+    }
 
     @Test
     void heicIsRefusedWithTheJpgOrPngHint() {

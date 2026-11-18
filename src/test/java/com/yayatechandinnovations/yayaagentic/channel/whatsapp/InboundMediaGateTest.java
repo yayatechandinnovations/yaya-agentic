@@ -35,6 +35,17 @@ class InboundMediaGateTest {
     }
 
     @Test
+    void theVoiceAllowanceIsAskedOnlyWhenAVoiceNoteIsPresent() {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        InboundMediaGate.classify(List.of(), Map.of(), true, () -> { asked.incrementAndGet(); return true; });
+        InboundMediaGate.classify(List.of(m("image/jpeg"), m("application/pdf")), Map.of(), true,
+                () -> { asked.incrementAndGet(); return true; });
+        assertThat(asked).hasValue(0);
+        InboundMediaGate.classify(List.of(m("audio/ogg")), Map.of(), true, () -> { asked.incrementAndGet(); return true; });
+        assertThat(asked).hasValue(1);
+    }
+
+    @Test
     void aSharedLocationIsUnsupportedToo() {
         InboundMediaGate.Plan plan = InboundMediaGate.classify(List.of(),
                 Map.of("Latitude", "18.47", "Longitude", "-69.9"), true, true);

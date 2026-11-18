@@ -1774,6 +1774,8 @@ public class DefaultConversationEngine implements ConversationEngine {
         final StringBuilder text = new StringBuilder();
         boolean chips;
         boolean frame;
+        /** Only a tool can leave an {@code _askUser} slot behind, so only then is it read. */
+        boolean toolRan;
     }
 
     /**
@@ -1804,6 +1806,7 @@ public class DefaultConversationEngine implements ConversationEngine {
             }
             case TurnEvent.ToolCall call -> {
                 tail.text.setLength(0);
+                tail.toolRan = true;
                 yield Flux.<TurnEvent>just(call);
             }
             case TurnEvent.ToolResult result -> {
@@ -1817,27 +1820,33 @@ public class DefaultConversationEngine implements ConversationEngine {
 
     private Flux<TurnEvent> closingChips(TurnEvent.End end, TurnTail tail, Session session, Profile profile,
                                          UserMessage message, TurnMeter meter) {
+        // Every turn ends here, so working memory is read only when something
+        // could come of it: a frame or chips already out settle the turn; the
+        // ask slot exists only after a tool ran; the pending-frame check only
+        // matters when the suggester would otherwise add chips.
+        if (tail.frame || tail.chips) return Flux.<TurnEvent>just(end);
         Ids.SessionId sessionId = session.id();
-        Map<String, Object> wm = workingMemory.get(sessionId);
-        Map<String, Object> ask = pendingMapOf(wm, ASK_USER_SLOT);
-        if (ask != null) workingMemory.remove(sessionId, ASK_USER_SLOT);
-        boolean framePending = tail.frame
-                || pendingMapOf(wm, "pending_confirm") != null
-                || pendingMapOf(wm, PLAN_SLOT) != null
-                || pendingMapOf(wm, SecretPrompts.SLOT) != null;
-        if (framePending) return Flux.<TurnEvent>just(end);
-        if (ask != null) {
-            List<QuickReplies.Option> options = AskUser.options(ask, profile.language());
-            if (!options.isEmpty()) {
-                return Flux.<TurnEvent>just(QuickReplies.hint(QuickReplies.SOURCE_ASK, options), end);
+        Map<String, Object> wm = null;
+        if (tail.toolRan) {
+            wm = workingMemory.get(sessionId);
+            Map<String, Object> ask = pendingMapOf(wm, ASK_USER_SLOT);
+            if (ask != null) {
+                workingMemory.remove(sessionId, ASK_USER_SLOT);
+                if (framePending(wm)) return Flux.<TurnEvent>just(end);
+                List<QuickReplies.Option> options = AskUser.options(ask, profile.language());
+                if (!options.isEmpty()) {
+                    return Flux.<TurnEvent>just(QuickReplies.hint(QuickReplies.SOURCE_ASK, options), end);
+                }
             }
         }
         String spoken = tail.text.toString();
-        if (tail.chips || replySuggester == null || !replySuggester.enabled()
+        if (replySuggester == null || !replySuggester.enabled()
                 || !replySuggestionsAllowed(profile)
                 || !com.yayatechandinnovations.yayaagentic.engine.suggest.ReplySuggester.endsWithQuestion(spoken)) {
             return Flux.<TurnEvent>just(end);
         }
+        if (wm == null) wm = workingMemory.get(sessionId);
+        if (framePending(wm)) return Flux.<TurnEvent>just(end);
         return replySuggester.suggest(message == null ? "" : message.text(), spoken, profile.language())
                 .flatMapMany(suggestion -> {
                     // Its tokens ride the turn; it is not a message of the allowance.
@@ -1846,6 +1855,13 @@ public class DefaultConversationEngine implements ConversationEngine {
                             endOf(end.turnId()));
                 })
                 .switchIfEmpty(Flux.<TurnEvent>just(end));
+    }
+
+    /** A confirmation, plan or code prompt is waiting: its buttons are the only chips. */
+    private static boolean framePending(Map<String, Object> wm) {
+        return pendingMapOf(wm, "pending_confirm") != null
+                || pendingMapOf(wm, PLAN_SLOT) != null
+                || pendingMapOf(wm, SecretPrompts.SLOT) != null;
     }
 
     /** {@code metadata.policy.replySuggestions} on the profile; false unless set. */

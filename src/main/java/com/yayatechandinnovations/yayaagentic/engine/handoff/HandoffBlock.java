@@ -55,7 +55,10 @@ public record HandoffBlock(String content, List<Turn> carried, int throughTurnId
 
         String header = "<channel_handoff from=\"" + channel + "\" horas=\"UTC\">\n";
         String footer = "</channel_handoff>\n" + instruction(channel);
-        String summary = summaryText == null || summaryText.isBlank() ? "" : SUMMARY_PREFIX + summaryText.strip();
+        // The summary is model output stored earlier: it gets the same angle-bracket
+        // neutralisation as the lines, so it cannot close the block it rides in.
+        String summary = summaryText == null || summaryText.isBlank() ? ""
+                : SUMMARY_PREFIX + neutralise(summaryText.strip());
         int fixed = header.length() + footer.length() + (summary.isEmpty() ? 0 : 5);
 
         List<String> lines = new ArrayList<>();
@@ -108,7 +111,11 @@ public record HandoffBlock(String content, List<Turn> carried, int throughTurnId
             if (sb.charAt(sb.length() - 1) != ' ') sb.append(' ');
             sb.append(note);
         }
-        return sb.toString().replace('<', '‹').replace('>', '›');
+        return neutralise(sb.toString());
+    }
+
+    static String neutralise(String text) {
+        return text.replace('<', '‹').replace('>', '›');
     }
 
     private static String hintNote(Map<?, ?> hint) {

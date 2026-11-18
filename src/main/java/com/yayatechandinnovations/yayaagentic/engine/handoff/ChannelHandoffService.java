@@ -1,6 +1,8 @@
 package com.yayatechandinnovations.yayaagentic.engine.handoff;
 
 import com.yayatechandinnovations.yayaagentic.auth.AuthContext;
+import com.yayatechandinnovations.yayaagentic.auth.AuthenticationException;
+import com.yayatechandinnovations.yayaagentic.auth.Authenticator;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.TurnChannel;
 import com.yayatechandinnovations.yayaagentic.core.Turn;
@@ -51,17 +53,20 @@ public class ChannelHandoffService {
     private final ConversationRecorder recorder;
     private final WorkingMemory workingMemory;
     private final ConversationEngine engine;
+    private final Authenticator authenticator;
 
     public ChannelHandoffService(SessionRepository sessions,
                                  TurnRepository turns,
                                  @Qualifier("postgresConversationRecorder") ConversationRecorder recorder,
                                  WorkingMemory workingMemory,
-                                 ConversationEngine engine) {
+                                 ConversationEngine engine,
+                                 Authenticator authenticator) {
         this.sessions = sessions;
         this.turns = turns;
         this.recorder = recorder;
         this.workingMemory = workingMemory;
         this.engine = engine;
+        this.authenticator = authenticator;
     }
 
     /** Another open conversation of this user, same profile, different channel, recent. */
@@ -119,6 +124,12 @@ public class ChannelHandoffService {
         if (source == null || !Objects.equals(source.getTenantId(), target.getTenantId())) {
             throw new HandoffException(HandoffException.SESSION_NOT_FOUND, "no such source conversation");
         }
+        // Both conversations must belong to an identified user: two anonymous
+        // sessions share a null subject, which is not the same person.
+        if (isBlank(source.getPrincipalSubject()) || isBlank(target.getPrincipalSubject())) {
+            throw new HandoffException(HandoffException.NOT_ALLOWED,
+                    "a hand-off needs two conversations of a signed-in user");
+        }
         if (source.getId().equals(target.getId())
                 || !Objects.equals(source.getPrincipalSubject(), target.getPrincipalSubject())
                 || !Objects.equals(source.getProfileId(), target.getProfileId())
@@ -126,10 +137,11 @@ public class ChannelHandoffService {
             throw new HandoffException(HandoffException.NOT_ALLOWED,
                     "the source conversation is not this user's on this profile");
         }
-        String owner = auth == null || auth.alreadyVerified() == null ? null
-                : auth.alreadyVerified().map(p -> p.subject()).orElse(null);
-        if (owner != null && !owner.equals(target.getPrincipalSubject())) {
-            throw new HandoffException(HandoffException.NOT_ALLOWED, "not the owner of the target conversation");
+        // The caller must be that user, verified on this request — not inferred
+        // from the row it is pointing at.
+        String owner = verifiedSubject(auth);
+        if (owner == null || !owner.equals(target.getPrincipalSubject())) {
+            throw new HandoffException(HandoffException.NOT_ALLOWED, "not the verified owner of the target conversation");
         }
 
         Ids.SessionId targetId = new Ids.SessionId(target.getId().toString());
@@ -170,6 +182,30 @@ public class ChannelHandoffService {
         LOG.info("hand-off: {} turns from {} ({}) into {}", block.carried().size(), sourceId.value(),
                 fromChannel, targetId.value());
         return new Result(sourceId, fromChannel, block.carried(), block);
+    }
+
+    /**
+     * The subject this request proves: the principal the API layer already
+     * verified, or what the authenticator chain makes of the channel headers
+     * (the WhatsApp worker's signed-webhook identity). Nothing provable → null.
+     */
+    private String verifiedSubject(AuthContext auth) {
+        if (auth == null) return null;
+        if (auth.alreadyVerified() != null && auth.alreadyVerified().isPresent()) {
+            return auth.alreadyVerified().get().subject();
+        }
+        if (authenticator == null) return null;
+        try {
+            var principal = authenticator.authenticate(auth);
+            return principal == null || isBlank(principal.subject()) ? null : principal.subject();
+        } catch (AuthenticationException | IllegalStateException e) {
+            LOG.debug("hand-off caller not verified: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     public static boolean isHandoff(Turn t) {

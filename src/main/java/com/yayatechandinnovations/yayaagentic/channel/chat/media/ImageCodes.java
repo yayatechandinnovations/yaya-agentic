@@ -26,9 +26,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -39,17 +42,25 @@ import java.util.concurrent.TimeoutException;
  * patterns are too big for ZXing's sampling), inside a 300 ms budget. The
  * result is data about the image, never an instruction — the composer puts
  * it inside the untrusted-data delimiters.
+ *
+ * <p>Reading runs on {@value #THREADS} daemon threads with no queue: ZXing and
+ * ImageIO ignore interruption, so a cancelled pass keeps its thread until it
+ * finishes, and an unbounded pool would grow one thread per stuck image. When
+ * both threads are busy the image simply gets no codes.
  */
 public final class ImageCodes {
 
     private static final Logger log = LoggerFactory.getLogger(ImageCodes.class);
     public static final long BUDGET_MS = 300;
 
-    private static final ExecutorService POOL = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "image-codes");
-        t.setDaemon(true);
-        return t;
-    });
+    static final int THREADS = 2;
+
+    private static final ExecutorService POOL = new ThreadPoolExecutor(THREADS, THREADS, 0L, TimeUnit.MILLISECONDS,
+            new SynchronousQueue<>(), r -> {
+                Thread t = new Thread(r, "image-codes");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     private static final Map<DecodeHintType, Object> HINTS;
 
@@ -92,11 +103,38 @@ public final class ImageCodes {
     /**
      * Never throws; empty when nothing was read. The budget covers the ZXing
      * passes (the image decode itself is bounded by the upload caps); the wait
-     * here allows for it plus the decode.
+     * here allows for it plus the decode. A picture over the decode ceiling
+     * ({@link ImageHygiene#requireWithinLimits}) is not decoded at all.
      */
     public static List<Code> decode(byte[] bytes) {
         if (bytes == null || bytes.length == 0) return List.of();
-        Future<List<Code>> f = POOL.submit(() -> decodeWithin(bytes, 0));
+        try {
+            ImageHygiene.requireWithinLimits(bytes);
+        } catch (ImageHygiene.ImageTooLargeException e) {
+            log.info("code reading skipped: {}", e.getMessage());
+            return List.of();
+        }
+        return await(submit(() -> decodeWithin(bytes, 0)));
+    }
+
+    /** The already-decoded picture (what {@link ImageHygiene#normalize} produced): no second decode. */
+    public static List<Code> decode(BufferedImage img) {
+        if (img == null) return List.of();
+        return await(submit(() -> decodeWithin(img, 0)));
+    }
+
+    /** Null when both reader threads are busy: the image gets no codes rather than a queue slot. */
+    static Future<List<Code>> submit(Callable<List<Code>> task) {
+        try {
+            return POOL.submit(task);
+        } catch (RejectedExecutionException saturated) {
+            log.debug("code reading skipped: both reader threads are busy");
+            return null;
+        }
+    }
+
+    private static List<Code> await(Future<List<Code>> f) {
+        if (f == null) return List.of();
         try {
             return f.get(BUDGET_MS * 4, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -117,6 +155,10 @@ public final class ImageCodes {
         } catch (Exception e) {
             return List.of();
         }
+        return decodeWithin(img, deadline);
+    }
+
+    static List<Code> decodeWithin(BufferedImage img, long deadline) {
         if (img == null) return List.of();
         if (deadline == 0) deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BUDGET_MS);
         // A phone photo is big: the half-size pass is cheap and usually enough,

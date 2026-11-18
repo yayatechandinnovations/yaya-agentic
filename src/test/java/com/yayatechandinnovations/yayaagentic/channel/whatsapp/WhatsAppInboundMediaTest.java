@@ -67,6 +67,8 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
         "yaya.agentic.llm.provider=stub",
         "spring.ai.anthropic.api-key=",
         "yaya.agentic.channels.whatsapp.poller.enabled=false",
+        // The CDN stub runs on loopback; production fetches Twilio's hosts only.
+        "yaya.agentic.channels.media.allowed-hosts=localhost",
 })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WhatsAppInboundMediaTest {
@@ -228,6 +230,24 @@ class WhatsAppInboundMediaTest {
         InboundMessageEntity failed = receive("", "audio/ogg; codecs=opus", "/m/voice-bad");
         assertThat(failed.getProcessingError()).isEqualTo("media_unsupported");
         verify(outbound).dispatchGreeting(any(), any(), eq(phone), any(), eq(InboundMediaGate.VOICE_UNAVAILABLE_REPLY), any());
+    }
+
+    @Test
+    void a_text_only_inbound_never_asks_the_voice_allowance() {
+        UsageMeter spy = org.mockito.Mockito.spy(usage);
+        worker.setUsageMeter(spy);
+        try {
+            String sid = "SM_text_" + UUID.randomUUID();
+            String payload = "{\"MessageSid\":\"" + sid + "\",\"From\":\"whatsapp:" + phone + "\",\"To\":\"whatsapp:"
+                    + BUSINESS_PHONE + "\",\"Body\":\"hola\",\"NumMedia\":\"0\"}";
+            inbound.save(new InboundMessageEntity(sid, TENANT, SENDER_ID.get(), phone, 0, payload));
+            worker.processSync(sid);
+            assertThat(inbound.findById(sid).orElseThrow().getProcessedAt()).isNotNull();
+            // Two SQL reads per inbound, saved: the allowance is asked only for a voice note.
+            verify(spy, org.mockito.Mockito.never()).hasVoiceAllowance(org.mockito.ArgumentMatchers.anyString());
+        } finally {
+            worker.setUsageMeter(usage);
+        }
     }
 
     /* ------------------------------- helpers ------------------------------- */

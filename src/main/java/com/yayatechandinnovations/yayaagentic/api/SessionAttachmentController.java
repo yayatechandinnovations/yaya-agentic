@@ -25,6 +25,7 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@code POST /v1/sessions/{id}/attachments} (multipart {@code file}, optional
@@ -32,6 +33,9 @@ import java.util.Map;
  * the session's owner check ({@link SessionController#admit}); the caps and
  * the gauntlet are the chat's ({@link ChatAttachmentService}); the per-subject
  * daily byte ceiling is keyed on {@code chat_attachments.principal_subject}.
+ * Admission and the per-session rate limit run BEFORE the multipart body is
+ * read, and a {@code Content-Length} over the read bound is refused outright:
+ * nobody buffers 16 MB on this server without a valid owner token.
  *
  * <p>Answers: {@code 201} with the attachment; {@code 413 too_large},
  * {@code 415 unsupported_type} (with a {@code hint} for HEIC),
@@ -65,28 +69,21 @@ public class SessionAttachmentController {
 
     @PostMapping(value = "/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<ResponseEntity<Object>> upload(@PathVariable("id") String id, ServerWebExchange exchange) {
-        return exchange.getMultipartData().flatMap(parts -> {
-            Part filePart = parts.getFirst("file");
-            if (!(filePart instanceof FilePart file)) {
-                return Mono.just(error(HttpStatus.BAD_REQUEST, "missing_file", "send the file as the multipart part 'file'", null));
-            }
-            Integer durationHint = durationHint(parts.getFirst("durationSeconds"));
-            return DataBufferUtils.join(file.content(), MAX_UPLOAD_READ_BYTES)
-                    .map(buf -> {
-                        byte[] bytes = new byte[buf.readableByteCount()];
-                        buf.read(bytes);
-                        DataBufferUtils.release(buf);
-                        return bytes;
-                    })
-                    .publishOn(Schedulers.boundedElastic())
-                    .map(bytes -> store(id, exchange, file.filename(), bytes, durationHint))
-                    .onErrorResume(DataBufferLimitException.class, e ->
-                            Mono.just(error(HttpStatus.PAYLOAD_TOO_LARGE, "too_large", "this file is too large", null)));
-        });
+        long declared = exchange.getRequest().getHeaders().getContentLength();
+        if (declared > MAX_UPLOAD_READ_BYTES) {
+            return Mono.just(error(HttpStatus.PAYLOAD_TOO_LARGE, "too_large", "this file is too large", null));
+        }
+        return Mono.fromCallable(() -> admit(id, exchange))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(admission -> admission.refused().isPresent()
+                        ? Mono.just(admission.refused().get())
+                        : readAndStore(id, exchange, admission.caller()));
     }
 
-    private ResponseEntity<Object> store(String id, ServerWebExchange exchange, String filename, byte[] bytes,
-                                         Integer durationHint) {
+    /** The owner check and the rate limit, with nothing of the body read yet. */
+    private record Admission(SessionController.Caller caller, Optional<ResponseEntity<Object>> refused) {}
+
+    private Admission admit(String id, ServerWebExchange exchange) {
         // The session's owner, on a session that may still take a turn.
         SessionController.Caller caller = sessions.admit(id, exchange, true);
         if (!caller.owned()) {
@@ -101,13 +98,39 @@ public class SessionAttachmentController {
             decision = null;
         }
         if (decision != null && !decision.allowed()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            return new Admission(caller, Optional.of(ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header("Retry-After", Long.toString(Math.max(1, decision.retryAfterSeconds())))
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body(HttpStatus.TOO_MANY_REQUESTS, "too_many_uploads",
-                            "too many uploads on this session; try again later", null));
+                            "too many uploads on this session; try again later", null))));
         }
+        return new Admission(caller, Optional.empty());
+    }
 
+    private Mono<ResponseEntity<Object>> readAndStore(String id, ServerWebExchange exchange,
+                                                      SessionController.Caller caller) {
+        return exchange.getMultipartData().flatMap(parts -> {
+            Part filePart = parts.getFirst("file");
+            if (!(filePart instanceof FilePart file)) {
+                return Mono.just(error(HttpStatus.BAD_REQUEST, "missing_file", "send the file as the multipart part 'file'", null));
+            }
+            Integer durationHint = durationHint(parts.getFirst("durationSeconds"));
+            return DataBufferUtils.join(file.content(), MAX_UPLOAD_READ_BYTES)
+                    .map(buf -> {
+                        byte[] bytes = new byte[buf.readableByteCount()];
+                        buf.read(bytes);
+                        DataBufferUtils.release(buf);
+                        return bytes;
+                    })
+                    .publishOn(Schedulers.boundedElastic())
+                    .map(bytes -> store(id, caller, file.filename(), bytes, durationHint))
+                    .onErrorResume(DataBufferLimitException.class, e ->
+                            Mono.just(error(HttpStatus.PAYLOAD_TOO_LARGE, "too_large", "this file is too large", null)));
+        });
+    }
+
+    private ResponseEntity<Object> store(String id, SessionController.Caller caller, String filename, byte[] bytes,
+                                         Integer durationHint) {
         Ids.TenantId tenant = caller.auth().tenant();
         String language = caller.profile() == null ? null : caller.profile().language();
         ChatAttachmentService.Uploader by = ChatAttachmentService.Uploader.subject(

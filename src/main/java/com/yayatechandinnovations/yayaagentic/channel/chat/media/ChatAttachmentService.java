@@ -235,10 +235,17 @@ public class ChatAttachmentService {
         Integer durationSeconds = null;
         List<ImageCodes.Code> codes = List.of();
         if (ChatAttachmentEntity.KIND_IMAGE.equals(kind)) {
-            ImageHygiene.Normalized clean = ImageHygiene.normalize(bytes, contentType);
+            ImageHygiene.Normalized clean;
+            try {
+                clean = ImageHygiene.normalize(bytes, contentType);
+            } catch (ImageHygiene.ImageTooLargeException e) {
+                throw new RejectedException("unsupported_type",
+                        "this picture is too large to read (max 40 megapixels)", ImageHygiene.TOO_BIG_HINT);
+            }
             bytes = clean.bytes();
             contentType = clean.contentType();
-            codes = ImageCodes.decode(bytes);
+            // Decoded once: the code reader takes the picture the re-encode produced.
+            codes = clean.image() != null ? ImageCodes.decode(clean.image()) : ImageCodes.decode(bytes);
         } else if (ChatAttachmentEntity.KIND_AUDIO.equals(kind)) {
             OptionalInt seconds = AudioDurations.resolve(bytes, contentType, by.durationHint());
             if (seconds.isPresent()) {

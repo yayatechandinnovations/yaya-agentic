@@ -110,10 +110,15 @@ public class InboundImageLoader {
             try {
                 byte[] bytes = mediaClient.fetch(URI.create(m.mediaUrl()), basicAuthHeader, maxBytes);
                 ImageHygiene.Normalized clean = ImageHygiene.normalize(bytes, normalize(m.contentType()));
+                List<ImageCodes.Code> codes = clean.image() != null
+                        ? ImageCodes.decode(clean.image()) : ImageCodes.decode(clean.bytes());
                 out.add(new LoadedImage(m.mediaUrl(), normalize(clean.contentType()), clean.bytes().length,
-                        Base64.getEncoder().encodeToString(clean.bytes()), ImageCodes.decode(clean.bytes())));
+                        Base64.getEncoder().encodeToString(clean.bytes()), codes));
             } catch (InboundMediaClient.TooLargeException e) {
                 log.info("Dropping inbound image: {} ({})", m.mediaUrl(), e.getMessage());
+            } catch (ImageHygiene.ImageTooLargeException e) {
+                // Never decoded: the header alone said it is over the ceiling.
+                log.info("Dropping inbound image over the decode ceiling: {} ({})", m.mediaUrl(), e.getMessage());
             } catch (RuntimeException e) {
                 log.warn("Could not fetch inbound image {}: {}", m.mediaUrl(), e.getMessage());
             }

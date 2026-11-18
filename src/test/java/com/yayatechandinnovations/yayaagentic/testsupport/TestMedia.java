@@ -44,6 +44,23 @@ public final class TestMedia {
         return write(img, "png");
     }
 
+    /**
+     * A few dozen bytes of PNG whose IHDR declares {@code width × height}: what
+     * a decompression bomb looks like before anything is decoded.
+     */
+    public static byte[] pngDeclaring(int width, int height) {
+        ByteBuffer ihdr = ByteBuffer.allocate(17).order(ByteOrder.BIG_ENDIAN);
+        ihdr.put("IHDR".getBytes(StandardCharsets.ISO_8859_1)).putInt(width).putInt(height)
+                .put((byte) 8).put((byte) 2).put((byte) 0).put((byte) 0).put((byte) 0);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(ihdr.array());
+        ByteBuffer b = ByteBuffer.allocate(8 + 4 + 17 + 4 + 12).order(ByteOrder.BIG_ENDIAN);
+        b.put(new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'});
+        b.putInt(13).put(ihdr.array()).putInt((int) crc.getValue());
+        b.putInt(0).put("IEND".getBytes(StandardCharsets.ISO_8859_1)).putInt(0xAE426082);
+        return b.array();
+    }
+
     /** A PNG of random pixels — incompressible, so its size is roughly 3 bytes per pixel. */
     public static byte[] noisyPng(int width, int height) {
         BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
