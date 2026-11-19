@@ -13,7 +13,9 @@ import java.util.Map;
  *
  * <p>SM-0 carries text only; media rides the same shape from SM-1 (§10).
  *
- * @param recipient WHO — resolved to the user's established chat (§6)
+ * @param recipient WHO — resolved to the user's established chat (§6); may be
+ *                  null only when {@code delivery} asks for WhatsApp with no
+ *                  chat fallback
  * @param body      human-readable text (SM-0 requires it non-blank)
  * @param correlation WHO to answer and about what — captured for the reply loop (§8)
  * @param dedupKey  idempotency handle, unique per (tenant, sender)
@@ -34,7 +36,12 @@ public record SystemInboundMessage(
     public SystemInboundMessage {
         if (tenant == null) throw new IllegalArgumentException("tenant required");
         if (senderId == null) throw new IllegalArgumentException("senderId required");
-        if (recipient == null) throw new IllegalArgumentException("recipient required");
+        delivery = delivery == null ? DeliveryRequest.chat() : delivery;
+        // With no chat fallback the WhatsApp number is the whole address: a
+        // recipient is welcome (it names whose outreach session the receipt
+        // belongs to) but not required (pos-ticket-whatsapp-share-design.md §8 P2).
+        if (recipient == null && delivery.wantsChatFallback())
+            throw new IllegalArgumentException("recipient required");
         media = media == null ? List.of() : List.copyOf(media);
         // Body may be empty when media-only; require at least one of body/media.
         if ((body == null || body.isBlank()) && media.isEmpty())
@@ -44,7 +51,6 @@ public record SystemInboundMessage(
         correlation = correlation == null ? new Correlation("", "", "") : correlation;
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
         actions = actions == null ? List.of() : List.copyOf(actions);
-        delivery = delivery == null ? DeliveryRequest.chat() : delivery;
         if (delivery.wantsWhatsApp() && delivery.phoneE164() == null)
             throw new IllegalArgumentException("delivery.phoneE164 required for WHATSAPP");
         for (ActionItem a : actions) {

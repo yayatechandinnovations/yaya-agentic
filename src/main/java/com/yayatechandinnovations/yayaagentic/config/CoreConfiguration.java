@@ -5,6 +5,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioProp
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.BlobGcProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.ClamAvProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.blob.KnowledgeUploadProperties;
+import com.yayatechandinnovations.yayaagentic.outreach.media.OutreachMediaProperties;
 import com.yayatechandinnovations.yayaagentic.knowledge.ingest.IngestionProperties;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.ApiKeysProperties;
 import com.yayatechandinnovations.yayaagentic.operator_auth.apikeys.AuditProperties;
@@ -25,7 +26,7 @@ import java.time.Clock;
 @Configuration
 @EnableConfigurationProperties({YayaAgenticProperties.class, TwilioProperties.class,
         EmbeddedSignupProperties.class,
-        ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class,
+        ApiKeysProperties.class, AuditProperties.class, KnowledgeUploadProperties.class, OutreachMediaProperties.class,
         IngestionProperties.class, BlobGcProperties.class, ClamAvProperties.class,
         com.yayatechandinnovations.yayaagentic.outreach.push.PushProperties.class,
         com.yayatechandinnovations.yayaagentic.channel.chat.verify.ChatVerifyLimitsProperties.class,

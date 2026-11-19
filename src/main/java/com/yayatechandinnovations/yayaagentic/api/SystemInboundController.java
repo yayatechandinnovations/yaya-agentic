@@ -60,7 +60,11 @@ public class SystemInboundController {
     /**
      * Delivery status of a message this sender posted (§14.2 of
      * whatsapp-ops-integration-design.md): same gate as ingest, and an id from
-     * another sender reads as unknown.
+     * another sender reads as unknown. The response's top-level {@code status}
+     * is the ingest ledger (RECEIVED/DELIVERED/DROPPED/FAILED); the provider's
+     * per-leg state is {@code deliveries[].status}. Works for a message that
+     * never touched a chat ({@code delivery.fallback: NONE}): the ledger row and
+     * the delivery rows are all it reads.
      */
     @GetMapping("/{outreachId}")
     public Mono<SystemInboundDtos.StatusResponse> status(@PathVariable("tenantId") String tenantId,
@@ -75,8 +79,7 @@ public class SystemInboundController {
                     .orElseThrow(IntegrationSenderGate::opaque404);
             return new SystemInboundDtos.StatusResponse(status.id().value(), status.status(),
                     status.receivedAt(), status.deliveries().stream()
-                    .map(d -> new SystemInboundDtos.DeliveryView(d.channel(), d.fallbackReason(),
-                            d.providerMessageId(), d.status(), d.statusAt()))
+                    .map(SystemInboundDtos.DeliveryView::of)
                     .toList());
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -85,10 +88,15 @@ public class SystemInboundController {
 
     private SystemInboundMessage toMessage(Ids.TenantId tenant, Ids.SystemSenderId sid,
                                            IngestRequest body, ServerWebExchange exchange) {
-        if (body == null || body.recipient() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recipient required");
+        if (body == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "body required");
         }
-        OutreachRecipient recipient = body.recipient().toDomain();
+        com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest delivery = deliveryOf(body);
+        if (body.recipient() == null && delivery.wantsChatFallback()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "recipient required (optional only with delivery.fallback NONE)");
+        }
+        OutreachRecipient recipient = body.recipient() == null ? null : body.recipient().toDomain();
         String dedupKey = body.dedupKey() != null && !body.dedupKey().isBlank()
                 ? body.dedupKey().trim()
                 : header(exchange, "X-Idem-Key");
@@ -98,14 +106,14 @@ public class SystemInboundController {
                 dedupKey,
                 body.metadata() == null ? Map.of() : body.metadata(),
                 body.actionsDomain(),
-                deliveryOf(body));
+                delivery);
     }
 
     private static com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest deliveryOf(IngestRequest body) {
         try {
             return body.deliveryDomain();
         } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown delivery.channel");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown delivery.channel or delivery.fallback");
         }
     }
 

@@ -14,11 +14,21 @@ package com.yayatechandinnovations.yayaagentic.channel.binding;
  * Principal — the pre-W-A behavior. Downstream Authorizers will still
  * deny identity-gated tools naturally.
  *
- * <p>See {@code docs/design/channel-auth-resolver-design.md} §6.2 and §9.
+ * <p>{@code AUTO_REPLY} drops the message exactly like {@code REJECT} (same
+ * audit row, the inbound stays in {@code inbound_messages} so the 24 h
+ * window logic keeps working) but first answers the caller with the
+ * binding's {@code unresolvedReplyText}, at most once per (sender, phone)
+ * per 24 h. For a business number that mostly sends (ticket copies,
+ * notices) and whose staff are the only recognised callers: a customer who
+ * writes back learns where to call instead of hearing nothing.
+ *
+ * <p>See {@code docs/design/channel-auth-resolver-design.md} §6.2 and §9,
+ * and smart-lottery {@code pos-ticket-whatsapp-share-design.md} §8 P4.
  */
 public enum OnUnresolvedPolicy {
     REJECT,
-    ANONYMOUS;
+    ANONYMOUS,
+    AUTO_REPLY;
 
     public static OnUnresolvedPolicy parse(String raw) {
         if (raw == null || raw.isBlank()) return REJECT;

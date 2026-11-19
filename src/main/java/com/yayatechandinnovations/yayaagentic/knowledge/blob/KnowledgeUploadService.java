@@ -11,6 +11,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
+import java.util.function.ToLongFunction;
 
 /**
  * Validates and persists uploaded knowledge files. The gauntlet each file runs
@@ -42,6 +44,21 @@ public class KnowledgeUploadService {
     }
 
     public List<StoredFile> storeAll(TenantId tenant, List<PendingFile> files) {
+        return storeAll(tenant, files, defaultPolicy());
+    }
+
+    /** The knowledge corpus rules: the configured allow-list, one per-file cap for every type. */
+    public UploadPolicy defaultPolicy() {
+        return new UploadPolicy(props::isAllowed, ct -> props.maxFileBytes());
+    }
+
+    /**
+     * Same gauntlet with a caller-owned type policy — what the outreach media
+     * library uses so a sender's attachment types and caps are its own, while
+     * the scan, the sniff, the quota and the de-dupe stay exactly the knowledge
+     * ones. The per-type cap applies to the sniffed type, after the scan.
+     */
+    public List<StoredFile> storeAll(TenantId tenant, List<PendingFile> files, UploadPolicy policy) {
         if (files.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "no files in upload");
         }
@@ -68,9 +85,14 @@ public class KnowledgeUploadService {
                         "malware detected in " + file.filename());
             }
             String contentType = sniffer.sniff(data, file.filename());
-            if (!props.isAllowed(contentType)) {
+            if (!policy.allowed().test(contentType)) {
                 throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                         "unsupported file type " + contentType + " for " + file.filename());
+            }
+            long typeCap = policy.maxBytesFor().applyAsLong(contentType);
+            if (data.length > typeCap) {
+                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                        file.filename() + " exceeds the " + contentType + " limit of " + typeCap + " bytes");
             }
             running += data.length;
             if (running > props.maxTenantCorpusBytes()) {
@@ -87,6 +109,17 @@ public class KnowledgeUploadService {
     }
 
     public record PendingFile(String filename, byte[] data) {}
+
+    /**
+     * Which sniffed content types pass and how large each may be. The size
+     * check here comes after the sniff, so it is by real type, not by name.
+     */
+    public record UploadPolicy(Predicate<String> allowed, ToLongFunction<String> maxBytesFor) {
+        public UploadPolicy {
+            if (allowed == null) throw new IllegalArgumentException("allowed required");
+            if (maxBytesFor == null) throw new IllegalArgumentException("maxBytesFor required");
+        }
+    }
 
     public record StoredFile(String blobId, String filename, String contentType,
                              long sizeBytes, String sha256) {}

@@ -72,6 +72,33 @@ class HttpEgressPolicyTest {
         assertThat(decision).isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
     }
 
+    @Test
+    void denies_cgnat_shared_space_and_ipv6_unique_local() {
+        HttpEgressPolicy policy = policyWith(List.of(), false);
+        var cgnat = policy.checkPrivateAddressOnly(URI.create("http://100.64.0.1/"));
+        assertThat(cgnat).isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
+        assertThat(((HttpEgressPolicy.Decision.Deny) cgnat).reason()).contains("100.64.0.0/10");
+        assertThat(policy.checkPrivateAddressOnly(URI.create("http://100.127.255.254/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
+        // Neighbours of the range are public.
+        assertThat(policy.checkPrivateAddressOnly(URI.create("http://100.63.255.255/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
+        assertThat(policy.checkPrivateAddressOnly(URI.create("http://100.128.0.1/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
+
+        var ula = policy.checkPrivateAddressOnly(URI.create("http://[fd12:3456::1]/"));
+        assertThat(ula).isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
+        assertThat(((HttpEgressPolicy.Decision.Deny) ula).reason()).contains("fc00::/7");
+        assertThat(policy.checkPrivateAddressOnly(URI.create("http://[fc00::1]/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Deny.class);
+        assertThat(policy.checkPrivateAddressOnly(URI.create("http://[2001:db8::1]/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
+
+        assertThat(policyWith(List.of(), true).checkPrivateAddressOnly(URI.create("http://100.64.0.1/")))
+                .isInstanceOf(HttpEgressPolicy.Decision.Allow.class);
+        assertThat(policyWith(List.of(), true).allowsPrivateNetworks()).isTrue();
+    }
+
     private static HttpEgressPolicy policyWith(List<String> allowlist, boolean allowPrivate) {
         YayaAgenticProperties props = new YayaAgenticProperties(
                 "default", "default", null, null, null, null, null,

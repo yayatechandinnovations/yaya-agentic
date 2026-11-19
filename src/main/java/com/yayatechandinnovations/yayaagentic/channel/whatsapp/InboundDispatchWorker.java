@@ -126,7 +126,24 @@ public class InboundDispatchWorker {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService handoffs;
 
+    // Deterministic answers that never wake the engine (ticket-share design §8
+    // P4/P5); optional for the same reason as the collaborators above.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordActionService keywordActions;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordForwarder keywordForwarder;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UnresolvedAutoReplyService autoReplies;
+
     void setContextSeeder(OutreachContextSeeder seeder) { this.contextSeeder = seeder; }
+
+    void setKeywordActions(com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordActionService s,
+                           com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordForwarder f) {
+        this.keywordActions = s;
+        this.keywordForwarder = f;
+    }
+
+    void setAutoReplies(UnresolvedAutoReplyService service) { this.autoReplies = service; }
 
     void setHandoffs(com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService service) {
         this.handoffs = service;
@@ -319,6 +336,17 @@ public class InboundDispatchWorker {
             return;
         }
 
+        // 1a''. Keyword actions (ticket-share design §8 P5): a word the tenant
+        // answers deterministically — the inbound goes to the tenant's URL and
+        // its reply comes back, with no engine run and no session. The row is
+        // filed like any other inbound, so the 24 h window still opens.
+        if (!secretInbound && answerKeywordAction(row, sender, body)) {
+            row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            row.setBodyRedacted(redact(body, row.getEndUserPhone()));
+            inbound.save(row);
+            return;
+        }
+
         // 1c. §11.3 — a person took this conversation over: ack and keep the
         // text (the desk reads it back through the hold API), but never run
         // the engine, or the customer gets a bot reply on top of theirs.
@@ -507,6 +535,12 @@ public class InboundDispatchWorker {
             // Binding's on_unresolved=REJECT — the verified caller phone
             // doesn't map to a known tenant identity. Drop the message
             // (same shape as no_binding_matched: no user-facing reply).
+            // Under AUTO_REPLY the caller first hears the binding's fixed
+            // line, once per 24 h; the drop and its audit row are the same.
+            if (autoReplies != null) {
+                autoReplies.replyIfDue(new Ids.TenantId(row.getTenantId()), new SenderId(row.getSenderId()),
+                        row.getEndUserPhone(), binding);
+            }
             markFailed(messageSid, "auth_resolver_rejected");
             return;
         }
@@ -651,6 +685,48 @@ public class InboundDispatchWorker {
                 ? SecretInboundRedaction.MARKER
                 : redact(body, row.getEndUserPhone()));
         inbound.save(row);
+    }
+
+    /**
+     * P5: forward a keyword inbound and send the tenant's reply. True when a
+     * keyword matched (whether or not a reply came back) — the caller files
+     * the row and stops. Never throws: a tenant outage is a missing reply.
+     */
+    private boolean answerKeywordAction(InboundMessageEntity row, WhatsAppSender sender, String body) {
+        if (keywordActions == null || keywordForwarder == null) return false;
+        Ids.TenantId tenant = new Ids.TenantId(row.getTenantId());
+        SenderId senderId = new SenderId(row.getSenderId());
+        Optional<com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordAction> action;
+        try {
+            action = keywordActions.match(tenant, senderId, body);
+        } catch (RuntimeException e) {
+            log.warn("keyword actions lookup failed for {}: {}", row.getMessageSid(), e.getMessage());
+            return false;
+        }
+        if (action.isEmpty()) return false;
+        // The inbound reopened the 24 h window (§10.2) — anything parked for this
+        // caller fires now, ahead of the keyword reply, exactly as step 6 does
+        // for inbounds that reach the engine.
+        try {
+            outboundDispatcher.releasePending(tenant, senderId, row.getEndUserPhone());
+        } catch (RuntimeException e) {
+            log.warn("parked outbound not released for {} on keyword inbound: {}", row.getMessageSid(), e.getMessage());
+        }
+        Optional<String> reply = keywordForwarder.forward(action.get(),
+                new com.yayatechandinnovations.yayaagentic.channel.whatsapp.keywords.KeywordForwarder.Inbound(
+                        tenant, senderId, row.getEndUserPhone(), sender.phoneE164(), body,
+                        row.getReceivedAt() == null ? null : row.getReceivedAt().toInstant(),
+                        row.getMessageSid()));
+        reply.ifPresent(text -> {
+            try {
+                outboundDispatcher.dispatchGreeting(tenant, senderId, row.getEndUserPhone(),
+                        new Ids.SessionId(UUID.randomUUID().toString()), text, List.of());
+            } catch (RuntimeException e) {
+                log.warn("keyword reply not sent for {}: {}", row.getMessageSid(), e.getMessage());
+            }
+        });
+        row.setProcessingError(null);
+        return true;
     }
 
     private TranscriptionOutcome transcribeIfPresent(InboundMessageEntity row, WhatsAppSender sender,
@@ -1123,7 +1199,8 @@ public class InboundDispatchWorker {
             case ANONYMOUS -> binding.authResolverId() == null
                     ? "No auth resolver on this binding (FAQ mode) — anonymous principal."
                     : authResolved.reason() + "; on_unresolved=ANONYMOUS.";
-            case REJECT -> authResolved.reason() + "; on_unresolved=REJECT.";
+            case REJECT -> authResolved.reason() + "; on_unresolved="
+                    + (binding.onUnresolved() == null ? "REJECT" : binding.onUnresolved().name()) + ".";
         };
         authTrace.recordVerification(sessionId, decision, detail);
 

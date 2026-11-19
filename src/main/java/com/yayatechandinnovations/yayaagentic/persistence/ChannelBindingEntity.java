@@ -70,6 +70,10 @@ public class ChannelBindingEntity {
     @Column(name = "on_override_denied", nullable = false, length = 8)
     private String onOverrideDenied = "IGNORE";
 
+    // What AUTO_REPLY says to a caller the resolver does not know (V97).
+    @Column(name = "unresolved_reply_text")
+    private String unresolvedReplyText;
+
     protected ChannelBindingEntity() {}
 
     public ChannelBindingEntity(String tenantId, String endpointKind, String endpointId,
@@ -119,5 +123,9 @@ public class ChannelBindingEntity {
     }
     public void setOnOverrideDenied(String v) {
         this.onOverrideDenied = v == null || v.isBlank() ? "IGNORE" : v;
+    }
+    public String getUnresolvedReplyText() { return unresolvedReplyText; }
+    public void setUnresolvedReplyText(String v) {
+        this.unresolvedReplyText = v == null || v.isBlank() ? null : v.trim();
     }
 }

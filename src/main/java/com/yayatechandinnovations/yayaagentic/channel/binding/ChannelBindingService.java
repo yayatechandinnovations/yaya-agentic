@@ -176,8 +176,26 @@ public class ChannelBindingService {
                                  OnUnresolvedPolicy onUnresolved,
                                  Set<String> allowedOverrideProfiles,
                                  OnOverrideDenied onOverrideDenied) {
+        return create(tenant, endpoint, profile, profileVersion, routing, sessionPolicy, priority,
+                authResolverId, onUnresolved, allowedOverrideProfiles, onOverrideDenied, null);
+    }
+
+    @Transactional
+    public ChannelBinding create(Ids.TenantId tenant,
+                                 ChannelEndpointRef endpoint,
+                                 Ids.ProfileId profile,
+                                 Optional<Integer> profileVersion,
+                                 RoutingRule routing,
+                                 SessionPolicy sessionPolicy,
+                                 int priority,
+                                 Long authResolverId,
+                                 OnUnresolvedPolicy onUnresolved,
+                                 Set<String> allowedOverrideProfiles,
+                                 OnOverrideDenied onOverrideDenied,
+                                 String unresolvedReplyText) {
         validateEndpointBelongsToTenant(tenant, endpoint);
         validateProfileExists(tenant, profile, profileVersion);
+        validateAutoReply(onUnresolved, unresolvedReplyText);
 
         ChannelBindingEntity entity = new ChannelBindingEntity(
                 tenant.value(),
@@ -195,7 +213,24 @@ public class ChannelBindingService {
         entity.setAllowedOverrideProfilesJson(writeJson(sortedList(allowedOverrideProfiles)));
         entity.setOnOverrideDenied((onOverrideDenied == null
                 ? OnOverrideDenied.IGNORE : onOverrideDenied).name());
+        entity.setUnresolvedReplyText(unresolvedReplyText);
         return toDomain(repo.save(entity));
+    }
+
+    /** The reply text a binding may answer an unknown caller with: at most this long. */
+    public static final int MAX_AUTO_REPLY_CHARS = 1000;
+
+    /** AUTO_REPLY without words to say is a misconfiguration, caught at the admin edge. */
+    static void validateAutoReply(OnUnresolvedPolicy onUnresolved, String text) {
+        boolean blank = text == null || text.isBlank();
+        if (onUnresolved == OnUnresolvedPolicy.AUTO_REPLY && blank) {
+            throw AdminApiException.badRequest("bad_unresolved_reply",
+                    "onUnresolved AUTO_REPLY needs unresolvedReplyText");
+        }
+        if (!blank && text.trim().length() > MAX_AUTO_REPLY_CHARS) {
+            throw AdminApiException.badRequest("bad_unresolved_reply",
+                    "unresolvedReplyText is at most " + MAX_AUTO_REPLY_CHARS + " characters");
+        }
     }
 
     private static List<String> sortedList(Set<String> keys) {
@@ -216,10 +251,35 @@ public class ChannelBindingService {
                                  OnUnresolvedPolicy onUnresolved,
                                  Set<String> allowedOverrideProfiles,
                                  OnOverrideDenied onOverrideDenied) {
+        return update(tenant, id, profile, profileVersion, routing, sessionPolicy, priority, status,
+                authResolverId, onUnresolved, allowedOverrideProfiles, onOverrideDenied, null);
+    }
+
+    /**
+     * {@code unresolvedReplyText} null keeps the stored text (so an older
+     * client's PUT does not wipe it); "" clears it.
+     */
+    @Transactional
+    public ChannelBinding update(Ids.TenantId tenant,
+                                 BindingId id,
+                                 Ids.ProfileId profile,
+                                 Optional<Integer> profileVersion,
+                                 RoutingRule routing,
+                                 SessionPolicy sessionPolicy,
+                                 int priority,
+                                 BindingStatus status,
+                                 Long authResolverId,
+                                 OnUnresolvedPolicy onUnresolved,
+                                 Set<String> allowedOverrideProfiles,
+                                 OnOverrideDenied onOverrideDenied,
+                                 String unresolvedReplyText) {
         ChannelBindingEntity entity = repo.findByTenantIdAndId(tenant.value(), id.value())
                 .orElseThrow(() -> AdminApiException.notFound("binding_not_found",
                         "no such binding " + id.value()));
         validateProfileExists(tenant, profile, profileVersion);
+        String effectiveText = unresolvedReplyText == null ? entity.getUnresolvedReplyText() : unresolvedReplyText;
+        validateAutoReply(onUnresolved == null ? OnUnresolvedPolicy.parse(entity.getOnUnresolved()) : onUnresolved,
+                effectiveText);
 
         entity.setProfileId(profile.value());
         entity.setProfileVersion(profileVersion.orElse(null));
@@ -230,6 +290,7 @@ public class ChannelBindingService {
         if (onUnresolved != null) entity.setOnUnresolved(onUnresolved.name());
         entity.setAllowedOverrideProfilesJson(writeJson(sortedList(allowedOverrideProfiles)));
         if (onOverrideDenied != null) entity.setOnOverrideDenied(onOverrideDenied.name());
+        if (unresolvedReplyText != null) entity.setUnresolvedReplyText(unresolvedReplyText);
         if (status == BindingStatus.DEACTIVATED
                 && !entity.getStatus().equals(BindingStatus.DEACTIVATED.name())) {
             entity.setDeactivatedAt(OffsetDateTime.now(ZoneOffset.UTC));
@@ -373,7 +434,8 @@ public class ChannelBindingService {
                 entity.getAuthResolverId(),
                 OnUnresolvedPolicy.parse(entity.getOnUnresolved()),
                 readStringSet(entity.getAllowedOverrideProfilesJson()),
-                OnOverrideDenied.parse(entity.getOnOverrideDenied())
+                OnOverrideDenied.parse(entity.getOnOverrideDenied()),
+                entity.getUnresolvedReplyText()
         );
     }
 

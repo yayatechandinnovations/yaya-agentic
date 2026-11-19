@@ -40,6 +40,8 @@ import java.util.Set;
  * @param onOverrideDenied  what to do when a resolver-selected override fails a
  *                       guardrail — {@code IGNORE} (bound profile) or
  *                       {@code REJECT} (drop the inbound).
+ * @param unresolvedReplyText  what {@code onUnresolved = AUTO_REPLY} says to a
+ *                       caller the resolver does not know; null otherwise.
  */
 public record ChannelBinding(
         BindingId             id,
@@ -56,8 +58,19 @@ public record ChannelBinding(
         Long                  authResolverId,
         OnUnresolvedPolicy    onUnresolved,
         Set<String>           allowedOverrideProfiles,
-        OnOverrideDenied      onOverrideDenied
+        OnOverrideDenied      onOverrideDenied,
+        String                unresolvedReplyText
 ) {
+
+    /** Back-compat: no auto-reply text. */
+    public ChannelBinding(BindingId id, Ids.TenantId tenant, ChannelEndpointRef endpoint, Ids.ProfileId profile,
+                          Optional<Integer> profileVersion, RoutingRule routing, SessionPolicy sessionPolicy,
+                          int priority, BindingStatus status, Instant createdAt, Instant deactivatedAt,
+                          Long authResolverId, OnUnresolvedPolicy onUnresolved,
+                          Set<String> allowedOverrideProfiles, OnOverrideDenied onOverrideDenied) {
+        this(id, tenant, endpoint, profile, profileVersion, routing, sessionPolicy, priority, status, createdAt,
+                deactivatedAt, authResolverId, onUnresolved, allowedOverrideProfiles, onOverrideDenied, null);
+    }
 
     public ChannelBinding {
         if (tenant == null)        throw new IllegalArgumentException("tenant required");
@@ -71,5 +84,13 @@ public record ChannelBinding(
         allowedOverrideProfiles = allowedOverrideProfiles == null
                 ? Set.of() : Set.copyOf(allowedOverrideProfiles);
         onOverrideDenied = onOverrideDenied == null ? OnOverrideDenied.IGNORE : onOverrideDenied;
+        unresolvedReplyText = unresolvedReplyText == null || unresolvedReplyText.isBlank()
+                ? null : unresolvedReplyText.trim();
+    }
+
+    /** The fixed line an {@code AUTO_REPLY} binding answers an unknown caller with; empty otherwise. */
+    public Optional<String> autoReplyText() {
+        return onUnresolved == OnUnresolvedPolicy.AUTO_REPLY
+                ? Optional.ofNullable(unresolvedReplyText) : Optional.empty();
     }
 }

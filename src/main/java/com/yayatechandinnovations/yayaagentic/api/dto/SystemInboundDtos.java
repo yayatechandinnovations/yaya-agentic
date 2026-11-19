@@ -55,8 +55,11 @@ public final class SystemInboundDtos {
             var channel = delivery.channel() == null || delivery.channel().isBlank() ? null
                     : com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest.Channel.valueOf(
                             delivery.channel().trim().toUpperCase());
+            var fallback = delivery.fallback() == null || delivery.fallback().isBlank() ? null
+                    : com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest.Fallback.valueOf(
+                            delivery.fallback().trim().toUpperCase());
             return new com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest(
-                    channel, delivery.phoneE164(), t);
+                    channel, delivery.phoneE164(), t, fallback);
         }
 
         public List<MediaRef> mediaDomain() {
@@ -98,8 +101,17 @@ public final class SystemInboundDtos {
 
     public record AskRef(String arg, String prompt, List<String> suggestions) {}
 
-    /** channel ∈ {CHAT, WHATSAPP}. */
-    public record DeliveryRef(String channel, String phoneE164) {}
+    /**
+     * channel ∈ {CHAT, WHATSAPP}; fallback ∈ {CHAT (default), NONE}. With
+     * {@code NONE} a WhatsApp leg that cannot deliver is reported FAILED on the
+     * receipt and nothing is written to any chat; {@code recipient} is then
+     * optional.
+     */
+    public record DeliveryRef(String channel, String phoneE164, String fallback) {
+        public DeliveryRef(String channel, String phoneE164) {
+            this(channel, phoneE164, null);
+        }
+    }
 
     public record TemplateRef(String name, String language, List<String> variables) {}
 
@@ -123,6 +135,12 @@ public final class SystemInboundDtos {
         }
     }
 
+    /**
+     * The ingest receipt. {@code disposition} ∈ DELIVERED / DUPLICATE / DROPPED
+     * (DROPPED also when every leg FAILED under {@code delivery.fallback: NONE});
+     * {@code deliveredVia} is the channel of the first delivery that went out,
+     * null when none did.
+     */
     public record IngestResponse(
             String id,
             String disposition,
@@ -132,21 +150,42 @@ public final class SystemInboundDtos {
             java.util.List<DeliveryView> deliveries
     ) {
         public static IngestResponse of(OutreachReceipt r) {
-            List<DeliveryView> views = r.deliveries().stream()
-                    .map(d -> new DeliveryView(d.channel(), d.fallbackReason(), d.providerMessageId(),
-                            d.status(), d.statusAt()))
-                    .toList();
+            List<DeliveryView> views = r.deliveries().stream().map(DeliveryView::of).toList();
+            String via = views.stream().filter(v -> !"FAILED".equals(v.status()))
+                    .map(DeliveryView::channel).findFirst().orElse(null);
             return new IngestResponse(r.id().value(), r.disposition().name(),
-                    r.sessionIds(), r.receivedAt(),
-                    views.isEmpty() ? null : views.get(0).channel(), views);
+                    r.sessionIds(), r.receivedAt(), via, views);
         }
     }
 
-    /** One resolved target's delivery (§14.1 / §14.2). */
+    /**
+     * One resolved target's delivery (§14.1 / §14.2). {@code status} ∈
+     * QUEUED / SENT / DELIVERED / READ / FAILED / CHAT_DELIVERED is the
+     * provider state of THIS leg; {@code templateUsed} names the approved
+     * template the WhatsApp leg went out as (null inside the 24 h window or
+     * on the chat); {@code errorCode} is the provider's failure code of a
+     * FAILED leg ({@code outreach_deliveries.failure_code}: Twilio's numeric
+     * {@code ErrorCode} as text, or {@code exception}), null otherwise — the
+     * same field on the ingest receipt and on the status GET, so an
+     * integration can label the failure (e.g. {@code twilio_63016}) from
+     * either.
+     */
     public record DeliveryView(String channel, String fallbackReason, String providerMessageId,
-                               String status, Instant statusAt) {}
+                               String status, Instant statusAt, String templateUsed, String errorCode) {
+        public static DeliveryView of(com.yayatechandinnovations.yayaagentic.outreach.OutreachService.Delivery d) {
+            return new DeliveryView(d.channel(), d.fallbackReason(), d.providerMessageId(),
+                    d.status(), d.statusAt(), d.templateUsed(), d.errorCode());
+        }
+    }
 
-    /** {@code GET …/messages/{outreachId}} (§14.2). */
+    /**
+     * {@code GET …/messages/{outreachId}} (§14.2). The top-level {@code status}
+     * is the INGEST LEDGER state (RECEIVED / DELIVERED / DROPPED / FAILED) — what
+     * happened to the message at ingest — not the provider's delivery state.
+     * Per-leg provider states (SENT → DELIVERED → READ, or FAILED) live in
+     * {@code deliveries[].status}; a poller tracking a WhatsApp receipt reads
+     * those.
+     */
     public record StatusResponse(String id, String status, Instant receivedAt,
                                  List<DeliveryView> deliveries) {}
 }

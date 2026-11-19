@@ -349,6 +349,8 @@ public class ChannelAuthIntegrator {
         if (onUnresolved == OnUnresolvedPolicy.ANONYMOUS) {
             return Resolved.anonymous(baseCtx, detail);
         }
+        // REJECT and AUTO_REPLY both fail closed here; the worker is what
+        // answers the caller under AUTO_REPLY, before dropping the inbound.
         return Resolved.reject(detail);
     }
 

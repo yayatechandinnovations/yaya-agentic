@@ -24,8 +24,10 @@ public final class ChannelBindingDtos {
      *                        Null = FAQ-mode binding (no resolver). The
      *                        admin form looks the row up by name and sends
      *                        its id here.
-     * @param onUnresolved    'REJECT' | 'ANONYMOUS'. Defaults to REJECT
-     *                        server-side when null.
+     * @param onUnresolved    'REJECT' | 'ANONYMOUS' | 'AUTO_REPLY'. Defaults to
+     *                        REJECT server-side when null.
+     * @param unresolvedReplyText  the fixed line AUTO_REPLY answers an unknown
+     *                        caller with (required for AUTO_REPLY, ≤ 1000 chars).
      */
     public record BindingRequest(
             EndpointRequest endpoint,
@@ -38,10 +40,22 @@ public final class ChannelBindingDtos {
             Long            authResolverId,
             OnUnresolvedPolicy onUnresolved,
             List<String>    allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied
-    ) {}
+            OnOverrideDenied onOverrideDenied,
+            String          unresolvedReplyText
+    ) {
+        public BindingRequest(EndpointRequest endpoint, String profileId, Integer profileVersion,
+                              RoutingRule routing, SessionPolicy sessionPolicy, Integer priority,
+                              BindingStatus status, Long authResolverId, OnUnresolvedPolicy onUnresolved,
+                              List<String> allowedOverrideProfiles, OnOverrideDenied onOverrideDenied) {
+            this(endpoint, profileId, profileVersion, routing, sessionPolicy, priority, status, authResolverId,
+                    onUnresolved, allowedOverrideProfiles, onOverrideDenied, null);
+        }
+    }
 
-    /** PUT-only update body (endpoint immutable post-create). */
+    /**
+     * PUT-only update body (endpoint immutable post-create). A null
+     * {@code unresolvedReplyText} keeps the stored text; "" clears it.
+     */
     public record BindingUpdate(
             String          profileId,
             Integer         profileVersion,
@@ -52,8 +66,17 @@ public final class ChannelBindingDtos {
             Long            authResolverId,
             OnUnresolvedPolicy onUnresolved,
             List<String>    allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied
-    ) {}
+            OnOverrideDenied onOverrideDenied,
+            String          unresolvedReplyText
+    ) {
+        public BindingUpdate(String profileId, Integer profileVersion, RoutingRule routing,
+                             SessionPolicy sessionPolicy, Integer priority, BindingStatus status,
+                             Long authResolverId, OnUnresolvedPolicy onUnresolved,
+                             List<String> allowedOverrideProfiles, OnOverrideDenied onOverrideDenied) {
+            this(profileId, profileVersion, routing, sessionPolicy, priority, status, authResolverId,
+                    onUnresolved, allowedOverrideProfiles, onOverrideDenied, null);
+        }
+    }
 
     /** Wire representation of {@link ChannelEndpointRef}. */
     public record EndpointRequest(String kind, String id) {}
@@ -74,7 +97,8 @@ public final class ChannelBindingDtos {
             Long            authResolverId,
             OnUnresolvedPolicy onUnresolved,
             List<String>    allowedOverrideProfiles,
-            OnOverrideDenied onOverrideDenied
+            OnOverrideDenied onOverrideDenied,
+            String          unresolvedReplyText
     ) {
 
         public static BindingResponse of(ChannelBinding b) {
@@ -93,7 +117,8 @@ public final class ChannelBindingDtos {
                     b.authResolverId(),
                     b.onUnresolved(),
                     b.allowedOverrideProfiles().stream().sorted().toList(),
-                    b.onOverrideDenied());
+                    b.onOverrideDenied(),
+                    b.unresolvedReplyText());
         }
     }
 }

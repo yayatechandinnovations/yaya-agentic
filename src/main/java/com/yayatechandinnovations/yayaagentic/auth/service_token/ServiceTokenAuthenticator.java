@@ -129,6 +129,27 @@ public class ServiceTokenAuthenticator implements Authenticator {
                 Instant.now()));
     }
 
+    /**
+     * Mint a token the install verifies exactly as {@link #tryAuthenticate}
+     * does — the platform calling the tenant back (keyword forwards, the
+     * {@code system.reply} tool's cousin). Empty when the tenant has no
+     * service-token secret: the caller then has nothing to sign with and must
+     * not call.
+     */
+    public Optional<String> mint(Ids.TenantId tenant, String subject, Set<String> scopes, java.time.Duration ttl) {
+        if (tenant == null || subject == null || subject.isBlank() || subject.contains(".")) {
+            throw new IllegalArgumentException("tenant and a dot-free subject are required");
+        }
+        byte[] secret = resolveSecret(tenant.value());
+        if (secret == null) return Optional.empty();
+        String scopesCsv = scopes == null ? "" : scopes.stream().sorted().collect(Collectors.joining(","));
+        long exp = Instant.now().plus(ttl == null ? java.time.Duration.ofSeconds(60) : ttl).getEpochSecond();
+        String payload = tenant.value() + "." + subject + "." + exp + "." + scopesCsv;
+        String mac = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(hmac(secret, payload.getBytes(StandardCharsets.UTF_8)));
+        return Optional.of(payload + "." + mac);
+    }
+
     /** DB row first (decrypted, cached), config map fallback; null = unknown. */
     private byte[] resolveSecret(String tenantId) {
         Optional<byte[]> hit = cache.computeIfAbsent(tenantId, this::loadSecret);

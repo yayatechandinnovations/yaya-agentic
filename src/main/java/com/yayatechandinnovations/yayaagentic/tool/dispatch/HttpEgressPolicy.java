@@ -3,6 +3,8 @@ package com.yayatechandinnovations.yayaagentic.tool.dispatch;
 import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import org.springframework.stereotype.Component;
 
+import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
@@ -25,9 +27,11 @@ import java.util.regex.Pattern;
  *       deployment-wide "this cluster can only ever call …" gate can
  *       still set the list and it will enforce.</li>
  *   <li>SSRF guard (always on): the resolved IP must not be loopback,
- *       link-local, multicast, any-local, or RFC1918 private (unless
- *       {@code allow-private-networks=true}). This is a platform
- *       concern and runs regardless of allowlist configuration.</li>
+ *       link-local, multicast, any-local, RFC1918 private, carrier-grade
+ *       NAT shared space ({@code 100.64.0.0/10}) or IPv6 unique-local
+ *       ({@code fc00::/7}) (unless {@code allow-private-networks=true}).
+ *       This is a platform concern and runs regardless of allowlist
+ *       configuration.</li>
  * </ol>
  *
  * Both decisions surface as a {@link Decision} that the dispatcher logs
@@ -81,8 +85,14 @@ public class HttpEgressPolicy {
      * SSRF check without the allowlist gate. Use this for outbound URLs
      * that are operator-configured (not LLM-influenced) — the delegate
      * login URL being the canonical case. Still blocks loopback,
-     * link-local, private (RFC1918), multicast, and any-local addresses
-     * unless {@code allow-private-networks=true}.
+     * link-local, private (RFC1918, 100.64.0.0/10, fc00::/7), multicast,
+     * and any-local addresses unless {@code allow-private-networks=true}.
+     *
+     * <p>The check resolves the name once and the caller's HTTP client
+     * resolves it again when it connects: a name whose record changes in
+     * between (DNS rebinding) is not caught here. Callers that cannot pin
+     * the connection to {@link Decision.Allow#resolved()} document that
+     * residual risk and the mitigations around it.
      */
     public Decision checkPrivateAddressOnly(URI uri) {
         if (uri == null || uri.getHost() == null) {
@@ -118,7 +128,27 @@ public class HttpEgressPolicy {
         if (addr.isSiteLocalAddress()) return "private (RFC1918) address forbidden";
         if (addr.isMulticastAddress()) return "multicast address forbidden";
         if (addr.isAnyLocalAddress()) return "any-local address forbidden";
+        if (isSharedAddressSpace(addr)) return "shared address space (100.64.0.0/10) forbidden";
+        if (isUniqueLocal(addr)) return "unique-local (fc00::/7) address forbidden";
         return null;
+    }
+
+    /** RFC 6598 carrier-grade NAT space: not RFC1918, so {@code isSiteLocalAddress()} misses it. */
+    private static boolean isSharedAddressSpace(InetAddress addr) {
+        if (!(addr instanceof Inet4Address)) return false;
+        byte[] b = addr.getAddress();
+        return (b[0] & 0xff) == 100 && (b[1] & 0xc0) == 0x40;
+    }
+
+    /** RFC 4193 unique-local IPv6: the JDK's site-local test only knows the deprecated fec0::/10. */
+    private static boolean isUniqueLocal(InetAddress addr) {
+        if (!(addr instanceof Inet6Address)) return false;
+        return (addr.getAddress()[0] & 0xfe) == 0xfc;
+    }
+
+    /** Whether the dev flag {@code allow-private-networks} is on (loopback and private targets accepted). */
+    public boolean allowsPrivateNetworks() {
+        return allowPrivate;
     }
 
     private static int defaultPort(String scheme) {

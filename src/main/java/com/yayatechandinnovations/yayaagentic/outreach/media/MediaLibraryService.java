@@ -20,7 +20,9 @@ import java.util.UUID;
  * Logical media over the knowledge {@link BlobStore} (§10 #1). Upload runs the
  * SAME gauntlet as knowledge files — size cap → ClamAV → content-type sniff →
  * allow-list → per-tenant quota → SHA-256 de-dupe — via {@link
- * KnowledgeUploadService}; the asset row is the tenant-scoped, filename-carrying
+ * KnowledgeUploadService}, with the allow-list and the image cap being the
+ * outreach ones ({@link OutreachMediaProperties}: PDF, PNG and JPEG by default,
+ * images at most 5 MiB); the asset row is the tenant-scoped, filename-carrying
  * handle the ingest envelope references.
  */
 @Service
@@ -29,20 +31,27 @@ public class MediaLibraryService {
     private final KnowledgeUploadService uploads;
     private final BlobStore blobStore;
     private final MediaAssetRepository assets;
+    private final KnowledgeUploadService.UploadPolicy policy;
 
     public MediaLibraryService(KnowledgeUploadService uploads,
                                BlobStore blobStore,
-                               MediaAssetRepository assets) {
+                               MediaAssetRepository assets,
+                               OutreachMediaProperties mediaProps) {
         this.uploads = uploads;
         this.blobStore = blobStore;
         this.assets = assets;
+        OutreachMediaProperties props = mediaProps == null
+                ? new OutreachMediaProperties(null, null) : mediaProps;
+        long documentCap = uploads.defaultPolicy().maxBytesFor().applyAsLong("application/pdf");
+        this.policy = new KnowledgeUploadService.UploadPolicy(props::isAllowed,
+                ct -> OutreachMediaProperties.isImage(ct) ? props.maxImageBytes() : documentCap);
     }
 
-    /** Store bytes through the gauntlet and register a logical asset. */
+    /** Store bytes through the gauntlet (with the outreach type policy) and register a logical asset. */
     @Transactional
     public MediaAsset upload(Ids.TenantId tenant, String filename, byte[] bytes, String caption) {
         var stored = uploads.storeAll(tenant, List.of(
-                new KnowledgeUploadService.PendingFile(filename, bytes)));
+                new KnowledgeUploadService.PendingFile(filename, bytes)), policy);
         var f = stored.get(0);
         String id = "media_" + UUID.randomUUID().toString().replace("-", "");
         MediaAssetEntity e = new MediaAssetEntity(id, tenant.value(), f.blobId(),

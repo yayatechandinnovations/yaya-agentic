@@ -62,12 +62,30 @@ public interface OutreachService {
     /**
      * How one resolved target got the message (whatsapp-ops-integration-design.md
      * §14.1/§14.2): {@code channel} ∈ CHAT/WHATSAPP, {@code fallbackReason} set
-     * when WhatsApp was asked for but the chat carried it, {@code status} ∈
-     * QUEUED/SENT/DELIVERED/READ/FAILED/CHAT_DELIVERED.
+     * when WhatsApp was asked for but the chat carried it (or, with no chat
+     * fallback, why the leg FAILED), {@code status} ∈
+     * QUEUED/SENT/DELIVERED/READ/FAILED/CHAT_DELIVERED, {@code templateUsed} the
+     * approved template a WhatsApp leg went out as (null in-window / on chat).
+     */
+    /**
+     * @param templateUsed the approved template the WhatsApp leg went out as (null in-window / on chat)
+     * @param errorCode    the provider's failure code when the leg FAILED ({@code outreach_deliveries.failure_code}:
+     *                     Twilio's numeric {@code ErrorCode} as text, or {@code exception}); null otherwise
      */
     record Delivery(String channel, String fallbackReason, String providerMessageId,
-                    String status, Instant statusAt) {}
+                    String status, Instant statusAt, String templateUsed, String errorCode) {
+        public Delivery(String channel, String fallbackReason, String providerMessageId,
+                        String status, Instant statusAt) {
+            this(channel, fallbackReason, providerMessageId, status, statusAt, null, null);
+        }
 
+        public Delivery(String channel, String fallbackReason, String providerMessageId,
+                        String status, Instant statusAt, String templateUsed) {
+            this(channel, fallbackReason, providerMessageId, status, statusAt, templateUsed, null);
+        }
+    }
+
+    /** @param status the ingest-ledger state (RECEIVED/DELIVERED/DROPPED/FAILED), not a provider state */
     record OutreachStatus(
             Ids.OutreachId id,
             String status,

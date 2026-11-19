@@ -414,7 +414,28 @@ here is domain-neutral.
   `no_template`, `send_failed`, `provider_not_configured`, `missing_phone`) falls back to
   the chat inbox and is reported per target in `deliveries[]` and
   `GET …/messages/{outreachId}` (`outreach_deliveries`, updated by Twilio status
-  callbacks).
+  callbacks). `delivery.fallback: "NONE"` (default `CHAT`) turns that off for recipients
+  with no inbox: the WhatsApp leg that cannot go out is recorded `FAILED` with the
+  reason, nothing is written to any chat, the receipt says `disposition: DROPPED`, and
+  `recipient` becomes optional (the phone is the address).
+- **Receipt and status shapes.** `deliveries[]` rows carry `{channel, fallbackReason,
+  providerMessageId, status, statusAt, templateUsed, errorCode}` — `templateUsed` is the
+  approved template the WhatsApp leg went out as (null in-window or on chat), so an
+  integration can tell a billable template send from a free in-window one; `errorCode`
+  is `outreach_deliveries.failure_code` (Twilio's numeric `ErrorCode` as text, or
+  `exception`) on a leg that FAILED — at send time on the ingest receipt, or later from
+  the status callback on `GET …/messages/{outreachId}` — and null otherwise, so the
+  integration can label the failure (`twilio_<code>`) from either surface. On
+  `GET …/messages/{outreachId}` the top-level `status` is the **ingest ledger**
+  (`RECEIVED` / `DELIVERED` / `DROPPED` / `FAILED`): what happened to the message at
+  ingest. The provider's per-leg state (`SENT → DELIVERED → READ`, or `FAILED`) is
+  `deliveries[].status`; a poller tracking a WhatsApp receipt reads that, never the top
+  level.
+- **Media types.** `POST /v1/integrations/{t}/senders/{s}/media` runs the knowledge
+  gauntlet (scan, sniff, quota, de-dupe) with its own allow-list
+  (`yaya.agentic.outreach.media.allowed-content-types`, default PDF + PNG + JPEG; images
+  at most `max-image-bytes`, 5 MiB) — a receipt image belongs on a WhatsApp card, not in
+  a knowledge corpus, and the two lists no longer have to agree.
 - **Bound actions.** An action is `send` text or a `tool {id, args}` (+ one optional
   `ask`). Every action gets a 128-bit `outreach_actions` id (7-day TTL, bound to the
   recipient subject/phone). Chat taps send `_selection {kind:"action", actionId}`;

@@ -83,6 +83,14 @@ yaya:
   agentic:
     default-personality: default
     default-tenant: default
+    outreach:
+      media:
+        # What an integration sender may attach to an outreach message
+        # (POST /v1/integrations/{t}/senders/{s}/media). Its own list, apart
+        # from the knowledge one: the chat shows PNG/JPEG inline. Images are
+        # capped at WhatsApp's 5 MiB; documents keep knowledge.max-file-bytes.
+        allowed-content-types: application/pdf,image/png,image/jpeg
+        max-image-bytes: 5242880
     knowledge:
       # Uploaded knowledge files (docs/design/knowledge-file-upload-design.md).
       # blob-store: db keeps bytes in Postgres (zero extra infra); switch to

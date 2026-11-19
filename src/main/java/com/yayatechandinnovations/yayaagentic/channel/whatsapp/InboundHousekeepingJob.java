@@ -1,5 +1,6 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.yayatechandinnovations.yayaagentic.persistence.ChannelAutoReplyRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
 import org.slf4j.Logger;
@@ -25,6 +26,10 @@ import java.util.List;
  *   <li><b>Reap.</b> Delete rows older than the §16 replay-attack dedup
  *       window (24h). Keeping older rows would slowly bloat the table
  *       without adding security — Twilio's retry behaviour caps at 24h.</li>
+ *   <li><b>Reap auto-reply claims.</b> Delete {@code channel_auto_replies}
+ *       rows older than 30 days: a claim only matters inside its 24 h
+ *       window, after which the row is dead weight for a number that may
+ *       never write again.</li>
  * </ol>
  */
 @Component
@@ -33,12 +38,14 @@ public class InboundHousekeepingJob {
     private static final Logger log = LoggerFactory.getLogger(InboundHousekeepingJob.class);
 
     private final InboundMessageRepository inbound;
+    private final ChannelAutoReplyRepository autoReplies;
     private final InboundDispatchWorker worker;
     private final boolean enabled;
     private final int rescueAfterMinutes;
     private final int reapAfterHours;
 
     public InboundHousekeepingJob(InboundMessageRepository inbound,
+                                  ChannelAutoReplyRepository autoReplies,
                                   InboundDispatchWorker worker,
                                   @Value("${yaya.agentic.channels.whatsapp.housekeeping.enabled:true}")
                                           boolean enabled,
@@ -47,6 +54,7 @@ public class InboundHousekeepingJob {
                                   @Value("${yaya.agentic.channels.whatsapp.housekeeping.reap-after-hours:24}")
                                           int reapAfterHours) {
         this.inbound = inbound;
+        this.autoReplies = autoReplies;
         this.worker = worker;
         this.enabled = enabled;
         this.rescueAfterMinutes = rescueAfterMinutes;
@@ -61,6 +69,7 @@ public class InboundHousekeepingJob {
         if (!enabled) return;
         rescueStuckRows();
         reapStaleRows();
+        reapAutoReplyClaims();
     }
 
     @Transactional
@@ -99,5 +108,17 @@ public class InboundHousekeepingJob {
         if (oldRows.isEmpty()) return;
         log.info("Inbound reap: deleting {} rows older than {}", oldRows.size(), cutoff);
         inbound.deleteAll(oldRows);
+    }
+
+    /** How long an auto-reply claim is kept past its 24 h window before the reaper drops it. */
+    static final int AUTO_REPLY_RETENTION_DAYS = 30;
+
+    @Transactional
+    protected void reapAutoReplyClaims() {
+        OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(AUTO_REPLY_RETENTION_DAYS);
+        int deleted = autoReplies.deleteByRepliedAtBefore(cutoff);
+        if (deleted > 0) {
+            log.info("Auto-reply reap: deleted {} claims older than {}", deleted, cutoff);
+        }
     }
 }

@@ -139,7 +139,7 @@ public class DefaultOutreachService implements OutreachService {
             throw new OutreachException(OutreachException.Kind.SENDER_DISABLED,
                     "sender is not enabled for inbound");
         }
-        if (!sender.addressing().permits(msg.recipient())) {
+        if (msg.recipient() != null && !sender.addressing().permits(msg.recipient())) {
             // A policy violation the trusted caller should learn about (not a
             // silent drop) — but we never echo the recipient back.
             throw new OutreachException(OutreachException.Kind.ADDRESSING_DENIED,
@@ -174,7 +174,10 @@ public class DefaultOutreachService implements OutreachService {
         }
 
         // --- Resolve to delivery targets. Empty ⇒ nobody eligible ⇒ silent drop.
-        List<ResolvedTarget> targets = resolve(msg.recipient(), sender);
+        // No recipient (WhatsApp with no chat fallback): the phone is the target.
+        List<ResolvedTarget> targets = msg.recipient() == null
+                ? List.of(phoneTarget(msg.delivery().phoneE164()))
+                : resolve(msg.recipient(), sender);
         if (targets.isEmpty()) {
             ledgerRow.setStatus("DROPPED");
             ledger.save(ledgerRow);
@@ -184,18 +187,30 @@ public class DefaultOutreachService implements OutreachService {
 
         List<String> sessionIds = new ArrayList<>();
         List<Delivery> receipts = new ArrayList<>();
+        boolean anyDelivered = false;
         for (ResolvedTarget target : targets) {
             Delivered d = deliver(msg, sender, target, outreachId);
             if (d.sessionId() != null) sessionIds.add(d.sessionId());
+            if (!"FAILED".equals(d.delivery().status())) anyDelivered = true;
             receipts.add(d.delivery());
         }
 
-        ledgerRow.setStatus("DELIVERED");
+        // Every leg FAILED (only possible with fallback NONE): the ledger says
+        // FAILED and the caller sees DROPPED with the reason per leg — nothing
+        // was written anywhere a person would read it.
+        ledgerRow.setStatus(anyDelivered ? "DELIVERED" : "FAILED");
         ledgerRow.setSessionId(sessionIds.isEmpty() ? null : sessionIds.get(0));
         ledger.save(ledgerRow);
-        return new OutreachReceipt(outreachId, Disposition.DELIVERED, sessionIds,
+        return new OutreachReceipt(outreachId, anyDelivered ? Disposition.DELIVERED : Disposition.DROPPED,
+                sessionIds,
                 ledgerRow.getReceivedAt() == null ? Instant.now() : ledgerRow.getReceivedAt().toInstant(),
                 receipts);
+    }
+
+    /** The target of a recipient-less WhatsApp message: keyed by the number, no chat entry point. */
+    private static ResolvedTarget phoneTarget(String phoneE164) {
+        String key = "phone:" + phoneE164;
+        return new ResolvedTarget(key, key, null);
     }
 
     @Override
@@ -216,7 +231,8 @@ public class DefaultOutreachService implements OutreachService {
 
     private static Delivery toDelivery(com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryEntity e) {
         return new Delivery(e.getChannel(), e.getFallbackReason(), e.getProviderMessageSid(), e.getStatus(),
-                e.getStatusAt() == null ? null : e.getStatusAt().toInstant());
+                e.getStatusAt() == null ? null : e.getStatusAt().toInstant(), e.getTemplateName(),
+                e.getFailureCode());
     }
 
     /** One target's outcome: the chat session it landed in (null on WhatsApp) + its receipt. */
@@ -227,7 +243,9 @@ public class DefaultOutreachService implements OutreachService {
     /**
      * Deliver to one target. A WHATSAPP preference goes out on the sender's
      * linked WhatsApp number when it can; every reason it cannot falls back to
-     * the chat inbox with that reason on the receipt (§6.1) — never a drop.
+     * the chat inbox with that reason on the receipt (§6.1) — never a drop —
+     * unless the envelope asked for no chat fallback: then the leg is recorded
+     * FAILED with the reason and no chat is written (ticket-share design §8 P2).
      */
     private Delivered deliver(SystemInboundMessage msg, SystemSender sender,
                               ResolvedTarget target, Ids.OutreachId outreachId) {
@@ -255,13 +273,26 @@ public class DefaultOutreachService implements OutreachService {
                         deliveries.save(row);
                     }
                     return new Delivered(null, new Delivery("WHATSAPP", null, outcome.providerMessageSid(),
-                            "SENT", Instant.now()));
+                            "SENT", Instant.now(), outcome.templateName()));
                 }
                 fallbackReason = outcome.fallbackReason();
                 failureCode = outcome.failureCode();
-                log.info("outreach {} → chat fallback for {}: {}", outreachId.value(),
-                        target.recipientKey(), fallbackReason);
             }
+            if (!msg.delivery().wantsChatFallback()) {
+                log.info("outreach {} → WhatsApp leg failed for {} with no chat fallback: {}",
+                        outreachId.value(), target.recipientKey(), fallbackReason);
+                var row = recordDelivery(msg, target, outreachId, "WHATSAPP", "FAILED", fallbackReason);
+                if (row != null) {
+                    row.setWhatsappSenderId(sender.whatsappSenderId().orElse(null));
+                    row.setEndUserPhone(phone);
+                    row.setFailureCode(failureCode);
+                    deliveries.save(row);
+                }
+                return new Delivered(null, new Delivery("WHATSAPP", fallbackReason, null, "FAILED",
+                        Instant.now(), null, failureCode));
+            }
+            log.info("outreach {} → chat fallback for {}: {}", outreachId.value(),
+                    target.recipientKey(), fallbackReason);
         }
         String sessionId = deliverToChat(msg, sender, target, outreachId, actions);
         var row = recordDelivery(msg, target, outreachId, "CHAT", "CHAT_DELIVERED", fallbackReason);
@@ -269,7 +300,8 @@ public class DefaultOutreachService implements OutreachService {
             row.setFailureCode(failureCode);
             deliveries.save(row);
         }
-        return new Delivered(sessionId, new Delivery("CHAT", fallbackReason, null, "CHAT_DELIVERED", Instant.now()));
+        return new Delivered(sessionId, new Delivery("CHAT", fallbackReason, null, "CHAT_DELIVERED", Instant.now(),
+                null, failureCode));
     }
 
     private com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryEntity recordDelivery(
@@ -459,7 +491,7 @@ public class DefaultOutreachService implements OutreachService {
     }
 
     private static Map<String, Object> recipientMap(OutreachRecipient r) {
-        return Map.of("kind", r.kindName(), "key", r.key());
+        return r == null ? Map.of() : Map.of("kind", r.kindName(), "key", r.key());
     }
 
     private static Map<String, Object> correlationMap(SystemInboundMessage msg) {

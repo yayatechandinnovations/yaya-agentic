@@ -72,7 +72,8 @@ public class ChannelBindingController {
                 req.authResolverId(),
                 req.onUnresolved(),
                 allowlistOf(req.allowedOverrideProfiles()),
-                req.onOverrideDenied());
+                req.onOverrideDenied(),
+                req.unresolvedReplyText());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ChannelBindingDtos.BindingResponse.of(saved));
     }
@@ -103,7 +104,8 @@ public class ChannelBindingController {
                 req.authResolverId(),
                 req.onUnresolved(),
                 allowlistOf(req.allowedOverrideProfiles()),
-                req.onOverrideDenied());
+                req.onOverrideDenied(),
+                req.unresolvedReplyText());
         return ChannelBindingDtos.BindingResponse.of(saved);
     }
 
