@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.channel.system;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
@@ -109,12 +110,19 @@ public class SystemSenderService {
         e.setCapabilityMaskJson(cmd.capabilityMask() == null ? null : writeJson(cmd.capabilityMask()));
         e.setLimitsJson(cmd.limits() == null ? null : writeJson(cmd.limits()));
         // Absent keeps the link (a provisioning re-run that predates WhatsApp
-        // must not unlink it); blank unlinks; a value must be this tenant's sender.
+        // must not unlink it); blank unlinks; a value must be this tenant's sender
+        // and a real one — the Playground simulator is ACTIVE but the WhatsApp leg
+        // never sends through it (no_whatsapp_sender), so a link to it would turn
+        // every proactive message into a silent failure.
         if (cmd.whatsappSenderId() != null) {
             String wa = cmd.whatsappSenderId().trim();
             if (wa.isEmpty()) {
                 e.setWhatsappSenderId(null);
             } else {
+                if (PlaygroundSenders.isPlayground(wa)) {
+                    throw AdminApiException.badRequest("playground_sender_not_linkable",
+                            "the Playground simulator cannot carry proactive messages; link a real WhatsApp number");
+                }
                 whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa)
                         .orElseThrow(() -> AdminApiException.badRequest("unknown_whatsapp_sender",
                                 "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'"));

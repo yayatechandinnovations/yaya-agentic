@@ -271,6 +271,9 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
     );
   }
 
+  /// Id prefix of the per-workspace Playground simulator (backend `PlaygroundSenders.PREFIX`).
+  static const _playgroundSenderPrefix = 'snd_playground_sim__';
+
   /// Optional WhatsApp leg: when linked, a message whose envelope asks for
   /// WhatsApp goes out on this number (template outside the 24 h window) and
   /// falls back to the chat when it cannot.
@@ -278,8 +281,12 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
     return options.when(
       loading: () => const LinearProgressIndicator(),
       error: (_, _) => const Text('Could not load WhatsApp numbers.'),
-      data: (list) {
-        final missing = _whatsappSenderId.isNotEmpty && !list.any((s) => s.id == _whatsappSenderId);
+      data: (all) {
+        // The Playground simulator is ACTIVE but never sends to WhatsApp; the
+        // server refuses it as a link (playground_sender_not_linkable).
+        final list = all.where((s) => !s.id.startsWith(_playgroundSenderPrefix)).toList();
+        final onSimulator = _whatsappSenderId.startsWith(_playgroundSenderPrefix);
+        final missing = _whatsappSenderId.isNotEmpty && !onSimulator && !list.any((s) => s.id == _whatsappSenderId);
         return DropdownButtonFormField<String>(
           initialValue: _whatsappSenderId,
           isExpanded: true,
@@ -297,6 +304,12 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
                 )),
             if (missing)
               DropdownMenuItem(value: _whatsappSenderId, child: Text('$_whatsappSenderId  (not found)')),
+            if (onSimulator)
+              DropdownMenuItem(
+                value: _whatsappSenderId,
+                child: const Text('Playground simulator — sends nothing, choose a real number',
+                    style: TextStyle(color: Colors.redAccent), overflow: TextOverflow.ellipsis),
+              ),
           ],
           onChanged: (v) => setState(() => _whatsappSenderId = v ?? ''),
         );
