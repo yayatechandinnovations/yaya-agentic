@@ -173,9 +173,13 @@ public class TenantAuthResolverController {
         return ResponseEntity.ok(new DeleteResponse(name, evicted));
     }
 
-    /** Operator-facing debug surface — see {@link AuthResolverTestProbe}. */
+    /**
+     * Operator-facing debug surface — see {@link AuthResolverTestProbe}. The probe blocks on the outbound HTTP call, so it
+     * runs on boundedElastic: on the Netty event loop {@code block()} throws IllegalStateException and every probe of an
+     * HTTP resolver failed as {@code transport_error}.
+     */
     @PostMapping("/{name}/test")
-    public AuthResolverTestProbe.ProbeResult test(@PathVariable("tenantId") String tenantId,
+    public reactor.core.publisher.Mono<AuthResolverTestProbe.ProbeResult> test(@PathVariable("tenantId") String tenantId,
                                                   @PathVariable("name") String name,
                                                   @RequestBody(required = false)
                                                   AuthResolverTestProbe.ProbeInput input,
@@ -183,7 +187,8 @@ public class TenantAuthResolverController {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
         ChannelAuthResolverEntity row = loadOrThrow(tenantId, name);
-        return probe.probe(row, input);
+        return reactor.core.publisher.Mono.fromCallable(() -> probe.probe(row, input))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
     /** §8.4 — explicit cache invalidate. */

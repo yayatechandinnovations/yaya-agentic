@@ -56,6 +56,30 @@ class TenantAuthResolverControllerTest {
     }
 
     @Test
+    void test_probe_of_an_http_resolver_really_calls_out() {
+        // The probe blocks on the outbound call; on the Netty event loop that threw IllegalStateException, so every probe of
+        // an HTTP resolver answered transport_error without sending anything. The host here does not resolve: the probe must
+        // report that failure, not the event-loop one.
+        String name = unique("probe-lookup");
+        client.post().uri("/v1/admin/tenants/{t}/auth-resolvers", TENANT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(httpRequest(name, "/yaya/resolve-identity", "SIGNED_JWT",
+                        "the-shared-secret-32-bytes-or-longer", 1500))
+                .exchange().expectStatus().isCreated();
+
+        var result = client.post().uri("/v1/admin/tenants/{t}/auth-resolvers/{n}/test", TENANT, name)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("callerPhone", "+18095554004", "senderPhone", "+18095550101"))
+                .exchange().expectStatus().isOk()
+                .expectBody(com.yayatechandinnovations.yayaagentic.channel.auth.AuthResolverTestProbe.ProbeResult.class)
+                .returnResult().getResponseBody();
+
+        assertThat(result).isNotNull();
+        assertThat(result.transport()).isEqualTo("HTTP");
+        assertThat(String.valueOf(result.errorMessage())).doesNotContain("IllegalStateException");
+    }
+
+    @Test
     void create_http_signed_jwt_resolver_masks_secret_in_response() {
         String name = unique("acme-customer-lookup");
         var req = httpRequest(name, "/yaya/resolve-identity", "SIGNED_JWT",
