@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.dto.AdminDtos;
+import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
+import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
 import com.yayatechandinnovations.yayaagentic.persistence.AuthBindingEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.AuthBindingRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.RecordingStrategyEntity;
@@ -19,11 +21,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Tenant CRUD + lifecycle per docs/design/tenant-registry-design.md §3, §4.
@@ -31,6 +35,12 @@ import java.util.Optional;
  * <p>Tenants are created exclusively through this controller; admin writes
  * elsewhere fail with {@code unknown_tenant} rather than auto-creating
  * (the old {@code ensureTenant} silent path is removed).</p>
+ *
+ * <p>Access: reading a tenant is VIEWER+ of that workspace, changing its
+ * settings is ADMIN+, and creating one or changing its lifecycle (suspend,
+ * resume, archive) is for platform admins only — a workspace must not be able
+ * to switch itself back on. The list shows each caller only the workspaces it
+ * can see.</p>
  */
 @RestController
 @RequestMapping("/v1/admin/tenants")
@@ -44,35 +54,44 @@ public class TenantController {
     private final RecordingStrategyRepository recordingStrategies;
     private final ObjectMapper json;
     private final CloneService cloneService;
+    private final WorkspaceAccessHelper workspaceAccess;
 
     public TenantController(TenantRepository tenants,
                             AuthBindingRepository authBindings,
                             RecordingStrategyRepository recordingStrategies,
                             ObjectMapper json,
-                            CloneService cloneService) {
+                            CloneService cloneService,
+                            WorkspaceAccessHelper workspaceAccess) {
         this.tenants = tenants;
         this.authBindings = authBindings;
         this.recordingStrategies = recordingStrategies;
         this.json = json;
         this.cloneService = cloneService;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping
-    public List<AdminDtos.TenantResponse> list(@RequestParam(value = "status", required = false) String status) {
+    public List<AdminDtos.TenantResponse> list(@RequestParam(value = "status", required = false) String status,
+                                               ServerWebExchange exchange) {
         List<TenantEntity> rows = (status == null || status.isBlank())
                 ? tenants.findAll()
                 : tenants.findAllByStatus(status.toUpperCase());
-        return rows.stream().map(this::toResponse).toList();
+        Set<String> visible = workspaceAccess.visibleWorkspaces(exchange,
+                rows.stream().map(TenantEntity::getId).toList());
+        return rows.stream().filter(t -> visible.contains(t.getId())).map(this::toResponse).toList();
     }
 
     @GetMapping("/{id}")
-    public AdminDtos.TenantResponse get(@PathVariable("id") String id) {
+    public AdminDtos.TenantResponse get(@PathVariable("id") String id, ServerWebExchange exchange) {
+        workspaceAccess.require(id, exchange, Role.VIEWER);
         return toResponse(loadOrThrow(id));
     }
 
     @PostMapping
     @Transactional
-    public ResponseEntity<AdminDtos.TenantResponse> create(@RequestBody AdminDtos.TenantRequest req) {
+    public ResponseEntity<AdminDtos.TenantResponse> create(@RequestBody AdminDtos.TenantRequest req,
+                                                           ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
         String id = req.id();
         TenantSlug.validate(id);
         if (tenants.existsById(id)) {
@@ -119,7 +138,9 @@ public class TenantController {
     @PutMapping("/{id}")
     @Transactional
     public AdminDtos.TenantResponse replace(@PathVariable("id") String id,
-                                            @RequestBody AdminDtos.TenantRequest req) {
+                                            @RequestBody AdminDtos.TenantRequest req,
+                                            ServerWebExchange exchange) {
+        workspaceAccess.require(id, exchange, Role.ADMIN);
         TenantEntity entity = loadOrThrow(id);
         rejectIfArchived(entity, "tenant is archived; reads only");
         applyMutations(entity, req, true);
@@ -130,7 +151,9 @@ public class TenantController {
     @PatchMapping("/{id}")
     @Transactional
     public AdminDtos.TenantResponse patch(@PathVariable("id") String id,
-                                          @RequestBody AdminDtos.TenantRequest req) {
+                                          @RequestBody AdminDtos.TenantRequest req,
+                                          ServerWebExchange exchange) {
+        workspaceAccess.require(id, exchange, Role.ADMIN);
         TenantEntity entity = loadOrThrow(id);
         rejectIfArchived(entity, "tenant is archived; reads only");
         applyMutations(entity, req, false);
@@ -140,7 +163,8 @@ public class TenantController {
 
     @PostMapping("/{id}/suspend")
     @Transactional
-    public AdminDtos.TenantResponse suspend(@PathVariable("id") String id) {
+    public AdminDtos.TenantResponse suspend(@PathVariable("id") String id, ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
         TenantEntity entity = loadOrThrow(id);
         rejectIfArchived(entity, "archived tenants cannot be suspended");
         entity.setStatus(TenantEntity.Status.SUSPENDED);
@@ -150,7 +174,8 @@ public class TenantController {
 
     @PostMapping("/{id}/resume")
     @Transactional
-    public AdminDtos.TenantResponse resume(@PathVariable("id") String id) {
+    public AdminDtos.TenantResponse resume(@PathVariable("id") String id, ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
         TenantEntity entity = loadOrThrow(id);
         rejectIfArchived(entity, "archived tenants cannot be resumed");
         entity.setStatus(TenantEntity.Status.ACTIVE);
@@ -160,7 +185,8 @@ public class TenantController {
 
     @PostMapping("/{id}/archive")
     @Transactional
-    public AdminDtos.TenantResponse archive(@PathVariable("id") String id) {
+    public AdminDtos.TenantResponse archive(@PathVariable("id") String id, ServerWebExchange exchange) {
+        workspaceAccess.requirePlatformAdmin(exchange);
         TenantEntity entity = loadOrThrow(id);
         if (TenantEntity.Status.ARCHIVED.name().equals(entity.getStatus())) {
             return toResponse(entity);
@@ -172,7 +198,8 @@ public class TenantController {
     }
 
     @GetMapping("/{id}/health")
-    public AdminDtos.TenantHealthResponse health(@PathVariable("id") String id) {
+    public AdminDtos.TenantHealthResponse health(@PathVariable("id") String id, ServerWebExchange exchange) {
+        workspaceAccess.require(id, exchange, Role.VIEWER);
         TenantEntity entity = loadOrThrow(id);
         List<String> warnings = new ArrayList<>();
 
@@ -217,10 +244,15 @@ public class TenantController {
     public CloneResult cloneProfile(@PathVariable("src") String sourceTenant,
                                     @PathVariable("profileId") String profileId,
                                     @PathVariable("version") int version,
-                                    @RequestBody CloneRequest body) {
+                                    @RequestBody CloneRequest body,
+                                    ServerWebExchange exchange) {
+        workspaceAccess.require(sourceTenant, exchange, Role.ADMIN);
         if (body == null || body.destinationTenant() == null || body.destinationTenant().isBlank()) {
             throw AdminApiException.badRequest("missing_destination_tenant",
                     "destinationTenant is required");
+        }
+        if (!workspaceAccess.isPlatformAdmin(exchange)) {
+            workspaceAccess.require(body.destinationTenant(), exchange, Role.ADMIN);
         }
         // Operator-identity wiring lands when M5 operator-auth surfaces it
         // through a request-scoped accessor; until then applied_by stays null.

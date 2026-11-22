@@ -11,6 +11,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 /**
  * Shared "resolve tenant + run guard" helper. Used by every admin
  * controller that takes a tenant id/path-variable so the 404-not-403
@@ -103,6 +107,32 @@ public class WorkspaceAccessHelper {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "insufficient_role");
         }
         return pinned.value();
+    }
+
+    /**
+     * The workspaces among {@code candidates} this caller may read (VIEWER+),
+     * the list-side twin of {@link #require}: a platform admin (or
+     * platform-scope key) sees all, an API key only its pinned workspace, a
+     * user only the workspaces they are a member of. With user accounts off
+     * {@link #require} admits every operator, so the list does too.
+     *
+     * @throws ResponseStatusException 401 if no operator is bound to the exchange
+     */
+    public Set<String> visibleWorkspaces(ServerWebExchange exchange, Collection<String> candidates) {
+        Operator op = OperatorContext.current(exchange)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no_operator_on_exchange"));
+        if (candidates == null || candidates.isEmpty()) return Set.of();
+        if (isPlatformAdmin(exchange)) return new LinkedHashSet<>(candidates);
+        if (op.source() == Operator.Source.API_KEY) {
+            TenantId pinned = exchange.getAttribute(WorkspaceContext.PINNED_ATTR);
+            return pinned != null && candidates.contains(pinned.value()) ? Set.of(pinned.value()) : Set.of();
+        }
+        if (!userAccountsEnabled) return new LinkedHashSet<>(candidates);
+        Set<TenantId> visible = guard.visible(OperatorIdentity.userIdOf(op),
+                candidates.stream().map(TenantId::new).toList());
+        Set<String> out = new LinkedHashSet<>();
+        for (TenantId t : visible) out.add(t.value());
+        return out;
     }
 
     /**
