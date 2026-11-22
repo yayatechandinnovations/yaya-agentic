@@ -276,24 +276,30 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
 
   /// Optional WhatsApp leg: when linked, a message whose envelope asks for
   /// WhatsApp goes out on this number (template outside the 24 h window) and
-  /// falls back to the chat when it cannot.
+  /// falls back to the chat when it cannot. The workspace's own Playground
+  /// simulator is offered too: its messages appear in the Playground
+  /// conversation of the recipient phone, buttons included.
   Widget _whatsappField(AsyncValue<List<WhatsAppSenderResponse>> options) {
     return options.when(
       loading: () => const LinearProgressIndicator(),
       error: (_, _) => const Text('Could not load WhatsApp numbers.'),
       data: (all) {
-        // The Playground simulator is ACTIVE but never sends to WhatsApp; the
-        // server refuses it as a link (playground_sender_not_linkable).
+        final tenant = ref.watch(currentTenantOrNull);
+        final ownSimulator = tenant == null ? null : '$_playgroundSenderPrefix$tenant';
         final list = all.where((s) => !s.id.startsWith(_playgroundSenderPrefix)).toList();
-        final onSimulator = _whatsappSenderId.startsWith(_playgroundSenderPrefix);
+        final onSimulator = _whatsappSenderId.isNotEmpty && _whatsappSenderId == ownSimulator;
         final missing = _whatsappSenderId.isNotEmpty && !onSimulator && !list.any((s) => s.id == _whatsappSenderId);
         return DropdownButtonFormField<String>(
           initialValue: _whatsappSenderId,
           isExpanded: true,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'WhatsApp number (optional)',
-            helperText: 'Proactive messages that ask for WhatsApp go out on this number; '
-                'otherwise they land in the chat.',
+            helperText: onSimulator
+                ? 'Messages appear in the Playground, in the conversation of the recipient phone '
+                    '(it must have written there first).'
+                : 'Proactive messages that ask for WhatsApp go out on this number; '
+                    'otherwise they land in the chat.',
+            helperMaxLines: 2,
           ),
           items: [
             const DropdownMenuItem(value: '', child: Text('Chat only')),
@@ -302,14 +308,14 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
                   child: Text('${s.displayName}  ·  ${s.phoneE164}  ·  ${s.status}',
                       overflow: TextOverflow.ellipsis),
                 )),
+            if (ownSimulator != null)
+              DropdownMenuItem(
+                value: ownSimulator,
+                child: const Text('Playground simulator  ·  messages appear in the Playground',
+                    overflow: TextOverflow.ellipsis),
+              ),
             if (missing)
               DropdownMenuItem(value: _whatsappSenderId, child: Text('$_whatsappSenderId  (not found)')),
-            if (onSimulator)
-              DropdownMenuItem(
-                value: _whatsappSenderId,
-                child: const Text('Playground simulator — sends nothing, choose a real number',
-                    style: TextStyle(color: Colors.redAccent), overflow: TextOverflow.ellipsis),
-              ),
           ],
           onChanged: (v) => setState(() => _whatsappSenderId = v ?? ''),
         );

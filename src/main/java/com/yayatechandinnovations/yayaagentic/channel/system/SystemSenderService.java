@@ -3,6 +3,7 @@ package com.yayatechandinnovations.yayaagentic.channel.system;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Ids.TenantId;
@@ -33,6 +34,14 @@ public class SystemSenderService {
     private final ChatEntryPointRepository entryPoints;
     private final ObjectMapper json;
     private final WhatsAppSenderRepository whatsappSenders;
+    // Optional so the hand-built tests keep compiling; it provisions the
+    // tenant's Playground simulator row a link to it needs (FK).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PlaygroundSenderService playgroundSenders;
+
+    void setPlaygroundSenders(PlaygroundSenderService playgroundSenders) {
+        this.playgroundSenders = playgroundSenders;
+    }
 
     public SystemSenderService(SystemSenderRepository repo,
                                ChatEntryPointRepository entryPoints,
@@ -110,22 +119,25 @@ public class SystemSenderService {
         e.setCapabilityMaskJson(cmd.capabilityMask() == null ? null : writeJson(cmd.capabilityMask()));
         e.setLimitsJson(cmd.limits() == null ? null : writeJson(cmd.limits()));
         // Absent keeps the link (a provisioning re-run that predates WhatsApp
-        // must not unlink it); blank unlinks; a value must be this tenant's sender
-        // and a real one — the Playground simulator is ACTIVE but the WhatsApp leg
-        // never sends through it (no_whatsapp_sender), so a link to it would turn
-        // every proactive message into a silent failure.
+        // must not unlink it); blank unlinks; a value must be this tenant's sender.
+        // The tenant's own Playground simulator counts: its messages land in the
+        // Playground conversation of the recipient phone (WhatsAppOutreachLeg). Its
+        // row is otherwise created by the first Playground message, so linking
+        // creates it. Another tenant's simulator is not this tenant's sender.
         if (cmd.whatsappSenderId() != null) {
             String wa = cmd.whatsappSenderId().trim();
             if (wa.isEmpty()) {
                 e.setWhatsappSenderId(null);
             } else {
-                if (PlaygroundSenders.isPlayground(wa)) {
-                    throw AdminApiException.badRequest("playground_sender_not_linkable",
-                            "the Playground simulator cannot carry proactive messages; link a real WhatsApp number");
+                TenantId tenant = new TenantId(e.getTenantId());
+                boolean ownSimulator = PlaygroundSenders.forTenant(tenant).value().equals(wa);
+                if (ownSimulator) {
+                    if (playgroundSenders != null) playgroundSenders.ensureForTenant(tenant);
+                } else {
+                    whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa)
+                            .orElseThrow(() -> AdminApiException.badRequest("unknown_whatsapp_sender",
+                                    "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'"));
                 }
-                whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa)
-                        .orElseThrow(() -> AdminApiException.badRequest("unknown_whatsapp_sender",
-                                "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'"));
                 e.setWhatsappSenderId(wa);
             }
         }

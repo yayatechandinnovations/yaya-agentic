@@ -21,6 +21,11 @@ import java.util.Optional;
  * com.yayatechandinnovations.yayaagentic.channel.whatsapp.OutboundDispatcher}
  * consults it when keying the sink for the playground sender.
  *
+ * <p>It also remembers, per tenant, the Playground conversation each simulated
+ * phone last wrote from, so a proactive message for that phone on the
+ * Playground number ({@code WhatsAppOutreachLeg}) lands in the conversation
+ * the operator is looking at.
+ *
  * <p>In-memory + single-instance, matching {@link PlaygroundOutboundSink}'s
  * own deployment assumption. Bounded so a long-running instance can't leak
  * the map; oldest mappings drop.
@@ -48,6 +53,14 @@ public class PlaygroundSessionRegistry {
                 }
             });
 
+    private final Map<String, String> phoneToClient = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    return size() > MAX_ENTRIES;
+                }
+            });
+
     public void register(Ids.SessionId engineSession, String clientSessionId) {
         if (clientSessionId == null || clientSessionId.isBlank()) return;
         engineToClient.put(engineSession.value(), clientSessionId);
@@ -61,5 +74,26 @@ public class PlaygroundSessionRegistry {
     public Optional<Ids.SessionId> engineFor(String clientSessionId) {
         if (clientSessionId == null || clientSessionId.isBlank()) return Optional.empty();
         return Optional.ofNullable(clientToEngine.get(clientSessionId)).map(Ids.SessionId::new);
+    }
+
+    /** The Playground conversation {@code phoneE164} last wrote from in {@code tenant}. */
+    public void rememberPhone(Ids.TenantId tenant, String phoneE164, String clientSessionId) {
+        if (tenant == null || clientSessionId == null || clientSessionId.isBlank()) return;
+        String key = phoneKey(tenant, phoneE164);
+        if (key != null) phoneToClient.put(key, clientSessionId);
+    }
+
+    public Optional<String> clientForPhone(Ids.TenantId tenant, String phoneE164) {
+        if (tenant == null) return Optional.empty();
+        String key = phoneKey(tenant, phoneE164);
+        return key == null ? Optional.empty() : Optional.ofNullable(phoneToClient.get(key));
+    }
+
+    private static String phoneKey(Ids.TenantId tenant, String phone) {
+        if (phone == null) return null;
+        String p = phone.trim();
+        if (p.startsWith("whatsapp:")) p = p.substring("whatsapp:".length());
+        p = p.replaceAll("[\\s()-]", "");
+        return p.isEmpty() ? null : tenant.value() + "|" + p;
     }
 }

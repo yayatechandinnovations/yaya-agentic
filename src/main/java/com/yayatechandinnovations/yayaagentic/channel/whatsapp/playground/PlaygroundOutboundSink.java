@@ -30,19 +30,21 @@ public class PlaygroundOutboundSink {
 
     private final Map<String, List<Message>> bySession = new LinkedHashMap<>();
 
-    public synchronized void append(Ids.SessionId session, String body,
-                                    InteractivePayload payload) {
+    public synchronized Message append(Ids.SessionId session, String body,
+                                       InteractivePayload payload) {
         List<Message> queue = bySession.computeIfAbsent(session.value(),
                 k -> Collections.synchronizedList(new ArrayList<>()));
         synchronized (queue) {
             if (queue.size() >= MAX_MESSAGES_PER_SESSION) {
                 queue.remove(0);
             }
-            queue.add(new Message(
+            Message message = new Message(
                     UUID.randomUUID().toString(),
                     Instant.now(),
                     body,
-                    descriptorFor(payload)));
+                    descriptorFor(payload));
+            queue.add(message);
+            return message;
         }
     }
 

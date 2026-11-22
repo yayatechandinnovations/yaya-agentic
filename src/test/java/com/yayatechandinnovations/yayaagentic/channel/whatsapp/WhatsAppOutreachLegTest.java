@@ -6,6 +6,8 @@ import com.yayatechandinnovations.yayaagentic.channel.ProviderCreds;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderId;
 import com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.TemplateCategory;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.TemplateId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.TemplateStatus;
@@ -55,6 +57,8 @@ class WhatsAppOutreachLegTest {
     private MediaTokenSigner signer;
     private WhatsAppOutreachLeg leg;
     private WhatsAppSender sender;
+    private PlaygroundOutboundSink sink;
+    private PlaygroundSessionRegistry playgroundSessions;
 
     @BeforeEach
     void setUp() {
@@ -66,8 +70,11 @@ class WhatsAppOutreachLegTest {
         inSession = mock(InSessionContents.class);
         inbound = mock(InboundMessageRepository.class);
         signer = mock(MediaTokenSigner.class);
+        sink = new PlaygroundOutboundSink();
+        playgroundSessions = new PlaygroundSessionRegistry();
         leg = new WhatsAppOutreachLeg(senders, optOuts, templates, twilio, creds, inSession, inbound,
-                mock(OutboundMessageRepository.class), signer, mock(ChannelMetrics.class), "https://hub.example/");
+                mock(OutboundMessageRepository.class), signer, mock(ChannelMetrics.class), sink,
+                playgroundSessions, "https://hub.example/");
 
         sender = mock(WhatsAppSender.class);
         when(sender.status()).thenReturn(SenderStatus.ACTIVE);
@@ -175,6 +182,50 @@ class WhatsAppOutreachLegTest {
 
         assertThat(leg.deliver(request(List.of())).fallbackReason()).isEqualTo("no_template");
         verify(twilio, never()).sendContent(anyString(), anyString(), anyMap(), anyMap(), any());
+    }
+
+    @Test
+    void the_tenants_playground_number_lands_in_the_conversation_of_that_phone_with_its_buttons() {
+        playgroundSessions.rememberPhone(TENANT, PHONE, "wa-1700000000000");
+        var r = new WhatsAppOutreachLeg.Request(TENANT, "snd_playground_sim__acme", PHONE,
+                "Solicitud UR-1 pendiente", List.of(), request(List.of()).actions(),
+                new DeliveryRequest.TemplateRef("sl_undo_request_v1", "es", List.of("UR-1")));
+
+        var outcome = leg.deliver(r);
+
+        assertThat(outcome.delivered()).isTrue();
+        assertThat(outcome.fallbackReason()).isNull();
+        assertThat(outcome.templateName()).isNull();
+        assertThat(outcome.deliveredBody()).isEqualTo("Solicitud UR-1 pendiente");
+        var messages = sink.drain(new Ids.SessionId("wa-1700000000000"), null);
+        assertThat(messages).singleElement().satisfies(m -> {
+            assertThat(outcome.providerMessageSid()).isEqualTo("playground:" + m.id());
+            assertThat(m.body()).startsWith("Solicitud UR-1 pendiente").contains("1. Aprobar");
+            assertThat(m.interactive().kind()).isEqualTo("buttons");
+            assertThat(m.interactive().options()).extracting(o -> o.get("id"))
+                    .containsExactly("act:a1", "act:a2", "act:a3");
+            assertThat(m.interactive().options()).extracting(o -> o.get("label"))
+                    .containsExactly("Aprobar", "Rechazar", "Ver detalle");
+        });
+        verify(twilio, never()).sendContent(anyString(), anyString(), anyMap(), anyMap(), any());
+        verify(templates, never()).findApproved(any(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void the_playground_number_without_a_conversation_for_that_phone_fails_and_another_tenants_is_no_sender() {
+        var none = new WhatsAppOutreachLeg.Request(TENANT, "snd_playground_sim__acme", PHONE, "b",
+                List.of(), List.of(), null);
+        assertThat(leg.deliver(none).fallbackReason()).isEqualTo("no_playground_session");
+
+        playgroundSessions.rememberPhone(new Ids.TenantId("other"), PHONE, "wa-other");
+        assertThat(leg.deliver(none).fallbackReason()).isEqualTo("no_playground_session");
+
+        playgroundSessions.rememberPhone(TENANT, PHONE, "wa-1");
+        var foreign = new WhatsAppOutreachLeg.Request(TENANT, "snd_playground_sim__other", PHONE, "b",
+                List.of(), List.of(), null);
+        assertThat(leg.deliver(foreign).fallbackReason()).isEqualTo("no_whatsapp_sender");
+        assertThat(sink.size(new Ids.SessionId("wa-other"))).isZero();
+        assertThat(sink.size(new Ids.SessionId("wa-1"))).isZero();
     }
 
     @Test

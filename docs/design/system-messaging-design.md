@@ -418,6 +418,16 @@ here is domain-neutral.
   with no inbox: the WhatsApp leg that cannot go out is recorded `FAILED` with the
   reason, nothing is written to any chat, the receipt says `disposition: DROPPED`, and
   `recipient` becomes optional (the phone is the address).
+- **The Playground number delivers (2026-11-22).** A system sender may link its own
+  tenant's Playground simulator (`snd_playground_sim__<tenant>`; another tenant's is
+  `unknown_whatsapp_sender`). The WhatsApp leg then appends the message to the Playground
+  conversation the recipient phone last wrote from (recorded by
+  `POST …/whatsapp-playground/inbound` when it carries `sessionId`): body plus the actions
+  as quick-reply buttons `act:<id>` (at most 3; no 24 h window, so never a template),
+  readable at `GET …/whatsapp-playground/outbound/{sessionId}`. The delivery is `SENT`
+  with `providerMessageId` `playground:<message id>`; a phone with no Playground
+  conversation is `no_playground_session`. Bound actions are stored as for a real number,
+  so a Playground tap (`interactiveId: "act:<id>"`) runs the bound tool.
 - **Receipt and status shapes.** `deliveries[]` rows carry `{channel, fallbackReason,
   providerMessageId, status, statusAt, templateUsed, errorCode}` — `templateUsed` is the
   approved template the WhatsApp leg went out as (null in-window or on chat), so an

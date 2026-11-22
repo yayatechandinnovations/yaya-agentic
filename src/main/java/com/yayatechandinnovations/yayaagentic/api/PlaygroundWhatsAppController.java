@@ -157,6 +157,9 @@ public class PlaygroundWhatsAppController {
         }
         if (req.sessionId() != null && !req.sessionId().isBlank()) {
             raw.put(RAW_PLAYGROUND_CLIENT_SESSION_KEY, req.sessionId());
+            // A proactive message for this phone on the Playground number
+            // (WhatsAppOutreachLeg) lands in the conversation it last wrote from.
+            sessionRegistry.rememberPhone(tenant, fromPhone, req.sessionId());
         }
 
         InboundMessageEntity row = new InboundMessageEntity(

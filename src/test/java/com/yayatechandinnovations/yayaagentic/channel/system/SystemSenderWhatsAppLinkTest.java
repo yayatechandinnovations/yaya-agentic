@@ -2,6 +2,7 @@ package com.yayatechandinnovations.yayaagentic.channel.system;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yayatechandinnovations.yayaagentic.api.AdminApiException;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenderService;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointRepository;
@@ -24,11 +25,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * The WhatsApp number a system sender links: a real sender of the tenant, or
- * nothing. The Playground simulator is refused — the WhatsApp leg never sends
- * through it, so a link to it turned every proactive message of a workspace
- * into a silent {@code no_whatsapp_sender} failure (SL org {@code test},
- * 2026-11-20).
+ * The WhatsApp number a system sender links: a sender of the tenant, or
+ * nothing. The tenant's own Playground simulator is a number like any other —
+ * its proactive messages land in the Playground conversation of the recipient
+ * phone — and linking it provisions its row (otherwise created by the first
+ * Playground message). Another tenant's simulator is not this tenant's sender.
  */
 class SystemSenderWhatsAppLinkTest {
 
@@ -59,13 +60,27 @@ class SystemSenderWhatsAppLinkTest {
     }
 
     @Test
-    void thePlaygroundSimulator_isRefused_andTheLinkStaysAsItWas() {
+    void theTenantsOwnPlaygroundSimulator_isLinked_andItsRowIsProvisioned() {
         row.setWhatsappSenderId("snd_real");
+        PlaygroundSenderService playground = mock(PlaygroundSenderService.class);
+        service.setPlaygroundSenders(playground);
+
+        service.update(TENANT, OWNER, linking("snd_playground_sim__test"));
+
+        assertEquals("snd_playground_sim__test", row.getWhatsappSenderId());
+        verify(playground).ensureForTenant(TENANT);
+        verify(whatsappSenders, never()).findByTenantIdAndId(any(), any());
+    }
+
+    @Test
+    void anotherTenantsPlaygroundSimulator_isRefused_andTheLinkStaysAsItWas() {
+        row.setWhatsappSenderId("snd_real");
+        when(whatsappSenders.findByTenantIdAndId("test", "snd_playground_sim__other")).thenReturn(Optional.empty());
 
         AdminApiException ex = assertThrows(AdminApiException.class,
-                () -> service.update(TENANT, OWNER, linking("snd_playground_sim__test")));
+                () -> service.update(TENANT, OWNER, linking("snd_playground_sim__other")));
 
-        assertEquals("playground_sender_not_linkable", ex.code());
+        assertEquals("unknown_whatsapp_sender", ex.code());
         assertEquals("snd_real", row.getWhatsappSenderId());
         verify(repo, never()).save(any());
     }

@@ -1,11 +1,14 @@
 package com.yayatechandinnovations.yayaagentic.channel.whatsapp;
 
+import com.yayatechandinnovations.yayaagentic.channel.InteractivePayload;
 import com.yayatechandinnovations.yayaagentic.channel.OutboundMedia;
 import com.yayatechandinnovations.yayaagentic.channel.OutboundResult;
 import com.yayatechandinnovations.yayaagentic.channel.ProviderCredsResolver;
 import com.yayatechandinnovations.yayaagentic.channel.SenderRef;
 import com.yayatechandinnovations.yayaagentic.channel.system.DeliveryRequest;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundOutboundSink;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSenders;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.playground.PlaygroundSessionRegistry;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.WhatsAppTemplate;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.templates.WhatsAppTemplateService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.twilio.TwilioMessagingChannelProvider;
@@ -41,6 +44,11 @@ import java.util.Optional;
  * <p>Never throws for a delivery problem: every reason the message cannot go
  * out on WhatsApp comes back as a {@code fallbackReason}, and the caller
  * delivers to the chat instead — no silent drops (§6.1).
+ *
+ * <p>The tenant's Playground simulator is a number like any other: its
+ * messages land in the Playground conversation the recipient phone last wrote
+ * from, as body + quick replies (the Playground has no 24 h window, so never a
+ * template), with the same {@code act:<id>} payloads a real number carries.
  */
 @Component
 public class WhatsAppOutreachLeg {
@@ -62,6 +70,8 @@ public class WhatsAppOutreachLeg {
     private final OutboundMessageRepository outbound;
     private final MediaTokenSigner mediaSigner;
     private final ChannelMetrics metrics;
+    private final PlaygroundOutboundSink playgroundSink;
+    private final PlaygroundSessionRegistry playgroundSessions;
     private final String publicBaseUrl;
 
     public WhatsAppOutreachLeg(WhatsAppSenderService senders,
@@ -74,6 +84,8 @@ public class WhatsAppOutreachLeg {
                                OutboundMessageRepository outbound,
                                MediaTokenSigner mediaSigner,
                                ChannelMetrics metrics,
+                               PlaygroundOutboundSink playgroundSink,
+                               PlaygroundSessionRegistry playgroundSessions,
                                @Value("${yaya.agentic.channels.twilio.webhook-base-url:${yaya.agentic.public-base-url:}}")
                                String publicBaseUrl) {
         this.senders = senders;
@@ -86,6 +98,8 @@ public class WhatsAppOutreachLeg {
         this.outbound = outbound;
         this.mediaSigner = mediaSigner;
         this.metrics = metrics;
+        this.playgroundSink = playgroundSink;
+        this.playgroundSessions = playgroundSessions;
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
     }
 
@@ -117,9 +131,11 @@ public class WhatsAppOutreachLeg {
 
     public Outcome deliver(Request r) {
         if (r.phoneE164() == null || r.phoneE164().isBlank()) return Outcome.fallback("missing_phone");
-        if (r.whatsappSenderId() == null || r.whatsappSenderId().isBlank()
-                || PlaygroundSenders.isPlayground(r.whatsappSenderId())) {
+        if (r.whatsappSenderId() == null || r.whatsappSenderId().isBlank()) {
             return Outcome.fallback("no_whatsapp_sender");
+        }
+        if (PlaygroundSenders.isPlayground(r.whatsappSenderId())) {
+            return deliverToPlayground(r);
         }
         SenderId senderId = new SenderId(r.whatsappSenderId());
         WhatsAppSender sender;
@@ -151,6 +167,31 @@ public class WhatsAppOutreachLeg {
             log.warn("WhatsApp outreach to {} failed: {}", mask(r.phoneE164()), e.getMessage());
             return Outcome.failed("exception");
         }
+    }
+
+    /* ----------------------------- playground ----------------------------- */
+
+    private Outcome deliverToPlayground(Request r) {
+        SenderId own = PlaygroundSenders.forTenant(r.tenant());
+        if (!own.value().equals(r.whatsappSenderId())) return Outcome.fallback("no_whatsapp_sender");
+        if (optOuts.isOptedOut(own, r.phoneE164())) {
+            metrics.optedOutBlocked(r.tenant().value(), own.value());
+            return Outcome.fallback("opted_out");
+        }
+        Optional<String> conversation = playgroundSessions.clientForPhone(r.tenant(), r.phoneE164());
+        if (conversation.isEmpty()) return Outcome.fallback("no_playground_session");
+
+        String body = r.body() == null ? "" : r.body();
+        List<InteractivePayload.Button> buttons = new ArrayList<>();
+        for (String[] b : buttons(r.actions())) buttons.add(new InteractivePayload.Button(b[1], b[0]));
+        InteractivePayload payload = buttons.isEmpty()
+                ? new InteractivePayload.PlainText(body)
+                : new InteractivePayload.Buttons(body, buttons, null);
+        String rendered = OutboundDispatcher.textFallback(payload, null);
+        PlaygroundOutboundSink.Message message = playgroundSink.append(
+                new Ids.SessionId(conversation.get()), rendered, payload);
+        metrics.outbound(r.tenant().value(), own.value(), "outreach", "playground");
+        return new Outcome(true, null, "playground:" + message.id(), null, body, null);
     }
 
     /* ----------------------------- in session ----------------------------- */
