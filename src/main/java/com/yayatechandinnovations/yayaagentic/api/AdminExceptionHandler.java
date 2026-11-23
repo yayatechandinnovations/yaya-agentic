@@ -32,7 +32,9 @@ public class AdminExceptionHandler {
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
                 .body(new AdminDtos.ApiError(
                         ex.code(),
-                        ex.getReason() == null ? status.getReasonPhrase() : ex.getReason()));
+                        ex.getReason() == null ? status.getReasonPhrase() : ex.getReason(),
+                        ex.fieldErrors(),
+                        ex.currentVersion()));
     }
 
     /**

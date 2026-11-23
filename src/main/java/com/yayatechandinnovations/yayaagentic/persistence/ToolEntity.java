@@ -103,6 +103,7 @@ public class ToolEntity {
     public String getTableOutputsJson() { return tableOutputsJson; }
     public String getCardFieldsJson() { return cardFieldsJson; }
     public String getStatus() { return status; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
 
     public void setInputSchemaJson(String v) { this.inputSchemaJson = v; }
     public void setOutputSchemaJson(String v) { this.outputSchemaJson = v; }

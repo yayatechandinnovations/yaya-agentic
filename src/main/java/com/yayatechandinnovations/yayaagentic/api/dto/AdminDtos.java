@@ -274,5 +274,17 @@ public final class AdminDtos {
 
     // ---- Generic --------------------------------------------------------
 
-    public record ApiError(String error, String message) {}
+    /**
+     * {@code fieldErrors} keys are request field names ({@code displayName},
+     * {@code handler.httpSpec.urlTemplate}) so the console can put the message
+     * under the field instead of a toast. {@code currentVersion} rides on a
+     * {@code version_conflict} 409 so the editor can say which version won.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public record ApiError(String error, String message,
+                           Map<String, String> fieldErrors, Integer currentVersion) {
+        public ApiError(String error, String message) {
+            this(error, message, null, null);
+        }
+    }
 }

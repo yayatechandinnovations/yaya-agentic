@@ -160,8 +160,12 @@ com.yayatechandinnovations.yayaagentic
 │   ├── TenantController                /v1/admin/tenants/*
 │   ├── TenantOidcIssuerController      /v1/admin/tenants/{id}/oidc-issuers  (per-tenant RS256/ES256 trust)
 │   ├── TenantJwtSecretController       /v1/admin/tenants/{id}/jwt-secrets   (per-tenant HS256 trust)
-│   └── IdentityProfileMappingController /v1/admin/tenants/{id}/identity-profile-mappings
-│                                        (claim → profile routing)
+│   ├── IdentityProfileMappingController /v1/admin/tenants/{id}/identity-profile-mappings
+│   │                                    (claim → profile routing)
+│   └── AdminEventsController           GET /v1/admin/events — SSE change feed for the admin console
+├── adminevents/                      Admin change feed (admin-console-ux-design.md §4 A3)
+│   ├── AdminChangeEntityListener       Hibernate post-commit listener: admin-visible entity → kind/id/version
+│   └── AdminChangeFeed                 per-instance fan-out + replay buffer (Last-Event-ID), metadata only
 └── config/
     ├── YayaAgenticProperties           @ConfigurationProperties("yaya.agentic")
     └── CoreConfiguration               enables properties

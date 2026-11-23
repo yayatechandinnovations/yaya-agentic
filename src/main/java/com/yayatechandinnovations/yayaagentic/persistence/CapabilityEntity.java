@@ -64,6 +64,7 @@ public class CapabilityEntity {
     public String getId() { return id; }
     public Integer getVersion() { return version; }
     public String getLabel() { return label; }
+    public java.time.OffsetDateTime getCreatedAt() { return createdAt; }
     public String getDescription() { return description; }
     public String getLlmGuidance() { return llmGuidance; }
     public String getToolIdsJson() { return toolIdsJson; }

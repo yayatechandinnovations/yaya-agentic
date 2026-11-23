@@ -120,6 +120,7 @@ public class AdminController {
     @PostMapping("/profiles")
     @Transactional
     public ResponseEntity<AdminDtos.ProfileResponse> createProfile(@RequestBody AdminDtos.ProfileRequest req,
+                                                                    @RequestParam(required = false) Integer baseVersion,
                                                                     ServerWebExchange exchange) {
         String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "profile.id");
@@ -146,6 +147,8 @@ public class AdminController {
         List<ProfileEntity> versions = profiles.findByTenantIdAndIdOrderByVersionDesc(tenant, req.id());
         ProfileEntity current = versions.stream()
                 .max(java.util.Comparator.comparingInt(ProfileEntity::getVersion)).orElse(null);
+        AdminApiException.requireBaseVersion("profile " + req.id(), baseVersion,
+                current == null ? null : current.getVersion());
 
         String sentModel = req.model() == null || req.model().isBlank() ? null : req.model().trim();
         if (sentModel != null && !allowedModels.contains(sentModel)) {
@@ -201,6 +204,7 @@ public class AdminController {
     @Transactional
     public ResponseEntity<AdminDtos.CapabilityResponse> createCapability(
             @RequestBody AdminDtos.CapabilityRequest req,
+            @RequestParam(required = false) Integer baseVersion,
             ServerWebExchange exchange) {
         String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "capability.id");
@@ -211,8 +215,10 @@ public class AdminController {
                 throw badRequest("capability references unknown tool: " + toolId);
             }
         }
-        int nextVersion = capabilities.findByTenantIdAndIdOrderByVersionDesc(tenant, req.id())
-                .stream().mapToInt(CapabilityEntity::getVersion).max().orElse(0) + 1;
+        int currentVersion = capabilities.findByTenantIdAndIdOrderByVersionDesc(tenant, req.id())
+                .stream().mapToInt(CapabilityEntity::getVersion).max().orElse(0);
+        AdminApiException.requireBaseVersion("capability " + req.id(), baseVersion, currentVersion);
+        int nextVersion = currentVersion + 1;
 
         CapabilityEntity entity = new CapabilityEntity(tenant, req.id(), nextVersion, req.label());
         entity.setDescription(req.description());
@@ -250,6 +256,7 @@ public class AdminController {
     @PostMapping("/tools")
     @Transactional
     public ResponseEntity<AdminDtos.ToolResponse> createTool(@RequestBody AdminDtos.ToolRequest req,
+                                                             @RequestParam(required = false) Integer baseVersion,
                                                              ServerWebExchange exchange) {
         String tenant = requireWorkspaceAccess(req.tenant(), exchange, Role.MEMBER);
         require(req.id(), "tool.id");
@@ -264,10 +271,13 @@ public class AdminController {
         parseOrFail(req.inputSchemaJson(), "tool.inputSchemaJson");
         parseOrFail(req.outputSchemaJson(), "tool.outputSchemaJson");
 
+        int nextVersion = nextToolVersion(tenant, req.id());
+        AdminApiException.requireBaseVersion("tool " + req.id(), baseVersion, nextVersion - 1);
+
         AdminDtos.ToolHandlerDto h = req.handler();
         String kind = h.kind() == null ? "" : h.kind().toUpperCase(Locale.ROOT);
         ToolEntity entity = new ToolEntity(tenant, req.id(),
-                nextToolVersion(tenant, req.id()),
+                nextVersion,
                 req.inputSchemaJson(), req.outputSchemaJson(), kind);
         entity.setRequiresJson(writeJson(req.requires() == null ? Map.of() : req.requires()));
         entity.setPolicyJson(writeJson(req.policy() == null ? Map.of() : req.policy()));
@@ -670,7 +680,7 @@ public class AdminController {
                 readJson(e.getFollowUpHintsJson(), new TypeReference<List<String>>() {}),
                 e.getMenuJson() == null ? null
                         : readJson(e.getMenuJson(), new TypeReference<Map<String, Object>>() {}),
-                null /* createdAt populated by DB; not loaded here in M1 */);
+                e.getCreatedAt());
     }
 
     private AdminDtos.ToolResponse toToolResponse(ToolEntity e) {
@@ -688,7 +698,7 @@ public class AdminController {
                 readList(e.getBindingsJson(), BINDING_LIST_REF),
                 readList(e.getSuggestionsJson(),
                         new TypeReference<List<com.yayatechandinnovations.yayaagentic.tool.SuggestionRule>>() {}),
-                e.getStatus(), null);
+                e.getStatus(), e.getCreatedAt());
     }
 
     private AdminDtos.AuthBindingResponse toAuthBindingResponse(AuthBindingEntity e) {
@@ -760,11 +770,39 @@ public class AdminController {
         if (value == null || value.isBlank()) throw badRequest(field + " is required");
     }
 
+    private static final java.util.regex.Pattern FIELD_PREFIX = java.util.regex.Pattern.compile(
+            "^(?:profile|capability|tool|recordingStrategy)\\.([A-Za-z][A-Za-z0-9_.\\[\\]]*)");
+
+    /**
+     * The request field a validation message is about, so the console can put it
+     * under that field. Messages already lead with the field path
+     * ({@code tool.handler.beanName is required…}); the wire key drops the
+     * resource prefix.
+     */
+    static String fieldOf(String msg) {
+        if (msg == null) return null;
+        if (msg.startsWith("profile references unknown capability")) return "capabilities";
+        if (msg.startsWith("profile references unknown auth binding")) return "authBindingId";
+        if (msg.startsWith("capability references unknown tool")) return "tools";
+        if (msg.startsWith("authenticatorRef")) return "authenticatorRef";
+        if (msg.startsWith("httpSpec.")) {
+            var m = java.util.regex.Pattern.compile("^httpSpec\\.([A-Za-z]+)").matcher(msg);
+            return m.find() ? "handler.httpSpec." + m.group(1) : null;
+        }
+        var m = FIELD_PREFIX.matcher(msg);
+        if (!m.find()) return null;
+        String field = m.group(1);
+        return field.endsWith(".") ? field.substring(0, field.length() - 1) : field;
+    }
+
     private static <T> List<T> safeList(List<T> list) {
         return list == null ? List.of() : list;
     }
 
     private static ResponseStatusException badRequest(String msg) {
-        return new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+        String field = fieldOf(msg);
+        return field == null
+                ? new ResponseStatusException(HttpStatus.BAD_REQUEST, msg)
+                : AdminApiException.invalidField(field, msg);
     }
 }
