@@ -18,6 +18,7 @@ class KnowledgeSourceResponse {
     this.chunkCount = 0,
     this.lastError,
     this.createdAt,
+    this.job,
   });
 
   final String tenant;
@@ -35,6 +36,29 @@ class KnowledgeSourceResponse {
   final int chunkCount;
   final String? lastError;
   final String? createdAt;
+
+  /// The latest async ingestion job, when fetched from `/status` (the list
+  /// endpoint doesn't carry it).
+  final KnowledgeIngestionJob? job;
+
+  KnowledgeSourceResponse withJob(KnowledgeIngestionJob? job) => KnowledgeSourceResponse(
+        tenant: tenant,
+        id: id,
+        version: version,
+        name: name,
+        locationKind: locationKind,
+        location: location,
+        ingestion: ingestion,
+        retrieval: retrieval,
+        access: access,
+        status: status,
+        lastIndexedAt: lastIndexedAt,
+        docCount: docCount,
+        chunkCount: chunkCount,
+        lastError: lastError,
+        createdAt: createdAt,
+        job: job,
+      );
 
   factory KnowledgeSourceResponse.fromJson(Map<String, dynamic> json) =>
       KnowledgeSourceResponse(
@@ -62,6 +86,33 @@ class KnowledgeSourceResponse {
         lastError: json['lastError'] as String?,
         createdAt: json['createdAt']?.toString(),
       );
+}
+
+/// The async ingestion job behind an uploaded source, from
+/// `GET /knowledge-sources/{id}/status` (`jobState`, `jobAttempts`, …).
+class KnowledgeIngestionJob {
+  const KnowledgeIngestionJob({required this.state, this.attempts = 0, this.maxAttempts = 0, this.runAfter, this.lastError});
+
+  /// QUEUED | RUNNING | DONE | FAILED
+  final String state;
+  final int attempts;
+  final int maxAttempts;
+  final String? runAfter;
+  final String? lastError;
+
+  bool get active => state == 'QUEUED' || state == 'RUNNING';
+
+  static KnowledgeIngestionJob? fromStatus(Map<String, dynamic> json) {
+    final state = json['jobState'];
+    if (state is! String) return null;
+    return KnowledgeIngestionJob(
+      state: state,
+      attempts: (json['jobAttempts'] as num?)?.toInt() ?? 0,
+      maxAttempts: (json['jobMaxAttempts'] as num?)?.toInt() ?? 0,
+      runAfter: json['jobRunAfter']?.toString(),
+      lastError: json['jobLastError'] as String?,
+    );
+  }
 }
 
 /// A file stored via the upload endpoint — the reference the UI drops into a

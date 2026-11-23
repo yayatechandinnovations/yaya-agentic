@@ -2,295 +2,301 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/form/unsaved_guard.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/tokens.dart';
+import '../../admin/tenants/tenant_validators.dart';
 import '../application/workspaces_controller.dart';
 import '../data/workspaces_api.dart';
 
-/// Create-a-new-workspace dialog. Returns the new workspace's code on
-/// success so the caller can switch to it.
-///
-/// `Code` is optional and starts hidden behind a "use a custom code"
-/// toggle. When the operator opens it, they can type the slug verbatim —
-/// useful when the workspace code must match an external integration's
-/// account identifier. Validation mirrors the backend (lowercase ASCII +
-/// internal dashes, 2–32 chars, no reserved words).
+/// Backend `WorkspaceSlugger` rules for an explicit code.
+abstract final class WorkspaceCodeRules {
+  static final pattern = RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$');
+  static const reserved = {
+    'admin', 'api', 'auth', 'health', 'system', 'static', 'public',
+    'www', 'signup', 'login', 'logout', 'verify', 'reset',
+    'accept-invitation', 'me', 'workspaces', 'platform-settings',
+    'audit', 'metrics', 'status', 'version', 'root', 'support', 'billing',
+  };
+
+  static String? validate(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty) return 'Enter a code, or switch back to an automatic one.';
+    if (v.length < 2 || v.length > 32) return 'Use 2–32 characters.';
+    if (!pattern.hasMatch(v)) return 'Lowercase letters and digits, with single dashes between them.';
+    if (reserved.contains(v)) return '“$v” is reserved. Pick another code.';
+    return null;
+  }
+}
+
+const _labels = {
+  'displayName': 'Workspace name',
+  'code': 'Workspace code',
+  'hostBaseUrl': 'Host base URL',
+  'hostBaseUrlAllowlist': 'Per-call override hosts',
+  'inboundOriginAllowlist': 'Allowed browser origins',
+};
+
+/// Create a workspace; pops with the new workspace's code. Renders as a
+/// dialog by default (the shell's "New workspace…") or as side-sheet
+/// content with [asSheet] (the workspaces page).
 class CreateWorkspaceDialog extends ConsumerStatefulWidget {
-  const CreateWorkspaceDialog({super.key});
+  const CreateWorkspaceDialog({super.key, this.asSheet = false});
+  final bool asSheet;
 
   @override
-  ConsumerState<CreateWorkspaceDialog> createState() =>
-      _CreateWorkspaceDialogState();
+  ConsumerState<CreateWorkspaceDialog> createState() => _CreateWorkspaceDialogState();
 }
 
 class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
-  // Same shape the backend enforces (WorkspaceSlugger#validateExplicit).
-  // Keeping it client-side too gives the operator instant feedback before
-  // the round-trip.
-  static final RegExp _codePattern =
-      RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$');
-
-  final _formKey = GlobalKey<FormState>();
   final _displayName = TextEditingController();
   final _code = TextEditingController();
-  // Optional URL config, same three knobs as the General settings tab.
-  // Hidden by default so the common "just name it" path stays a single field.
   final _hostBase = TextEditingController();
   final _hostAllowlist = TextEditingController();
   final _inboundOrigins = TextEditingController();
   bool _useCustomCode = false;
   bool _showUrlConfig = false;
-  bool _saving = false;
-  String? _error;
-  String? _codeError;
+  late final YFormController _form;
+
+  @override
+  void initState() {
+    super.initState();
+    _form = YFormController(
+      snapshot: () => {
+        'displayName': _displayName.text.trim(),
+        'useCustomCode': _useCustomCode,
+        'code': _code.text.trim(),
+        'hostBaseUrl': _hostBase.text.trim(),
+        'hostBaseUrlAllowlist': _hostAllowlist.text.trim(),
+        'inboundOriginAllowlist': _inboundOrigins.text.trim(),
+      },
+      validate: _validate,
+      labels: _labels,
+      draftKey: 'yaya.draft.workspace.mine.new',
+    );
+    _form.addListener(_rebuild);
+    _form.loadDraft().then((d) {
+      if (d == null || !mounted) return;
+      final v = d.values;
+      _displayName.text = (v['displayName'] as String?) ?? '';
+      _useCustomCode = v['useCustomCode'] == true;
+      _code.text = (v['code'] as String?) ?? '';
+      _hostBase.text = (v['hostBaseUrl'] as String?) ?? '';
+      _hostAllowlist.text = (v['hostBaseUrlAllowlist'] as String?) ?? '';
+      _inboundOrigins.text = (v['inboundOriginAllowlist'] as String?) ?? '';
+      _showUrlConfig = [_hostBase, _hostAllowlist, _inboundOrigins].any((c) => c.text.isNotEmpty);
+      _form.refresh();
+    });
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  // A new workspace starts with "Require HTTPS" on, so its URLs must be https.
+  Map<String, String?> _validate() => {
+        'displayName': Validators.required(_displayName.text, 'a workspace name'),
+        'code': _useCustomCode ? WorkspaceCodeRules.validate(_code.text) : null,
+        'hostBaseUrl': _hostBase.text.trim().isEmpty
+            ? null
+            : TenantValidators.hostBaseUrl(_hostBase.text, requireHttps: true),
+        'hostBaseUrlAllowlist': TenantValidators.lines(
+            _hostAllowlist.text, (l) => TenantValidators.urlPattern(l, requireHttps: true)),
+        'inboundOriginAllowlist': TenantValidators.lines(
+            _inboundOrigins.text, (l) => TenantValidators.originPattern(l, requireHttps: true)),
+      };
 
   @override
   void dispose() {
-    _displayName.dispose();
-    _code.dispose();
-    _hostBase.dispose();
-    _hostAllowlist.dispose();
-    _inboundOrigins.dispose();
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    for (final c in [_displayName, _code, _hostBase, _hostAllowlist, _inboundOrigins]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  /// One pattern per line → trimmed, non-empty entries (mirrors the settings
-  /// screen). Returns null when blank so the field is simply omitted.
-  static List<String>? _parseAllowlist(String raw) {
-    final list = raw
-        .split('\n')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    return list.isEmpty ? null : list;
-  }
-
-  String? _validateCode(String? raw) {
-    if (!_useCustomCode) return null;
-    final v = raw?.trim() ?? '';
-    if (v.isEmpty) return 'Required when "use a custom code" is on';
-    if (v.length < 2 || v.length > 32) return 'Must be 2–32 characters';
-    if (!_codePattern.hasMatch(v)) {
-      return 'Lowercase letters, digits, single internal dashes only';
-    }
-    return null;
+  static List<String>? _list(String raw) {
+    final l = TenantValidators.splitLines(raw);
+    return l.isEmpty ? null : l;
   }
 
   Future<void> _submit() async {
-    if (_saving) return;
-    setState(() => _codeError = null);
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    if (!_form.submit()) return;
+    _form.saving = true;
     try {
       final api = await ref.read(workspacesApiProvider.future);
       final created = await api.create(
         _displayName.text.trim(),
         code: _useCustomCode ? _code.text.trim() : null,
         hostBaseUrl: _hostBase.text.trim().isEmpty ? null : _hostBase.text.trim(),
-        hostBaseUrlAllowlist: _parseAllowlist(_hostAllowlist.text),
-        inboundOriginAllowlist: _parseAllowlist(_inboundOrigins.text),
+        hostBaseUrlAllowlist: _list(_hostAllowlist.text),
+        inboundOriginAllowlist: _list(_inboundOrigins.text),
       );
-      // Refresh the membership list so the new workspace is visible
-      // everywhere it's rendered (switcher, list page).
       ref.invalidate(myWorkspacesProvider);
+      _form.saving = false;
+      _form.markClean();
       if (!mounted) return;
       Navigator.of(context).pop<String>(created.code);
     } on WorkspaceApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _saving = false;
-        if (e.isCodeTaken) {
-          // Bind to the field, not the dialog-wide error band — the
-          // operator just needs to pick a different slug.
-          _codeError = e.message;
-        } else {
-          _error = e.message;
-        }
-      });
+      _form.saving = false;
+      _form.applyServerError(ApiErrorInfo(
+        message: e.message,
+        code: e.errorCode,
+        status: e.statusCode,
+        fieldErrors: e.isCodeTaken ? {'code': 'This code is already taken. Pick another.'} : const {},
+      ));
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _saving = false;
-        _error = 'Create failed: $e';
-      });
+      _form.saving = false;
+      _form.applyServerError(e);
     }
+  }
+
+  List<Widget> _fields(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return [
+      if (_form.summary.isNotEmpty || _form.formError != null) ...[
+        YErrorSummary(form: _form, action: 'creating the workspace'),
+        const SizedBox(height: Gap.lg),
+      ],
+      YTextField(
+        label: _labels['displayName']!,
+        wireKey: 'displayName',
+        controller: _displayName,
+        form: _form,
+        name: 'displayName',
+        required: true,
+        autofocus: true,
+        hint: 'e.g. Acme Co',
+        helper: _useCustomCode ? 'What teammates see in the workspace switcher.' : 'A URL code is generated from this. You become the owner.',
+        onSubmitted: (_) => _submit(),
+      ),
+      const SizedBox(height: Gap.fieldGap),
+      YSwitchField(
+        title: 'Choose the workspace code myself',
+        description: 'Useful when the code must match an account ID in another system. It can’t change later.',
+        value: _useCustomCode,
+        onChanged: (v) {
+          setState(() => _useCustomCode = v);
+          _form.refresh();
+        },
+      ),
+      if (_useCustomCode) ...[
+        const SizedBox(height: Gap.md),
+        YTextField(
+          label: _labels['code']!,
+          wireKey: 'code',
+          controller: _code,
+          form: _form,
+          name: 'code',
+          required: true,
+          mono: true,
+          hint: 'e.g. acme-co',
+          helper: 'Used in URLs and audit logs. 2–32 lowercase letters, digits and single dashes.',
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[a-z0-9-]')),
+            LengthLimitingTextInputFormatter(32),
+          ],
+          onSubmitted: (_) => _submit(),
+        ),
+      ],
+      const SizedBox(height: Gap.lg),
+      YSwitchField(
+        title: 'Set up host URLs now',
+        description: 'Needed before HTTP tools or an HTTP auth resolver can run. You can also do it later in the workspace’s settings.',
+        value: _showUrlConfig,
+        onChanged: (v) => setState(() => _showUrlConfig = v),
+      ),
+      if (_showUrlConfig) ...[
+        const SizedBox(height: Gap.md),
+        YTextField(
+          label: _labels['hostBaseUrl']!,
+          wireKey: 'hostBaseUrl',
+          controller: _hostBase,
+          form: _form,
+          name: 'hostBaseUrl',
+          optional: true,
+          mono: true,
+          keyboardType: TextInputType.url,
+          hint: 'e.g. https://api.acme.com',
+          helper: 'Outbound: HTTP tools declare paths only; they’re joined onto this URL. Must be https://.',
+        ),
+        const SizedBox(height: Gap.fieldGap),
+        YTextField(
+          label: _labels['hostBaseUrlAllowlist']!,
+          wireKey: 'hostBaseUrlAllowlist',
+          controller: _hostAllowlist,
+          form: _form,
+          name: 'hostBaseUrlAllowlist',
+          optional: true,
+          mono: true,
+          maxLines: 4,
+          minLines: 2,
+          hint: 'https://*.acme.com',
+          helper: 'One pattern per line, * allowed. Lets the X-Yaya-Host-Base-Url header switch hosts for a single call.',
+        ),
+        const SizedBox(height: Gap.fieldGap),
+        YTextField(
+          label: _labels['inboundOriginAllowlist']!,
+          wireKey: 'inboundOriginAllowlist',
+          controller: _inboundOrigins,
+          form: _form,
+          name: 'inboundOriginAllowlist',
+          optional: true,
+          mono: true,
+          maxLines: 4,
+          minLines: 2,
+          hint: 'https://shop.acme.com',
+          helper: 'Inbound: browser origins (scheme://host[:port]) allowed to start chat sessions.',
+        ),
+      ],
+      if (!_showUrlConfig && [_hostBase, _hostAllowlist, _inboundOrigins].any((c) => c.text.trim().isNotEmpty))
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text('Host URLs you entered are kept and will be saved.',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+        ),
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AlertDialog(
-      title: const Text('Create a workspace'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _displayName,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Display name',
-                  hintText: 'Acme Co',
-                ),
-                onFieldSubmitted: (_) => _submit(),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              const SizedBox(height: 8),
-              if (!_useCustomCode)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _saving
-                        ? null
-                        : () => setState(() => _useCustomCode = true),
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('Use a custom code'),
-                  ),
-                ),
-              if (_useCustomCode) ...[
-                TextFormField(
-                  controller: _code,
-                  decoration: InputDecoration(
-                    labelText: 'Workspace code',
-                    hintText: 'acme-co',
-                    errorText: _codeError,
-                    helperText:
-                        'Used in URLs and audit logs. Lowercase letters, digits, internal dashes. 2–32 chars.',
-                    helperMaxLines: 2,
-                    suffixIcon: IconButton(
-                      tooltip: 'Use auto-generated slug',
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: _saving
-                          ? null
-                          : () {
-                              setState(() {
-                                _useCustomCode = false;
-                                _code.clear();
-                                _codeError = null;
-                              });
-                            },
-                    ),
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[a-z0-9-]')),
-                    LengthLimitingTextInputFormatter(32),
-                  ],
-                  onChanged: (_) {
-                    if (_codeError != null) {
-                      setState(() => _codeError = null);
-                    }
-                  },
-                  onFieldSubmitted: (_) => _submit(),
-                  validator: _validateCode,
-                ),
-              ] else
-                Text(
-                  "A unique URL slug is generated from this — you'll be the OWNER.",
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.outline),
-                ),
-              const SizedBox(height: 8),
-              const Divider(height: 24),
-              // Optional URL config. Setting the host base URL here means an
-              // HTTP auth resolver / HTTP tool works immediately — otherwise
-              // it fails config_error until it's set on the General tab.
-              if (!_showUrlConfig)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed:
-                        _saving ? null : () => setState(() => _showUrlConfig = true),
-                    icon: const Icon(Icons.link, size: 16),
-                    label: const Text('Configure host URLs (optional)'),
-                  ),
-                ),
-              if (_showUrlConfig) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('URL configuration',
-                          style: theme.textTheme.titleSmall),
-                    ),
-                    IconButton(
-                      tooltip: 'Hide',
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: _saving
-                          ? null
-                          : () => setState(() => _showUrlConfig = false),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Set this if the workspace uses HTTP tools or an HTTP auth '
-                  'resolver — the engine joins their path-only templates onto '
-                  'this base. You can change it later on the General tab.',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.outline),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _hostBase,
-                  decoration: const InputDecoration(
-                    labelText: 'Host base URL (outbound)',
-                    hintText: 'https://api.example.com',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _hostAllowlist,
-                  minLines: 1,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Per-call override hosts (outbound)',
-                    hintText: 'One pattern per line, e.g. https://*.example.com',
-                    helperText:
-                        'Optional. Lets X-Yaya-Host-Base-Url override the base for a single call.',
-                    helperMaxLines: 2,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _inboundOrigins,
-                  minLines: 1,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Allowed origins (inbound)',
-                    hintText:
-                        'One per line, e.g. https://yayaagentic.smartlottery.do',
-                    helperText:
-                        'Browser origins allowed to call /v1/sessions/*. Glob wildcards allowed.',
-                    helperMaxLines: 2,
-                  ),
-                ),
-              ],
-              if (_error != null) const SizedBox(height: 12),
-              if (_error != null)
-                Text(_error!,
-                    style: TextStyle(color: theme.colorScheme.error)),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _submit,
-          child: _saving
-              ? const SizedBox(
-                  height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Create'),
-        ),
-      ],
+    final bar = YActionBar(
+      form: _form,
+      primaryLabel: 'Create workspace',
+      onPrimary: _submit,
+      onCancel: () => closeYSheet(context),
     );
+    final body = ListView(
+      shrinkWrap: !widget.asSheet,
+      padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+      children: _fields(context),
+    );
+    final content = widget.asSheet
+        ? YSheetScaffold(
+            title: 'New workspace',
+            subtitle: 'A workspace is a team’s own space: its profiles, tools, knowledge, members and keys. Fields marked * are required.',
+            body: body,
+            footer: bar,
+          )
+        : Dialog(
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: 560, maxHeight: MediaQuery.of(context).size.height * 0.85),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(28, 22, 28, 0),
+                  child: Text('New workspace', style: Theme.of(context).textTheme.titleLarge),
+                ),
+                Flexible(child: body),
+                bar,
+              ]),
+            ),
+          );
+    return YUnsavedGuard(form: _form, child: YSaveShortcut(onSave: _submit, child: content));
   }
 }

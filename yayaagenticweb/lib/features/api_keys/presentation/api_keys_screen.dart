@@ -2,355 +2,184 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../models/admin/api_key.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/tokens.dart';
 import '../../workspaces/application/workspaces_controller.dart';
-import '../../workspaces/presentation/confirm_typed_name_dialog.dart';
 import '../../workspaces/presentation/role_chip.dart';
 import '../application/api_keys_controller.dart';
-import 'api_key_audit_drawer.dart';
+import 'api_key_sheet.dart';
 import 'create_api_key_dialog.dart';
 import 'show_secret_panel.dart';
 
-/// Settings → API keys (design §3.1). Lists the current workspace's keys;
-/// create/revoke are gated to ADMIN+ (server stays authoritative — the UI
-/// gate is hygiene). Keyed on the current workspace, so switching workspaces
-/// re-fetches and never crosses keys between them.
-class ApiKeysScreen extends ConsumerWidget {
+/// Settings → API keys for the current workspace. Create, rename and revoke
+/// are for admins and owners; the server stays authoritative. Keyed on the
+/// current workspace, so switching never shows another workspace's keys.
+class ApiKeysScreen extends ConsumerStatefulWidget {
   const ApiKeysScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ApiKeysScreen> createState() => _ApiKeysScreenState();
+}
+
+class _ApiKeysScreenState extends ConsumerState<ApiKeysScreen> {
+  String? _handledLink;
+
+  Future<void> _create(String code, String role) async {
+    final created = await showYSheet<ApiKeyCreated>(
+      context,
+      width: 620,
+      label: 'New API key',
+      builder: (_) => CreateApiKeySheet(workspaceCode: code, creatorRole: role),
+    );
+    if (created == null || !mounted) return;
+    await ShowSecretDialog.show(context, created);
+    if (mounted) showToast(context, 'Created ${created.name}');
+  }
+
+  Future<void> _open(String code, ApiKey k, bool canManage) => showYSheet<void>(
+        context,
+        width: 620,
+        label: 'API key ${k.name}',
+        builder: (_) => ApiKeySheet(workspaceCode: code, apiKey: k, canManage: canManage),
+      );
+
+  void _handleDeepLink(String code, String role, bool canManage, List<ApiKey> keys) {
+    final params = GoRouterState.of(context).uri.queryParameters;
+    final link = params['id'] ?? (params['new'] != null ? '' : null);
+    if (link == null || link == _handledLink) return;
+    _handledLink = link;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      context.go('/settings/api-keys');
+      if (link.isEmpty) {
+        if (canManage) await _create(code, role);
+      } else {
+        final k = keys.where((k) => k.id == link || k.name == link).firstOrNull;
+        if (k == null) {
+          showToast(context, 'No API key “$link” in this workspace', error: true);
+        } else {
+          await _open(code, k, canManage);
+        }
+      }
+      _handledLink = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final code = ref.watch(currentWorkspaceOrNull);
     final membership = ref.watch(currentMembershipProvider);
-
     if (code == null) {
-      return _ScaffoldBody(
-        child: _EmptyState(
-          icon: Icons.workspaces_outline,
-          title: 'No workspace selected',
-          body: 'Create or pick a workspace first — API keys are scoped to one.',
-          action: FilledButton(
-            onPressed: () => context.go('/workspaces'),
-            child: const Text('Go to workspaces'),
-          ),
-        ),
+      return YEmptyState(
+        icon: Icons.workspaces_outline,
+        title: 'No workspace selected',
+        message: 'API keys belong to one workspace. Create or pick a workspace first.',
+        action: FilledButton(onPressed: () => context.go('/workspaces'), child: const Text('Go to workspaces')),
       );
     }
-
     final role = membership?.role ?? 'VIEWER';
     final canManage = roleAtLeast(role, 'ADMIN');
     final keys = ref.watch(apiKeysProvider(code));
+    final fresh = ref.watch(freshIdsProvider(AdminResourceKind.apiKey));
+    keys.whenData((k) => _handleDeepLink(code, role, canManage, k));
 
-    return _ScaffoldBody(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('API keys', style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(width: 12),
-              if (membership != null) RoleChip(membership.role, dense: true),
-              const Spacer(),
-              _CreateButton(
-                workspaceCode: code,
-                creatorRole: role,
-                enabled: canManage,
-              ),
-            ],
+    final createBtn = Tooltip(
+      message: canManage ? '' : 'Only admins and owners can create keys.',
+      child: FilledButton.icon(
+        onPressed: canManage ? () => _create(code, role) : null,
+        icon: const Icon(Icons.add, size: 18),
+        label: const Text('New API key'),
+      ),
+    );
+
+    return YPage(
+      title: 'API keys',
+      subtitle: 'Long-lived credentials for apps, scripts and CI jobs to call the yaya-agentic API without a user password. Each key is bound to ${membership?.workspace.displayName ?? code} and a role.',
+      actions: [if (membership != null) RoleChip(membership.role), createBtn],
+      child: LiveAsyncView<List<ApiKey>>(
+        value: keys,
+        what: 'API keys',
+        onRetry: () => ref.invalidate(apiKeysProvider(code)),
+        data: (context, rows) => YTable<ApiKey>(
+          rows: rows,
+          noun: 'keys',
+          idOf: (k) => k.id,
+          highlightIds: fresh,
+          searchHint: 'Search by name, prefix or creator',
+          searchTextOf: (k) => '${k.name} ${k.keyPrefix} ${k.role} ${k.createdBy ?? ''} ${k.status}',
+          onRowTap: (k) => _open(code, k, canManage),
+          filters: [
+            YFilter('Active', (k) => k.status == 'active'),
+            YFilter('Never used', (k) => k.status == 'active' && k.lastUsedAt == null),
+            YFilter('Revoked or expired', (k) => k.status != 'active'),
+          ],
+          empty: YEmptyState(
+            icon: Icons.vpn_key_outlined,
+            title: 'No API keys yet',
+            message: 'An API key lets a service call the yaya-agentic API as this workspace, with a role you choose — no user password stored anywhere.',
+            action: canManage ? createBtn : null,
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Long-lived bearer credentials for apps, scripts, and CI jobs to call '
-            'the yaya-agentic API without a user password. Bound to this workspace '
-            'and a role.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.outline),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: keys.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Could not load keys: $e')),
-              data: (rows) {
-                if (rows.isEmpty) {
-                  return _EmptyState(
-                    icon: Icons.vpn_key_outlined,
-                    title: 'No API keys yet',
-                    body:
-                        'API keys let your apps, scripts, and CI jobs call the '
-                        'yaya-agentic API without storing a user password. Each '
-                        'key is bound to this workspace and a role.',
-                    action: canManage
-                        ? FilledButton.icon(
-                            onPressed: () =>
-                                _createFlow(context, ref, code, role),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Create key'),
-                          )
-                        : null,
-                  );
-                }
-                return _KeysTable(
-                  workspaceCode: code,
-                  rows: rows,
-                  canManage: canManage,
-                );
-              },
+          columns: [
+            YColumn(
+              label: 'Key',
+              flex: 3,
+              sortKey: (k) => k.name.toLowerCase(),
+              cell: (context, k) => YCellStack(primary: k.name, secondary: '${k.keyPrefix}…'),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Future<void> _createFlow(
-    BuildContext context, WidgetRef ref, String code, String role) async {
-  final created = await showDialog<ApiKeyCreated>(
-    context: context,
-    builder: (_) => CreateApiKeyDialog(workspaceCode: code, creatorRole: role),
-  );
-  if (created != null && context.mounted) {
-    await ShowSecretDialog.show(context, created);
-  }
-}
-
-class _CreateButton extends ConsumerWidget {
-  const _CreateButton({
-    required this.workspaceCode,
-    required this.creatorRole,
-    required this.enabled,
-  });
-  final String workspaceCode;
-  final String creatorRole;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final btn = FilledButton.icon(
-      onPressed: enabled
-          ? () => _createFlow(context, ref, workspaceCode, creatorRole)
-          : null,
-      icon: const Icon(Icons.add),
-      label: const Text('Create key'),
-    );
-    if (enabled) return btn;
-    return Tooltip(
-      message: 'Only OWNER and ADMIN can create keys.',
-      child: btn,
-    );
-  }
-}
-
-class _KeysTable extends ConsumerWidget {
-  const _KeysTable({
-    required this.workspaceCode,
-    required this.rows,
-    required this.canManage,
-  });
-  final String workspaceCode;
-  final List<ApiKey> rows;
-  final bool canManage;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SingleChildScrollView(
-        child: DataTable(
-          columns: const [
-            DataColumn(label: Text('Name')),
-            DataColumn(label: Text('Prefix')),
-            DataColumn(label: Text('Role')),
-            DataColumn(label: Text('Created by')),
-            DataColumn(label: Text('Last used')),
-            DataColumn(label: Text('Expires')),
-            DataColumn(label: Text('Status')),
-            DataColumn(label: Text('')),
-          ],
-          rows: rows
-              .map((k) => DataRow(cells: [
-                    DataCell(Text(k.name)),
-                    DataCell(Text('${k.keyPrefix}…',
-                        style: const TextStyle(fontFamily: 'monospace'))),
-                    DataCell(RoleChip(k.role, dense: true)),
-                    DataCell(Text(k.createdBy ?? '—')),
-                    DataCell(Text(_fmt(k.lastUsedAt, whenNull: 'never'))),
-                    DataCell(_expiresCell(context, k)),
-                    DataCell(_statusChip(context, k.status)),
-                    DataCell(_RowActions(
-                      workspaceCode: workspaceCode,
-                      apiKey: k,
-                      canManage: canManage,
-                    )),
-                  ]))
-              .toList(),
-        ),
-      ),
-    );
-  }
-
-  Widget _expiresCell(BuildContext context, ApiKey k) {
-    if (k.expiresAt == null) return const Text('never');
-    if (k.status == 'expired') {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.errorContainer,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text('expired',
-            style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onErrorContainer)),
-      );
-    }
-    return Text(_fmt(k.expiresAt, whenNull: 'never'));
-  }
-
-  Widget _statusChip(BuildContext context, String status) {
-    final c = Theme.of(context).colorScheme;
-    final (bg, fg) = switch (status) {
-      'active' => (c.primaryContainer, c.onPrimaryContainer),
-      'revoked' => (c.surfaceContainerHigh, c.onSurfaceVariant),
-      'expired' => (c.errorContainer, c.onErrorContainer),
-      _ => (c.surfaceContainerHigh, c.onSurfaceVariant),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(99)),
-      child: Text(status,
-          style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
-    );
-  }
-}
-
-class _RowActions extends ConsumerWidget {
-  const _RowActions({
-    required this.workspaceCode,
-    required this.apiKey,
-    required this.canManage,
-  });
-  final String workspaceCode;
-  final ApiKey apiKey;
-  final bool canManage;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final revocable = canManage && apiKey.status == 'active';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          tooltip: 'Audit',
-          icon: const Icon(Icons.history, size: 20),
-          onPressed: canManage
-              ? () => ApiKeyAuditDialog.show(context, workspaceCode, apiKey)
-              : null,
-        ),
-        IconButton(
-          tooltip: revocable
-              ? 'Revoke'
-              : (canManage ? 'Already inactive' : 'ADMIN+ only'),
-          icon: const Icon(Icons.delete_outline, size: 20),
-          onPressed: revocable ? () => _revoke(context, ref) : null,
-        ),
-      ],
-    );
-  }
-
-  Future<void> _revoke(BuildContext context, WidgetRef ref) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => ConfirmTypedNameDialog(
-        title: 'Revoke API key',
-        body: Text(
-          'Revoking “${apiKey.name}” (${apiKey.keyPrefix}…) is immediate and '
-          'cannot be undone. Any caller using this key will start getting 401s.',
-        ),
-        expectedName: apiKey.name,
-        confirmLabel: 'Revoke',
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    try {
-      await ref.read(apiKeysControllerProvider).revoke(
-            workspaceCode: workspaceCode,
-            keyId: apiKey.id,
-          );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Key revoked.')),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Revoke failed: $e')),
-        );
-      }
-    }
-  }
-}
-
-class _ScaffoldBody extends StatelessWidget {
-  const _ScaffoldBody({required this.child});
-  final Widget child;
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1100),
-        child: child,
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({
-    required this.icon,
-    required this.title,
-    required this.body,
-    this.action,
-  });
-  final IconData icon;
-  final String title;
-  final String body;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: theme.colorScheme.outline),
-            const SizedBox(height: 12),
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(body,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.outline)),
-            if (action != null) ...[const SizedBox(height: 16), action!],
+            YColumn(
+              label: 'Role',
+              width: 150,
+              sortKey: (k) => k.role,
+              cell: (context, k) => Wrap(spacing: 4, runSpacing: 4, children: [
+                RoleChip(k.role),
+                if (k.platformScope) const YBadge('Platform', tone: YTone.warning, icon: Icons.public),
+              ]),
+            ),
+            YColumn(label: 'Status', width: 120, sortKey: (k) => k.status, cell: (context, k) => keyStatusBadge(k.status)),
+            YColumn(
+              label: 'Last used',
+              width: 130,
+              sortKey: (k) => k.lastUsedAt ?? '',
+              cell: (context, k) => k.lastUsedAt == null
+                  ? Text('Never', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))
+                  : Tooltip(message: k.lastUsedIp ?? '', child: Text(formatRelativeIso(k.lastUsedAt))),
+            ),
+            YColumn(
+              label: 'Expires',
+              width: 130,
+              sortKey: (k) => k.expiresAt ?? '9999',
+              cell: (context, k) => k.expiresAt == null
+                  ? const YBadge('Never', icon: Icons.all_inclusive)
+                  : Tooltip(message: k.expiresAt!, child: Text(_expiry(k.expiresAt!))),
+            ),
+            YColumn(
+              label: 'Created by',
+              flex: 2,
+              sortKey: (k) => k.createdBy ?? '',
+              cell: (context, k) => Text(k.createdBy ?? '—', overflow: TextOverflow.ellipsis, style: monoStyle(context, size: 12.5)),
+            ),
           ],
         ),
       ),
     );
   }
-}
 
-/// ISO-8601 → 'YYYY-MM-DD HH:MM' (local), or [whenNull] when absent/unparseable.
-String _fmt(String? iso, {required String whenNull}) {
-  if (iso == null || iso.isEmpty) return whenNull;
-  final dt = DateTime.tryParse(iso);
-  if (dt == null) return whenNull;
-  final l = dt.toLocal();
-  String two(int n) => n.toString().padLeft(2, '0');
-  return '${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
+  static String _expiry(String iso) {
+    final t = DateTime.tryParse(iso);
+    if (t == null) return iso;
+    final d = t.difference(DateTime.now());
+    if (d.isNegative) return formatRelativeIso(iso);
+    if (d.inDays >= 1) return 'in ${d.inDays} ${d.inDays == 1 ? 'day' : 'days'}';
+    return 'in ${d.inHours.clamp(1, 23)} h';
+  }
 }

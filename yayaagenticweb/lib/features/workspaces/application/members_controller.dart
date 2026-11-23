@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/admin/invitation.dart';
 import '../../../models/admin/member.dart';
 import '../data/members_api.dart';
+import '../../../app/live/live_resource.dart';
 
 /// Members of a given workspace (keyed by code). Invalidated by mutation
 /// methods on [MembersController] below.
 final membersProvider =
     FutureProvider.family<List<Member>, String>((ref, workspaceCode) async {
+  liveRefresh(ref);
   final api = await ref.watch(workspaceMembersApiProvider.future);
   return api.listMembers(workspaceCode);
 });
@@ -15,6 +17,7 @@ final membersProvider =
 /// Pending invitations for a given workspace.
 final invitationsProvider =
     FutureProvider.family<List<Invitation>, String>((ref, workspaceCode) async {
+  liveRefresh(ref);
   final api = await ref.watch(workspaceMembersApiProvider.future);
   return api.listInvitations(workspaceCode);
 });

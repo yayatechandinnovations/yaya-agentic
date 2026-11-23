@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
 import 'package:yayaagenticweb/app/selected_tenant.dart';
 import 'package:yayaagenticweb/features/admin/whatsapp_senders/whatsapp_senders_screen.dart';
@@ -143,18 +144,18 @@ Widget _screen(_FakeAdminApi api, {bool platformAdmin = false}) => ProviderScope
       child: const MaterialApp(home: Scaffold(body: WhatsAppSendersScreen())),
     );
 
+/// Opens the sender's detail sheet from its table row.
 Future<void> _expand(WidgetTester tester) async {
   await tester.tap(find.text('Test Co').first);
   await tester.pumpAndSettle();
 }
 
-/// The list refetches after an action, which can rebuild the card collapsed.
-Future<void> _expandIfCollapsed(WidgetTester tester) async {
-  if (find.byIcon(Icons.expand_more).evaluate().isNotEmpty) await _expand(tester);
-}
+/// The sheet reads the live list, so it reflects an action without reopening.
+Future<void> _expandIfCollapsed(WidgetTester tester) async {}
 
 void main() {
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     binding.platformDispatcher.views.first.physicalSize = const Size(1600, 2400);
     binding.platformDispatcher.views.first.devicePixelRatio = 1.0;
@@ -385,5 +386,62 @@ void main() {
     expect(find.text('Removal not finished'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Finish removal'), findsOneWidget);
     expect(find.text('Remove'), findsNothing);
+  });
+
+  testWidgets('a verification code that is not 4–8 digits is flagged at the field and not sent',
+      (tester) async {
+    final api = _FakeAdminApi('PENDING_REVIEW', 'PENDING_VERIFICATION');
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+    await _expand(tester);
+    final enterCode = find.widgetWithText(FilledButton, 'Enter code');
+    await tester.ensureVisible(enterCode);
+    await tester.tap(enterCode);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter the code WhatsApp sent.'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).last, '12');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+    await tester.pumpAndSettle();
+    expect(find.text('Codes are 4 to 8 digits.'), findsOneWidget);
+    expect(api.verifiedCode, isNull);
+  });
+
+  testWidgets('a route needs a profile before it can be added', (tester) async {
+    final api = _FakeAdminApi('ACTIVE', 'ONLINE');
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+    await _expand(tester);
+
+    final add = find.widgetWithText(TextButton, 'Add route');
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Add route'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose the profile that answers.'), findsOneWidget);
+    expect(find.textContaining('need attention before saving this route'), findsNothing);
+    expect(find.textContaining('needs attention before saving this route'), findsOneWidget);
+  });
+
+  testWidgets('removing a live number asks for the number to be typed', (tester) async {
+    final api = _FakeAdminApi('ACTIVE', 'ONLINE');
+    await tester.pumpWidget(_screen(api));
+    await tester.pumpAndSettle();
+    await _expand(tester);
+
+    final remove = find.widgetWithText(TextButton, 'Remove');
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Remove +18095551234?'), findsOneWidget);
+    final confirm = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Remove sender'));
+    expect(confirm.onPressed, isNull);
   });
 }

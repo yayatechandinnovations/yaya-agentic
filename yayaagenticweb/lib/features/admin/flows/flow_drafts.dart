@@ -53,6 +53,12 @@ const kTargetKinds = <String, String>{
   'Abort': 'Stop (fallback)',
 };
 
+/// What the server sent that this draft has no control for: everything in
+/// [raw] except the keys the draft writes itself. Merged under the draft's own
+/// output so a republish never drops a field a newer server added.
+Map<String, dynamic> carried(Map<String, dynamic> raw, Set<String> managed) =>
+    {for (final e in raw.entries) if (!managed.contains(e.key)) e.key: e.value};
+
 /// Coerce a text field into the scalar the backend expects (bool / num / string).
 dynamic coerceScalar(String raw) {
   final t = raw.trim();
@@ -208,8 +214,11 @@ class BranchDraft {
 // ---- steps -------------------------------------------------------------
 
 sealed class StepDraft {
-  StepDraft(this.key);
+  StepDraft(this.key, {Map<String, dynamic>? raw}) : raw = raw ?? const {};
   String key;
+
+  /// The step as loaded, for [carried].
+  final Map<String, dynamic> raw;
   String get kind;
   Map<String, dynamic> toJson();
 
@@ -252,7 +261,8 @@ class RunToolDraft extends StepDraft {
       List<CaptureDraft>? captures,
       List<BranchDraft>? next,
       this.onErrorMode = 'ABORT',
-      this.maxRetries = 0})
+      this.maxRetries = 0,
+      super.raw})
       : inputs = inputs ?? [],
         captures = captures ?? [],
         next = next ?? [];
@@ -284,11 +294,15 @@ class RunToolDraft extends StepDraft {
           .toList(),
       onErrorMode: (onErr['onError'] ?? 'ABORT') as String,
       maxRetries: (onErr['maxRetries'] as num?)?.toInt() ?? 0,
+      raw: j,
     );
   }
 
+  static const _managed = {'kind', 'key', 'tool', 'inputs', 'captures', 'next', 'onError'};
+
   @override
   Map<String, dynamic> toJson() => {
+        ...carried(raw, _managed),
         'kind': 'RunTool',
         'key': key,
         'tool': {'value': toolId},
@@ -307,7 +321,8 @@ class ElicitDraft extends StepDraft {
       this.captureKind = 'StepVar',
       this.captureName = '',
       this.visibleToLlm = true,
-      List<BranchDraft>? next})
+      List<BranchDraft>? next,
+      super.raw})
       : quickReplies = quickReplies ?? [],
         next = next ?? [];
 
@@ -337,17 +352,24 @@ class ElicitDraft extends StepDraft {
       next: ((j['next'] as List?) ?? const [])
           .map((e) => BranchDraft.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList(),
+      raw: j,
     );
   }
 
+  static const _managed = {
+    'kind', 'key', 'promptTemplate', 'quickReplyTemplates', 'uiHintKind', 'uiHintPayload', 'captureTarget', 'next'
+  };
+
   @override
   Map<String, dynamic> toJson() => {
+        ...carried(raw, _managed),
         'kind': 'Elicit',
         'key': key,
         'promptTemplate': promptTemplate,
         'quickReplyTemplates': quickReplies,
         if (uiHintKind.isNotEmpty) 'uiHintKind': uiHintKind,
-        'uiHintPayload': const <String, dynamic>{},
+        // No editor for the payload; it rides along with the widget hint.
+        'uiHintPayload': raw['uiHintPayload'] is Map ? raw['uiHintPayload'] : const <String, dynamic>{},
         'captureTarget': captureKind == 'Entity'
             ? {'kind': 'Entity', 'name': captureName, 'visibleToLlm': visibleToLlm}
             : {'kind': 'StepVar', 'name': captureName},
@@ -361,7 +383,8 @@ class DecisionDraft extends StepDraft {
       this.defaultKind = 'End',
       this.defaultStep = '',
       this.defaultOutcome = 'fallback',
-      this.defaultReason = ''})
+      this.defaultReason = '',
+      super.raw})
       : branches = branches ?? [];
 
   List<BranchDraft> branches;
@@ -386,11 +409,15 @@ class DecisionDraft extends StepDraft {
       defaultStep: (def['key'] ?? '') as String,
       defaultOutcome: (def['outcomeLabel'] ?? 'fallback') as String,
       defaultReason: (def['reason'] ?? '') as String,
+      raw: j,
     );
   }
 
+  static const _managed = {'kind', 'key', 'branches', 'defaultTarget'};
+
   @override
   Map<String, dynamic> toJson() => {
+        ...carried(raw, _managed),
         'kind': 'Decision',
         'key': key,
         'branches': branches.map((e) => e.toJson()).toList(),
@@ -412,8 +439,10 @@ class GreetingDraft {
     List<String>? quickReplies,
     this.instruction = 'Greet the returning customer warmly by name and offer to help — one sentence.',
     List<String>? briefingEntities,
+    Map<String, dynamic>? raw,
   })  : quickReplies = quickReplies ?? [],
-        briefingEntities = briefingEntities ?? [];
+        briefingEntities = briefingEntities ?? [],
+        raw = raw ?? const {};
 
   String mode;
   String successTemplate;
@@ -421,6 +450,10 @@ class GreetingDraft {
   List<String> quickReplies;
   String instruction;
   List<String> briefingEntities;
+
+  /// The greeting as loaded: other outcome templates, the opening's hints,
+  /// stream flag and budget ride along from here.
+  final Map<String, dynamic> raw;
 
   bool get isLlm => mode == 'LLM_COMPOSED' || mode == 'HYBRID';
 
@@ -437,24 +470,36 @@ class GreetingDraft {
       instruction: (llm['instruction'] ?? '') as String,
       briefingEntities:
           ((llm['briefingEntities'] as List?) ?? const []).map((e) => e.toString()).toList(),
+      raw: j,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'mode': mode,
-        'outcomeGreetingTemplates': {
-          if (successTemplate.isNotEmpty) 'success': successTemplate,
+  static const _managed = {'mode', 'outcomeGreetingTemplates', 'fallbackGreeting', 'quickReplyTemplates', 'llmOpening'};
+
+  Map<String, dynamic> toJson() {
+    final templates = raw['outcomeGreetingTemplates'] is Map
+        ? Map<String, dynamic>.from(raw['outcomeGreetingTemplates'] as Map)
+        : <String, dynamic>{};
+    final llm = raw['llmOpening'] is Map ? Map<String, dynamic>.from(raw['llmOpening'] as Map) : <String, dynamic>{};
+    return {
+      ...carried(raw, _managed),
+      'mode': mode,
+      'outcomeGreetingTemplates': {
+        ...carried(templates, const {'success'}),
+        if (successTemplate.isNotEmpty) 'success': successTemplate,
+      },
+      'fallbackGreeting': fallbackGreeting,
+      'quickReplyTemplates': quickReplies,
+      if (isLlm)
+        'llmOpening': {
+          'quickReplyHints': const <String>[],
+          'stream': false,
+          ...carried(llm, const {'instruction', 'briefingEntities'}),
+          'instruction': instruction,
+          'briefingEntities': briefingEntities,
         },
-        'fallbackGreeting': fallbackGreeting,
-        'quickReplyTemplates': quickReplies,
-        if (isLlm)
-          'llmOpening': {
-            'instruction': instruction,
-            'briefingEntities': briefingEntities,
-            'quickReplyHints': const <String>[],
-            'stream': false,
-          },
-      };
+    };
+  }
 }
 
 // ---- whole flow --------------------------------------------------------
@@ -503,13 +548,122 @@ class FlowDraft {
         greeting: GreetingDraft.fromJson(f.greeting),
       );
 
+  /// JSON-safe form state: dirty tracking and drafts.
+  Map<String, Object?> toSnapshot() => {
+        'id': id.trim(),
+        'name': name,
+        'description': description,
+        'steps': steps.map((s) => s.toJson()).toList(),
+        'greeting': greeting.toJson(),
+      };
+
+  factory FlowDraft.fromSnapshot(Map<String, Object?> s) => FlowDraft(
+        id: (s['id'] as String?) ?? '',
+        name: (s['name'] as String?) ?? '',
+        description: (s['description'] as String?) ?? '',
+        steps: [
+          for (final e in (s['steps'] as List?) ?? const [])
+            if (e is Map) StepDraft.fromJson(Map<String, dynamic>.from(e)),
+        ],
+        greeting: s['greeting'] is Map
+            ? GreetingDraft.fromJson(Map<String, dynamic>.from(s['greeting'] as Map))
+            : GreetingDraft(),
+      );
+
+  /// The policy is never sent: the server applies `FlowPolicy.defaults()` on
+  /// create and keeps the latest version's policy on update.
   StartFlowRequest toRequest({required bool publish}) => StartFlowRequest(
         id: id.trim(),
         name: name.trim(),
         description: description.trim().isEmpty ? null : description.trim(),
         steps: steps.map((s) => s.toJson()).toList(),
         greeting: greeting.toJson(),
-        policy: const {}, // backend applies FlowPolicy.defaults()
         publish: publish,
       );
+}
+
+// ---- validation (mirrors StartFlowAdminService + the step records) -------
+
+/// Field names shared by [validateFlow] and the builder, so each error lands
+/// under the control it is about.
+abstract final class FlowFields {
+  static String step(int i, String part) => 'step:$i:$part';
+  static String input(int i, int j) => 'step:$i:input:$j';
+  static String capture(int i, int j) => 'step:$i:capture:$j';
+  static String branch(int i, int j) => 'step:$i:branch:$j';
+}
+
+final _flowId = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
+
+/// field → message, plus a human label for each field for the error summary.
+({Map<String, String?> errors, Map<String, String> labels}) validateFlow(
+  FlowDraft f, {
+  required bool editing,
+  Set<String> existingIds = const {},
+  Set<String> knownTools = const {},
+}) {
+  final errors = <String, String?>{};
+  final labels = <String, String>{'id': 'Flow ID', 'name': 'Name'};
+  final id = f.id.trim();
+  if (!editing) {
+    if (id.isEmpty) {
+      errors['id'] = 'Enter a flow ID.';
+    } else if (!_flowId.hasMatch(id)) {
+      errors['id'] = 'Use letters, digits, underscores or dashes (no dots or spaces), up to 128 characters.';
+    } else if (existingIds.contains(id)) {
+      errors['id'] = 'A flow with this ID already exists. Open it to save a new version.';
+    }
+  }
+  if (f.name.trim().isEmpty) errors['name'] = 'Enter a name.';
+
+  final keys = f.stepKeys.toSet();
+  final seen = <String>{};
+  for (var i = 0; i < f.steps.length; i++) {
+    final s = f.steps[i];
+    final where = 'Step ${i + 1}${s.key.isEmpty ? '' : ' (${s.key})'}';
+    void add(String field, String label, String? msg) {
+      labels[field] = '$where · $label';
+      if (msg != null) errors[field] = msg;
+    }
+
+    final keyField = FlowFields.step(i, 'key');
+    if (s.key.trim().isEmpty) {
+      add(keyField, 'Step ID', 'Give the step an ID — rules jump to steps by it.');
+    } else if (!seen.add(s.key)) {
+      add(keyField, 'Step ID', 'Another step already uses “${s.key}”. Step IDs must be unique.');
+    } else {
+      add(keyField, 'Step ID', null);
+    }
+
+    String? jump(String target, String stepKey) =>
+        target == 'Step' && !keys.contains(stepKey) ? (stepKey.isEmpty ? 'Pick the step to go to.' : 'There is no step “$stepKey”.') : null;
+    void branches(List<BranchDraft> list) {
+      for (var j = 0; j < list.length; j++) {
+        add(FlowFields.branch(i, j), 'Rule ${j + 1}', jump(list[j].targetKind, list[j].stepKey));
+      }
+    }
+
+    switch (s) {
+      case RunToolDraft():
+        final tool = s.toolId.trim();
+        add(FlowFields.step(i, 'tool'), 'Tool',
+            tool.isEmpty ? 'Pick the tool this step runs.' : (knownTools.isNotEmpty && !knownTools.contains(tool) ? '“$tool” doesn’t exist on this tenant.' : null));
+        for (var j = 0; j < s.inputs.length; j++) {
+          add(FlowFields.input(i, j), 'Input ${j + 1}', s.inputs[j].argName.trim().isEmpty ? 'Name the tool argument this fills.' : null);
+        }
+        for (var j = 0; j < s.captures.length; j++) {
+          add(FlowFields.capture(i, j), 'Saved result ${j + 1}', s.captures[j].name.trim().isEmpty ? 'Name the value to save it as.' : null);
+        }
+        branches(s.next);
+      case ElicitDraft():
+        add(FlowFields.step(i, 'prompt'), 'Prompt', s.promptTemplate.trim().isEmpty ? 'Write what to ask the user.' : null);
+        add(FlowFields.step(i, 'captureName'), 'Save their answer as',
+            s.captureName.trim().isEmpty ? 'Name the value their answer is saved as.' : null);
+        branches(s.next);
+      case DecisionDraft():
+        branches(s.branches);
+        add(FlowFields.step(i, 'default'), 'Otherwise', jump(s.defaultKind, s.defaultStep));
+    }
+  }
+  return (errors: errors, labels: labels);
 }

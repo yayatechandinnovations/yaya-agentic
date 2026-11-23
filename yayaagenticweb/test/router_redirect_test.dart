@@ -7,7 +7,7 @@ import 'package:yayaagenticweb/features/auth/models/operator.dart';
 /// Regression coverage for the redirect-during-AuthChecking bug: a user
 /// clicking a verify link in their inbox arrives anonymous. The bootstrap
 /// /v1/auth/me call hasn't returned yet, so authProvider is in
-/// {@link AuthChecking}. The router MUST let token-bearer routes mount
+/// [AuthChecking]. The router MUST let token-bearer routes mount
 /// immediately; bouncing to /loading would strip the `?token=` query
 /// and dead-end the user at /login.
 void main() {
@@ -147,6 +147,44 @@ void main() {
           matchedLocation: '/admin/tenants',
         ),
         isNull,
+      );
+    });
+  });
+
+  group('reload keeps your place', () {
+    test('a private route waits on /loading with where it came from', () {
+      expect(
+        resolveAuthRedirect(auth: const AuthChecking(), matchedLocation: '/admin/tools/:id', location: '/admin/tools/orders_refund'),
+        equals('/loading?returnTo=%2Fadmin%2Ftools%2Forders_refund'),
+      );
+    });
+
+    test('signed in on /loading goes back there', () {
+      expect(
+        resolveAuthRedirect(
+          auth: const AuthAuthenticated(Operator(subject: 's', displayName: 'd', source: 'local')),
+          matchedLocation: '/loading',
+          returnTo: '/admin/tools/orders_refund',
+        ),
+        equals('/admin/tools/orders_refund'),
+      );
+    });
+
+    test('signed out on /loading carries it to /login', () {
+      expect(
+        resolveAuthRedirect(auth: const AuthUnauthenticated(), matchedLocation: '/loading', returnTo: '/admin/tools?id=x'),
+        equals('/login?returnTo=%2Fadmin%2Ftools%3Fid%3Dx'),
+      );
+    });
+
+    test('an off-site returnTo is ignored', () {
+      expect(
+        resolveAuthRedirect(
+          auth: const AuthAuthenticated(Operator(subject: 's', displayName: 'd', source: 'local')),
+          matchedLocation: '/loading',
+          returnTo: '//evil.example',
+        ),
+        equals('/playground'),
       );
     });
   });

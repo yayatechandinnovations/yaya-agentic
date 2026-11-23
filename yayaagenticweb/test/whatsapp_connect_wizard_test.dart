@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
 import 'package:yayaagenticweb/app/selected_tenant.dart';
 import 'package:yayaagenticweb/features/admin/whatsapp_senders/embedded_signup/embedded_signup_events.dart';
@@ -11,6 +12,7 @@ import 'package:yayaagenticweb/features/admin/whatsapp_senders/embedded_signup/s
 import 'package:yayaagenticweb/features/admin/whatsapp_senders/whatsapp_connect_wizard.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_embedded_signup.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_sender.dart';
+import 'package:yayaagenticweb/ui/form/y_fields.dart';
 
 class _FakeLauncher implements EmbeddedSignupLauncher {
   final _controller = StreamController<EmbeddedSignupEvent>.broadcast();
@@ -115,6 +117,7 @@ void main() {
   late _FakeAdminApi api;
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     launcher = _FakeLauncher();
     api = _FakeAdminApi();
   });
@@ -148,14 +151,14 @@ void main() {
   }
 
   Future<void> enterByLabel(WidgetTester tester, String label, String text) async {
-    final finder = find.byWidgetPredicate((w) =>
-        w is TextField && w.decoration?.labelText == label);
+    final finder =
+        find.descendant(of: find.widgetWithText(YTextField, label), matching: find.byType(TextField));
     await tester.ensureVisible(finder);
     await tester.enterText(finder, text);
   }
 
   Future<void> fillDetailsStep(WidgetTester tester) async {
-    await enterByLabel(tester, 'WhatsApp phone number (E.164) *', '+18095551234');
+    await enterByLabel(tester, 'WhatsApp phone number *', '+18095551234');
     await enterByLabel(tester, 'WhatsApp display name *', 'Test Co');
     await enterByLabel(tester, 'Business name *', 'Test Inc.');
     await enterByLabel(tester, 'Contact email *', 'ops@test.example');
@@ -193,7 +196,10 @@ void main() {
 
     await tapButton(tester, find.widgetWithText(FilledButton, 'Next'));
     await tester.pump();
-    expect(find.textContaining('phone number is required'), findsOneWidget);
+    // Each problem shows at its field (and in the summary above the form).
+    expect(find.text('Enter the phone number.'), findsOneWidget);
+    expect(find.text('Confirm you are authorized to connect this number.'), findsOneWidget);
+    expect(find.textContaining('things need attention before connecting'), findsOneWidget);
     expect(launcher.launchCalls, 0);
   });
 

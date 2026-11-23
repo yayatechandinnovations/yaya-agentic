@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../models/admin/api_key.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/tokens.dart';
+import '../../workspaces/presentation/role_chip.dart';
 
-/// Show-once secret panel (design §3.1). The secret is rendered exactly once,
-/// here, right after create. The Close button stays disabled until the
-/// operator ticks "I've stored this key" — a small forcing function so nobody
-/// dismisses it by accident and then asks us to recover a key we never stored.
+/// The one and only time a key's secret is shown. Done stays disabled until
+/// the operator confirms they stored it; the dialog can't be clicked away.
 class ShowSecretDialog extends StatefulWidget {
   const ShowSecretDialog({super.key, required this.created});
   final ApiKeyCreated created;
@@ -14,7 +15,7 @@ class ShowSecretDialog extends StatefulWidget {
   static Future<void> show(BuildContext context, ApiKeyCreated created) {
     return showDialog<void>(
       context: context,
-      barrierDismissible: false, // can't click away from a one-time secret
+      barrierDismissible: false,
       builder: (_) => ShowSecretDialog(created: created),
     );
   }
@@ -29,95 +30,83 @@ class _ShowSecretDialogState extends State<ShowSecretDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final secret = widget.created.secret;
-    final curl =
-        'curl -H "Authorization: Bearer $secret" \\\n     <backend>/v1/admin/profiles';
+    final curl = 'curl -H "Authorization: Bearer $secret" \\\n     <backend>/v1/admin/profiles';
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(Icons.warning_amber_rounded, color: theme.colorScheme.tertiary),
-          const SizedBox(width: 8),
-          const Expanded(child: Text("Save this key now — you won't see it again")),
-        ],
-      ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('“${widget.created.name}” · ${widget.created.role}',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.outline)),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: theme.colorScheme.outlineVariant),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      secret,
-                      style: const TextStyle(
-                          fontFamily: 'monospace', fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.tonalIcon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: secret));
-                      setState(() => _copied = true);
-                    },
-                    icon: Icon(_copied ? Icons.check : Icons.copy, size: 18),
-                    label: Text(_copied ? 'Copied' : 'Copy'),
-                  ),
-                ],
-              ),
+    return PopScope(
+      canPop: _stored,
+      child: AlertDialog(
+        title: const Text('Copy your new key now'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const YBanner(
+              tone: YBannerTone.warning,
+              title: 'You won’t see it again.',
+              message: 'We only store a hash. If you lose this secret, revoke the key and create a new one.',
             ),
-            const SizedBox(height: 16),
-            Text('Test it', style: theme.textTheme.labelLarge),
-            const SizedBox(height: 4),
+            const SizedBox(height: Gap.lg),
+            Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              Text(widget.created.name, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              RoleChip(widget.created.role),
+              Text('${widget.created.keyPrefix}…', style: monoStyle(context, color: scheme.onSurfaceVariant)),
+            ]),
+            const SizedBox(height: Gap.md),
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(children: [
+                Expanded(child: SelectableText(secret, style: monoStyle(context, size: 13.5))),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: secret));
+                    if (mounted) setState(() => _copied = true);
+                  },
+                  icon: Icon(_copied ? Icons.check : Icons.copy, size: 18),
+                  label: Text(_copied ? 'Copied' : 'Copy secret'),
+                ),
+              ]),
+            ),
+            const SizedBox(height: Gap.lg),
+            Text('Try it', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            const SizedBox(height: 6),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SelectableText(curl,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+              decoration: BoxDecoration(color: scheme.surfaceContainerLow, borderRadius: BorderRadius.circular(8)),
+              child: SelectableText(curl, style: monoStyle(context, size: 12.5)),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: Gap.sm),
             Text(
-              'Never put an API key in client-side code or a mobile app. '
-              'Keys are for server-to-server use.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.error),
+              'Keys are for server-to-server use. Never put one in a web page or mobile app.',
+              style: TextStyle(fontSize: 13, height: 1.45, color: scheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: Gap.sm),
             CheckboxListTile(
               value: _stored,
               onChanged: (v) => setState(() => _stored = v ?? false),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text("I've stored this key"),
+              title: const Text('I’ve stored this key somewhere safe', style: TextStyle(fontSize: 14)),
             ),
-          ],
+          ]),
         ),
+        actions: [
+          Tooltip(
+            message: _stored ? '' : 'Tick the box first — the secret can’t be shown again.',
+            child: FilledButton(
+              onPressed: _stored ? () => Navigator.of(context).pop() : null,
+              child: const Text('Done'),
+            ),
+          ),
+        ],
       ),
-      actions: [
-        FilledButton(
-          onPressed: _stored ? () => Navigator.of(context).pop() : null,
-          child: const Text('Close'),
-        ),
-      ],
     );
   }
 }

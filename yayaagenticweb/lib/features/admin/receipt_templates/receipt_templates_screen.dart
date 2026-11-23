@@ -2,20 +2,88 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/receipt_template.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/feedback/confirm.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/form/unsaved_guard.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/tokens.dart';
 import '../shared/admin_shared.dart';
 import 'receipt_preview.dart';
 
-final receiptTemplatesProvider =
-    FutureProvider.family<List<ReceiptTemplateResponse>, String>(
+final receiptTemplatesProvider = FutureProvider.family<List<ReceiptTemplateResponse>, String>(
   (ref, tenant) async {
+    liveResource(ref, AdminResourceKind.receiptTemplate);
     final api = await ref.watch(adminApiProvider.future);
     return api.listReceiptTemplates(tenant);
   },
 );
+
+const _routePath = '/admin/receipt-templates';
+
+/// How the receipt template screen open a side sheet. Tests swap in a plain route:
+/// the kit's sheet frame (`Semantics(scopesRoute: true)` without
+/// `explicitChildNodes`) fails a debug assertion when it mounts.
+Future<R?> Function<R>(BuildContext context, {required WidgetBuilder builder, double width, String label})
+    openReceiptSheet = showYSheet;
+
+
+Map<String, String> _routeParams(BuildContext context) =>
+    GoRouter.maybeOf(context) == null ? const {} : GoRouterState.of(context).uri.queryParameters;
+
+/// The closed v1 layout vocabulary the backend accepts (chat-experience-design.md §7.4).
+const kReceiptElementTypes = [
+  'header', 'status', 'meta', 'divider', 'title', 'text', 'kv', 'section',
+  'table', 'cells', 'total', 'code', 'barcode', 'qr', 'footer', 'spacer',
+];
+
+const _maxElements = 80;
+
+/// The first rule [elements] breaks, as the backend checks it; null when fine.
+String? receiptElementsProblem(Object? elements) {
+  if (elements is! List) return 'The top level must be a JSON array of elements: [ { "type": … }, … ].';
+  if (elements.isEmpty) return 'Add at least one element, or start from a starter layout.';
+  if (elements.length > _maxElements) return 'Use at most $_maxElements elements (it has ${elements.length}).';
+  String? check(Object? el, String where, {required bool allowSection}) {
+    if (el is! Map) return '$where must be an object with a "type".';
+    final type = el['type'];
+    if (type is! String || !kReceiptElementTypes.contains(type)) {
+      return '$where has type ${type == null ? 'missing' : '"$type"'} — use one of: ${kReceiptElementTypes.join(', ')}.';
+    }
+    if (type == 'section') {
+      if (!allowSection) return '$where is a section inside a section; sections can’t nest.';
+      final inner = el['elements'];
+      if (inner is! List || inner.isEmpty) return '$where is a section without child "elements".';
+      for (var j = 0; j < inner.length; j++) {
+        final err = check(inner[j], '$where, child ${j + 1},', allowSection: false);
+        if (err != null) return err;
+      }
+    }
+    return null;
+  }
+
+  for (var i = 0; i < elements.length; i++) {
+    final err = check(elements[i], 'Element ${i + 1}', allowSection: true);
+    if (err != null) return err;
+  }
+  return null;
+}
 
 /// Receipt template authoring (chat-experience-design.md §7.4): tenant-scoped
 /// CRUD over the closed layout vocabulary plus a live preview that renders the
@@ -26,184 +94,44 @@ class ReceiptTemplatesScreen extends ConsumerStatefulWidget {
   const ReceiptTemplatesScreen({super.key});
 
   @override
-  ConsumerState<ReceiptTemplatesScreen> createState() =>
-      _ReceiptTemplatesScreenState();
+  ConsumerState<ReceiptTemplatesScreen> createState() => _ReceiptTemplatesScreenState();
 }
 
-class _ReceiptTemplatesScreenState
-    extends ConsumerState<ReceiptTemplatesScreen> {
-  final _nameCtrl = TextEditingController();
-  final _kindLabelCtrl = TextEditingController();
-  final _paperColsCtrl = TextEditingController(text: '32');
-  final _elementsCtrl = TextEditingController();
-  String _paperProfile = '58mm';
-  String? _editingId;
-  Map<String, dynamic>? _brand; // preserved verbatim across edit round-trips
-  bool _saving = false;
+class _ReceiptTemplatesScreenState extends ConsumerState<ReceiptTemplatesScreen> {
+  String? _handledLink;
 
-  /// Inline JSON parse error for the elements editor; null when valid.
-  String? _jsonError;
-
-  /// Last successfully parsed elements array — the preview keeps rendering
-  /// this while the operator types through an invalid intermediate state.
-  List<dynamic> _parsedElements = const [];
-
-  static const _prettyJson = JsonEncoder.withIndent('  ');
-
-  @override
-  void initState() {
-    super.initState();
-    _elementsCtrl.addListener(_reparse);
+  Future<void> _open({ReceiptTemplateResponse? existing, ReceiptTemplateResponse? copyOf}) async {
+    await openReceiptSheet<void>(
+      context,
+      width: 1040,
+      label: existing == null ? 'New receipt template' : 'Edit receipt template',
+      builder: (_) => ReceiptTemplateEditorSheet(
+        existing: existing,
+        copyOf: copyOf,
+        onDuplicate: (t) => WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _open(copyOf: t);
+        }),
+      ),
+    );
   }
 
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _kindLabelCtrl.dispose();
-    _paperColsCtrl.dispose();
-    _elementsCtrl.dispose();
-    super.dispose();
-  }
-
-  void _reparse() {
-    final text = _elementsCtrl.text.trim();
-    if (text.isEmpty) {
-      setState(() {
-        _jsonError = null;
-        _parsedElements = const [];
-      });
-      return;
-    }
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is! List) {
-        setState(() =>
-            _jsonError = 'Top level must be a JSON array of elements.');
-        return;
-      }
-      setState(() {
-        _jsonError = null;
-        _parsedElements = decoded;
-      });
-    } on FormatException catch (e) {
-      setState(() => _jsonError = e.message);
-    }
-  }
-
-  void _resetForm() {
-    setState(() {
-      _editingId = null;
-      _brand = null;
-      _nameCtrl.clear();
-      _kindLabelCtrl.clear();
-      _paperColsCtrl.text = '32';
-      _paperProfile = '58mm';
-      _elementsCtrl.clear();
-    });
-  }
-
-  void _loadIntoForm(ReceiptTemplateResponse row) {
-    setState(() {
-      _editingId = row.id;
-      _brand = row.brand;
-      _nameCtrl.text = row.name;
-      _kindLabelCtrl.text = row.kindLabel ?? '';
-      _paperColsCtrl.text = '${row.paperCols}';
-      _paperProfile = row.paperProfile == '80mm' ? '80mm' : '58mm';
-      _elementsCtrl.text = _prettyJson.convert(row.elements);
-    });
-  }
-
-  void _loadStarter({required List<Map<String, dynamic>> elements,
-      required int cols, required String profile}) {
-    setState(() {
-      _paperColsCtrl.text = '$cols';
-      _paperProfile = profile;
-      _elementsCtrl.text = _prettyJson.convert(elements);
-    });
-  }
-
-  String? _validate() {
-    if (_nameCtrl.text.trim().isEmpty) return 'Template name is required.';
-    final cols = int.tryParse(_paperColsCtrl.text.trim());
-    if (cols == null || cols < 20 || cols > 64) {
-      return 'Paper columns must be a number between 20 and 64.';
-    }
-    if (_jsonError != null) return 'Fix the elements JSON first: $_jsonError';
-    if (_parsedElements.isEmpty) return 'Elements must be a non-empty JSON array.';
-    return null;
-  }
-
-  Future<void> _save() async {
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) return;
-    final err = _validate();
-    if (err != null) {
-      showSnack(context, err, error: true);
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      final body = ReceiptTemplateRequest(
-        name: _nameCtrl.text.trim(),
-        kindLabel: _kindLabelCtrl.text.trim().isEmpty
-            ? null
-            : _kindLabelCtrl.text.trim(),
-        paperCols: int.parse(_paperColsCtrl.text.trim()),
-        paperProfile: _paperProfile,
-        elements: _parsedElements,
-        brand: _brand,
-      );
-      if (_editingId == null) {
-        await api.createReceiptTemplate(tenant, body);
-      } else {
-        await api.updateReceiptTemplate(tenant, _editingId!, body);
-      }
-      ref.invalidate(receiptTemplatesProvider(tenant));
+  /// `?id=` / `?new=1` (⌘K, cross-links) open the editor once the list is in.
+  void _handleDeepLink(List<ReceiptTemplateResponse> list) {
+    final params = _routeParams(context);
+    final link = params['id'] ?? (params['new'] != null ? '' : null);
+    if (link == null || link == _handledLink) return;
+    _handledLink = link;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      _resetForm();
-      showSnack(context, 'Template saved');
-    } catch (e) {
-      // Server-side vocabulary validation lands here as a 400 whose message
-      // names the offending element — surface it verbatim.
-      if (mounted) showSnack(context, formatError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _delete(ReceiptTemplateResponse row) async {
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) return;
-    final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Delete this template?'),
-            content: Text(
-                '"${row.name}" will be removed. Tools bound to it will fall '
-                'back to unstyled rendering until rebound.'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel')),
-              FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Delete')),
-            ],
-          ),
-        ) ??
-        false;
-    if (!confirmed) return;
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      await api.deleteReceiptTemplate(tenant, row.id);
-      ref.invalidate(receiptTemplatesProvider(tenant));
-      if (_editingId == row.id) _resetForm();
-      if (mounted) showSnack(context, 'Template deleted');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    }
+      final match = link.isEmpty ? null : list.where((t) => t.id == link).firstOrNull;
+      if (link.isNotEmpty && match == null) {
+        showToast(context, 'No receipt template “$link” on this tenant', error: true);
+      } else {
+        await _open(existing: match);
+      }
+      if (mounted) GoRouter.maybeOf(context)?.go(_routePath);
+      _handledLink = null;
+    });
   }
 
   @override
@@ -213,195 +141,74 @@ class _ReceiptTemplatesScreenState
       return const TenantScopedEmptyState(resourceLabel: 'Receipt templates');
     }
     final templates = ref.watch(receiptTemplatesProvider(tenant));
+    final fresh = ref.watch(freshIdsProvider(AdminResourceKind.receiptTemplate));
+    templates.whenData(_handleDeepLink);
 
-    return AdminTwoPane(
+    return YPage(
       title: 'Receipt templates',
-      subtitle:
-          'Thermal-receipt layouts the chat app renders when a tool emits a '
-          'receipt hint. Elements bind {{data}} paths at runtime — labels '
-          'included — so the layout stays domain-free.',
-      list: templates.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Text(formatError(e),
-            style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        data: (list) {
-          if (list.isEmpty) {
-            return const Center(
-                child: Text(
-                    'No templates yet. Load a starter on the right to begin.'));
-          }
-          return ListView.separated(
-            itemBuilder: (_, i) => _TemplateTile(
-              row: list[i],
-              onEdit: () => _loadIntoForm(list[i]),
-              onDelete: () => _delete(list[i]),
+      subtitle: 'Thermal-receipt layouts the chat app renders when a tool emits a receipt hint. Elements bind '
+          '{{data}} paths at runtime — labels included — so the layout stays domain-free.',
+      actions: [
+        FilledButton.icon(onPressed: () => _open(), icon: const Icon(Icons.add, size: 18), label: const Text('New template')),
+      ],
+      child: LiveAsyncView<List<ReceiptTemplateResponse>>(
+        value: templates,
+        what: 'receipt templates',
+        onRetry: () => ref.invalidate(receiptTemplatesProvider(tenant)),
+        data: (context, list) => YTable<ReceiptTemplateResponse>(
+          rows: list,
+          noun: 'templates',
+          idOf: (t) => t.id,
+          searchHint: 'Search by name, badge or ID',
+          searchTextOf: (t) => '${t.name} ${t.kindLabel ?? ''} ${t.id} ${t.paperProfile}',
+          highlightIds: fresh,
+          onRowTap: (t) => _open(existing: t),
+          filters: [
+            YFilter('58 mm', (t) => t.paperProfile == '58mm'),
+            YFilter('80 mm', (t) => t.paperProfile == '80mm'),
+          ],
+          empty: YEmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: 'No receipt templates yet',
+            message: 'A receipt template lays out the ticket or sale receipt the chat shows after a tool completes a purchase.',
+            action: FilledButton.icon(
+              onPressed: () => _open(),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Create your first template'),
             ),
-            separatorBuilder: (_, i) => const SizedBox(height: 8),
-            itemCount: list.length,
-          );
-        },
-      ),
-      form: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            FormCard(
-              title: _editingId == null
-                  ? 'New template'
-                  : 'Editing "${_nameCtrl.text}"',
-              actions: [
-                if (_editingId != null)
-                  TextButton(
-                    onPressed: _saving ? null : _resetForm,
-                    child: const Text('Cancel'),
-                  ),
-                FilledButton(
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : Text(_editingId == null ? 'Create' : 'Save'),
-                ),
-              ],
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextField(
-                    controller: _nameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      helperText:
-                          'Operator-facing template name (e.g. "Quiniela ticket").',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _kindLabelCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Kind label (optional)',
-                      helperText:
-                          'Short badge shown on the receipt bubble (e.g. "Ticket").',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _paperColsCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Paper columns',
-                            helperText: '20–64 (32 fits 58 mm).',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: _paperProfile,
-                          isExpanded: true,
-                          decoration:
-                              const InputDecoration(labelText: 'Paper profile'),
-                          items: const [
-                            DropdownMenuItem(
-                                value: '58mm', child: Text('58mm')),
-                            DropdownMenuItem(
-                                value: '80mm', child: Text('80mm')),
-                          ],
-                          onChanged: (v) =>
-                              setState(() => _paperProfile = v ?? '58mm'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: () => _loadStarter(
-                            elements: _genericSaleStarter,
-                            cols: 32,
-                            profile: '58mm'),
-                        icon: const Icon(Icons.receipt_outlined, size: 18),
-                        label: const Text('Generic sale receipt'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _loadStarter(
-                            elements: _numberedTicketStarter,
-                            cols: 32,
-                            profile: '58mm'),
-                        icon: const Icon(
-                            Icons.confirmation_number_outlined, size: 18),
-                        label: const Text('Numbered ticket with picks grid'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _elementsCtrl,
-                    maxLines: 18,
-                    minLines: 10,
-                    style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 12),
-                    decoration: InputDecoration(
-                      labelText: 'Elements (JSON array)',
-                      alignLabelWithHint: true,
-                      helperText:
-                          'Vocabulary: header, status, meta, divider, title, '
-                          'text, kv, section, table, cells, total, code, '
-                          'barcode, qr, footer, spacer. Bind with {{path}}; '
-                          'formatters: money, maskTail:n, group:n, chunk:n.',
-                      helperMaxLines: 3,
-                      errorText: _jsonError,
-                      errorMaxLines: 3,
-                    ),
-                  ),
-                ],
-              ),
+          ),
+          columns: [
+            YColumn(
+              label: 'Template',
+              flex: 4,
+              sortKey: (t) => t.name.toLowerCase(),
+              cell: (context, t) => YCellStack(primary: t.name, secondary: t.id),
             ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Live preview — sample data',
-                        style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Rendered with built-in sample data; at runtime the '
-                      'emitting tool supplies the data (and labels) per session.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.outline),
-                    ),
-                    const SizedBox(height: 12),
-                    if (_parsedElements.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            'Add elements (or load a starter) to see the preview.',
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.outline),
-                          ),
-                        ),
-                      )
-                    else
-                      ReceiptPreview(
-                        elements: _parsedElements,
-                        paperCols:
-                            (int.tryParse(_paperColsCtrl.text.trim()) ?? 32)
-                                .clamp(20, 64),
-                      ),
-                  ],
-                ),
-              ),
+            YColumn(
+              label: 'Badge',
+              flex: 2,
+              sortKey: (t) => t.kindLabel ?? '',
+              cell: (context, t) => (t.kindLabel ?? '').isEmpty
+                  ? Text('None', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))
+                  : YBadge(t.kindLabel!),
+            ),
+            YColumn(
+              label: 'Paper',
+              width: 150,
+              sortKey: (t) => t.paperCols,
+              cell: (context, t) => YCellStack(primary: t.paperProfile, mono: true, secondary: '${t.paperCols} columns'),
+            ),
+            YColumn(
+              label: 'Elements',
+              width: 130,
+              sortKey: (t) => t.elements.length,
+              cell: (context, t) => Text('${t.elements.length}', style: monoStyle(context)),
+            ),
+            YColumn(
+              label: 'Updated',
+              width: 130,
+              sortKey: (t) => t.updatedAt ?? t.createdAt ?? '',
+              cell: (context, t) => Text(fresh.contains(t.id) ? 'Just now' : formatRelativeIso(t.updatedAt ?? t.createdAt)),
             ),
           ],
         ),
@@ -410,59 +217,474 @@ class _ReceiptTemplatesScreenState
   }
 }
 
-class _TemplateTile extends StatelessWidget {
-  const _TemplateTile({
-    required this.row,
-    required this.onEdit,
-    required this.onDelete,
-  });
+const _labels = {
+  'name': 'Name',
+  'kindLabel': 'Badge',
+  'paperCols': 'Paper columns',
+  'paperProfile': 'Paper width',
+  'elements': 'Layout elements',
+};
 
-  final ReceiptTemplateResponse row;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+const _prettyJson = JsonEncoder.withIndent('  ');
+
+/// Create or edit one receipt template, with the live preview beside it.
+class ReceiptTemplateEditorSheet extends ConsumerStatefulWidget {
+  const ReceiptTemplateEditorSheet({super.key, this.existing, this.copyOf, this.onDuplicate});
+  final ReceiptTemplateResponse? existing;
+
+  /// Prefills a new template from this one.
+  final ReceiptTemplateResponse? copyOf;
+  final ValueChanged<ReceiptTemplateResponse>? onDuplicate;
+
+  @override
+  ConsumerState<ReceiptTemplateEditorSheet> createState() => _ReceiptTemplateEditorSheetState();
+}
+
+class _ReceiptTemplateEditorSheetState extends ConsumerState<ReceiptTemplateEditorSheet> {
+  final _name = TextEditingController();
+  final _kindLabel = TextEditingController();
+  final _paperCols = TextEditingController(text: '32');
+  final _elements = TextEditingController();
+  String _paperProfile = '58mm';
+  late final YFormController _form;
+
+  /// Preserved verbatim: the console doesn't edit the brand block.
+  Map<String, dynamic>? _brand;
+
+  /// The last elements that parsed — the preview keeps rendering them while
+  /// the operator types through an invalid intermediate state.
+  List<dynamic> _parsed = const [];
+
+  ReceiptTemplateResponse? get _base => widget.existing;
+  bool get _editing => _base != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final src = widget.existing ?? widget.copyOf;
+    _name.text = widget.copyOf != null ? '${src!.name} (copy)' : (src?.name ?? '');
+    _kindLabel.text = src?.kindLabel ?? '';
+    _paperCols.text = '${src?.paperCols ?? 32}';
+    _paperProfile = src?.paperProfile == '80mm' ? '80mm' : '58mm';
+    _elements.text = src == null || src.elements.isEmpty ? '' : _prettyJson.convert(src.elements);
+    _brand = src?.brand;
+    _reparse();
+    final tenant = ref.read(currentTenantOrNull);
+    _form = YFormController(
+      snapshot: () => {
+        'name': _name.text.trim(),
+        'kindLabel': _kindLabel.text.trim(),
+        'paperCols': _paperCols.text.trim(),
+        'paperProfile': _paperProfile,
+        'elements': _elements.text,
+      },
+      validate: _validate,
+      labels: _labels,
+      draftKey: widget.copyOf == null ? 'yaya.draft.receiptTemplate.$tenant.${_base?.id ?? 'new'}' : null,
+    );
+    _form.addListener(_rebuild);
+    _elements.addListener(_onElements);
+    _paperCols.addListener(_rebuild);
+    _form.loadDraft().then((d) {
+      if (d == null || !mounted) return;
+      final v = d.values;
+      _name.text = (v['name'] as String?) ?? _name.text;
+      _kindLabel.text = (v['kindLabel'] as String?) ?? _kindLabel.text;
+      _paperCols.text = (v['paperCols'] as String?) ?? _paperCols.text;
+      if (v['paperProfile'] == '58mm' || v['paperProfile'] == '80mm') _paperProfile = v['paperProfile'] as String;
+      _elements.text = (v['elements'] as String?) ?? _elements.text;
+      _form.refresh();
+    });
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  void _onElements() {
+    _reparse();
+    _rebuild();
+  }
+
+  /// The elements text decoded, or the parse error.
+  (Object?, String?) _decode() {
+    final text = _elements.text.trim();
+    if (text.isEmpty) return (null, null);
+    try {
+      return (jsonDecode(text), null);
+    } on FormatException catch (e) {
+      return (null, 'Not valid JSON — ${e.message}${e.offset != null ? ' (at character ${e.offset})' : ''}.');
+    }
+  }
+
+  void _reparse() {
+    final (value, err) = _decode();
+    if (err == null && value is List) _parsed = value;
+    if (_elements.text.trim().isEmpty) _parsed = const [];
+  }
+
+  Map<String, String?> _validate() {
+    final (value, parseErr) = _decode();
+    final cols = _paperCols.text.trim();
+    return {
+      'name': Validators.required(_name.text, 'a name'),
+      'paperCols': cols.isEmpty ? 'Enter the paper width in characters.' : Validators.intInRange(cols, 20, 64),
+      'elements': _elements.text.trim().isEmpty
+          ? 'Add the layout elements, or start from a starter layout.'
+          : parseErr ?? receiptElementsProblem(value),
+    };
+  }
+
+  @override
+  void dispose() {
+    _form.removeListener(_rebuild);
+    _elements.removeListener(_onElements);
+    _paperCols.removeListener(_rebuild);
+    _form.dispose();
+    for (final c in [_name, _kindLabel, _paperCols, _elements]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadStarter(String label, List<Map<String, dynamic>> elements) async {
+    if (_elements.text.trim().isNotEmpty) {
+      final ok = await confirmAction(
+        context,
+        title: 'Replace the layout with “$label”?',
+        message: 'The elements you have now are replaced. Name, badge and paper stay as they are.',
+        confirmLabel: 'Replace layout',
+      );
+      if (!ok) return;
+    }
+    _elements.text = _prettyJson.convert(elements);
+    _paperCols.text = '32';
+    _paperProfile = '58mm';
+    _form.changed('elements');
+  }
+
+  void _format() {
+    final (value, err) = _decode();
+    if (err != null || value == null) {
+      _form.touch('elements');
+      return;
+    }
+    _elements.text = _prettyJson.convert(value);
+    _form.changed('elements');
+  }
+
+  /// Server-side vocabulary errors arrive as a 400 whose message names the
+  /// offending part; put it under that field.
+  ApiErrorInfo _fieldError(Object e) {
+    final info = ApiErrorInfo.from(e);
+    if (info.fieldErrors.isNotEmpty || info.status != 400) return info;
+    final m = info.message.toLowerCase();
+    final field = m.startsWith('name')
+        ? 'name'
+        : m.startsWith('papercols')
+            ? 'paperCols'
+            : m.startsWith('paperprofile')
+                ? 'paperProfile'
+                : (m.contains('element') || m.contains('section'))
+                    ? 'elements'
+                    : null;
+    if (field == null) return info;
+    final text = info.message.isEmpty ? info.message : '${info.message[0].toUpperCase()}${info.message.substring(1)}.';
+    return ApiErrorInfo(message: info.message, code: info.code, status: info.status, path: info.path, fieldErrors: {field: text});
+  }
+
+  Future<void> _save() async {
+    if (!_form.submit()) return;
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    final (value, _) = _decode();
+    _form.saving = true;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      final body = ReceiptTemplateRequest(
+        name: _name.text.trim(),
+        kindLabel: _kindLabel.text.trim().isEmpty ? null : _kindLabel.text.trim(),
+        paperCols: int.parse(_paperCols.text.trim()),
+        paperProfile: _paperProfile,
+        elements: value as List,
+        brand: _brand,
+      );
+      final saved = _editing
+          ? await api.updateReceiptTemplate(tenant, _base!.id, body)
+          : await api.createReceiptTemplate(tenant, body);
+      ref.invalidate(receiptTemplatesProvider(tenant));
+      _form.saving = false;
+      _form.markClean();
+      if (!mounted) return;
+      showToast(context, _editing ? 'Saved ${saved.name}' : 'Created ${saved.name}');
+      Navigator.of(context).pop();
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(_fieldError(e));
+    }
+  }
+
+  Future<void> _delete() async {
+    final base = _base;
+    final tenant = ref.read(currentTenantOrNull);
+    if (base == null || tenant == null) return;
+    final ok = await confirmAction(
+      context,
+      destructive: true,
+      title: 'Delete ${base.name}?',
+      message: 'Tools bound to this template fall back to unstyled rendering until they are bound to another one. '
+          'This can’t be undone.',
+      confirmLabel: 'Delete template',
+    );
+    if (!ok || !mounted) return;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      await api.deleteReceiptTemplate(tenant, base.id);
+      ref.invalidate(receiptTemplatesProvider(tenant));
+      _form.markClean();
+      if (!mounted) return;
+      showToast(context, 'Deleted ${base.name}');
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) showToast(context, ApiErrorInfo.from(e).message, error: true);
+    }
+  }
+
+  Future<void> _duplicate() async {
+    final base = _base;
+    if (base == null) return;
+    if (!await UnsavedChanges.instance.confirmLeave(context)) return;
+    _form.markClean();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    widget.onDuplicate?.call(base);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return EditableRecordCard(
-      onCloneEdit: onEdit,
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(row.name, style: Theme.of(context).textTheme.titleSmall),
-          Text(
-            [
-              if (row.kindLabel != null && row.kindLabel!.isNotEmpty)
-                row.kindLabel!,
-              '${row.paperCols} cols · ${row.paperProfile}',
-              if (row.updatedAt != null) 'updated ${row.updatedAt}',
-            ].join(' · '),
-            style: const TextStyle(fontSize: 12),
+    final scheme = Theme.of(context).colorScheme;
+    final status = StatusColors.of(context);
+    final (value, parseErr) = _decode();
+    final problem = _elements.text.trim().isEmpty ? null : parseErr ?? receiptElementsProblem(value);
+    final cols = (int.tryParse(_paperCols.text.trim()) ?? 32).clamp(20, 64);
+    final n = value is List ? value.length : _parsed.length;
+
+    return YUnsavedGuard(
+      form: _form,
+      child: YSaveShortcut(
+        onSave: _save,
+        child: YSheetScaffold(
+          title: _editing ? _base!.name : 'New receipt template',
+          subtitle: _editing
+              ? '${_base!.id} · saving replaces the layout for every tool bound to it.'
+              : 'Fields marked * are required. Start from a starter layout and adjust it.',
+          headerActions: [
+            if (_editing) ...[
+              TextButton.icon(onPressed: _duplicate, icon: const Icon(Icons.copy_outlined, size: 18), label: const Text('Duplicate')),
+              TextButton.icon(
+                onPressed: _delete,
+                style: TextButton.styleFrom(foregroundColor: scheme.error),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Delete'),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ],
+          body: LayoutBuilder(builder: (context, c) {
+            final form = <Widget>[
+              if (_form.summary.isNotEmpty || _form.formError != null) ...[
+                YErrorSummary(form: _form, action: _editing ? 'saving' : 'creating this template'),
+                const SizedBox(height: Gap.lg),
+              ],
+              YTextField(
+                label: 'Name',
+                wireKey: 'name',
+                controller: _name,
+                form: _form,
+                name: 'name',
+                required: true,
+                autofocus: !_editing,
+                hint: 'e.g. Quiniela ticket',
+                helper: 'What operators see when binding a tool to this layout.',
+              ),
+              const SizedBox(height: Gap.fieldGap),
+              YTextField(
+                label: 'Badge',
+                wireKey: 'kindLabel',
+                controller: _kindLabel,
+                form: _form,
+                name: 'kindLabel',
+                optional: true,
+                hint: 'e.g. Ticket',
+                helper: 'A short label on the receipt bubble in the chat.',
+              ),
+              const SizedBox(height: Gap.fieldGap),
+              YEnumCards<String>(
+                label: 'Paper width',
+                wireKey: 'paperProfile',
+                form: _form,
+                name: 'paperProfile',
+                required: true,
+                horizontal: true,
+                value: _paperProfile,
+                options: const [
+                  YEnumOption('58mm', '58 mm roll', wire: '58mm', description: 'Pocket printers; about 32 characters a line.'),
+                  YEnumOption('80mm', '80 mm roll', wire: '80mm', description: 'Counter printers; about 48 characters a line.'),
+                ],
+                onChanged: (v) {
+                  setState(() {
+                    // Keep the columns in step with the roll unless they were set by hand.
+                    if (_paperCols.text.trim() == (_paperProfile == '58mm' ? '32' : '48')) {
+                      _paperCols.text = v == '58mm' ? '32' : '48';
+                    }
+                    _paperProfile = v;
+                  });
+                  _form.refresh();
+                },
+              ),
+              const SizedBox(height: Gap.fieldGap),
+              YTextField(
+                label: 'Paper columns',
+                wireKey: 'paperCols',
+                controller: _paperCols,
+                form: _form,
+                name: 'paperCols',
+                required: true,
+                mono: true,
+                keyboardType: TextInputType.number,
+                hint: 'e.g. 32',
+                helper: 'Characters per line, 20–64. 32 fits a 58 mm roll, 48 an 80 mm one.',
+              ),
+              const SizedBox(height: Gap.xl),
+              YFieldShell(
+                label: 'Layout elements',
+                wireKey: 'elements',
+                form: _form,
+                name: 'elements',
+                required: true,
+                helper: 'A JSON array, top to bottom. Types: ${kReceiptElementTypes.join(', ')}. Bind data with '
+                    '{{path}}; formatters: money, maskTail:n, group:n, chunk:n. Sections nest one level.',
+                labelTrailing: Wrap(spacing: 4, children: [
+                  TextButton.icon(
+                    onPressed: () => _loadStarter('Generic sale receipt', _genericSaleStarter),
+                    icon: const Icon(Icons.receipt_outlined, size: 18),
+                    label: const Text('Sale receipt starter'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _loadStarter('Numbered ticket', _numberedTicketStarter),
+                    icon: const Icon(Icons.confirmation_number_outlined, size: 18),
+                    label: const Text('Numbered ticket starter'),
+                  ),
+                ]),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _form.errorFor('elements') != null ? scheme.error : status.inputBorder,
+                      width: _form.errorFor('elements') != null ? 2 : 1,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Container(
+                      color: scheme.surfaceContainerLow,
+                      padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+                      child: Row(children: [
+                        Icon(problem == null ? Icons.check_circle_outline : Icons.error_outline,
+                            size: 16, color: problem == null ? status.onSuccessContainer : scheme.error),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _elements.text.trim().isEmpty
+                                ? 'Empty'
+                                : problem ?? 'Valid layout · $n element${n == 1 ? '' : 's'}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: problem == null ? status.onSuccessContainer : scheme.error),
+                          ),
+                        ),
+                        TextButton(onPressed: _format, child: const Text('Format')),
+                      ]),
+                    ),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    TextField(
+                      key: const ValueKey('receipt-elements'),
+                      controller: _elements,
+                      minLines: 14,
+                      maxLines: 28,
+                      keyboardType: TextInputType.multiline,
+                      style: monoStyle(context, size: 13),
+                      onChanged: (_) => _form.changed('elements'),
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        filled: false,
+                        contentPadding: EdgeInsets.all(12),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+              if (_brand != null) ...[
+                const SizedBox(height: Gap.lg),
+                Text('This template carries brand settings set through the API; saving keeps them as they are.',
+                    style: TextStyle(fontSize: 13, height: 1.45, color: scheme.onSurfaceVariant)),
+              ],
+            ];
+            final preview = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text('Live preview', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              const SizedBox(height: 4),
+              Text(
+                'Rendered with built-in sample data; at runtime the tool that emits the receipt supplies the data '
+                '(and labels) per session.',
+                style: TextStyle(fontSize: 13, height: 1.45, color: scheme.onSurfaceVariant),
+              ),
+              if (problem != null && _parsed.isNotEmpty) ...[
+                const SizedBox(height: Gap.md),
+                const YBanner(tone: YBannerTone.warning, message: 'Showing the last layout that parsed.'),
+              ],
+              const SizedBox(height: Gap.md),
+              if (_parsed.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(color: scheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(8)),
+                  child: Text('Add elements, or start from a starter layout, to see the receipt.',
+                      textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant)),
+                )
+              else
+                FittedBox(fit: BoxFit.scaleDown, child: ReceiptPreview(elements: _parsed, paperCols: cols)),
+            ]);
+            if (c.maxWidth < 900) {
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+                children: [...form, const SizedBox(height: Gap.xl), preview],
+              );
+            }
+            return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Expanded(child: ListView(padding: const EdgeInsets.fromLTRB(28, 20, 24, 28), children: form)),
+              Container(
+                width: 460,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerLowest,
+                  border: Border(left: BorderSide(color: scheme.outlineVariant)),
+                ),
+                child: ListView(padding: const EdgeInsets.fromLTRB(20, 20, 20, 28), children: [preview]),
+              ),
+            ]);
+          }),
+          footer: YActionBar(
+            form: _form,
+            primaryLabel: _editing ? 'Save template' : 'Create template',
+            onPrimary: _save,
+            onCancel: () => closeYSheet(context),
           ),
-        ],
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DetailRow(label: 'Id', value: row.id),
-          DetailRow(
-              label: 'Elements',
-              value:
-                  '${row.elements.length} element${row.elements.length == 1 ? '' : 's'}'),
-          if (row.createdAt != null)
-            DetailRow(label: 'Created', value: row.createdAt!),
-          if (row.updatedAt != null)
-            DetailRow(label: 'Updated', value: row.updatedAt!),
-        ],
-      ),
-      extraActions: [
-        TextButton.icon(
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Delete'),
-          style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error),
         ),
-      ],
+      ),
     );
   }
 }

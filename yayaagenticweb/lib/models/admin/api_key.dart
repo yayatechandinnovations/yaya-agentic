@@ -19,6 +19,8 @@ class ApiKey with _$ApiKey {
     String? lastUsedAt,
     String? lastUsedIp,
     required String status, // active | revoked | expired
+    /// Acts with platform-admin reach across every workspace.
+    @Default(false) bool platformScope,
   }) = _ApiKey;
 
   factory ApiKey.fromJson(Map<String, dynamic> json) => _$ApiKeyFromJson(json);
@@ -32,6 +34,8 @@ class ApiKeyCreateRequest with _$ApiKeyCreateRequest {
     required String name,
     required String role,
     String? expiresAt,
+    /// Only a platform admin may mint one; null = workspace-scoped.
+    bool? platformScope,
   }) = _ApiKeyCreateRequest;
 
   factory ApiKeyCreateRequest.fromJson(Map<String, dynamic> json) =>
@@ -50,6 +54,7 @@ class ApiKeyCreated with _$ApiKeyCreated {
     required String role,
     String? createdAt,
     String? expiresAt,
+    @Default(false) bool platformScope,
     required String secret,
   }) = _ApiKeyCreated;
 

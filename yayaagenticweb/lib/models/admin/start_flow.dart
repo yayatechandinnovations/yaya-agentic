@@ -68,7 +68,7 @@ class StartFlowRequest {
     this.description,
     required this.steps,
     required this.greeting,
-    required this.policy,
+    this.policy,
     this.publish = false,
   });
 
@@ -77,7 +77,11 @@ class StartFlowRequest {
   final String? description;
   final List<dynamic> steps;
   final Map<String, dynamic> greeting;
-  final Map<String, dynamic> policy;
+
+  /// Null = leave it to the server: `FlowPolicy.defaults()` on create, the
+  /// latest version's policy on update. (An empty map is not the same — it
+  /// deserializes to a policy with `allowWhenAnonymous: false`.)
+  final Map<String, dynamic>? policy;
   final bool publish;
 
   Map<String, dynamic> toJson() => {
@@ -86,7 +90,7 @@ class StartFlowRequest {
         if (description != null && description!.isNotEmpty) 'description': description,
         'steps': steps,
         'greeting': greeting,
-        'policy': policy,
+        if (policy != null) 'policy': policy,
         'publish': publish,
       };
 
@@ -96,6 +100,6 @@ class StartFlowRequest {
         if (description != null) 'description': description,
         'steps': steps,
         'greeting': greeting,
-        'policy': policy,
+        if (policy != null) 'policy': policy,
       };
 }

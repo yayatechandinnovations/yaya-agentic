@@ -20,6 +20,7 @@ class ChannelBindingResponse {
     required this.onUnresolved,
     this.allowedOverrideProfiles = const [],
     this.onOverrideDenied = 'IGNORE',
+    this.unresolvedReplyText,
   });
 
   final int id;
@@ -34,10 +35,13 @@ class ChannelBindingResponse {
   final String? createdAt;
   final String? deactivatedAt;
   final int? authResolverId;
-  final String onUnresolved; // 'REJECT' | 'ANONYMOUS'
+  final String onUnresolved; // 'REJECT' | 'ANONYMOUS' | 'AUTO_REPLY'
   // Profile keys the resolver may override into; empty = any published.
   final List<String> allowedOverrideProfiles;
   final String onOverrideDenied; // 'IGNORE' | 'REJECT'
+
+  /// What AUTO_REPLY answers an unrecognised caller with.
+  final String? unresolvedReplyText;
 
   factory ChannelBindingResponse.fromJson(Map<String, dynamic> json) =>
       ChannelBindingResponse(
@@ -60,6 +64,7 @@ class ChannelBindingResponse {
         allowedOverrideProfiles:
             (json['allowedOverrideProfiles'] as List?)?.cast<String>() ?? const [],
         onOverrideDenied: (json['onOverrideDenied'] ?? 'IGNORE') as String,
+        unresolvedReplyText: json['unresolvedReplyText'] as String?,
       );
 }
 
@@ -204,6 +209,7 @@ class ChannelBindingRequest {
     this.onUnresolved = 'REJECT',
     this.allowedOverrideProfiles = const [],
     this.onOverrideDenied = 'IGNORE',
+    this.unresolvedReplyText,
   });
 
   final ChannelEndpointWire endpoint;
@@ -218,6 +224,9 @@ class ChannelBindingRequest {
   final List<String> allowedOverrideProfiles;
   final String onOverrideDenied;
 
+  /// Null keeps the stored text; '' clears it.
+  final String? unresolvedReplyText;
+
   Map<String, dynamic> toJson() => {
         'endpoint': endpoint.toJson(),
         'profileId': profileId,
@@ -230,6 +239,7 @@ class ChannelBindingRequest {
         'onUnresolved': onUnresolved,
         'allowedOverrideProfiles': allowedOverrideProfiles,
         'onOverrideDenied': onOverrideDenied,
+        if (unresolvedReplyText != null) 'unresolvedReplyText': unresolvedReplyText,
       };
 }
 
@@ -245,6 +255,7 @@ class ChannelBindingUpdate {
     this.onUnresolved = 'REJECT',
     this.allowedOverrideProfiles = const [],
     this.onOverrideDenied = 'IGNORE',
+    this.unresolvedReplyText,
   });
 
   final String profileId;
@@ -258,6 +269,9 @@ class ChannelBindingUpdate {
   final List<String> allowedOverrideProfiles;
   final String onOverrideDenied;
 
+  /// Null keeps the stored text; '' clears it.
+  final String? unresolvedReplyText;
+
   Map<String, dynamic> toJson() => {
         'profileId': profileId,
         if (profileVersion != null) 'profileVersion': profileVersion,
@@ -269,5 +283,6 @@ class ChannelBindingUpdate {
         'onUnresolved': onUnresolved,
         'allowedOverrideProfiles': allowedOverrideProfiles,
         'onOverrideDenied': onOverrideDenied,
+        if (unresolvedReplyText != null) 'unresolvedReplyText': unresolvedReplyText,
       };
 }

@@ -13,6 +13,8 @@ class CapabilityRequest with _$CapabilityRequest {
     String? llmGuidance,
     @Default(<String>[]) List<String> tools,
     @Default(<String>[]) List<String> followUpHints,
+    // No editor yet; carried so a republish keeps the quick-reply menu.
+    Map<String, dynamic>? menu,
   }) = _CapabilityRequest;
 
   factory CapabilityRequest.fromJson(Map<String, dynamic> json) =>
@@ -30,6 +32,7 @@ class CapabilityResponse with _$CapabilityResponse {
     String? llmGuidance,
     @Default(<String>[]) List<String> tools,
     @Default(<String>[]) List<String> followUpHints,
+    Map<String, dynamic>? menu,
     String? createdAt,
   }) = _CapabilityResponse;
 

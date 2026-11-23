@@ -4,12 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/workspace.dart';
 import '../data/workspaces_api.dart';
+import '../../../app/live/live_resource.dart';
 
 /// Caller's workspace memberships. Auto-refreshed when the user creates
 /// or archives a workspace (the create-success path calls
 /// `ref.invalidate(myWorkspacesProvider)`).
 final myWorkspacesProvider =
     FutureProvider<List<WorkspaceListItem>>((ref) async {
+  liveRefresh(ref);
   final api = await ref.watch(workspacesApiProvider.future);
   return api.listMine();
 });

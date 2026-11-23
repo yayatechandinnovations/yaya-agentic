@@ -2,11 +2,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
-import 'package:yayaagenticweb/features/admin/whatsapp_templates/template_list_kit.dart';
 import 'package:yayaagenticweb/features/admin/whatsapp_templates/whatsapp_shared_templates_screen.dart';
 import 'package:yayaagenticweb/models/admin/tenant.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_template.dart';
+import 'package:yayaagenticweb/ui/form/y_fields.dart';
+
+import 'template_test_support.dart';
 
 Map<String, dynamic> _template(int id, String name, String status, List<String> holders) => {
       'id': id,
@@ -107,17 +110,18 @@ class _FailingShareApi extends _FakeAdminApi {
       throw Exception('holder_not_allowed');
 }
 
-/// The row card of a template, by its title.
-Finder _row(String title) =>
-    find.ancestor(of: find.text(title), matching: find.byType(TemplateRowCard));
-
 Future<void> _open(WidgetTester tester, String title) async {
   await tester.tap(find.text(title));
   await tester.pumpAndSettle();
 }
 
+Future<void> _close(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Close (Esc)'));
+  await tester.pumpAndSettle();
+}
+
 Future<List<String>> _menu(WidgetTester tester, String title) async {
-  await tester.tap(find.descendant(of: _row(title), matching: find.byTooltip('More actions')));
+  await tester.tap(find.byTooltip('More actions for $title'));
   await tester.pumpAndSettle();
   return tester
       .widgetList<PopupMenuItem<int>>(find.byType(PopupMenuItem<int>))
@@ -125,8 +129,18 @@ Future<List<String>> _menu(WidgetTester tester, String title) async {
       .toList();
 }
 
+Future<void> _select(WidgetTester tester, int id) async {
+  await tester.tap(find.descendant(of: find.byKey(ValueKey('select-$id')), matching: find.byType(Checkbox)));
+  await tester.pumpAndSettle();
+}
+
 CheckboxListTile _workspace(WidgetTester tester, String title) =>
     tester.widget<CheckboxListTile>(find.widgetWithText(CheckboxListTile, title));
+
+Finder _field(String label) => find.descendant(
+      of: find.byWidgetPredicate((w) => w is YTextField && w.label == label),
+      matching: find.byType(TextField),
+    );
 
 Widget _wrap(_FakeAdminApi api) => ProviderScope(
       overrides: [adminApiProvider.overrideWith((ref) async => api)],
@@ -134,10 +148,20 @@ Widget _wrap(_FakeAdminApi api) => ProviderScope(
     );
 
 void main() {
-  testWidgets('lists each template once with its workspaces; share and stop sharing', (tester) async {
+  setUp(() {
+    useTestSheets();
+    SharedPreferences.setMockInitialValues({});
+  });
+  tearDown(useRealSheets);
+
+  Future<void> bigView(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1600, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+  }
+
+  testWidgets('lists each template once with its workspaces; share and stop sharing', (tester) async {
+    await bigView(tester);
     final api = _FakeAdminApi();
 
     await tester.pumpWidget(_wrap(api));
@@ -145,24 +169,26 @@ void main() {
 
     expect(find.text('sl_ops_alert_v1 (es)'), findsOneWidget);
     expect(find.text('sl_draft_v1 (es)'), findsOneWidget);
+    expect(find.text('Approved'), findsOneWidget);
+    expect(find.text('Draft'), findsOneWidget);
     // Only what WhatsApp has not seen can be submitted or removed; the next
     // step shows on the row itself.
     expect(find.widgetWithText(FilledButton, 'Submit for review'), findsOneWidget);
-    expect(await _menu(tester, 'sl_draft_v1 (es)'), ['Hide', 'Remove']);
+    expect(await _menu(tester, 'sl_draft_v1 (es)'), ['Share…', 'Hide', 'Remove']);
     await tester.tapAt(Offset.zero);
     await tester.pumpAndSettle();
-    expect(await _menu(tester, 'sl_ops_alert_v1 (es)'), ['Hide']);
+    expect(await _menu(tester, 'sl_ops_alert_v1 (es)'), ['Share…', 'Hide']);
     await tester.tapAt(Offset.zero);
     await tester.pumpAndSettle();
 
     await _open(tester, 'sl_draft_v1 (es)');
     expect(find.text('None yet — no workspace can send this template.'), findsOneWidget);
-    await _open(tester, 'sl_draft_v1 (es)');
+    await _close(tester);
     await _open(tester, 'sl_ops_alert_v1 (es)');
     expect(find.widgetWithText(InputChip, 'fastcash'), findsOneWidget);
 
     // Share the approved one: the workspace that already has it cannot be picked.
-    await tester.tap(find.widgetWithText(ActionChip, 'Share with a workspace').first);
+    await tester.tap(find.widgetWithText(ActionChip, 'Share with a workspace'));
     await tester.pumpAndSettle();
     expect(find.text('Share sl_ops_alert_v1'), findsOneWidget);
     expect(_workspace(tester, 'Fast Cash (fastcash)').onChanged, isNull);
@@ -173,11 +199,11 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Share with 1 workspace'));
     await tester.pumpAndSettle();
     expect(api.calls, ['share:platform:[1]:[test]']);
+    // The open sheet follows the list.
     expect(find.widgetWithText(InputChip, 'test'), findsOneWidget);
 
     // Stop sharing asks first.
-    await tester.tap(find.descendant(
-        of: find.widgetWithText(InputChip, 'fastcash'), matching: find.byIcon(Icons.close)));
+    await tester.tap(find.descendant(of: find.widgetWithText(InputChip, 'fastcash'), matching: find.byIcon(Icons.close)));
     await tester.pumpAndSettle();
     expect(find.text('Stop sharing with fastcash?'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, 'Stop sharing'));
@@ -186,24 +212,44 @@ void main() {
     expect(find.widgetWithText(InputChip, 'fastcash'), findsNothing);
   });
 
-  testWidgets('adding a template needs one example per placeholder', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets('a new template is checked like the backend checks a declaration', (tester) async {
+    await bigView(tester);
     final api = _FakeAdminApi();
 
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'New template'));
+    await tester.pumpAndSettle();
 
-    await tester.enterText(find.widgetWithText(TextField, 'Template name'), 'appt_reminder_v1');
-    await tester.enterText(find.widgetWithText(TextField, 'Body'), 'Hola {{1}}, tu cita es {{2}}.');
-    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.enterText(_field('Template name'), 'Appt Reminder');
+    await tester.enterText(_field('Message'), '{{1}}, tu cita es {{3}}.');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create template'));
     await tester.pumpAndSettle();
     expect(api.calls, isEmpty);
-    expect(find.textContaining('Give 2 example values'), findsOneWidget);
+    expect(find.textContaining('Use lowercase letters, digits and _ only'), findsWidgets);
+    expect(find.textContaining('{{2}} is missing'), findsWidgets);
+    expect(find.textContaining('Give an example for {{1}}, {{2}}, {{3}}'), findsWidgets);
 
-    await tester.enterText(find.widgetWithText(TextField, 'Example values'), 'Ana\nlunes 3 p. m.');
-    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    // An existing name on the account would replace its wording: caught here.
+    await tester.enterText(_field('Template name'), 'sl_draft_v1');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('sl_draft_v1 (es) is already on this account'), findsWidgets);
+
+    await tester.enterText(_field('Template name'), 'appt_reminder_v1');
+    await tester.enterText(_field('Message'), 'Hola {{1}}, tu cita es {{2}}.');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create template'));
+    await tester.pumpAndSettle();
+    expect(api.calls, isEmpty);
+    expect(find.textContaining('Give an example for {{1}}, {{2}}'), findsWidgets);
+
+    await tester.enterText(find.byKey(const ValueKey('sample-1')), 'Ana');
+    await tester.enterText(find.byKey(const ValueKey('sample-2')), 'lunes 3 p. m.');
+    await tester.pumpAndSettle();
+    // The preview reads with the examples in place.
+    expect(find.text('Ana'), findsWidgets);
+    await tester.tap(find.widgetWithText(FilledButton, 'Create template'));
     await tester.pumpAndSettle();
     expect(api.calls.single, contains('declare:platform:'));
     expect(api.calls.single, contains('body: [Ana, lunes 3 p. m.]'));
@@ -211,9 +257,7 @@ void main() {
   });
 
   testWidgets('older versions are hidden in one go and come back with «Show hidden»', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await bigView(tester);
     final api = _FakeAdminApi([
       _template(1, 'sl_ops_alert_v1', 'APPROVED', ['fastcash']),
       _template(4, 'sl_ops_alert_v2', 'APPROVED', ['fastcash']),
@@ -225,8 +269,6 @@ void main() {
 
     // sl_report_v1 has no later version: it is current, whatever its suffix.
     expect(find.text('1 template has a newer version: sl_ops_alert_v1.'), findsOneWidget);
-    expect(find.descendant(of: _row('sl_ops_alert_v1 (es)'), matching: find.text('Older version')),
-        findsOneWidget);
     expect(find.text('Older version'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Hide older versions'));
@@ -239,14 +281,12 @@ void main() {
     expect(api.calls, ['hide:platform:[1]']);
     expect(find.text('sl_ops_alert_v1 (es)'), findsNothing);
     expect(find.text('Hide older versions'), findsNothing);
-    expect(find.text('Showing 2 of 3'), findsOneWidget);
 
     await tester.tap(find.text('Show hidden (1)'));
     await tester.pumpAndSettle();
-    expect(find.descendant(of: _row('sl_ops_alert_v1 (es)'), matching: find.text('Hidden')),
-        findsOneWidget);
+    expect(find.text('Hidden'), findsOneWidget);
 
-    expect(await _menu(tester, 'sl_ops_alert_v1 (es)'), ['Unhide']);
+    expect(await _menu(tester, 'sl_ops_alert_v1 (es)'), ['Share…', 'Unhide']);
     await tester.tap(find.text('Unhide'));
     await tester.pumpAndSettle();
     expect(api.calls.last, 'unhide:platform:[1]');
@@ -255,9 +295,7 @@ void main() {
   });
 
   testWidgets('search, status chips and hiding a selection', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await bigView(tester);
     final api = _FakeAdminApi([
       _template(1, 'sl_ops_alert_v1', 'APPROVED', ['fastcash']),
       _template(4, 'sl_ops_alert_v2', 'APPROVED', ['fastcash']),
@@ -267,17 +305,17 @@ void main() {
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
 
-    expect(find.text('All (3)'), findsOneWidget);
-    expect(find.text('Approved (2)'), findsOneWidget);
-    expect(find.text('Draft (1)'), findsOneWidget);
+    expect(find.text('All  3'), findsOneWidget);
+    expect(find.text('Approved  2'), findsOneWidget);
+    expect(find.text('Draft  1'), findsOneWidget);
     expect(find.textContaining('Rejected'), findsNothing);
 
-    await tester.tap(find.text('Draft (1)'));
+    await tester.tap(find.text('Draft  1'));
     await tester.pumpAndSettle();
     expect(find.text('sl_draft_v1 (es)'), findsOneWidget);
     expect(find.text('sl_ops_alert_v2 (es)'), findsNothing);
-    expect(find.text('Showing 1 of 3'), findsOneWidget);
-    await tester.tap(find.text('All (3)'));
+    expect(find.text('1 of 3 templates'), findsOneWidget);
+    await tester.tap(find.text('All  3'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).first, 'ops_alert');
@@ -287,19 +325,17 @@ void main() {
     expect(tester.getTopLeft(find.text('sl_ops_alert_v2 (es)')).dy,
         lessThan(tester.getTopLeft(find.text('sl_ops_alert_v1 (es)')).dy));
 
-    await tester.tap(find.byTooltip('Select all shown'));
-    await tester.pumpAndSettle();
+    await _select(tester, 1);
+    await _select(tester, 4);
     expect(find.text('2 selected'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Hide'));
     await tester.pumpAndSettle();
     expect(api.calls, ['hide:platform:[4, 1]']);
-    expect(find.text('No template matches.'), findsOneWidget);
+    expect(find.text('No templates match “ops_alert”.'), findsOneWidget);
   });
 
   testWidgets('a selection of templates is shared with several workspaces at once', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await bigView(tester);
     final api = _FakeAdminApi([
       _template(1, 'sl_ops_alert_v1', 'APPROVED', ['fastcash']),
       _template(4, 'sl_ops_alert_v2', 'APPROVED', ['fastcash']),
@@ -309,7 +345,7 @@ void main() {
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Select all shown'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Select all'));
     await tester.pumpAndSettle();
     expect(find.text('3 selected'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Share…'));
@@ -327,23 +363,20 @@ void main() {
 
     // Shown order: versions of a name together, the newest first.
     expect(api.calls, ['share:platform:[2, 4, 1]:[fastcash, test]']);
-    expect(find.text('3 templates'), findsOneWidget);
+    expect(find.text('3 selected'), findsNothing);
     expect(find.text('Shared 3 templates with 2 workspaces'), findsOneWidget);
-    await tester.tap(find.text('sl_draft_v1 (es)'));
-    await tester.pumpAndSettle();
+    await _open(tester, 'sl_draft_v1 (es)');
     expect(find.widgetWithText(InputChip, 'fastcash'), findsOneWidget);
     expect(find.widgetWithText(InputChip, 'test'), findsOneWidget);
   });
 
   testWidgets('a share that fails keeps the selection', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await bigView(tester);
     final api = _FailingShareApi();
 
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Select all shown'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Select all'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Share…'));
     await tester.pumpAndSettle();

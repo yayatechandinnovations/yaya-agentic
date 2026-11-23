@@ -17,6 +17,7 @@ _$ApiKeyImpl _$$ApiKeyImplFromJson(Map<String, dynamic> json) => _$ApiKeyImpl(
   lastUsedAt: json['lastUsedAt'] as String?,
   lastUsedIp: json['lastUsedIp'] as String?,
   status: json['status'] as String,
+  platformScope: json['platformScope'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$$ApiKeyImplToJson(_$ApiKeyImpl instance) =>
@@ -31,6 +32,7 @@ Map<String, dynamic> _$$ApiKeyImplToJson(_$ApiKeyImpl instance) =>
       'lastUsedAt': instance.lastUsedAt,
       'lastUsedIp': instance.lastUsedIp,
       'status': instance.status,
+      'platformScope': instance.platformScope,
     };
 
 _$ApiKeyCreateRequestImpl _$$ApiKeyCreateRequestImplFromJson(
@@ -39,6 +41,7 @@ _$ApiKeyCreateRequestImpl _$$ApiKeyCreateRequestImplFromJson(
   name: json['name'] as String,
   role: json['role'] as String,
   expiresAt: json['expiresAt'] as String?,
+  platformScope: json['platformScope'] as bool?,
 );
 
 Map<String, dynamic> _$$ApiKeyCreateRequestImplToJson(
@@ -47,6 +50,7 @@ Map<String, dynamic> _$$ApiKeyCreateRequestImplToJson(
   'name': instance.name,
   'role': instance.role,
   'expiresAt': instance.expiresAt,
+  'platformScope': instance.platformScope,
 };
 
 _$ApiKeyCreatedImpl _$$ApiKeyCreatedImplFromJson(Map<String, dynamic> json) =>
@@ -57,6 +61,7 @@ _$ApiKeyCreatedImpl _$$ApiKeyCreatedImplFromJson(Map<String, dynamic> json) =>
       role: json['role'] as String,
       createdAt: json['createdAt'] as String?,
       expiresAt: json['expiresAt'] as String?,
+      platformScope: json['platformScope'] as bool? ?? false,
       secret: json['secret'] as String,
     );
 
@@ -68,6 +73,7 @@ Map<String, dynamic> _$$ApiKeyCreatedImplToJson(_$ApiKeyCreatedImpl instance) =>
       'role': instance.role,
       'createdAt': instance.createdAt,
       'expiresAt': instance.expiresAt,
+      'platformScope': instance.platformScope,
       'secret': instance.secret,
     };
 

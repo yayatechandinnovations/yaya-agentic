@@ -68,6 +68,10 @@ class SystemSenderResponse {
     required this.addressing,
     this.responseToolId,
     this.whatsappSenderId,
+    this.capabilityMask,
+    this.limits,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String id;
@@ -81,6 +85,13 @@ class SystemSenderResponse {
   final String? responseToolId;
   final String? whatsappSenderId;
 
+  /// Not edited in the console, but a PUT replaces them — carried through
+  /// verbatim so saving the form never clears them.
+  final Map<String, dynamic>? capabilityMask;
+  final Map<String, dynamic>? limits;
+  final String? createdAt;
+  final String? updatedAt;
+
   factory SystemSenderResponse.fromJson(Map<String, dynamic> json) => SystemSenderResponse(
         id: json['id'] as String,
         tenantId: (json['tenantId'] ?? '') as String,
@@ -93,6 +104,10 @@ class SystemSenderResponse {
             (json['addressing'] as Map?)?.cast<String, dynamic>() ?? const {}),
         responseToolId: json['responseToolId'] as String?,
         whatsappSenderId: json['whatsappSenderId'] as String?,
+        capabilityMask: (json['capabilityMask'] as Map?)?.cast<String, dynamic>(),
+        limits: (json['limits'] as Map?)?.cast<String, dynamic>(),
+        createdAt: json['createdAt']?.toString(),
+        updatedAt: json['updatedAt']?.toString(),
       );
 }
 
@@ -106,6 +121,8 @@ class SystemSenderRequest {
     required this.addressing,
     this.responseToolId,
     this.whatsappSenderId,
+    this.capabilityMask,
+    this.limits,
   });
 
   final String entryPoint;
@@ -119,6 +136,8 @@ class SystemSenderRequest {
   /// WhatsApp number the sender's proactive messages go out on. `null` leaves
   /// the server's current link untouched; `''` unlinks.
   final String? whatsappSenderId;
+  final Map<String, dynamic>? capabilityMask;
+  final Map<String, dynamic>? limits;
 
   Map<String, dynamic> toJson() => {
         'entryPoint': entryPoint,
@@ -129,6 +148,8 @@ class SystemSenderRequest {
         'addressing': addressing.toJson(),
         if (responseToolId != null && responseToolId!.isNotEmpty) 'responseToolId': responseToolId,
         if (whatsappSenderId != null) 'whatsappSenderId': whatsappSenderId,
+        if (capabilityMask != null) 'capabilityMask': capabilityMask,
+        if (limits != null) 'limits': limits,
       };
 }
 

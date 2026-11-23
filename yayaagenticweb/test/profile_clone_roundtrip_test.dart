@@ -5,13 +5,21 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
 import 'package:yayaagenticweb/app/selected_tenant.dart';
+import 'package:yayaagenticweb/features/admin/profiles/profile_editor_screen.dart';
 import 'package:yayaagenticweb/features/admin/profiles/profiles_screen.dart';
 import 'package:yayaagenticweb/models/admin/auth_binding.dart';
 import 'package:yayaagenticweb/models/admin/capability.dart';
+import 'package:yayaagenticweb/models/admin/channel_binding.dart';
+import 'package:yayaagenticweb/models/admin/chat_entry_point.dart';
+import 'package:yayaagenticweb/models/admin/identity_profile_mapping.dart';
 import 'package:yayaagenticweb/models/admin/profile.dart';
 import 'package:yayaagenticweb/models/admin/start_flow.dart';
+import 'package:yayaagenticweb/models/admin/tool.dart';
+import 'package:yayaagenticweb/ui/form/y_fields.dart';
 
 /// The owner agent profile as the admin API returns it: gated to staff
 /// principals through `metadata.principalKinds`, carrying a `metadata.policy`,
@@ -61,6 +69,10 @@ class _FakeAdminApi extends AdminApi {
   _FakeAdminApi() : super(Dio());
 
   final posts = <Map<String, dynamic>>[];
+  final baseVersions = <int?>[];
+
+  /// Thrown by the next save instead of answering.
+  Object? failWith;
 
   @override
   Future<List<ProfileResponse>> listProfiles({String tenant = 'default'}) async =>
@@ -68,7 +80,7 @@ class _FakeAdminApi extends AdminApi {
 
   @override
   Future<List<CapabilityResponse>> listCapabilities({String tenant = 'default'}) async =>
-      const [];
+      const [CapabilityResponse(id: 'ops', version: 2, tenant: 't1', label: 'Operations')];
 
   @override
   Future<List<AuthBindingResponse>> listAuthBindings({String tenant = 'default'}) async =>
@@ -78,10 +90,28 @@ class _FakeAdminApi extends AdminApi {
   Future<List<StartFlowResponse>> listStartFlows(String tenantId) async => const [];
 
   @override
-  Future<ProfileResponse> createProfile(ProfileRequest req) async {
+  Future<List<ToolResponse>> listTools({String tenant = 'default'}) async => const [];
+
+  @override
+  Future<List<IdentityProfileMappingResponse>> listIdentityProfileMappings(String tenantId) async => const [];
+
+  @override
+  Future<List<ChannelBindingResponse>> listChannelBindings(String tenantId) async => const [];
+
+  @override
+  Future<List<ChatEntryPointResponse>> listChatEntryPoints(String tenantId) async => const [];
+
+  @override
+  Future<ProfileResponse> createProfile(ProfileRequest req, {int? baseVersion}) async {
+    final fail = failWith;
+    if (fail != null) {
+      failWith = null;
+      throw fail;
+    }
     final sent =
         Map<String, dynamic>.from(jsonDecode(jsonEncode(req.toWireJson())) as Map);
     posts.add(sent);
+    baseVersions.add(baseVersion);
     return ProfileResponse.fromJson({..._ownerProfile(), ...sent, 'version': 4});
   }
 }
@@ -107,46 +137,75 @@ class _RecordingAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-Future<_FakeAdminApi> _openCloneOfOwnerProfile(WidgetTester tester) async {
+Future<_FakeAdminApi> _pumpConsole(WidgetTester tester, String location) async {
   tester.view.physicalSize = const Size(1600, 3000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+  SharedPreferences.setMockInitialValues({});
 
   final api = _FakeAdminApi();
+  final router = GoRouter(initialLocation: location, routes: [
+    GoRoute(path: '/admin/profiles', builder: (_, _) => const Scaffold(body: ProfilesScreen())),
+    GoRoute(
+      path: '/admin/profiles/new',
+      builder: (_, s) => Scaffold(body: ProfileEditorScreen(duplicateOf: s.uri.queryParameters['from'])),
+    ),
+    GoRoute(
+      path: '/admin/profiles/:id',
+      builder: (_, s) => Scaffold(body: ProfileEditorScreen(profileId: s.pathParameters['id'])),
+    ),
+  ]);
+  addTearDown(router.dispose);
   await tester.pumpWidget(ProviderScope(
     overrides: [
       adminApiProvider.overrideWith((ref) async => api),
       currentTenantOrNull.overrideWithValue('t1'),
     ],
-    child: const MaterialApp(home: Scaffold(body: ProfilesScreen())),
+    child: MaterialApp.router(routerConfig: router),
   ));
-  await tester.pumpAndSettle();
-
-  await tester.tap(find.text('owner-agent@3'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Clone & edit'));
   await tester.pumpAndSettle();
   return api;
 }
 
-Future<void> _save(WidgetTester tester) async {
-  final save = find.widgetWithText(FilledButton, 'Save as v4');
-  await tester.ensureVisible(save);
-  await tester.tap(save);
+/// Opens the owner profile from the list, the way an operator does.
+Future<_FakeAdminApi> _openOwnerProfile(WidgetTester tester) async {
+  final api = await _pumpConsole(tester, '/admin/profiles');
+  await tester.tap(find.text('Owner agent'));
+  await tester.pumpAndSettle();
+  return api;
+}
+
+Finder _field(String label) => find.descendant(
+      of: find.byWidgetPredicate((w) => w is YTextField && w.label == label),
+      matching: find.byType(TextField),
+    );
+
+Future<void> _tapButton(WidgetTester tester, String label) async {
+  final button = find.widgetWithText(FilledButton, label);
+  await tester.ensureVisible(button);
+  await tester.tap(button);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _expandAdvanced(WidgetTester tester) async {
+  final header = find.text('Advanced').last;
+  await tester.ensureVisible(header);
+  await tester.tap(header);
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('clone & edit saves every field the form does not edit',
+  testWidgets('publishing a new version saves every field the form does not edit',
       (tester) async {
-    final backend = await _openCloneOfOwnerProfile(tester);
+    final backend = await _openOwnerProfile(tester);
 
     // Edit one thing the form does expose.
-    await tester.enterText(
-        find.widgetWithText(TextField, 'display name'), 'Owner agent (v4)');
-    await _save(tester);
+    await tester.enterText(_field('Display name'), 'Owner agent (v4)');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Publish v4');
 
     expect(backend.posts, hasLength(1));
+    expect(backend.baseVersions.single, 3);
     final sent = backend.posts.single;
 
     expect(sent['displayName'], 'Owner agent (v4)');
@@ -192,58 +251,116 @@ void main() {
     expect(sent.containsKey('createdAt'), isFalse);
   });
 
-  testWidgets('emptying the tool rounds of a clone saves the default, not the old value',
+  testWidgets('emptying the tool rounds of an existing profile saves the default, not the old value',
       (tester) async {
-    final backend = await _openCloneOfOwnerProfile(tester);
+    final backend = await _openOwnerProfile(tester);
 
-    await tester.enterText(
-        find.widgetWithText(TextField, 'max tool rounds per turn (optional)'), '');
-    await _save(tester);
+    await _expandAdvanced(tester);
+    await tester.enterText(_field('Max tool rounds per turn'), '');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Publish v4');
 
     expect(backend.posts.single['maxToolRounds'], 5);
   });
 
   testWidgets('turning the store off removes only the store binding',
       (tester) async {
-    final backend = await _openCloneOfOwnerProfile(tester);
+    final backend = await _openOwnerProfile(tester);
 
-    final toggle = find.widgetWithText(SwitchListTile, 'Commerce (storefront)');
+    final toggle = find.text('Sell from a yaya-sales store');
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    await _save(tester);
+    await _tapButton(tester, 'Publish v4');
 
     final sent = backend.posts.single;
     expect((sent['extensions'] as Map).keys, ['ops.whatsapp']);
     expect((sent['metadata'] as Map)['principalKinds'], ['staff']);
   });
 
-  testWidgets('a new profile after a cancelled clone carries nothing over',
+  testWidgets('a new profile opened after editing another carries nothing over',
       (tester) async {
-    final backend = await _openCloneOfOwnerProfile(tester);
+    final backend = await _openOwnerProfile(tester);
 
-    final cancel = find.widgetWithText(TextButton, 'Cancel');
+    final cancel = find.widgetWithText(OutlinedButton, 'Cancel');
     await tester.ensureVisible(cancel);
     await tester.tap(cancel);
     await tester.pumpAndSettle();
-
-    await tester.enterText(find.widgetWithText(TextField, 'id'), 'fresh');
-    await tester.enterText(
-        find.widgetWithText(TextField, 'display name'), 'Fresh');
-    await tester.enterText(
-        find.widgetWithText(TextField, 'intro one-liner'), 'Hello.');
-    await tester.enterText(
-        find.widgetWithText(TextField, 'system prompt fragment'), 'Be brief.');
-    final save = find.widgetWithText(FilledButton, 'Save');
-    await tester.ensureVisible(save);
-    await tester.tap(save);
+    await tester.tap(find.widgetWithText(FilledButton, 'New profile'));
     await tester.pumpAndSettle();
+
+    await tester.enterText(_field('Profile ID'), 'fresh');
+    await tester.enterText(_field('Display name'), 'Fresh');
+    await tester.enterText(_field('Intro line'), 'Hello.');
+    await tester.enterText(_field('Instructions for this role'), 'Be brief.');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Create profile');
 
     final sent = backend.posts.single;
     expect(sent['id'], 'fresh');
     expect(sent['metadata'], isEmpty);
     expect(sent['extensions'], isNull);
+    expect(sent['maxToolRounds'], isNull);
     expect(sent.containsKey('fieldAddedByANewerServer'), isFalse);
+    expect(backend.baseVersions.single, isNull);
+  });
+
+  testWidgets('a duplicate keeps what the form does not edit under its new ID',
+      (tester) async {
+    final backend = await _pumpConsole(tester, '/admin/profiles/new?from=owner-agent');
+
+    await tester.enterText(_field('Profile ID'), 'owner-copy');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Create profile');
+
+    final sent = backend.posts.single;
+    expect(sent['id'], 'owner-copy');
+    expect(sent['displayName'], 'Owner agent (copy)');
+    expect((sent['metadata'] as Map)['principalKinds'], ['staff']);
+    expect((sent['extensions'] as Map).keys, containsAll(['ops.whatsapp', 'sales.store']));
+    expect(sent['fieldAddedByANewerServer'], {'keep': true});
+    expect(backend.baseVersions.single, isNull);
+  });
+
+  testWidgets('missing required fields and bad tool rounds show inline and block the save',
+      (tester) async {
+    final backend = await _pumpConsole(tester, '/admin/profiles/new');
+
+    await _expandAdvanced(tester);
+    await tester.enterText(_field('Max tool rounds per turn'), '40');
+    await tester.enterText(_field('Profile ID'), 'owner-agent');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Create profile');
+
+    expect(backend.posts, isEmpty);
+    expect(find.textContaining('need attention'), findsWidgets);
+    expect(find.text('Enter a display name.'), findsWidgets);
+    expect(find.text('Enter an intro line.'), findsWidgets);
+    expect(find.text('Enter the instructions for this profile.'), findsWidgets);
+    expect(find.text('Use a number from 1 to 16.'), findsWidgets);
+    expect(find.textContaining('A profile with this ID already exists'), findsWidgets);
+  });
+
+  testWidgets('a model the server refuses is shown under the model field',
+      (tester) async {
+    final backend = await _openOwnerProfile(tester);
+    backend.failWith = DioException(
+      requestOptions: RequestOptions(path: '/v1/admin/profiles'),
+      response: Response(
+        requestOptions: RequestOptions(path: '/v1/admin/profiles'),
+        statusCode: 400,
+        data: {'error': 'model_not_allowed', 'message': "profile.model 'gpt-x' is not on this deployment's allow-list"},
+      ),
+      type: DioExceptionType.badResponse,
+    );
+
+    await _expandAdvanced(tester);
+    await tester.enterText(_field('Model'), 'gpt-x');
+    await tester.pumpAndSettle();
+    await _tapButton(tester, 'Publish v4');
+
+    expect(backend.posts, isEmpty);
+    expect(find.textContaining('isn’t on the deployment’s allow-list'), findsWidgets);
   });
 
   test('the admin client posts the carried fields with the request', () async {

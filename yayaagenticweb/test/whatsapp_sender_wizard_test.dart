@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yayaagenticweb/api/admin_api.dart';
 import 'package:yayaagenticweb/app/selected_tenant.dart';
 import 'package:yayaagenticweb/app/theme.dart';
@@ -11,6 +12,8 @@ import 'package:yayaagenticweb/models/admin/channel_binding.dart';
 import 'package:yayaagenticweb/models/admin/profile.dart';
 import 'package:yayaagenticweb/models/admin/start_flow.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_sender.dart';
+import 'package:yayaagenticweb/ui/form/y_fields.dart';
+import 'package:yayaagenticweb/ui/form/y_resource_picker.dart';
 
 class _FakeAdminApi extends AdminApi {
   _FakeAdminApi() : super(Dio());
@@ -119,11 +122,27 @@ Widget _wizard(_FakeAdminApi api, {WhatsAppSenderResponse? existing}) => Provide
       ),
     );
 
+/// The input under a kit field's label (labels render as "Name *" / "Name  Optional").
+Finder _input(String label) =>
+    find.descendant(of: find.widgetWithText(YTextField, label), matching: find.byType(TextField)).hitTestable();
+
 Future<void> _type(WidgetTester tester, String label, String value) async {
-  final field = find.widgetWithText(TextField, label).hitTestable();
+  final field = _input(label);
   await tester.ensureVisible(field);
   await tester.enterText(field, value);
   await tester.pump();
+}
+
+/// Opens a searchable resource picker by its label and picks [option].
+Future<void> _pickResource(WidgetTester tester, String label, String option) async {
+  final field = find
+      .descendant(of: find.widgetWithText(YResourcePicker, label), matching: find.byType(TextField))
+      .hitTestable();
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(option).last);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _pick(WidgetTester tester, Finder dropdown, String option) async {
@@ -169,7 +188,7 @@ Future<void> _fillBusinessProfile(WidgetTester tester, {String website = ''}) as
   await _type(tester, 'Legal business name *', 'Test Inc.');
   await _type(tester, 'Business display name *', 'Test Co');
   await _type(tester, 'Contact email *', 'ops@test.example');
-  if (website.isNotEmpty) await _type(tester, 'Website URL', website);
+  if (website.isNotEmpty) await _type(tester, 'Website  Optional', website);
   await _pick(tester, find.byType(DropdownButtonFormField<String>).first, 'Restaurant');
 }
 
@@ -177,17 +196,12 @@ Future<void> _fillThroughReview(WidgetTester tester, {String website = ''}) asyn
   await _fillBusinessProfile(tester, website: website);
   await _tapText(tester, 'Next');
 
-  await _type(tester, 'Phone number (E.164) *', '+18095551234');
+  await _type(tester, 'Phone number *', '+18095551234');
   await _tapText(tester, 'Voice call');
   await _tapText(tester, 'Next');
 
   await _type(tester, 'Public display name *', 'Test Co');
-  await _pick(
-      tester,
-      find.ancestor(
-          of: find.text('Assistant that answers this number'),
-          matching: find.byType(DropdownButtonFormField<String>)),
-      'Support Bot (support@3)');
+  await _pickResource(tester, 'Assistant that answers this number  Optional', 'Support Bot');
   await _tapText(tester, 'Next');
 }
 
@@ -218,6 +232,7 @@ List<String> _unreadableText(WidgetTester tester) {
 
 void main() {
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     binding.platformDispatcher.views.first.physicalSize = const Size(1600, 2400);
     binding.platformDispatcher.views.first.devicePixelRatio = 1.0;
@@ -264,8 +279,9 @@ void main() {
     await _fillBusinessProfile(tester, website: 'not a website');
     await _tapText(tester, 'Next');
 
-    expect(find.textContaining('Website must be a web address'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'Phone number (E.164) *').hitTestable(), findsNothing);
+    // At the field and in the summary above the steps.
+    expect(find.textContaining('Website must be a web address'), findsNWidgets(2));
+    expect(_input('Phone number *'), findsNothing);
   });
 
   testWidgets('no step has clipped or cut-off text at laptop width', (tester) async {
@@ -278,18 +294,18 @@ void main() {
 
     // Typing floats each step's first label up onto the field border.
     await _fillBusinessProfile(tester, website: 'example.com');
-    await tester.ensureVisible(find.widgetWithText(TextField, 'Legal business name *'));
+    await tester.ensureVisible(_input('Legal business name *'));
     await tester.pumpAndSettle();
     expect(_unreadableText(tester), isEmpty, reason: 'business profile step');
     await _tapText(tester, 'Next');
 
-    await _type(tester, 'Phone number (E.164) *', '+18095551234');
+    await _type(tester, 'Phone number *', '+18095551234');
     await tester.pumpAndSettle();
     expect(_unreadableText(tester), isEmpty, reason: 'phone step');
     await _tapText(tester, 'Next');
 
     await _type(tester, 'Public display name *', 'Test Co');
-    await tester.ensureVisible(find.widgetWithText(TextField, 'Public display name *'));
+    await tester.ensureVisible(_input('Public display name *'));
     await tester.pumpAndSettle();
     expect(_unreadableText(tester), isEmpty, reason: 'display name step');
     await _tapText(tester, 'Next');
@@ -343,5 +359,24 @@ void main() {
     expect(api.created, isNotNull);
     expect(api.binding, isNotNull);
     expect(find.textContaining('submit it from the list'), findsOneWidget);
+  });
+
+  testWidgets('leaving the business step empty flags each field and stays on the step', (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await _tapText(tester, 'Next');
+
+    expect(find.text('Enter the legal business name.'), findsWidgets);
+    expect(find.text('Enter a contact email.'), findsWidgets);
+    expect(find.text('Choose the category that best fits your business.'), findsWidgets);
+    expect(find.textContaining('things need attention before continuing'), findsOneWidget);
+    // Fields on later steps aren't judged yet.
+    expect(find.text('Enter the phone number.'), findsNothing);
+    expect(_input('Phone number *'), findsNothing);
+    expect(api.created, isNull);
   });
 }

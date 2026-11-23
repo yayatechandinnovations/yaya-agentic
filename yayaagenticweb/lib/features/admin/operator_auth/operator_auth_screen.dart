@@ -1,869 +1,1011 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../models/admin/operator_auth_strategies.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/feedback/confirm.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/form/unsaved_guard.dart';
+import '../../../ui/form/y_editor_page.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/form/y_key_value_field.dart';
+import '../../../ui/tokens.dart';
 import 'operator_auth_controller.dart';
 
-/// Settings → Operator authentication.
-///
-/// Two cards (Bootstrap + HTTP delegate) plus a Test dialog that
-/// renders the structured ProbeResult — exactly what the runtime
-/// authenticator would compute against the same config.
-class OperatorAuthScreen extends ConsumerStatefulWidget {
+const _labels = {
+  'enabled': 'Use the HTTP delegate',
+  'url': 'Login endpoint URL',
+  'sharedSecret': 'Shared secret',
+  'timeoutMs': 'Timeout',
+  'requireHttps': 'Require HTTPS',
+  'method': 'Method',
+  'bodyFormat': 'How credentials are sent',
+  'bodyTemplate': 'Body template',
+  'headers': 'Extra headers',
+  'statusIn': 'Success status codes',
+  'jsonPathExists': 'JSONPath that must exist',
+  'jsonPathEquals': 'JSONPath equality checks',
+  'subjectPath': 'Subject path',
+  'displayNamePath': 'Display name path',
+  'attributesPath': 'Attributes path',
+  'reasonPath': 'Failure reason path',
+};
+
+/// Backend `jsonPath` keys → this form's field names, for server errors
+/// that name the path ("identity.subjectPath: invalid JSONPath …").
+const _serverFieldPrefixes = {
+  'success.jsonPathExists': 'jsonPathExists',
+  'success.jsonPathEquals': 'jsonPathEquals',
+  'success.statusIn': 'statusIn',
+  'identity.subjectPath': 'subjectPath',
+  'identity.displayNamePath': 'displayNamePath',
+  'identity.attributesPath': 'attributesPath',
+  'failure.reasonPath': 'reasonPath',
+  'shared-secret': 'sharedSecret',
+  'url ': 'url',
+};
+
+/// Platform → Operator authentication: how people sign in to this console.
+/// The bootstrap (break-glass) account saves immediately; the HTTP delegate
+/// is an editor with its own Save bar.
+class OperatorAuthScreen extends ConsumerWidget {
   const OperatorAuthScreen({super.key});
 
   @override
-  ConsumerState<OperatorAuthScreen> createState() => _OperatorAuthScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final value = ref.watch(operatorAuthStrategiesProvider);
+    return LiveAsyncView<StrategiesResponse>(
+      value: value,
+      what: 'operator login settings',
+      onRetry: () => ref.invalidate(operatorAuthStrategiesProvider),
+      data: (context, data) => _OperatorAuthEditor(data: data),
+    );
+  }
 }
 
-class _OperatorAuthScreenState extends ConsumerState<OperatorAuthScreen> {
-  // Bootstrap-card local state ----------------------------------------
-  final _newPassword = TextEditingController();
-  final _confirmPassword = TextEditingController();
+class _OperatorAuthEditor extends ConsumerStatefulWidget {
+  const _OperatorAuthEditor({required this.data});
+  final StrategiesResponse data;
 
-  // Delegate-card local state (mirrors DelegateView; tied back on save)
-  final _urlCtrl = TextEditingController();
-  final _secretCtrl = TextEditingController();
-  final _timeoutCtrl = TextEditingController();
-  final _bodyTemplateCtrl = TextEditingController();
-  final _jsonPathExistsCtrl = TextEditingController();
-  final _subjectPathCtrl = TextEditingController();
-  final _displayNamePathCtrl = TextEditingController();
-  final _attributesPathCtrl = TextEditingController();
-  final _reasonPathCtrl = TextEditingController();
-  final _statusInCtrl = TextEditingController();   // comma list
-  bool _delegateEnabled = false;
+  @override
+  ConsumerState<_OperatorAuthEditor> createState() => _OperatorAuthEditorState();
+}
+
+class _OperatorAuthEditorState extends ConsumerState<_OperatorAuthEditor> {
+  final _url = TextEditingController();
+  final _secret = TextEditingController();
+  final _timeout = TextEditingController();
+  final _bodyTemplate = TextEditingController();
+  final _statusIn = TextEditingController();
+  final _jsonPathExists = TextEditingController();
+  final _subjectPath = TextEditingController();
+  final _displayNamePath = TextEditingController();
+  final _attributesPath = TextEditingController();
+  final _reasonPath = TextEditingController();
+  bool _enabled = false;
   bool _requireHttps = true;
   String _method = 'POST';
   String _bodyFormat = 'JSON';
-  // Editable equals list — operator can add/remove rows.
-  final List<({TextEditingController path, TextEditingController value})>
-      _equalsRows = [];
-  // Editable headers list.
-  final List<({TextEditingController key, TextEditingController value})>
-      _headerRows = [];
+  Map<String, String> _headers = {};
+  Map<String, String> _equals = {};
+  bool _bootstrapBusy = false;
 
-  bool _formHydrated = false;
+  late final YFormController _form;
+  late DelegateView _base;
+
+  final _kConnection = GlobalKey(debugLabel: 'section-connection');
+  final _kRequest = GlobalKey(debugLabel: 'section-request');
+  final _kSuccess = GlobalKey(debugLabel: 'section-success');
+  final _kIdentity = GlobalKey(debugLabel: 'section-identity');
+  final _kBootstrap = GlobalKey(debugLabel: 'section-bootstrap');
+
+  @override
+  void initState() {
+    super.initState();
+    _load(widget.data.delegate);
+    _form = YFormController(
+      snapshot: _snapshot,
+      validate: _validate,
+      labels: _labels,
+      draftKey: 'yaya.draft.operatorAuth.platform.delegate',
+      excludeFromDraft: const {'sharedSecret'},
+    );
+    _form.addListener(_rebuild);
+    _form.loadDraft().then((d) {
+      if (d == null || !mounted) return;
+      _applySnapshot(d.values);
+      _form.refresh();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_OperatorAuthEditor old) {
+    super.didUpdateWidget(old);
+    // Someone else saved (or we did): take the new baseline unless there's
+    // unsaved work here, which the operator decides about.
+    if (old.data.delegate != widget.data.delegate && !_form.isDirty) {
+      _load(widget.data.delegate);
+      _form.markClean();
+    }
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  void _load(DelegateView d) {
+    _base = d;
+    _enabled = d.enabled;
+    _requireHttps = d.requireHttps;
+    _url.text = d.url ?? '';
+    _secret.text = '';
+    _timeout.text = '${d.timeoutMs}';
+    _method = d.request.method;
+    _bodyFormat = d.request.body.format;
+    _bodyTemplate.text = d.request.body.template ?? '';
+    _headers = Map.of(d.request.headers);
+    _statusIn.text = d.success.statusIn.join(', ');
+    _jsonPathExists.text = d.success.jsonPathExists ?? '';
+    _equals = {for (final e in d.success.jsonPathEquals) e.path: _encodeExpected(e.value)};
+    _subjectPath.text = d.identity.subjectPath ?? '';
+    _displayNamePath.text = d.identity.displayNamePath ?? '';
+    _attributesPath.text = d.identity.attributesPath ?? '';
+    _reasonPath.text = d.failure.reasonPath ?? '';
+  }
+
+  Map<String, Object?> _snapshot() => {
+        'enabled': _enabled,
+        'url': _url.text.trim(),
+        'sharedSecret': _secret.text,
+        'timeoutMs': _timeout.text.trim(),
+        'requireHttps': _requireHttps,
+        'method': _method,
+        'bodyFormat': _bodyFormat,
+        'bodyTemplate': _bodyTemplate.text,
+        'headers': _headers,
+        'statusIn': _statusIn.text.trim(),
+        'jsonPathExists': _jsonPathExists.text.trim(),
+        'jsonPathEquals': _equals,
+        'subjectPath': _subjectPath.text.trim(),
+        'displayNamePath': _displayNamePath.text.trim(),
+        'attributesPath': _attributesPath.text.trim(),
+        'reasonPath': _reasonPath.text.trim(),
+      };
+
+  void _applySnapshot(Map<String, Object?> v) {
+    String s(String k, String cur) => v[k] is String ? v[k] as String : cur;
+    if (v['enabled'] is bool) _enabled = v['enabled'] as bool;
+    if (v['requireHttps'] is bool) _requireHttps = v['requireHttps'] as bool;
+    _url.text = s('url', _url.text);
+    _timeout.text = s('timeoutMs', _timeout.text);
+    _method = s('method', _method);
+    _bodyFormat = s('bodyFormat', _bodyFormat);
+    _bodyTemplate.text = s('bodyTemplate', _bodyTemplate.text);
+    _statusIn.text = s('statusIn', _statusIn.text);
+    _jsonPathExists.text = s('jsonPathExists', _jsonPathExists.text);
+    _subjectPath.text = s('subjectPath', _subjectPath.text);
+    _displayNamePath.text = s('displayNamePath', _displayNamePath.text);
+    _attributesPath.text = s('attributesPath', _attributesPath.text);
+    _reasonPath.text = s('reasonPath', _reasonPath.text);
+    final h = v['headers'];
+    if (h is Map) _headers = h.map((k, val) => MapEntry('$k', '$val'));
+    final eq = v['jsonPathEquals'];
+    if (eq is Map) _equals = eq.map((k, val) => MapEntry('$k', '$val'));
+  }
+
+  // ---- validation ------------------------------------------------------
+
+  List<int>? _parseStatuses() {
+    final parts = _statusIn.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    final out = <int>[];
+    for (final p in parts) {
+      final n = int.tryParse(p);
+      if (n == null) return null;
+      out.add(n);
+    }
+    return out;
+  }
+
+  List<int> get _nonOkStatuses => (_parseStatuses() ?? const []).where((s) => s < 200 || s >= 300).toList();
+
+  bool get _templateApplies => _bodyFormat == 'JSON' || _bodyFormat == 'FORM';
+
+  Map<String, String?> _validate() {
+    String? urlErr;
+    final url = _url.text.trim();
+    if (_enabled && url.isEmpty) {
+      urlErr = 'Enter the login endpoint URL — it’s required while the delegate is on.';
+    } else if (url.isNotEmpty) {
+      urlErr = Validators.httpUrl(url);
+      if (urlErr == null && _requireHttps && !url.toLowerCase().startsWith('https://')) {
+        urlErr = 'Must start with https:// while “Require HTTPS” is on.';
+      }
+    }
+    final statuses = _parseStatuses();
+    String? statusErr;
+    if (statuses == null) {
+      statusErr = 'Use whole numbers separated by commas, e.g. 200, 204.';
+    } else if (statuses.any((s) => s < 100 || s > 599)) {
+      statusErr = 'HTTP status codes run from 100 to 599.';
+    }
+    String? equalsErr = YKeyValueField.validate(_equals.entries);
+    if (equalsErr == null) {
+      for (final p in _equals.keys) {
+        final e = _jsonPath(p);
+        if (e != null) {
+          equalsErr = '“$p”: $e';
+          break;
+        }
+      }
+    }
+    return {
+      'url': urlErr,
+      'sharedSecret': _enabled && !_base.sharedSecretPresent && _secret.text.trim().isEmpty
+          ? 'Enter a shared secret — the first save with the delegate on needs one.'
+          : null,
+      'timeoutMs': Validators.intInRange(_timeout.text, 1, 300000, optional: false),
+      'statusIn': statusErr,
+      'headers': YKeyValueField.validate(_headers.entries, caseInsensitive: true),
+      'jsonPathExists': _jsonPath(_jsonPathExists.text),
+      'jsonPathEquals': equalsErr,
+      'subjectPath': _jsonPath(_subjectPath.text),
+      'displayNamePath': _jsonPath(_displayNamePath.text),
+      'attributesPath': _jsonPath(_attributesPath.text),
+      'reasonPath': _jsonPath(_reasonPath.text),
+    };
+  }
+
+  /// A light syntax check; the server compiles the path for real.
+  static String? _jsonPath(String raw) {
+    final p = raw.trim();
+    if (p.isEmpty) return null;
+    if (p.endsWith('.') || p.contains('..[')) return 'Path can’t end with a dot.';
+    var depth = 0;
+    for (final ch in p.split('')) {
+      if (ch == '[') depth++;
+      if (ch == ']') depth--;
+      if (depth < 0) break;
+    }
+    if (depth != 0) return 'Brackets [ ] don’t balance.';
+    if (RegExp(r'\s').hasMatch(p.replaceAll(RegExp(r"'[^']*'|" r'"[^"]*"'), ''))) {
+      return 'Remove spaces (quote keys that contain them, e.g. \$[\'full name\']).';
+    }
+    return null;
+  }
+
+  // ---- expected values: typed JSON scalars, shown as text ---------------
+
+  /// Strings that would read back as a number/bool/null are shown quoted so
+  /// a save doesn't silently change their type.
+  static String _encodeExpected(dynamic v) {
+    if (v == null) return 'null';
+    if (v is String) return _decodeExpected(v) is String ? v : jsonEncode(v);
+    return '$v';
+  }
+
+  static dynamic _decodeExpected(String raw) {
+    if (raw == 'null') return null;
+    if (raw == 'true') return true;
+    if (raw == 'false') return false;
+    final i = int.tryParse(raw);
+    if (i != null) return i;
+    final d = double.tryParse(raw);
+    if (d != null) return d;
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        final s = jsonDecode(raw);
+        if (s is String) return s;
+      } catch (_) {}
+    }
+    return raw;
+  }
+
+  DelegateView _buildView() {
+    String? orNull(String s) => s.trim().isEmpty ? null : s.trim();
+    final statuses = _parseStatuses() ?? const [];
+    return _base.copyWith(
+      enabled: _enabled,
+      url: orNull(_url.text),
+      timeoutMs: int.tryParse(_timeout.text.trim()) ?? _base.timeoutMs,
+      requireHttps: _requireHttps,
+      request: _base.request.copyWith(
+        method: _method,
+        headers: _headers,
+        body: _base.request.body.copyWith(
+          format: _bodyFormat,
+          template: _templateApplies ? (_bodyTemplate.text.isEmpty ? null : _bodyTemplate.text) : _base.request.body.template,
+        ),
+      ),
+      success: _base.success.copyWith(
+        statusIn: statuses.isEmpty ? const [200, 204] : statuses,
+        jsonPathExists: orNull(_jsonPathExists.text),
+        jsonPathEquals: [
+          for (final e in _equals.entries) JsonPathEquals(path: e.key.trim(), value: _decodeExpected(e.value)),
+        ],
+      ),
+      identity: _base.identity.copyWith(
+        subjectPath: orNull(_subjectPath.text),
+        displayNamePath: orNull(_displayNamePath.text),
+        attributesPath: orNull(_attributesPath.text),
+      ),
+      failure: _base.failure.copyWith(reasonPath: orNull(_reasonPath.text)),
+    );
+  }
+
+  Future<void> _save() async {
+    if (!_form.submit()) return;
+    final nonOk = _nonOkStatuses;
+    var permissive = false;
+    if (nonOk.isNotEmpty) {
+      permissive = await confirmAction(
+        context,
+        title: 'Count ${nonOk.join(', ')} as a successful login?',
+        message: 'Your success codes include non-2xx statuses. Any response with ${nonOk.length == 1 ? 'that status' : 'those statuses'} — '
+            'often an error page — would sign the operator in, unless another check below fails.',
+        confirmLabel: 'Yes, allow ${nonOk.length == 1 ? 'it' : 'them'}',
+        destructive: true,
+      );
+      if (!permissive) return;
+    }
+    _form.saving = true;
+    try {
+      final secret = _secret.text.trim();
+      final updated = await ref.read(operatorAuthActionsProvider).saveDelegate(
+            _buildView(),
+            sharedSecret: secret.isEmpty ? null : secret,
+            confirmPermissive: permissive,
+          );
+      _load(updated.delegate);
+      _form.saving = false;
+      _form.markClean();
+      if (mounted) showToast(context, 'HTTP delegate settings saved');
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(_mapServerError(e));
+    }
+  }
+
+  /// The delegate endpoint answers with plain messages; pin the ones that
+  /// name a field under that field.
+  Object _mapServerError(Object e) {
+    final info = ApiErrorInfo.from(e);
+    if (info.fieldErrors.isNotEmpty) return info;
+    for (final entry in _serverFieldPrefixes.entries) {
+      if (info.message.startsWith(entry.key)) {
+        return ApiErrorInfo(
+          message: info.message,
+          code: info.code,
+          status: info.status,
+          path: info.path,
+          fieldErrors: {entry.value: info.message},
+        );
+      }
+    }
+    return info;
+  }
+
+  void _discard() {
+    _load(widget.data.delegate);
+    _form.markClean();
+    setState(() {});
+  }
+
+  // ---- bootstrap (saves immediately) -----------------------------------
+
+  Future<void> _toggleBootstrap(bool on) async {
+    if (!on) {
+      final ok = await confirmAction(
+        context,
+        title: 'Turn off the bootstrap login?',
+        message: 'The “${widget.data.bootstrap.username}” break-glass account stops working right away. '
+            'If the HTTP delegate later fails, nobody can sign in until the bootstrap account is re-enabled from the server configuration.',
+        confirmLabel: 'Turn off bootstrap login',
+        destructive: true,
+      );
+      if (!ok) return;
+    }
+    setState(() => _bootstrapBusy = true);
+    try {
+      await ref.read(operatorAuthActionsProvider).saveBootstrap(enabled: on);
+      if (mounted) showToast(context, on ? 'Bootstrap login turned on' : 'Bootstrap login turned off');
+    } catch (e) {
+      if (mounted) showToast(context, ApiErrorInfo.from(e).message, error: true);
+    } finally {
+      if (mounted) setState(() => _bootstrapBusy = false);
+    }
+  }
+
+  Future<void> _changePassword() async {
+    await showYSheet<void>(
+      context,
+      width: 560,
+      label: 'Change bootstrap password',
+      builder: (_) => _BootstrapPasswordSheet(username: widget.data.bootstrap.username),
+    );
+  }
+
+  Future<void> _openTest() async {
+    await showYSheet<void>(context, width: 680, label: 'Test HTTP delegate', builder: (_) => const _DelegateTestSheet());
+  }
 
   @override
   void dispose() {
-    _newPassword.dispose();
-    _confirmPassword.dispose();
-    _urlCtrl.dispose();
-    _secretCtrl.dispose();
-    _timeoutCtrl.dispose();
-    _bodyTemplateCtrl.dispose();
-    _jsonPathExistsCtrl.dispose();
-    _subjectPathCtrl.dispose();
-    _displayNamePathCtrl.dispose();
-    _attributesPathCtrl.dispose();
-    _reasonPathCtrl.dispose();
-    _statusInCtrl.dispose();
-    for (final r in _equalsRows) { r.path.dispose(); r.value.dispose(); }
-    for (final r in _headerRows) { r.key.dispose(); r.value.dispose(); }
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    for (final c in [
+      _url, _secret, _timeout, _bodyTemplate, _statusIn, _jsonPathExists,
+      _subjectPath, _displayNamePath, _attributesPath, _reasonPath,
+    ]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  void _hydrateFromData(DelegateView d) {
-    _delegateEnabled = d.enabled;
-    _requireHttps = d.requireHttps;
-    _urlCtrl.text = d.url ?? '';
-    _secretCtrl.text = '';      // never echo the secret; placeholder shows the mask
-    _timeoutCtrl.text = d.timeoutMs.toString();
-    _method = d.request.method;
-    _bodyFormat = d.request.body.format;
-    _bodyTemplateCtrl.text = d.request.body.template ?? '';
-    _statusInCtrl.text = d.success.statusIn.join(',');
-    _jsonPathExistsCtrl.text = d.success.jsonPathExists ?? '';
-    _subjectPathCtrl.text = d.identity.subjectPath ?? '';
-    _displayNamePathCtrl.text = d.identity.displayNamePath ?? '';
-    _attributesPathCtrl.text = d.identity.attributesPath ?? '';
-    _reasonPathCtrl.text = d.failure.reasonPath ?? '';
-
-    for (final r in _equalsRows) { r.path.dispose(); r.value.dispose(); }
-    _equalsRows
-      ..clear()
-      ..addAll(d.success.jsonPathEquals.map((e) => (
-            path: TextEditingController(text: e.path),
-            value: TextEditingController(text: e.value?.toString() ?? ''),
-          )));
-
-    for (final r in _headerRows) { r.key.dispose(); r.value.dispose(); }
-    _headerRows
-      ..clear()
-      ..addAll(d.request.headers.entries.map((e) => (
-            key: TextEditingController(text: e.key),
-            value: TextEditingController(text: e.value),
-          )));
-  }
-
-  DelegateView _buildDelegateView(DelegateView base) {
-    final equals = _equalsRows
-        .where((r) => r.path.text.trim().isNotEmpty)
-        .map((r) {
-          final raw = r.value.text;
-          // Best-effort coerce: int → int, "true"/"false" → bool, "null" → null.
-          dynamic v = raw.isEmpty ? '' : raw;
-          if (raw == 'null') v = null;
-          else if (raw == 'true') v = true;
-          else if (raw == 'false') v = false;
-          else {
-            final asInt = int.tryParse(raw);
-            if (asInt != null) v = asInt;
-            else { final asD = double.tryParse(raw); if (asD != null) v = asD; }
-          }
-          return JsonPathEquals(path: r.path.text.trim(), value: v);
-        })
-        .toList();
-    final headers = <String, String>{};
-    for (final r in _headerRows) {
-      if (r.key.text.trim().isNotEmpty) headers[r.key.text.trim()] = r.value.text;
-    }
-    final statusIn = _statusInCtrl.text
-        .split(',')
-        .map((s) => int.tryParse(s.trim()))
-        .whereType<int>()
-        .toList();
-
-    return base.copyWith(
-      enabled: _delegateEnabled,
-      url: _urlCtrl.text.trim().isEmpty ? null : _urlCtrl.text.trim(),
-      timeoutMs: int.tryParse(_timeoutCtrl.text) ?? 5000,
-      requireHttps: _requireHttps,
-      request: RequestShape(
-        method: _method,
-        headers: headers,
-        body: RequestBody(
-          format: _bodyFormat,
-          template: _bodyTemplateCtrl.text.isEmpty ? null : _bodyTemplateCtrl.text,
-        ),
-      ),
-      success: SuccessCriteria(
-        statusIn: statusIn.isEmpty ? const [200, 204] : statusIn,
-        jsonPathExists: _trimOrNull(_jsonPathExistsCtrl.text),
-        jsonPathEquals: equals,
-      ),
-      identity: IdentityMapping(
-        subjectPath: _trimOrNull(_subjectPathCtrl.text),
-        displayNamePath: _trimOrNull(_displayNamePathCtrl.text),
-        attributesPath: _trimOrNull(_attributesPathCtrl.text),
-      ),
-      failure: FailureMapping(
-        reasonPath: _trimOrNull(_reasonPathCtrl.text),
-      ),
-    );
-  }
-
-  String? _trimOrNull(String s) {
-    final t = s.trim();
-    return t.isEmpty ? null : t;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(operatorAuthProvider);
-    final ctrl = ref.read(operatorAuthProvider.notifier);
+    final data = widget.data;
+    final scheme = Theme.of(context).colorScheme;
+    final savedEnabled = data.delegate.enabled && (data.delegate.url ?? '').isNotEmpty;
+    final testBlocker = !savedEnabled
+        ? 'Turn the delegate on and save before testing.'
+        : _form.isDirty
+            ? 'Testing uses the saved settings — save your changes first.'
+            : null;
+    final nonOk = _nonOkStatuses;
 
-    // Push toasts via listener so they don't replay on every rebuild.
-    ref.listen<OperatorAuthState>(operatorAuthProvider, (prev, next) {
-      if (next.error != null && next.error != prev?.error) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(next.error!),
-          backgroundColor: Theme.of(context).colorScheme.errorContainer,
-        ));
-        ctrl.dismissError();
-      }
-      if (next.notice != null && next.notice != prev?.notice) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(next.notice!)));
-        ctrl.dismissNotice();
-      }
-      if (next.lastProbe != null && next.lastProbe != prev?.lastProbe) {
-        _showProbeDialog(next.lastProbe!);
-      }
-    });
-
-    if (state.loading && state.data == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final data = state.data;
-    if (data == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Failed to load operator-auth strategies.'),
-              const SizedBox(height: 12),
-              FilledButton(onPressed: ctrl.load, child: const Text('Retry')),
-            ],
+    return YEditorPage(
+      form: _form,
+      title: 'Operator authentication',
+      subtitle: 'How people sign in to this console: a break-glass bootstrap account, and an HTTP delegate that checks credentials against your existing login service.',
+      badges: [
+        data.delegate.enabled
+            ? const YBadge('Delegate on', tone: YTone.success, icon: Icons.cloud_done_outlined)
+            : const YBadge('Delegate off', icon: Icons.cloud_off_outlined),
+        data.bootstrap.enabled
+            ? const YBadge('Bootstrap on', tone: YTone.warning, icon: Icons.key_outlined)
+            : const YBadge('Bootstrap off', icon: Icons.key_off_outlined),
+      ],
+      headerActions: [
+        Tooltip(
+          message: testBlocker ?? 'Send test credentials to the saved delegate',
+          child: OutlinedButton.icon(
+            onPressed: testBlocker == null ? _openTest : null,
+            icon: const Icon(Icons.science_outlined, size: 18),
+            label: const Text('Test delegate…'),
           ),
         ),
-      );
-    }
-
-    if (!_formHydrated) {
-      _hydrateFromData(data.delegate);
-      _formHydrated = true;
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 920),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Settings → Operator authentication',
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 4),
-            Text('Operator login',
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 16),
-            _BootstrapCard(
-              data: data,
-              saving: state.savingBootstrap,
-              newPassword: _newPassword,
-              confirmPassword: _confirmPassword,
-              onSavePassword: () {
-                final np = _newPassword.text;
-                if (np.isEmpty) return;
-                if (np != _confirmPassword.text) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Passwords do not match.')));
-                  return;
-                }
-                ctrl.saveBootstrap(newPassword: np);
-                _newPassword.clear();
-                _confirmPassword.clear();
-              },
-              onToggleEnabled: (v) => ctrl.saveBootstrap(enabled: v),
-            ),
-            const SizedBox(height: 24),
-            _DelegateCard(
-              data: data,
-              saving: state.savingDelegate,
-              testing: state.testing,
-              enabled: _delegateEnabled,
-              onEnabledChanged: (v) => setState(() => _delegateEnabled = v),
-              requireHttps: _requireHttps,
-              onRequireHttpsChanged: (v) => setState(() => _requireHttps = v),
-              method: _method,
-              onMethodChanged: (v) => setState(() => _method = v),
-              bodyFormat: _bodyFormat,
-              onBodyFormatChanged: (v) => setState(() => _bodyFormat = v),
-              urlCtrl: _urlCtrl,
-              secretCtrl: _secretCtrl,
-              timeoutCtrl: _timeoutCtrl,
-              bodyTemplateCtrl: _bodyTemplateCtrl,
-              statusInCtrl: _statusInCtrl,
-              jsonPathExistsCtrl: _jsonPathExistsCtrl,
-              subjectPathCtrl: _subjectPathCtrl,
-              displayNamePathCtrl: _displayNamePathCtrl,
-              attributesPathCtrl: _attributesPathCtrl,
-              reasonPathCtrl: _reasonPathCtrl,
-              equalsRows: _equalsRows,
-              headerRows: _headerRows,
-              addEqualsRow: () => setState(() => _equalsRows.add((
-                    path: TextEditingController(),
-                    value: TextEditingController(),
-                  ))),
-              removeEqualsRow: (i) => setState(() {
-                final r = _equalsRows.removeAt(i);
-                r.path.dispose();
-                r.value.dispose();
-              }),
-              addHeaderRow: () => setState(() => _headerRows.add((
-                    key: TextEditingController(),
-                    value: TextEditingController(),
-                  ))),
-              removeHeaderRow: (i) => setState(() {
-                final r = _headerRows.removeAt(i);
-                r.key.dispose();
-                r.value.dispose();
-              }),
-              onSave: ({bool confirmPermissive = false}) {
-                final view = _buildDelegateView(data.delegate);
-                final secret = _secretCtrl.text.trim();
-                ctrl.saveDelegate(view,
-                    sharedSecret: secret.isEmpty ? null : secret,
-                    confirmPermissive: confirmPermissive);
-              },
-              onTest: () => _showTestDialog(context, ctrl),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showTestDialog(BuildContext context, OperatorAuthController ctrl) {
-    final user = TextEditingController();
-    final pass = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => Consumer(builder: (ctx2, ref2, _) {
-        final s = ref2.watch(operatorAuthProvider);
-        return AlertDialog(
-          title: const Text('Test HTTP delegate'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('Posts these credentials to the delegate URL '
-                    'and shows how your configured rules interpret the response.'),
-                const SizedBox(height: 12),
-                TextField(controller: user,
-                    decoration: const InputDecoration(labelText: 'Test username')),
-                const SizedBox(height: 8),
-                TextField(controller: pass, obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Test password')),
-                const SizedBox(height: 16),
-                if (s.testing) const LinearProgressIndicator(),
-                if (s.lastProbe != null) _ProbeResultView(probe: s.lastProbe!),
-              ],
-            ),
+      ],
+      banners: [
+        if (data.updatedAt != null)
+          Text(
+            'Last changed ${formatRelativeIso(data.updatedAt)}${data.updatedBy == null ? '' : ' by ${data.updatedBy}'}.',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
           ),
-          actions: [
-            TextButton(
-              onPressed: () { ctrl.dismissProbe(); Navigator.of(ctx).pop(); },
-              child: const Text('Close'),
-            ),
-            FilledButton(
-              onPressed: s.testing
-                  ? null
-                  : () => ctrl.runTest(username: user.text, password: pass.text),
-              child: const Text('Run test'),
-            ),
-          ],
-        );
-      }),
-    ).then((_) {
-      user.dispose();
-      pass.dispose();
-    });
-  }
-
-  void _showProbeDialog(ProbeResult _) {
-    // The dialog is already open with a Consumer that picks up lastProbe.
-    // This hook stays in case we ever want a notification when a probe
-    // result lands without the dialog being open.
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Bootstrap card
-// ---------------------------------------------------------------------------
-
-class _BootstrapCard extends StatelessWidget {
-  const _BootstrapCard({
-    required this.data,
-    required this.saving,
-    required this.newPassword,
-    required this.confirmPassword,
-    required this.onSavePassword,
-    required this.onToggleEnabled,
-  });
-
-  final StrategiesResponse data;
-  final bool saving;
-  final TextEditingController newPassword;
-  final TextEditingController confirmPassword;
-  final VoidCallback onSavePassword;
-  final ValueChanged<bool> onToggleEnabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final canDisable = data.canDisableBootstrap;
-    final enabled = data.bootstrap.enabled;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      ],
+      sections: [
+        YSectionLink('Bootstrap account', _kBootstrap),
+        YSectionLink('Delegate connection', _kConnection, fields: const ['enabled', 'url', 'sharedSecret', 'timeoutMs', 'requireHttps']),
+        YSectionLink('Request', _kRequest, fields: const ['method', 'bodyFormat', 'bodyTemplate', 'headers']),
+        YSectionLink('Success criteria', _kSuccess, fields: const ['statusIn', 'jsonPathExists', 'jsonPathEquals']),
+        YSectionLink('Identity & failure', _kIdentity, fields: const ['subjectPath', 'displayNamePath', 'attributesPath', 'reasonPath']),
+      ],
+      primaryLabel: 'Save delegate settings',
+      actionVerb: 'saving the delegate settings',
+      onPrimary: _save,
+      onCancel: _discard,
+      children: [
+        YFormSection(
+          sectionKey: _kBootstrap,
+          title: 'Bootstrap account',
+          description: 'A break-glass login configured on the server. Changes here save immediately — they don’t use the Save bar.',
           children: [
-            Row(
-              children: [
-                const Icon(Icons.key_outlined),
-                const SizedBox(width: 8),
-                Text('Bootstrap operator',
-                    style: Theme.of(context).textTheme.titleMedium),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.person_outline),
-              title: Text(data.bootstrap.username,
-                  style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: const Text('Username (set via YAYA_BOOTSTRAP_USERNAME)'),
-            ),
-            const SizedBox(height: 8),
-            if (!canDisable && enabled)
-              Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.amber.shade100,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.amber.shade700),
-                ),
-                child: const Text(
-                  'Disabling bootstrap removes your break-glass account. '
-                  'The toggle unlocks after at least one operator has signed in '
-                  'through the HTTP delegate successfully.',
-                ),
+            Row(children: [
+              Icon(Icons.person_outline, size: 20, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              SelectableText(data.bootstrap.username, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text('Username, set by YAYA_BOOTSTRAP_USERNAME on the server.',
+                    style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
               ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Enabled'),
-              subtitle: Text(enabled
-                  ? 'Bootstrap login is accepted as a fallback.'
-                  : 'Bootstrap login is rejected.'),
-              value: enabled,
-              onChanged: saving || (!canDisable && enabled) ? null : onToggleEnabled,
+            ]),
+            YSwitchField(
+              title: 'Accept bootstrap login',
+              wireKey: 'bootstrap.enabled',
+              value: data.bootstrap.enabled,
+              description: data.bootstrap.enabled
+                  ? 'The bootstrap account can sign in as a fallback.'
+                  : 'Bootstrap sign-in is refused.',
+              disabledReason: _bootstrapBusy
+                  ? 'Saving…'
+                  : (!data.canDisableBootstrap && data.bootstrap.enabled)
+                      ? 'Can’t turn off yet: at least one operator must first sign in through the HTTP delegate, so you’re never locked out.'
+                      : null,
+              onChanged: _toggleBootstrap,
             ),
-            const Divider(height: 24),
-            const Text('Change password',
-                style: TextStyle(fontWeight: FontWeight.w500)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: newPassword,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'New password'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: confirmPassword,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Confirm new password'),
-            ),
-            const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                onPressed: saving ? null : onSavePassword,
-                icon: const Icon(Icons.save_outlined),
-                label: Text(saving ? 'Saving…' : 'Update password'),
+              child: OutlinedButton.icon(
+                onPressed: _changePassword,
+                icon: const Icon(Icons.password, size: 18),
+                label: const Text('Change bootstrap password…'),
               ),
             ),
           ],
         ),
-      ),
+        YFormSection(
+          sectionKey: _kConnection,
+          title: 'Delegate connection',
+          description: 'yaya-agentic forwards the username and password an operator types to your login endpoint and reads its answer.',
+          children: [
+            YSwitchField(
+              title: _labels['enabled']!,
+              wireKey: 'enabled',
+              value: _enabled,
+              description: 'When on, the console sign-in form checks credentials against the endpoint below.',
+              onChanged: (v) {
+                setState(() => _enabled = v);
+                _form.changed('enabled');
+              },
+            ),
+            YTextField(
+              label: _labels['url']!,
+              wireKey: 'url',
+              controller: _url,
+              form: _form,
+              name: 'url',
+              required: _enabled,
+              optional: !_enabled,
+              mono: true,
+              keyboardType: TextInputType.url,
+              hint: 'e.g. https://login.acme.com/internal/yaya-login',
+              helper: 'Receives the operator’s credentials on every sign-in. Only point it at a service you trust with them.',
+            ),
+            YSecretField(
+              label: _labels['sharedSecret']!,
+              wireKey: 'sharedSecret',
+              controller: _secret,
+              form: _form,
+              name: 'sharedSecret',
+              stored: data.delegate.sharedSecretPresent,
+              required: _enabled,
+              helper: data.delegate.sharedSecretPresent
+                  ? 'Stored (${data.delegate.sharedSecretMask}). Leave blank to keep it; type a new one to rotate — the endpoint must accept the new value immediately.'
+                  : 'Sent so your endpoint can tell the request comes from yaya-agentic. Stored encrypted; never shown again.',
+            ),
+            YTextField(
+              label: _labels['timeoutMs']!,
+              wireKey: 'timeoutMs',
+              controller: _timeout,
+              form: _form,
+              name: 'timeoutMs',
+              required: true,
+              mono: true,
+              keyboardType: TextInputType.number,
+              hint: 'e.g. 5000',
+              helper: 'Milliseconds to wait for the endpoint before refusing the sign-in.',
+              suffix: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Text('ms', style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant)),
+              ),
+            ),
+            YSwitchField(
+              title: _labels['requireHttps']!,
+              wireKey: 'requireHttps',
+              value: _requireHttps,
+              description: 'Refuse an http:// endpoint — passwords would otherwise travel unencrypted. Turn off only for local development.',
+              onChanged: (v) {
+                setState(() => _requireHttps = v);
+                _form.changed('requireHttps');
+                if (_url.text.trim().isNotEmpty) _form.touch('url');
+              },
+            ),
+          ],
+        ),
+        YFormSection(
+          sectionKey: _kRequest,
+          title: 'Request',
+          description: 'How the credentials are sent. X-Yaya-* headers are added automatically.',
+          collapsible: true,
+          initiallyExpanded: false,
+          children: [
+            YSelectField<String>(
+              label: _labels['method']!,
+              wireKey: 'request.method',
+              form: _form,
+              name: 'method',
+              value: _method,
+              options: const [YOption('POST', 'POST'), YOption('PUT', 'PUT'), YOption('GET', 'GET')],
+              helper: 'GET sends no body; use Basic Auth with it.',
+              onChanged: (v) => setState(() => _method = v ?? _method),
+            ),
+            YEnumCards<String>(
+              label: _labels['bodyFormat']!,
+              wireKey: 'request.body.format',
+              form: _form,
+              name: 'bodyFormat',
+              value: _bodyFormat,
+              onChanged: (v) => setState(() => _bodyFormat = v),
+              options: const [
+                YEnumOption('JSON', 'JSON body', wire: 'JSON', description: 'Credentials go in a JSON body built from the template below.'),
+                YEnumOption('FORM', 'Form-encoded body', wire: 'FORM', description: 'Like an HTML login form: username=…&password=…, from the template.'),
+                YEnumOption('BASIC_AUTH', 'HTTP Basic Auth', wire: 'BASIC_AUTH', description: 'Credentials go in the Authorization header; no body is sent.'),
+                YEnumOption('NONE', 'No body', wire: 'NONE', caution: true, description: 'Nothing carries the credentials unless your headers use {{username}} / {{password}}.'),
+              ],
+            ),
+            YTextField(
+              label: _labels['bodyTemplate']!,
+              wireKey: 'request.body.template',
+              controller: _bodyTemplate,
+              form: _form,
+              name: 'bodyTemplate',
+              optional: true,
+              enabled: _templateApplies,
+              mono: true,
+              maxLines: 5,
+              minLines: 3,
+              hint: _bodyFormat == 'FORM'
+                  ? 'username={{username}}&password={{password}}'
+                  : '{"username":"{{username}}","password":"{{password}}"}',
+              helper: _templateApplies
+                  ? 'Substitutions: {{username}}, {{password}}, {{basic}}. Empty uses the default shape for this format.'
+                  : 'Not used — ${_bodyFormat == 'BASIC_AUTH' ? 'Basic Auth' : 'this format'} sends no body. The saved template is kept.',
+            ),
+            YKeyValueField(
+              label: _labels['headers']!,
+              wireKey: 'request.headers',
+              form: _form,
+              name: 'headers',
+              value: _headers,
+              caseInsensitiveKeys: true,
+              keyHint: 'Header',
+              valueHint: 'Value, may use {{username}}',
+              addLabel: 'Add header',
+              helper: 'Sent with every sign-in request.',
+              onChanged: (m) {
+                setState(() => _headers = m);
+                _form.refresh();
+              },
+            ),
+          ],
+        ),
+        YFormSection(
+          sectionKey: _kSuccess,
+          title: 'Success criteria',
+          description: 'Every check you configure must pass for the sign-in to be allowed.',
+          collapsible: true,
+          initiallyExpanded: false,
+          children: [
+            YTextField(
+              label: _labels['statusIn']!,
+              wireKey: 'success.statusIn',
+              controller: _statusIn,
+              form: _form,
+              name: 'statusIn',
+              required: true,
+              mono: true,
+              hint: 'e.g. 200, 204',
+              helper: 'Comma-separated. Empty means 200, 204.',
+            ),
+            if (nonOk.isNotEmpty)
+              YBanner(
+                tone: YBannerTone.warning,
+                title: 'Non-2xx counts as success.',
+                message: '${nonOk.join(', ')} would sign the operator in. You’ll be asked to confirm when saving.',
+              ),
+            YTextField(
+              label: _labels['jsonPathExists']!,
+              wireKey: 'success.jsonPathExists',
+              controller: _jsonPathExists,
+              form: _form,
+              name: 'jsonPathExists',
+              optional: true,
+              mono: true,
+              hint: r'e.g. $.data.user.id',
+              helper: 'The response body must contain this path.',
+            ),
+            YKeyValueField(
+              label: _labels['jsonPathEquals']!,
+              wireKey: 'success.jsonPathEquals',
+              form: _form,
+              name: 'jsonPathEquals',
+              value: _equals,
+              keyHint: r'$.status',
+              valueHint: 'Expected, e.g. "ok", 1, true',
+              addLabel: 'Add equality check',
+              helper: 'The value at each path must equal the expected value. Numbers, true/false and null are typed; quote text that looks like one ("200").',
+              onChanged: (m) {
+                setState(() => _equals = m);
+                _form.refresh();
+              },
+            ),
+          ],
+        ),
+        YFormSection(
+          sectionKey: _kIdentity,
+          title: 'Identity & failure',
+          description: 'Who the operator is, read from a successful response.',
+          collapsible: true,
+          initiallyExpanded: false,
+          children: [
+            YTextField(
+              label: _labels['subjectPath']!,
+              wireKey: 'identity.subjectPath',
+              controller: _subjectPath,
+              form: _form,
+              name: 'subjectPath',
+              optional: true,
+              mono: true,
+              hint: r'e.g. $.user.email',
+              helper: _subjectPath.text.trim().isEmpty
+                  ? 'Empty: the typed username becomes the operator’s identity.'
+                  : 'Set: if this path is missing from a successful response, the sign-in is refused.',
+            ),
+            YTextField(
+              label: _labels['displayNamePath']!,
+              wireKey: 'identity.displayNamePath',
+              controller: _displayNamePath,
+              form: _form,
+              name: 'displayNamePath',
+              optional: true,
+              mono: true,
+              hint: r'e.g. $.user.full_name',
+              helper: 'Shown in the console and in audit rows.',
+            ),
+            YTextField(
+              label: _labels['attributesPath']!,
+              wireKey: 'identity.attributesPath',
+              controller: _attributesPath,
+              form: _form,
+              name: 'attributesPath',
+              optional: true,
+              mono: true,
+              hint: r'e.g. $.user',
+              helper: 'A subtree copied onto the operator verbatim.',
+            ),
+            YTextField(
+              label: _labels['reasonPath']!,
+              wireKey: 'failure.reasonPath',
+              controller: _reasonPath,
+              form: _form,
+              name: 'reasonPath',
+              optional: true,
+              mono: true,
+              hint: r'e.g. $.error.code',
+              helper: 'Why a sign-in failed — recorded in the audit log only, never shown to the person signing in.',
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// HTTP delegate card
-// ---------------------------------------------------------------------------
-
-class _DelegateCard extends StatelessWidget {
-  const _DelegateCard({
-    required this.data,
-    required this.saving,
-    required this.testing,
-    required this.enabled,
-    required this.onEnabledChanged,
-    required this.requireHttps,
-    required this.onRequireHttpsChanged,
-    required this.method,
-    required this.onMethodChanged,
-    required this.bodyFormat,
-    required this.onBodyFormatChanged,
-    required this.urlCtrl,
-    required this.secretCtrl,
-    required this.timeoutCtrl,
-    required this.bodyTemplateCtrl,
-    required this.statusInCtrl,
-    required this.jsonPathExistsCtrl,
-    required this.subjectPathCtrl,
-    required this.displayNamePathCtrl,
-    required this.attributesPathCtrl,
-    required this.reasonPathCtrl,
-    required this.equalsRows,
-    required this.headerRows,
-    required this.addEqualsRow,
-    required this.removeEqualsRow,
-    required this.addHeaderRow,
-    required this.removeHeaderRow,
-    required this.onSave,
-    required this.onTest,
-  });
-
-  final StrategiesResponse data;
-  final bool saving;
-  final bool testing;
-  final bool enabled;
-  final ValueChanged<bool> onEnabledChanged;
-  final bool requireHttps;
-  final ValueChanged<bool> onRequireHttpsChanged;
-  final String method;
-  final ValueChanged<String> onMethodChanged;
-  final String bodyFormat;
-  final ValueChanged<String> onBodyFormatChanged;
-
-  final TextEditingController urlCtrl;
-  final TextEditingController secretCtrl;
-  final TextEditingController timeoutCtrl;
-  final TextEditingController bodyTemplateCtrl;
-  final TextEditingController statusInCtrl;
-  final TextEditingController jsonPathExistsCtrl;
-  final TextEditingController subjectPathCtrl;
-  final TextEditingController displayNamePathCtrl;
-  final TextEditingController attributesPathCtrl;
-  final TextEditingController reasonPathCtrl;
-
-  final List<({TextEditingController path, TextEditingController value})> equalsRows;
-  final List<({TextEditingController key, TextEditingController value})> headerRows;
-  final VoidCallback addEqualsRow;
-  final ValueChanged<int> removeEqualsRow;
-  final VoidCallback addHeaderRow;
-  final ValueChanged<int> removeHeaderRow;
-
-  final void Function({bool confirmPermissive}) onSave;
-  final VoidCallback onTest;
-
-  static const _methods = ['GET', 'POST', 'PUT'];
-  static const _formats = ['JSON', 'FORM', 'BASIC_AUTH', 'NONE'];
+/// New bootstrap password + confirmation. Saves on its own endpoint.
+class _BootstrapPasswordSheet extends ConsumerStatefulWidget {
+  const _BootstrapPasswordSheet({required this.username});
+  final String username;
 
   @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.cloud_outlined),
-                const SizedBox(width: 8),
-                Text('HTTP delegate',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const Spacer(),
-                Switch(value: enabled, onChanged: onEnabledChanged),
-              ],
-            ),
-            const SizedBox(height: 4),
-            const Text('Forward operator credentials to your existing login '
-                'endpoint; yaya-agentic adapts to whatever shape it already '
-                'returns.'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: urlCtrl,
-              enabled: enabled,
-              decoration: const InputDecoration(
-                labelText: 'URL',
-                hintText: 'https://host.example.com/internal/yaya-login',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: secretCtrl,
-              enabled: enabled,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: 'Shared secret',
-                hintText: data.delegate.sharedSecretPresent
-                    ? data.delegate.sharedSecretMask + '   (leave blank to keep)'
-                    : 'Required',
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: timeoutCtrl,
-                    enabled: enabled,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Timeout (ms)'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: SwitchListTile(
-                    title: const Text('Require HTTPS'),
-                    value: requireHttps,
-                    onChanged: enabled ? onRequireHttpsChanged : null,
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Three collapsible advanced sections — closed by default to
-            // keep the common case (URL + secret + save) one screen tall.
-            _AdvancedTile(
-              title: 'Request shaping',
-              subtitle: 'How yaya-agentic sends the credentials',
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: method,
-                        decoration: const InputDecoration(labelText: 'Method'),
-                        items: _methods.map((m) =>
-                            DropdownMenuItem(value: m, child: Text(m))).toList(),
-                        onChanged: enabled ? (v) { if (v != null) onMethodChanged(v); } : null,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: bodyFormat,
-                        decoration: const InputDecoration(labelText: 'Body format'),
-                        items: _formats.map((f) => DropdownMenuItem(
-                              value: f,
-                              child: Text(switch (f) {
-                                'JSON' => 'JSON body',
-                                'FORM' => 'Form-encoded body',
-                                'BASIC_AUTH' => 'HTTP Basic Auth (no body)',
-                                'NONE' => 'No body',
-                                _ => f,
-                              }),
-                            )).toList(),
-                        onChanged: enabled ? (v) { if (v != null) onBodyFormatChanged(v); } : null,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: bodyTemplateCtrl,
-                  enabled: enabled
-                      && bodyFormat != 'BASIC_AUTH'
-                      && bodyFormat != 'NONE',
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Body template',
-                    hintText: '{"username":"{{username}}","password":"{{password}}"}',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text('Available substitutions: {{username}}, {{password}}, {{basic}}',
-                    style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 16),
-                const Text('Extra headers (X-Yaya-* are added automatically)'),
-                const SizedBox(height: 4),
-                ..._headerEditor(),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: enabled ? addHeaderRow : null,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add header'),
-                  ),
-                ),
-              ],
-            ),
-            _AdvancedTile(
-              title: 'Success criteria',
-              subtitle: 'All configured criteria must match for ALLOW',
-              children: [
-                TextField(
-                  controller: statusInCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'Status codes (comma-separated)',
-                    hintText: '200, 204',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: jsonPathExistsCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'JSONPath must exist (optional)',
-                    hintText: '\$.data.user.id',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text('JSONPath equals — path + expected value'),
-                const SizedBox(height: 4),
-                ..._equalsEditor(),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: enabled ? addEqualsRow : null,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add equality check'),
-                  ),
-                ),
-              ],
-            ),
-            _AdvancedTile(
-              title: 'Identity & failure',
-              subtitle: 'How to extract the operator from a successful response',
-              children: [
-                TextField(
-                  controller: subjectPathCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'Subject path (optional — defaults to typed username)',
-                    hintText: '\$.user.email',
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subjectPathCtrl.text.isEmpty
-                      ? 'Unset → yaya-agentic trusts the typed username as the operator subject.'
-                      : 'Set → if the path does not resolve on success, login is denied.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: displayNamePathCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'Display name path (optional)',
-                    hintText: '\$.user.full_name',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: attributesPathCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'Attributes path (optional — subtree to copy verbatim)',
-                    hintText: '\$.user',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: reasonPathCtrl,
-                  enabled: enabled,
-                  decoration: const InputDecoration(
-                    labelText: 'Failure reason path (audit only, never shown to user)',
-                    hintText: '\$.error.code',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                FilledButton.icon(
-                  onPressed: saving ? null : () => onSave(),
-                  icon: const Icon(Icons.save_outlined),
-                  label: Text(saving ? 'Saving…' : 'Save'),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: enabled && !testing ? onTest : null,
-                  icon: const Icon(Icons.science_outlined),
-                  label: const Text('Test delegate'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+  ConsumerState<_BootstrapPasswordSheet> createState() => _BootstrapPasswordSheetState();
+}
+
+class _BootstrapPasswordSheetState extends ConsumerState<_BootstrapPasswordSheet> {
+  final _pw = TextEditingController();
+  final _confirm = TextEditingController();
+  late final YFormController _form;
+
+  @override
+  void initState() {
+    super.initState();
+    _form = YFormController(
+      snapshot: () => {'newPassword': _pw.text, 'confirmPassword': _confirm.text},
+      validate: () => {
+        'newPassword': _pw.text.isEmpty ? 'Enter a new password.' : null,
+        'confirmPassword': _confirm.text.isEmpty
+            ? 'Type the password again.'
+            : _confirm.text != _pw.text
+                ? 'Doesn’t match the new password.'
+                : null,
+      },
+      labels: const {'newPassword': 'New password', 'confirmPassword': 'Confirm new password'},
     );
+    _form.addListener(_rebuild);
   }
 
-  List<Widget> _equalsEditor() {
-    if (equalsRows.isEmpty) {
-      return const [
-        Padding(
-          padding: EdgeInsets.symmetric(vertical: 4),
-          child: Text('No equality checks configured.'),
-        ),
-      ];
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    _pw.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_form.submit()) return;
+    final ok = await confirmAction(
+      context,
+      title: 'Change the bootstrap password?',
+      message: 'The old password for “${widget.username}” stops working immediately. Store the new one somewhere safe — it can’t be shown again.',
+      confirmLabel: 'Change password',
+    );
+    if (!ok) return;
+    _form.saving = true;
+    try {
+      await ref.read(operatorAuthActionsProvider).saveBootstrap(newPassword: _pw.text);
+      _form.saving = false;
+      _form.markClean();
+      if (!mounted) return;
+      showToast(context, 'Bootstrap password changed');
+      Navigator.of(context).pop();
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(e);
     }
-    return [
-      for (var i = 0; i < equalsRows.length; i++) Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: equalsRows[i].path,
-                enabled: enabled,
-                decoration: const InputDecoration(labelText: 'Path'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 1,
-              child: TextField(
-                controller: equalsRows[i].value,
-                enabled: enabled,
-                decoration: const InputDecoration(labelText: 'Value'),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: enabled ? () => removeEqualsRow(i) : null,
-            ),
-          ],
-        ),
-      ),
-    ];
   }
-
-  List<Widget> _headerEditor() {
-    return [
-      for (var i = 0; i < headerRows.length; i++) Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: headerRows[i].key,
-                enabled: enabled,
-                decoration: const InputDecoration(labelText: 'Header name'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: headerRows[i].value,
-                enabled: enabled,
-                decoration: const InputDecoration(labelText: 'Value'),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: enabled ? () => removeHeaderRow(i) : null,
-            ),
-          ],
-        ),
-      ),
-    ];
-  }
-}
-
-class _AdvancedTile extends StatelessWidget {
-  const _AdvancedTile({required this.title, required this.subtitle, required this.children});
-  final String title;
-  final String subtitle;
-  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(top: 8, bottom: 16),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      children: children.map((c) =>
-          Padding(padding: const EdgeInsets.only(bottom: 8), child: c)).toList(),
+    return YUnsavedGuard(
+      form: _form,
+      child: YSaveShortcut(
+        onSave: _save,
+        child: YSheetScaffold(
+          title: 'Change bootstrap password',
+          subtitle: 'For the break-glass account “${widget.username}”.',
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+            children: [
+              if (_form.summary.isNotEmpty || _form.formError != null) ...[
+                YErrorSummary(form: _form, action: 'changing the password'),
+                const SizedBox(height: Gap.lg),
+              ],
+              YSecretField(
+                label: 'New password',
+                wireKey: 'newPassword',
+                controller: _pw,
+                form: _form,
+                name: 'newPassword',
+                required: true,
+                helper: 'Use a long, unique passphrase — this account bypasses the HTTP delegate.',
+              ),
+              const SizedBox(height: Gap.fieldGap),
+              YSecretField(
+                label: 'Confirm new password',
+                controller: _confirm,
+                form: _form,
+                name: 'confirmPassword',
+                required: true,
+                helper: 'Type it again to catch typos.',
+              ),
+            ],
+          ),
+          footer: YActionBar(
+            form: _form,
+            primaryLabel: 'Change password',
+            onPrimary: _save,
+            onCancel: () => closeYSheet(context),
+          ),
+        ),
+      ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Probe result render — the structured-evaluation view from design §8
-// ---------------------------------------------------------------------------
+/// Sends test credentials to the SAVED delegate and shows how the rules read the answer.
+class _DelegateTestSheet extends ConsumerStatefulWidget {
+  const _DelegateTestSheet();
+
+  @override
+  ConsumerState<_DelegateTestSheet> createState() => _DelegateTestSheetState();
+}
+
+class _DelegateTestSheetState extends ConsumerState<_DelegateTestSheet> {
+  final _user = TextEditingController();
+  final _pass = TextEditingController();
+  late final YFormController _form;
+  ProbeResult? _probe;
+
+  @override
+  void initState() {
+    super.initState();
+    _form = YFormController(
+      // Nothing here is worth guarding: test credentials are throwaway.
+      snapshot: () => const {},
+      validate: () => {'username': Validators.required(_user.text, 'a test username')},
+      labels: const {'username': 'Test username'},
+    );
+    _form.addListener(_rebuild);
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    _user.dispose();
+    _pass.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run() async {
+    if (!_form.submit()) return;
+    _form.saving = true;
+    try {
+      final p = await ref.read(operatorAuthActionsProvider).test(username: _user.text.trim(), password: _pass.text);
+      _form.saving = false;
+      _form.markClean();
+      setState(() => _probe = p);
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return YSaveShortcut(
+      onSave: _run,
+      child: YSheetScaffold(
+        title: 'Test HTTP delegate',
+        subtitle: 'Sends these credentials to the saved endpoint and shows how your rules read the answer. Nothing is signed in.',
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+          children: [
+            if (_form.summary.isNotEmpty || _form.formError != null) ...[
+              YErrorSummary(form: _form, action: 'running the test'),
+              const SizedBox(height: Gap.lg),
+            ],
+            YTextField(
+              label: 'Test username',
+              controller: _user,
+              form: _form,
+              name: 'username',
+              required: true,
+              autofocus: true,
+              hint: 'e.g. ana@acme.com',
+            ),
+            const SizedBox(height: Gap.fieldGap),
+            YSecretField(
+              label: 'Test password',
+              controller: _pass,
+              form: _form,
+              name: 'password',
+              helper: 'Sent to your endpoint once for this test; never stored.',
+            ),
+            if (_probe != null) ...[
+              const SizedBox(height: Gap.xl),
+              _ProbeResultView(probe: _probe!),
+            ],
+          ],
+        ),
+        footer: YActionBar(
+          form: _form,
+          primaryLabel: _probe == null ? 'Run test' : 'Run again',
+          onPrimary: _run,
+          onCancel: () => Navigator.of(context).pop(),
+          cancelLabel: 'Close',
+        ),
+      ),
+    );
+  }
+}
 
 class _ProbeResultView extends StatelessWidget {
   const _ProbeResultView({required this.probe});
@@ -871,107 +1013,74 @@ class _ProbeResultView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final status = StatusColors.of(context);
     final allowed = probe.allowed;
-    final decisionColor = allowed ? Colors.green.shade700 : Colors.red.shade700;
+    final code = probe.response.status;
+    final id = probe.evaluation.identity;
+    Widget heading(String s) => Padding(
+          padding: const EdgeInsets.only(top: Gap.lg, bottom: 6),
+          child: Text(s, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+        );
+    Widget mono(String s) => SelectableText(s, style: monoStyle(context, size: 12.5));
     return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(Gap.lg),
       decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).dividerColor),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (probe.response.status != null) ...[
-                _Pill(label: 'HTTP ${probe.response.status}',
-                    color: _statusColor(probe.response.status!)),
-                const SizedBox(width: 8),
-              ],
-              _Pill(label: '${probe.response.durationMs} ms', color: Colors.blueGrey),
-              const Spacer(),
-              _Pill(
-                label: probe.evaluation.decision,
-                color: decisionColor,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text('Success criteria',
-              style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 4),
-          ...probe.evaluation.successChecks.map((c) => Row(
-                children: [
-                  Icon(c.matched ? Icons.check_circle : Icons.cancel,
-                      color: c.matched ? Colors.green : Colors.red, size: 16),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text('${c.criterion}: ${c.detail ?? ''}',
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
-                ],
-              )),
-          if (probe.evaluation.identity != null) ...[
-            const SizedBox(height: 12),
-            Text('Identity extracted',
-                style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 4),
-            Text('subject: ${probe.evaluation.identity!.subject}',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            Text('display: ${probe.evaluation.identity!.displayName}',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            if (probe.evaluation.identity!.attributes.isNotEmpty)
-              Text('attributes: ${probe.evaluation.identity!.attributes}',
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-          ],
-          if (probe.evaluation.auditReason != null) ...[
-            const SizedBox(height: 12),
-            Text('Audit reason (never shown to user):',
-                style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 4),
-            Text(probe.evaluation.auditReason!,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-          ],
-          if (probe.response.body != null && probe.response.body!.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(bottom: 8),
-              title: const Text('Raw response body'),
-              children: [
-                SelectableText(probe.response.body!,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-              ],
-            ),
-          ],
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          allowed
+              ? const YBadge('Would allow', tone: YTone.success, icon: Icons.check_circle_outline)
+              : const YBadge('Would deny', tone: YTone.danger, icon: Icons.block),
+          if (code != null)
+            YBadge('HTTP $code',
+                mono: true,
+                tone: code >= 200 && code < 300
+                    ? YTone.success
+                    : code >= 400 && code < 500
+                        ? YTone.warning
+                        : YTone.danger),
+          YBadge('${probe.response.durationMs} ms', mono: true),
+          Text('${probe.request.method} ${probe.request.url}', style: monoStyle(context, size: 12.5, color: scheme.onSurfaceVariant)),
+        ]),
+        if (probe.response.error != null) ...[
+          const SizedBox(height: Gap.md),
+          YBanner(tone: YBannerTone.error, title: 'Request failed.', message: probe.response.error!),
         ],
-      ),
-    );
-  }
-
-  Color _statusColor(int status) {
-    if (status >= 200 && status < 300) return Colors.green.shade700;
-    if (status >= 400 && status < 500) return Colors.orange.shade700;
-    return Colors.red.shade700;
-  }
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({required this.label, required this.color});
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color),
-      ),
-      child: Text(label,
-          style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
+        heading('Success criteria'),
+        if (probe.evaluation.successChecks.isEmpty)
+          Text('No checks ran.', style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant)),
+        for (final c in probe.evaluation.successChecks)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(c.matched ? Icons.check_circle : Icons.cancel, size: 18, color: c.matched ? status.success : scheme.error),
+              const SizedBox(width: 8),
+              Expanded(child: mono('${c.criterion}${c.detail == null ? '' : ': ${c.detail}'}')),
+            ]),
+          ),
+        if (id != null) ...[
+          heading('Identity extracted'),
+          mono('subject: ${id.subject}'),
+          mono('display: ${id.displayName}'),
+          if (id.attributes.isNotEmpty) mono('attributes: ${const JsonEncoder.withIndent('  ').convert(id.attributes)}'),
+        ],
+        if ((probe.evaluation.auditReason ?? probe.auditReason) != null) ...[
+          heading('Audit reason (never shown to the person signing in)'),
+          mono((probe.evaluation.auditReason ?? probe.auditReason)!),
+        ],
+        if (probe.response.body != null && probe.response.body!.isNotEmpty) ...[
+          heading('Raw response body'),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: scheme.surfaceContainerLow, borderRadius: BorderRadius.circular(8)),
+            child: mono(probe.response.body!),
+          ),
+        ],
+      ]),
     );
   }
 }

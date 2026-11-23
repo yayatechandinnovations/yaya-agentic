@@ -22,6 +22,7 @@ _$CapabilityRequestImpl _$$CapabilityRequestImplFromJson(
           ?.map((e) => e as String)
           .toList() ??
       const <String>[],
+  menu: json['menu'] as Map<String, dynamic>?,
 );
 
 Map<String, dynamic> _$$CapabilityRequestImplToJson(
@@ -34,6 +35,7 @@ Map<String, dynamic> _$$CapabilityRequestImplToJson(
   'llmGuidance': instance.llmGuidance,
   'tools': instance.tools,
   'followUpHints': instance.followUpHints,
+  'menu': instance.menu,
 };
 
 _$CapabilityResponseImpl _$$CapabilityResponseImplFromJson(
@@ -53,6 +55,7 @@ _$CapabilityResponseImpl _$$CapabilityResponseImplFromJson(
           ?.map((e) => e as String)
           .toList() ??
       const <String>[],
+  menu: json['menu'] as Map<String, dynamic>?,
   createdAt: json['createdAt'] as String?,
 );
 
@@ -67,5 +70,6 @@ Map<String, dynamic> _$$CapabilityResponseImplToJson(
   'llmGuidance': instance.llmGuidance,
   'tools': instance.tools,
   'followUpHints': instance.followUpHints,
+  'menu': instance.menu,
   'createdAt': instance.createdAt,
 };

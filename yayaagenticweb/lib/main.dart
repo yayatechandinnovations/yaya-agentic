@@ -4,6 +4,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'app/router.dart';
 import 'app/theme.dart';
+import 'ui/theme.dart';
 
 void main() {
   // Switch web URLs from the default hash strategy (`/#/verify?token=…`)
@@ -25,6 +26,8 @@ class YayaAgenticWebApp extends ConsumerWidget {
       title: 'Yaya Agentic — Admin',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
+      darkTheme: buildAppDarkTheme(),
+      themeMode: ref.watch(themeModeProvider),
       routerConfig: router,
     );
   }

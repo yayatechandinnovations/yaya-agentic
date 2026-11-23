@@ -1,606 +1,179 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../app/selected_tenant.dart';
-import '../../../models/admin/tenant.dart';
-import '../../../models/admin/tool.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
 import '../capabilities/capabilities_screen.dart' show toolsProvider;
+import '../profiles/profiles_screen.dart' show capabilitiesProvider;
 import '../shared/admin_shared.dart';
-import '../tenants/tenants_screen.dart' show tenantsProvider;
+import 'tool_form.dart';
 
-class ToolsScreen extends ConsumerStatefulWidget {
+/// Latest version of every tool, with its version history.
+final toolSummariesProvider = Provider<AsyncValue<List<ToolSummary>>>(
+  (ref) => ref.watch(toolsProvider).whenData(summarizeTools),
+);
+
+/// Tool id → ids of the capabilities (latest versions) that list it.
+final toolUsageProvider = Provider<Map<String, List<String>>>((ref) {
+  final caps = ref.watch(capabilitiesProvider).valueOrNull ?? const [];
+  final latest = <String, ({int version, List<String> tools})>{};
+  for (final c in caps) {
+    final cur = latest[c.id];
+    if (cur == null || c.version > cur.version) latest[c.id] = (version: c.version, tools: c.tools);
+  }
+  final out = <String, List<String>>{};
+  latest.forEach((capId, v) {
+    for (final t in v.tools) {
+      out.putIfAbsent(t, () => []).add(capId);
+    }
+  });
+  return out;
+});
+
+class ToolsScreen extends ConsumerWidget {
   const ToolsScreen({super.key});
-  @override
-  ConsumerState<ToolsScreen> createState() => _ToolsScreenState();
-}
-
-class _ToolsScreenState extends ConsumerState<ToolsScreen> {
-  final _idCtrl = TextEditingController();
-  final _inputSchemaCtrl = TextEditingController(text: '{"type":"object"}');
-  final _outputSchemaCtrl = TextEditingController(text: '{"type":"object"}');
-
-  String _kind = 'BEAN';
-  final _beanNameCtrl = TextEditingController();
-  bool _confirmable = false;
-  bool _clientInvocable = false;
-  bool _secretInput = false;
-  bool _plannable = false;
-  bool _headless = false;
-  // Policy keys of the cloned version this form has no control for
-  // (confirmPrompt, timeout, preconfirmableByAction, …): kept on save.
-  Map<String, dynamic> _clonedPolicy = const {};
-
-  String _httpMethod = 'GET';
-  final _urlCtrl = TextEditingController();
-  final _headersCtrl = TextEditingController(); // k=v lines
-  final _bodyContentTypeCtrl = TextEditingController(text: 'application/json');
-  final _bodyTemplateCtrl = TextEditingController();
-  final _jsonPathCtrl = TextEditingController(text: r'$');
-  String _authForwarding = 'NONE';
-
-  bool _saving = false;
-
-  /// Non-null when the form was populated from a "Clone & edit" action.
-  /// Persists from form prefill until the next successful save, then resets.
-  int? _cloningFromVersion;
-
-  void _cloneEditFrom(ToolResponse t) {
-    setState(() {
-      _idCtrl.text = t.id;
-      _inputSchemaCtrl.text = t.inputSchemaJson;
-      _outputSchemaCtrl.text = t.outputSchemaJson;
-      _kind = t.handler.kind;
-      _beanNameCtrl.text = t.handler.beanName ?? '';
-      final http = t.handler.httpSpec;
-      if (http != null) {
-        _httpMethod = http.method;
-        _urlCtrl.text = http.urlTemplate;
-        _headersCtrl.text = http.headerTemplates.entries
-            .map((e) => '${e.key}=${e.value}')
-            .join('\n');
-        _bodyContentTypeCtrl.text =
-            http.body?.contentType ?? 'application/json';
-        _bodyTemplateCtrl.text = http.body?.template ?? '';
-        _jsonPathCtrl.text = http.response?.jsonPath ?? r'$';
-        _authForwarding = http.authForwarding;
-      }
-      _confirmable = t.policy['confirmable'] == true;
-      _clientInvocable = t.policy['clientInvocable'] == true;
-      _secretInput = t.policy['secretInput'] == true;
-      _plannable = t.policy['plannable'] == true;
-      _headless = t.policy['headless'] == true;
-      _clonedPolicy = Map<String, dynamic>.from(t.policy);
-      _cloningFromVersion = t.version;
-    });
-    showSnack(context,
-        'Cloned ${t.id}@${t.version} → will save as v${t.version + 1}');
-  }
-
-  void _cancelClone() {
-    setState(() {
-      _cloningFromVersion = null;
-      _idCtrl.clear();
-      _beanNameCtrl.clear();
-      _urlCtrl.clear();
-      _headersCtrl.clear();
-      _bodyTemplateCtrl.clear();
-      _inputSchemaCtrl.text = '{"type":"object"}';
-      _outputSchemaCtrl.text = '{"type":"object"}';
-      _jsonPathCtrl.text = r'$';
-      _kind = 'BEAN';
-      _confirmable = false;
-      _secretInput = false;
-      _plannable = false;
-      _headless = false;
-      _clonedPolicy = const {};
-      _authForwarding = 'NONE';
-    });
-  }
-
-  @override
-  void dispose() {
-    _idCtrl.dispose();
-    _inputSchemaCtrl.dispose();
-    _outputSchemaCtrl.dispose();
-    _beanNameCtrl.dispose();
-    _urlCtrl.dispose();
-    _headersCtrl.dispose();
-    _bodyContentTypeCtrl.dispose();
-    _bodyTemplateCtrl.dispose();
-    _jsonPathCtrl.dispose();
-    super.dispose();
-  }
-
-  Map<String, String> _parseHeaders(String raw) {
-    final out = <String, String>{};
-    for (final line in raw.split('\n')) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) continue;
-      final ix = trimmed.indexOf('=');
-      if (ix <= 0) continue;
-      out[trimmed.substring(0, ix).trim()] = trimmed.substring(ix + 1).trim();
-    }
-    return out;
-  }
-
-  Future<void> _save() async {
-    if (_idCtrl.text.trim().isEmpty) {
-      showSnack(context, 'id is required', error: true);
-      return;
-    }
-    ToolHandlerDto handler;
-    if (_kind == 'BEAN') {
-      if (_beanNameCtrl.text.trim().isEmpty) {
-        showSnack(context, 'BEAN tools need a beanName', error: true);
-        return;
-      }
-      handler = ToolHandlerDto(kind: 'BEAN', beanName: _beanNameCtrl.text.trim());
-    } else {
-      if (_urlCtrl.text.trim().isEmpty) {
-        showSnack(context, 'HTTP tools need a urlTemplate', error: true);
-        return;
-      }
-      handler = ToolHandlerDto(
-        kind: 'HTTP',
-        httpSpec: HttpHandlerDto(
-          method: _httpMethod,
-          urlTemplate: _urlCtrl.text.trim(),
-          headerTemplates: _parseHeaders(_headersCtrl.text),
-          body: _bodyTemplateCtrl.text.trim().isEmpty
-              ? null
-              : HttpBodyDto(
-                  contentType: _bodyContentTypeCtrl.text.trim(),
-                  template: _bodyTemplateCtrl.text,
-                ),
-          response: HttpResponseDto(
-            jsonPath: _jsonPathCtrl.text.trim().isEmpty ? r'$' : _jsonPathCtrl.text.trim(),
-            headerOutputs: const {},
-          ),
-          authForwarding: _authForwarding,
-        ),
-      );
-    }
-
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) {
-      showSnack(context, 'select a tenant first', error: true);
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      await api.createTool(ToolRequest(
-        tenant: tenant,
-        id: _idCtrl.text.trim(),
-        inputSchemaJson: _inputSchemaCtrl.text,
-        outputSchemaJson: _outputSchemaCtrl.text,
-        handler: handler,
-        policy: {
-          ..._clonedPolicy,
-          'confirmable': _confirmable,
-          'clientInvocable': _clientInvocable,
-          'secretInput': _secretInput,
-          'plannable': _plannable,
-          'headless': _headless,
-        },
-      ));
-      ref.invalidate(toolsProvider);
-      if (!mounted) return;
-      final wasCloning = _cloningFromVersion;
-      _idCtrl.clear();
-      _beanNameCtrl.clear();
-      _urlCtrl.clear();
-      _headersCtrl.clear();
-      _bodyTemplateCtrl.clear();
-      _jsonPathCtrl.text = r'$';
-      setState(() {
-        _cloningFromVersion = null;
-        _clonedPolicy = const {};
-        _secretInput = false;
-        _plannable = false;
-        _headless = false;
-      });
-      showSnack(context,
-          wasCloning == null
-              ? 'tool saved'
-              : 'saved as v${wasCloning + 1}');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (ref.watch(currentTenantOrNull) == null) {
-      return const TenantScopedEmptyState(resourceLabel: 'Tools');
-    }
-    final tools = ref.watch(toolsProvider);
-    return AdminTwoPane(
-      title: 'Tools',
-      subtitle: 'BEAN runs in-process; HTTP is a declarative remote call with explicit auth forwarding.',
-      list: tools.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Text(formatError(e), style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        data: (list) => list.isEmpty
-            ? const Center(child: Text('No tools yet.'))
-            : ListView.separated(
-                itemBuilder: (_, i) => _Tile(
-                  t: list[i],
-                  onCloneEdit: () => _cloneEditFrom(list[i]),
-                ),
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemCount: list.length,
-              ),
-      ),
-      form: SingleChildScrollView(child: _form(context)),
-    );
-  }
-
-  Widget _form(BuildContext context) {
-    final cloning = _cloningFromVersion;
-    return FormCard(
-      title: cloning == null
-          ? 'New tool'
-          : 'Editing clone of ${_idCtrl.text}@$cloning → saves as v${cloning + 1}',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextField(controller: _idCtrl, decoration: const InputDecoration(labelText: 'id')),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _inputSchemaCtrl,
-            maxLines: 4,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: const InputDecoration(labelText: 'inputSchemaJson'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _outputSchemaCtrl,
-            maxLines: 4,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: const InputDecoration(labelText: 'outputSchemaJson'),
-          ),
-          const SizedBox(height: 12),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'BEAN', label: Text('BEAN')),
-              ButtonSegment(value: 'HTTP', label: Text('HTTP')),
-            ],
-            selected: {_kind},
-            onSelectionChanged: (s) => setState(() => _kind = s.first),
-          ),
-          const SizedBox(height: 12),
-          if (_kind == 'BEAN')
-            TextField(
-              controller: _beanNameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'bean name',
-                helperText: 'must resolve to a @Component ToolHandler in the backend',
-              ),
-            )
-          else
-            _httpForm(context),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            value: _confirmable,
-            onChanged: (v) => setState(() => _confirmable = v),
-            title: const Text('Confirmable'),
-            subtitle: const Text(
-                'Pause for explicit yes/no before dispatch. Use for destructive actions.',
-                style: TextStyle(fontSize: 12)),
-            contentPadding: EdgeInsets.zero,
-          ),
-          SwitchListTile(
-            value: _clientInvocable,
-            onChanged: (v) => setState(() => _clientInvocable = v),
-            title: const Text('Client-invocable'),
-            subtitle: const Text(
-                'Allow a client tap to run this tool via POST /sessions/{id}/actions '
-                '(cart edits, checkout). Off keeps it model-only.',
-                style: TextStyle(fontSize: 12)),
-            contentPadding: EdgeInsets.zero,
-          ),
-          SwitchListTile(
-            value: _secretInput,
-            onChanged: (v) => setState(() => _secretInput = v),
-            title: const Text('Secret input'),
-            subtitle: const Text(
-                'The tool may ask the user for a code by returning _secretPrompt; '
-                'the value reaches it as {secret.value} in a header, never as an argument.',
-                style: TextStyle(fontSize: 12)),
-            contentPadding: EdgeInsets.zero,
-          ),
-          SwitchListTile(
-            value: _plannable,
-            onChanged: (v) => setState(() => _plannable = v),
-            title: const Text('Plannable'),
-            subtitle: const Text(
-                'Several confirmable calls of plannable tools in one answer share '
-                'one card the user agrees to once. Needs Confirmable and a '
-                'confirmPrompt; not for a Secret input tool.',
-                style: TextStyle(fontSize: 12)),
-            contentPadding: EdgeInsets.zero,
-          ),
-          SwitchListTile(
-            value: _headless,
-            onChanged: (v) => setState(() => _headless = v),
-            title: const Text('Headless'),
-            subtitle: const Text(
-                'A headless run (a stored question answered with nobody present) '
-                'may call this tool. Only for an HTTP GET that is not Confirmable, '
-                'Client-invocable, Secret input or Plannable; anything else is '
-                'refused on save (headless_not_allowed).',
-                style: TextStyle(fontSize: 12)),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ],
-      ),
-      actions: [
-        if (_cloningFromVersion != null)
-          TextButton(
-            onPressed: _saving ? null : _cancelClone,
-            child: const Text('Cancel'),
-          ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: _saving
-              ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(_cloningFromVersion == null
-                  ? 'Save'
-                  : 'Save as v${_cloningFromVersion! + 1}'),
-        ),
-      ],
-    );
-  }
-
-  Widget _httpForm(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DropdownButtonFormField<String>(
-          initialValue: _httpMethod,
-          decoration: const InputDecoration(labelText: 'method'),
-          items: const ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-              .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-              .toList(),
-          onChanged: (v) => setState(() => _httpMethod = v ?? 'GET'),
-        ),
-        const SizedBox(height: 8),
-        _PathOnlyUrlField(
-          controller: _urlCtrl,
-          onChanged: () => setState(() {}),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _headersCtrl,
-          maxLines: 3,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          decoration: const InputDecoration(
-            labelText: 'header templates',
-            helperText: 'one per line: Key=Value (placeholders work too)',
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _bodyContentTypeCtrl,
-          decoration: const InputDecoration(labelText: 'body content-type'),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _bodyTemplateCtrl,
-          maxLines: 5,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          decoration: const InputDecoration(labelText: 'body template (leave empty for GET/DELETE)'),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _jsonPathCtrl,
-          decoration: const InputDecoration(
-            labelText: 'response.jsonPath',
-            helperText: r'use $ for the whole body',
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text('Auth forwarding', style: Theme.of(context).textTheme.labelLarge),
-        ...['NONE', 'PRINCIPAL_TOKEN', 'SERVICE_TOKEN'].map(
-          (mode) => RadioListTile<String>(
-            value: mode,
-            groupValue: _authForwarding,
-            onChanged: (v) => setState(() => _authForwarding = v ?? 'NONE'),
-            title: Text(mode),
-            subtitle: mode == 'PRINCIPAL_TOKEN'
-                ? const Text('Forwards the inbound Authorization header. Only use for trusted downstreams.',
-                    style: TextStyle(fontSize: 12))
-                : null,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// urlTemplate input that enforces the path-only rule (§6 of
-/// tenant-registry-design.md) in-place. Absolute URLs surface an inline
-/// warning + a single-click "Extract path" affordance when the origin
-/// matches the tenant's host_base_url. Anything else just gets a "fix
-/// manually" hint — same code path the backend rejects with
-/// absolute_url_not_permitted at save time.
-class _PathOnlyUrlField extends ConsumerWidget {
-  const _PathOnlyUrlField({required this.controller, required this.onChanged});
-  final TextEditingController controller;
-  final VoidCallback onChanged;
-
-  bool _isAbsolute(String s) =>
-      s.startsWith('//') || s.indexOf('://') > 0;
-
-  String? _originOf(String url) {
-    if (url.startsWith('//')) return null;
-    final schemeEnd = url.indexOf('://');
-    if (schemeEnd <= 0) return null;
-    final pathStart = url.indexOf('/', schemeEnd + 3);
-    return pathStart < 0
-        ? url.toLowerCase()
-        : url.substring(0, pathStart).toLowerCase();
-  }
-
-  String _extractPath(String url) {
-    final origin = _originOf(url);
-    if (origin == null) return url;
-    final tail = url.substring(origin.length);
-    return tail.isEmpty || !tail.startsWith('/') ? '/$tail' : tail;
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final value = controller.text;
-    final absolute = _isAbsolute(value);
-    final selected = ref.watch(currentTenantOrNull);
-    final tenants = ref.watch(tenantsProvider);
+    final params = GoRouterState.of(context).uri.queryParameters;
+    // Old links and the palette's generic form: ?id= / ?new=1.
+    if (params['id'] != null || params['new'] != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        context.go(params['id'] != null ? '/admin/tools/${Uri.encodeComponent(params['id']!)}' : '/admin/tools/new');
+      });
+    }
+    if (ref.watch(currentTenantOrNull) == null) {
+      return const TenantScopedEmptyState(resourceLabel: 'Tools');
+    }
+    final summaries = ref.watch(toolSummariesProvider);
+    final usage = ref.watch(toolUsageProvider);
+    final fresh = ref.watch(freshIdsProvider(AdminResourceKind.tool));
 
-    final tenantOrigin = tenants.maybeWhen(
-      data: (list) {
-        if (selected == null) return null;
-        for (final TenantResponse t in list) {
-          if (t.id == selected) {
-            return _originOf(t.hostBaseUrl ?? '');
-          }
-        }
-        return null;
-      },
-      orElse: () => null,
-    );
+    void openNew() => context.go('/admin/tools/new');
 
-    final urlOrigin = absolute ? _originOf(value) : null;
-    final canExtract = absolute
-        && urlOrigin != null
-        && tenantOrigin != null
-        && urlOrigin == tenantOrigin;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: controller,
-          onChanged: (_) => onChanged(),
-          decoration: InputDecoration(
-            labelText: 'urlTemplate',
-            helperText: 'Path only (/...). The host resolves from this tool\'s tenant.',
-            helperMaxLines: 2,
-            errorText: absolute
-                ? 'Absolute URLs are no longer accepted (absolute_url_not_permitted).'
-                : null,
-          ),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-        ),
-        if (absolute) ...[
-          const SizedBox(height: 6),
-          Row(children: [
-            Icon(Icons.warning_amber_rounded,
-                size: 16, color: theme.colorScheme.error),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                canExtract
-                    ? 'Origin matches tenant host — click to extract the path.'
-                    : 'Origin doesn\'t match this tenant\'s host_base_url; '
-                        'fix manually or route via tenant migration.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.error,
-                ),
-              ),
-            ),
-            if (canExtract)
-              TextButton.icon(
-                onPressed: () {
-                  controller.text = _extractPath(value);
-                  onChanged();
-                },
-                icon: const Icon(Icons.content_cut, size: 16),
-                label: const Text('Extract path'),
-              ),
-          ]),
-        ],
-      ],
-    );
-  }
-}
-
-class _Tile extends StatelessWidget {
-  const _Tile({required this.t, required this.onCloneEdit});
-  final ToolResponse t;
-  final VoidCallback onCloneEdit;
-
-  @override
-  Widget build(BuildContext context) {
-    final isHttp = t.handler.kind == 'HTTP';
-    final confirmable = t.policy['confirmable'] == true;
-    final http = t.handler.httpSpec;
-    return EditableRecordCard(
-      onCloneEdit: onCloneEdit,
-      leading: Icon(isHttp ? Icons.cloud_outlined : Icons.memory_outlined),
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Text('${t.id}@${t.version}',
-                style: Theme.of(context).textTheme.titleSmall),
-            if (confirmable) ...[
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Confirmable: preview → yes/no before dispatch',
-                child: Icon(Icons.priority_high,
-                    size: 16, color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-          ]),
-          Text(isHttp
-              ? '${http?.method} ${http?.urlTemplate}'
-              : 'bean: ${t.handler.beanName}'),
-        ],
-      ),
-      trailing: Chip(
-        label: Text(t.handler.kind),
-        visualDensity: VisualDensity.compact,
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DetailRow(label: 'inputSchemaJson', value: t.inputSchemaJson, mono: true),
-          DetailRow(label: 'outputSchemaJson', value: t.outputSchemaJson, mono: true),
-          DetailRow(label: 'handler.kind', value: t.handler.kind),
-          if (t.handler.beanName != null)
-            DetailRow(label: 'handler.beanName', value: t.handler.beanName!),
-          if (http != null) ...[
-            DetailRow(label: 'http.method', value: http.method),
-            DetailRow(label: 'http.urlTemplate', value: http.urlTemplate),
-            DetailRow(
-              label: 'http.headers',
-              value: http.headerTemplates.isEmpty
-                  ? '(none)'
-                  : http.headerTemplates.entries
-                      .map((e) => '${e.key}=${e.value}')
-                      .join('\n'),
-              mono: true,
-            ),
-            if (http.body != null)
-              DetailRow(
-                label: 'http.body',
-                value: '${http.body!.contentType}\n${http.body!.template}',
-                mono: true,
-              ),
-            DetailRow(label: 'http.response.jsonPath', value: http.response?.jsonPath ?? r'$'),
-            DetailRow(label: 'http.authForwarding', value: http.authForwarding),
+    return YPage(
+      title: 'Tools',
+      subtitle: 'Actions a capability can take. HTTP tools call a service with explicit credential forwarding; Bean tools run inside the backend.',
+      actions: [FilledButton.icon(onPressed: openNew, icon: const Icon(Icons.add, size: 18), label: const Text('New tool'))],
+      child: LiveAsyncView<List<ToolSummary>>(
+        value: summaries,
+        what: 'tools',
+        onRetry: () => ref.invalidate(toolsProvider),
+        data: (context, list) => YTable<ToolSummary>(
+          rows: list,
+          noun: 'tools',
+          idOf: (s) => s.latest.id,
+          searchHint: 'Search by ID, method, path or bean',
+          searchTextOf: (s) {
+            final h = s.latest.handler;
+            return '${s.latest.id} ${h.kind} ${h.beanName ?? ''} ${h.httpSpec?.method ?? ''} ${h.httpSpec?.urlTemplate ?? ''}';
+          },
+          highlightIds: fresh,
+          onRowTap: (s) => context.go('/admin/tools/${Uri.encodeComponent(s.latest.id)}'),
+          filters: [
+            YFilter('HTTP', (s) => s.latest.handler.kind == 'HTTP'),
+            YFilter('Bean', (s) => s.latest.handler.kind == 'BEAN'),
+            YFilter('Forwards user token', (s) => s.latest.handler.httpSpec?.authForwarding == 'PRINCIPAL_TOKEN'),
+            YFilter('Asks before running', (s) => s.latest.policy['confirmable'] == true),
+            YFilter('Unused', (s) => (usage[s.latest.id] ?? const []).isEmpty),
           ],
-          DetailRow(
-            label: 'policy',
-            value: t.policy.entries.map((e) => '${e.key}=${e.value}').join('  '),
+          empty: YEmptyState(
+            icon: Icons.build_outlined,
+            title: 'No tools yet',
+            message: 'Tools are the actions a capability can take — an HTTP call to your service, or a Java handler in the backend.',
+            action: FilledButton.icon(onPressed: openNew, icon: const Icon(Icons.add, size: 18), label: const Text('Create your first tool')),
           ),
-        ],
+          columns: [
+            YColumn(
+              label: 'Tool',
+              flex: 3,
+              sortKey: (s) => s.latest.id,
+              cell: (context, s) => YCellStack(
+                primary: s.latest.id,
+                mono: true,
+                secondary: s.latest.handler.kind == 'HTTP'
+                    ? s.latest.handler.httpSpec?.urlTemplate
+                    : s.latest.handler.beanName,
+              ),
+            ),
+            YColumn(
+              label: 'Transport',
+              flex: 2,
+              sortKey: (s) => s.latest.handler.kind,
+              cell: (context, s) => Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                YBadge(s.latest.handler.kind == 'HTTP' ? 'HTTP' : 'Bean', tone: s.latest.handler.kind == 'HTTP' ? YTone.brand : YTone.success),
+                if (s.latest.handler.httpSpec != null) YBadge(s.latest.handler.httpSpec!.method, mono: true),
+              ]),
+            ),
+            YColumn(
+              label: 'Credentials',
+              flex: 2,
+              cell: (context, s) => switch (s.latest.handler.httpSpec?.authForwarding) {
+                'PRINCIPAL_TOKEN' => const YBadge('User’s token', tone: YTone.warning, icon: Icons.person_outline),
+                'SERVICE_TOKEN' => const YBadge('Service token', tone: YTone.info, icon: Icons.vpn_key_outlined),
+                null => const YBadge('In-process'),
+                _ => const YBadge('None'),
+              },
+            ),
+            YColumn(
+              label: 'Behaviour',
+              flex: 2,
+              cell: (context, s) => Wrap(spacing: 4, runSpacing: 4, children: [
+                if (s.latest.policy['confirmable'] == true) const YBadge('Confirms', tone: YTone.warning),
+                if (s.latest.policy['clientInvocable'] == true) const YBadge('Client'),
+                if (s.latest.policy['headless'] == true) const YBadge('Headless', tone: YTone.info),
+                if (s.latest.policy['secretInput'] == true) const YBadge('Secret'),
+              ]),
+            ),
+            YColumn(
+              label: 'Version',
+              width: 110,
+              sortKey: (s) => s.latest.version,
+              cell: (context, s) => YCellStack(
+                primary: 'v${s.latest.version}',
+                mono: true,
+                secondary: s.versions.length == 1 ? null : '${s.versions.length} versions',
+              ),
+            ),
+            YColumn(
+              label: 'Used by',
+              flex: 2,
+              sortKey: (s) => (usage[s.latest.id] ?? const []).length,
+              cell: (context, s) {
+                final caps = usage[s.latest.id] ?? const [];
+                return Text(
+                  caps.isEmpty ? 'Not used yet' : caps.length == 1 ? caps.first : '${caps.length} capabilities',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: caps.isEmpty ? Theme.of(context).colorScheme.onSurfaceVariant : null),
+                );
+              },
+            ),
+            YColumn(
+              label: 'Updated',
+              width: 120,
+              sortKey: (s) => s.latest.createdAt ?? '',
+              cell: (context, s) {
+                final isFresh = fresh.contains(s.latest.id);
+                return Text(
+                  isFresh ? 'Just now' : formatRelativeIso(s.latest.createdAt),
+                  style: TextStyle(
+                    fontWeight: isFresh ? FontWeight.w600 : null,
+                    color: isFresh ? Theme.of(context).colorScheme.primary : null,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

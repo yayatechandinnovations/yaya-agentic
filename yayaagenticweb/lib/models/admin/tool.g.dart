@@ -27,6 +27,15 @@ _$HttpResponseDtoImpl _$$HttpResponseDtoImplFromJson(
         (k, e) => MapEntry(k, e as String),
       ) ??
       const <String, String>{},
+  mediaOutputs: (json['mediaOutputs'] as Map<String, dynamic>?)?.map(
+    (k, e) => MapEntry(k, e as String),
+  ),
+  tableOutputs: (json['tableOutputs'] as Map<String, dynamic>?)?.map(
+    (k, e) => MapEntry(k, e as String),
+  ),
+  cardFields: (json['cardFields'] as List<dynamic>?)
+      ?.map((e) => Map<String, String>.from(e as Map))
+      .toList(),
 );
 
 Map<String, dynamic> _$$HttpResponseDtoImplToJson(
@@ -34,6 +43,9 @@ Map<String, dynamic> _$$HttpResponseDtoImplToJson(
 ) => <String, dynamic>{
   'jsonPath': instance.jsonPath,
   'headerOutputs': instance.headerOutputs,
+  'mediaOutputs': instance.mediaOutputs,
+  'tableOutputs': instance.tableOutputs,
+  'cardFields': instance.cardFields,
 };
 
 _$HttpHandlerDtoImpl _$$HttpHandlerDtoImplFromJson(Map<String, dynamic> json) =>
@@ -93,6 +105,21 @@ _$ToolRequestImpl _$$ToolRequestImplFromJson(
       json['requires'] as Map<String, dynamic>? ?? const <String, dynamic>{},
   handler: ToolHandlerDto.fromJson(json['handler'] as Map<String, dynamic>),
   policy: json['policy'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+  captures:
+      (json['captures'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
+  bindings:
+      (json['bindings'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
+  suggestions:
+      (json['suggestions'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
 );
 
 Map<String, dynamic> _$$ToolRequestImplToJson(_$ToolRequestImpl instance) =>
@@ -104,6 +131,9 @@ Map<String, dynamic> _$$ToolRequestImplToJson(_$ToolRequestImpl instance) =>
       'requires': instance.requires,
       'handler': instance.handler,
       'policy': instance.policy,
+      'captures': instance.captures,
+      'bindings': instance.bindings,
+      'suggestions': instance.suggestions,
     };
 
 _$ToolResponseImpl _$$ToolResponseImplFromJson(
@@ -118,6 +148,21 @@ _$ToolResponseImpl _$$ToolResponseImplFromJson(
       json['requires'] as Map<String, dynamic>? ?? const <String, dynamic>{},
   handler: ToolHandlerDto.fromJson(json['handler'] as Map<String, dynamic>),
   policy: json['policy'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+  captures:
+      (json['captures'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
+  bindings:
+      (json['bindings'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
+  suggestions:
+      (json['suggestions'] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .toList() ??
+      const [],
   status: json['status'] as String?,
   createdAt: json['createdAt'] as String?,
 );
@@ -132,6 +177,9 @@ Map<String, dynamic> _$$ToolResponseImplToJson(_$ToolResponseImpl instance) =>
       'requires': instance.requires,
       'handler': instance.handler,
       'policy': instance.policy,
+      'captures': instance.captures,
+      'bindings': instance.bindings,
+      'suggestions': instance.suggestions,
       'status': instance.status,
       'createdAt': instance.createdAt,
     };

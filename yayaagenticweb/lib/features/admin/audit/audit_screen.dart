@@ -1,11 +1,22 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/audit.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/tokens.dart';
 import '../shared/admin_shared.dart';
 
 class AuditFilter {
@@ -16,19 +27,31 @@ class AuditFilter {
   final int page;
   final int pageSize;
 
-  AuditFilter copyWith({String? decision, String? principal, String? toolId, int? page, int? pageSize}) =>
+  bool get isFiltered => decision != null || principal != null || toolId != null;
+
+  /// Null clears a filter; omit an argument to keep it.
+  AuditFilter copyWith({
+    Object? decision = _keep,
+    Object? principal = _keep,
+    Object? toolId = _keep,
+    int? page,
+    int? pageSize,
+  }) =>
       AuditFilter(
-        decision: decision ?? this.decision,
-        principal: principal ?? this.principal,
-        toolId: toolId ?? this.toolId,
+        decision: identical(decision, _keep) ? this.decision : decision as String?,
+        principal: identical(principal, _keep) ? this.principal : principal as String?,
+        toolId: identical(toolId, _keep) ? this.toolId : toolId as String?,
         page: page ?? this.page,
         pageSize: pageSize ?? this.pageSize,
       );
 }
 
+const _keep = Object();
+
 final auditFilterProvider = StateProvider<AuditFilter>((_) => const AuditFilter());
 
 final auditPageProvider = FutureProvider<AuthzAuditPage>((ref) async {
+  liveRefresh(ref);
   final tenant = ref.watch(currentTenantOrNull);
   if (tenant == null) {
     return const AuthzAuditPage(items: [], page: 0, pageSize: 0, total: 0);
@@ -45,192 +68,253 @@ final auditPageProvider = FutureProvider<AuthzAuditPage>((ref) async {
   );
 });
 
-class AuditScreen extends ConsumerWidget {
+/// Read-only: every Allow and Deny the Authorizer chain produced, with the
+/// policy trace. Decision / principal / tool filter on the server (so paging
+/// stays correct); the table's search narrows the current page.
+class AuditScreen extends ConsumerStatefulWidget {
   const AuditScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AuditScreen> createState() => _AuditScreenState();
+}
+
+class _AuditScreenState extends ConsumerState<AuditScreen> {
+  final _principal = TextEditingController();
+  final _tool = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final f = ref.read(auditFilterProvider);
+    _principal.text = f.principal ?? '';
+    _tool.text = f.toolId ?? '';
+  }
+
+  @override
+  void dispose() {
+    _principal.dispose();
+    _tool.dispose();
+    super.dispose();
+  }
+
+  void _set(AuditFilter f) => ref.read(auditFilterProvider.notifier).state = f;
+
+  void _applyText() {
+    final f = ref.read(auditFilterProvider);
+    final p = _principal.text.trim();
+    final t = _tool.text.trim();
+    _set(f.copyWith(principal: p.isEmpty ? null : p, toolId: t.isEmpty ? null : t, page: 0));
+  }
+
+  void _clear() {
+    _principal.clear();
+    _tool.clear();
+    _set(const AuditFilter());
+  }
+
+  void _open(AuthzAuditEntry e) {
+    showYSheet<void>(context, label: 'Audit entry', builder: (_) => _AuditEntrySheet(entry: e));
+  }
+
+  @override
+  Widget build(BuildContext context) {
     if (ref.watch(currentTenantOrNull) == null) {
       return const TenantScopedEmptyState(resourceLabel: 'AuthZ audit entries');
     }
     final filter = ref.watch(auditFilterProvider);
     final page = ref.watch(auditPageProvider);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('AuthZ audit', style: Theme.of(context).textTheme.headlineSmall),
-              Text('Every Allow + Deny lands here, with the policy trace inline.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.outline)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  SizedBox(
-                    width: 160,
-                    child: DropdownButtonFormField<String?>(
-                      initialValue: filter.decision,
-                      decoration: const InputDecoration(labelText: 'decision'),
-                      items: const [
-                        DropdownMenuItem(value: null, child: Text('— any —')),
-                        DropdownMenuItem(value: 'ALLOW', child: Text('ALLOW')),
-                        DropdownMenuItem(value: 'DENY', child: Text('DENY')),
-                      ],
-                      onChanged: (v) {
-                        ref.read(auditFilterProvider.notifier).state =
-                            filter.copyWith(decision: v, page: 0);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 240,
-                    child: TextField(
-                      decoration: const InputDecoration(labelText: 'principal subject'),
-                      onSubmitted: (v) {
-                        ref.read(auditFilterProvider.notifier).state =
-                            filter.copyWith(principal: v.isEmpty ? null : v, page: 0);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 240,
-                    child: TextField(
-                      decoration: const InputDecoration(labelText: 'tool id'),
-                      onSubmitted: (v) {
-                        ref.read(auditFilterProvider.notifier).state =
-                            filter.copyWith(toolId: v.isEmpty ? null : v, page: 0);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: page.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Text(formatError(e),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              data: (data) {
-                if (data.items.isEmpty) {
-                  return const Center(child: Text('No audit entries match these filters.'));
-                }
-                return Column(
-                  children: [
-                    Expanded(
-                      child: ListView.separated(
-                        itemCount: data.items.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 6),
-                        itemBuilder: (_, i) => _AuditTile(entry: data.items[i]),
-                      ),
-                    ),
-                    const Divider(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('${data.total} matching · page ${data.page + 1}',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        Row(children: [
-                          IconButton(
-                            onPressed: data.page == 0
-                                ? null
-                                : () {
-                                    ref.read(auditFilterProvider.notifier).state =
-                                        filter.copyWith(page: data.page - 1);
-                                  },
-                            icon: const Icon(Icons.chevron_left),
-                          ),
-                          IconButton(
-                            onPressed: (data.page + 1) * data.pageSize >= data.total
-                                ? null
-                                : () {
-                                    ref.read(auditFilterProvider.notifier).state =
-                                        filter.copyWith(page: data.page + 1);
-                                  },
-                            icon: const Icon(Icons.chevron_right),
-                          ),
-                        ]),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
+
+    return YPage(
+      title: 'AuthZ audit',
+      subtitle: 'Every Allow and Deny from the authorization chain, with the reason shown to the user, the audit reason, and the policy trace.',
+      actions: [
+        OutlinedButton.icon(
+          onPressed: () => ref.invalidate(auditPageProvider),
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('Refresh'),
         ),
       ],
-    );
-  }
-}
-
-class _AuditTile extends StatelessWidget {
-  const _AuditTile({required this.entry});
-  final AuthzAuditEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final isAllow = entry.decision == 'ALLOW';
-    final color = isAllow
-        ? Theme.of(context).colorScheme.primaryContainer
-        : Theme.of(context).colorScheme.errorContainer;
-    return Card(
-      child: ExpansionTile(
-        leading: CircleAvatar(
-          backgroundColor: color,
-          child: Text(isAllow ? 'A' : 'D'),
-        ),
-        title: Text(
-          '${entry.decision}  ·  ${entry.toolId ?? "—"}  ·  ${entry.principal ?? "—"}',
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-        ),
-        subtitle: Text(
-          entry.auditReason ?? '(no reason)',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (entry.userReason != null) _row(context, 'user-safe', entry.userReason!),
-                if (entry.auditReason != null) _row(context, 'audit', entry.auditReason!),
-                if (entry.sessionId != null) _row(context, 'session', entry.sessionId!),
-                const SizedBox(height: 8),
-                Text('policy trace',
-                    style: Theme.of(context).textTheme.labelMedium),
-                const SizedBox(height: 4),
-                SelectableText(
-                  const JsonEncoder.withIndent('  ').convert(entry.policyTrace),
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      toolbar: _filters(context, filter),
+      child: LiveAsyncView<AuthzAuditPage>(
+        value: page,
+        what: 'audit entries',
+        onRetry: () => ref.invalidate(auditPageProvider),
+        data: (context, data) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(
+            child: YTable<AuthzAuditEntry>(
+              rows: data.items,
+              noun: 'entries',
+              idOf: (e) => '${e.id}',
+              searchHint: 'Search this page',
+              searchTextOf: (e) =>
+                  '${e.decision} ${e.toolId ?? ''} ${e.principal ?? ''} ${e.sessionId ?? ''} ${e.auditReason ?? ''} ${e.userReason ?? ''}',
+              onRowTap: _open,
+              empty: YEmptyState(
+                icon: Icons.policy_outlined,
+                title: filter.isFiltered ? 'No entries match these filters' : 'No authorization decisions yet',
+                message: filter.isFiltered
+                    ? 'Try a different decision, principal or tool.'
+                    : 'Each tool call and knowledge read is checked by the Authorizer chain; its decisions appear here as conversations run.',
+                action: filter.isFiltered ? OutlinedButton(onPressed: _clear, child: const Text('Clear filters')) : null,
+              ),
+              columns: [
+                YColumn(
+                  label: 'Decision',
+                  width: 130,
+                  sortKey: (e) => e.decision,
+                  cell: (context, e) => e.decision == 'ALLOW'
+                      ? const YBadge('Allow', tone: YTone.success, icon: Icons.check)
+                      : e.decision == 'DENY'
+                          ? const YBadge('Deny', tone: YTone.danger, icon: Icons.block)
+                          : YBadge(e.decision),
+                ),
+                YColumn(
+                  label: 'Tool',
+                  flex: 2,
+                  sortKey: (e) => e.toolId ?? '',
+                  cell: (context, e) => Text(e.toolId ?? '—', overflow: TextOverflow.ellipsis, style: monoStyle(context)),
+                ),
+                YColumn(
+                  label: 'Principal',
+                  flex: 2,
+                  sortKey: (e) => e.principal ?? '',
+                  cell: (context, e) => Text(e.principal ?? 'Anonymous', overflow: TextOverflow.ellipsis, style: monoStyle(context)),
+                ),
+                YColumn(
+                  label: 'Audit reason',
+                  flex: 4,
+                  cell: (context, e) => Text(
+                    e.auditReason ?? 'No reason recorded',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: e.auditReason == null ? Theme.of(context).colorScheme.onSurfaceVariant : null),
+                  ),
+                ),
+                YColumn(
+                  label: 'When',
+                  width: 120,
+                  sortKey: (e) => e.createdAt ?? '',
+                  cell: (context, e) => Tooltip(message: e.createdAt ?? '', child: Text(formatRelativeIso(e.createdAt))),
                 ),
               ],
             ),
           ),
-        ],
+          _pager(context, data, filter),
+        ]),
       ),
     );
   }
 
-  Widget _row(BuildContext context, String label, String value) {
+  Widget _filters(BuildContext context, AuditFilter filter) {
+    Widget decisionChip(String? value, String label) => ChoiceChip(
+          label: Text(label),
+          selected: filter.decision == value,
+          onSelected: (_) => _set(filter.copyWith(decision: value, page: 0)),
+        );
+    Widget field(TextEditingController c, String hint, IconData icon) => ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 260, minWidth: 200),
+          child: TextField(
+            controller: c,
+            style: monoStyle(context),
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _applyText(),
+            decoration: InputDecoration(isDense: true, hintText: hint, prefixIcon: Icon(icon, size: 18)),
+          ),
+        );
+    return Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+      decisionChip(null, 'Any decision'),
+      decisionChip('ALLOW', 'Allow'),
+      decisionChip('DENY', 'Deny'),
+      const SizedBox(width: 8),
+      Semantics(label: 'Filter by principal subject', child: field(_principal, 'Principal subject, e.g. user-123', Icons.person_outline)),
+      Semantics(label: 'Filter by tool ID', child: field(_tool, 'Tool ID, e.g. orders_lookup', Icons.build_outlined)),
+      FilledButton.tonal(onPressed: _applyText, child: const Text('Apply')),
+      if (filter.isFiltered) TextButton(onPressed: _clear, child: const Text('Clear filters')),
+    ]);
+  }
+
+  Widget _pager(BuildContext context, AuthzAuditPage data, AuditFilter filter) {
+    final scheme = Theme.of(context).colorScheme;
+    final size = data.pageSize == 0 ? filter.pageSize : data.pageSize;
+    final pages = data.total == 0 ? 1 : ((data.total + size - 1) ~/ size);
+    final hasNext = (data.page + 1) * size < data.total;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(children: [
+        Text('${data.total} matching · page ${data.page + 1} of $pages',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+        const Spacer(),
+        IconButton(
+          tooltip: 'Previous page',
+          onPressed: data.page == 0 ? null : () => _set(filter.copyWith(page: data.page - 1)),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        IconButton(
+          tooltip: 'Next page',
+          onPressed: hasNext ? () => _set(filter.copyWith(page: data.page + 1)) : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ]),
+    );
+  }
+}
+
+class _AuditEntrySheet extends StatelessWidget {
+  const _AuditEntrySheet({required this.entry});
+  final AuthzAuditEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final trace = const JsonEncoder.withIndent('  ').convert(entry.policyTrace);
+    Widget row(String label, String? value, {bool mono = false}) => Padding(
+          padding: const EdgeInsets.only(bottom: Gap.md),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant)),
+            const SizedBox(height: 2),
+            SelectableText(
+              value ?? '—',
+              style: mono ? monoStyle(context) : TextStyle(fontSize: 14, height: 1.45, color: scheme.onSurface),
+            ),
+          ]),
+        );
+    return YSheetScaffold(
+      title: '${entry.decision == 'ALLOW' ? 'Allowed' : entry.decision == 'DENY' ? 'Denied' : entry.decision} · ${entry.toolId ?? 'no tool'}',
+      subtitle: 'Entry #${entry.id}${entry.createdAt == null ? '' : ' · ${entry.createdAt}'}',
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
         children: [
-          SizedBox(width: 88, child: Text(label, style: Theme.of(context).textTheme.labelMedium)),
-          Expanded(child: SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+          row('Principal', entry.principal, mono: true),
+          row('Tool', entry.toolId, mono: true),
+          row('Session', entry.sessionId, mono: true),
+          row('Turn', entry.turnId, mono: true),
+          row('Reason shown to the user', entry.userReason),
+          row('Audit reason (logged only)', entry.auditReason),
+          const SizedBox(height: Gap.sm),
+          Row(children: [
+            Expanded(
+              child: Text('Policy trace',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            ),
+            TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: trace));
+                showToast(context, 'Policy trace copied');
+              },
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copy'),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: SelectableText(trace, style: monoStyle(context, size: 12.5)),
+          ),
         ],
       ),
     );

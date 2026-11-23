@@ -8,6 +8,7 @@ import '../../api/api_client.dart';
 import '../../app/selected_tenant.dart';
 import '../../models/inspector_snapshot.dart';
 import '../admin/profiles/profiles_screen.dart' show profilesProvider;
+import '../../ui/feedback/toast.dart';
 import '../admin/shared/admin_shared.dart';
 import 'inspector_panel.dart';
 
@@ -140,7 +141,7 @@ class _WhatsAppPlaygroundScreenState
     final tenant = ref.read(currentTenantOrNull);
     if (tenant == null) return;
     if (_profileSlug == null) {
-      showSnack(context, 'Pick a profile first.', error: true);
+      showToast(context, 'Pick a profile first.', error: true);
       return;
     }
     final text = (prefilled ?? _textCtrl.text).trim();

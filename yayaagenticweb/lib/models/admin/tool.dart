@@ -16,6 +16,10 @@ class HttpResponseDto with _$HttpResponseDto {
   const factory HttpResponseDto({
     String? jsonPath,
     @Default(<String, String>{}) Map<String, String> headerOutputs,
+    // Carried through unedited so a republish from the console keeps them.
+    Map<String, String>? mediaOutputs,
+    Map<String, String>? tableOutputs,
+    List<Map<String, String>>? cardFields,
   }) = _HttpResponseDto;
   factory HttpResponseDto.fromJson(Map<String, dynamic> json) =>
       _$HttpResponseDtoFromJson(json);
@@ -56,6 +60,11 @@ class ToolRequest with _$ToolRequest {
     @Default(<String, dynamic>{}) Map<String, dynamic> requires,
     required ToolHandlerDto handler,
     @Default(<String, dynamic>{}) Map<String, dynamic> policy,
+    // Entity-memory hooks and suggestion rules: no editor here yet, but every
+    // save replaces the whole tool, so they must round-trip.
+    @Default([]) List<Map<String, dynamic>> captures,
+    @Default([]) List<Map<String, dynamic>> bindings,
+    @Default([]) List<Map<String, dynamic>> suggestions,
   }) = _ToolRequest;
   factory ToolRequest.fromJson(Map<String, dynamic> json) =>
       _$ToolRequestFromJson(json);
@@ -72,6 +81,9 @@ class ToolResponse with _$ToolResponse {
     @Default(<String, dynamic>{}) Map<String, dynamic> requires,
     required ToolHandlerDto handler,
     @Default(<String, dynamic>{}) Map<String, dynamic> policy,
+    @Default([]) List<Map<String, dynamic>> captures,
+    @Default([]) List<Map<String, dynamic>> bindings,
+    @Default([]) List<Map<String, dynamic>> suggestions,
     String? status,
     String? createdAt,
   }) = _ToolResponse;

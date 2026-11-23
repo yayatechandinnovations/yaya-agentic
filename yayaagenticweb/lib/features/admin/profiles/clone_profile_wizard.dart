@@ -4,8 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../api/admin_api.dart';
 import '../../../models/admin/clone.dart';
 import '../../../models/admin/profile.dart';
-import '../../../models/admin/tenant.dart';
-import '../shared/admin_shared.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/form/y_resource_picker.dart';
+import '../../../ui/tokens.dart';
 import '../tenants/tenants_screen.dart' show tenantsProvider;
 
 /// Multi-step wizard: pick destination + policies → call dry-run → review the
@@ -30,7 +36,7 @@ class CloneProfileWizard extends ConsumerStatefulWidget {
       builder: (_) => Dialog(
         insetPadding: const EdgeInsets.all(24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 720),
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
           child: CloneProfileWizard(sourceTenant: sourceTenant, profile: profile),
         ),
       ),
@@ -42,7 +48,7 @@ class CloneProfileWizard extends ConsumerStatefulWidget {
 }
 
 class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
-  int _step = 0;                                // 0 = config, 1 = plan, 2 = applied
+  int _step = 0; // 0 = configure, 1 = review plan, 2 = applied
 
   String? _destinationTenant;
   final _destinationProfileIdCtrl = TextEditingController();
@@ -50,28 +56,61 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
   String _knowledgeLocationStrategy = 'RETAIN';
   String _personalityPolicy = 'AUTO';
 
+  late final YFormController _form;
   bool _busy = false;
   ClonePlan? _plan;
   String? _appliedJobId;
-  String? _stepError;                           // shown next to the action row
+  String? _stepError;
 
   @override
   void initState() {
     super.initState();
     _destinationProfileIdCtrl.text = widget.profile.id;
+    _form = YFormController(
+      snapshot: () => {
+        'destinationTenant': _destinationTenant,
+        'destinationProfileId': _destinationProfileIdCtrl.text,
+        'conflictPolicy': _conflictPolicy,
+        'knowledgeLocationStrategy': _knowledgeLocationStrategy,
+        'personalityPolicy': _personalityPolicy,
+      },
+      validate: () => {
+        'destinationTenant': _destinationTenant == null ? 'Pick the tenant to clone into.' : null,
+        'destinationProfileId': _destinationProfileIdCtrl.text.trim().isEmpty
+            ? null
+            : Validators.slugId(_destinationProfileIdCtrl.text, 'a profile ID'),
+      },
+      labels: const {
+        'destinationTenant': 'Destination tenant',
+        'destinationProfileId': 'Profile ID at the destination',
+      },
+    );
+    _form.addListener(_onForm);
+  }
+
+  void _onForm() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _form.removeListener(_onForm);
+    _form.dispose();
     _destinationProfileIdCtrl.dispose();
     super.dispose();
   }
 
+  CloneRequest _request({required bool dryRun}) => CloneRequest(
+        destinationTenant: _destinationTenant!,
+        destinationProfileId: _destinationProfileIdCtrl.text.trim().isEmpty ? null : _destinationProfileIdCtrl.text.trim(),
+        conflictPolicy: _conflictPolicy,
+        knowledgeLocationStrategy: _knowledgeLocationStrategy,
+        personalityPolicy: _personalityPolicy,
+        dryRun: dryRun,
+      );
+
   Future<void> _runDryRun() async {
-    if (_destinationTenant == null) {
-      setState(() => _stepError = 'Pick a destination tenant first.');
-      return;
-    }
+    if (!_form.submit()) return;
     setState(() {
       _busy = true;
       _stepError = null;
@@ -82,23 +121,15 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
         sourceTenant: widget.sourceTenant,
         profileId: widget.profile.id,
         version: widget.profile.version,
-        body: CloneRequest(
-          destinationTenant: _destinationTenant!,
-          destinationProfileId: _destinationProfileIdCtrl.text.trim().isEmpty
-              ? null
-              : _destinationProfileIdCtrl.text.trim(),
-          conflictPolicy: _conflictPolicy,
-          knowledgeLocationStrategy: _knowledgeLocationStrategy,
-          personalityPolicy: _personalityPolicy,
-          dryRun: true,
-        ),
+        body: _request(dryRun: true),
       );
+      if (!mounted) return;
       setState(() {
         _plan = res.plan;
         _step = 1;
       });
     } catch (e) {
-      setState(() => _stepError = formatError(e));
+      if (mounted) setState(() => _stepError = ApiErrorInfo.from(e).message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -115,24 +146,17 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
         sourceTenant: widget.sourceTenant,
         profileId: widget.profile.id,
         version: widget.profile.version,
-        body: CloneRequest(
-          destinationTenant: _destinationTenant!,
-          destinationProfileId: _destinationProfileIdCtrl.text.trim().isEmpty
-              ? null
-              : _destinationProfileIdCtrl.text.trim(),
-          conflictPolicy: _conflictPolicy,
-          knowledgeLocationStrategy: _knowledgeLocationStrategy,
-          personalityPolicy: _personalityPolicy,
-          dryRun: false,
-        ),
+        body: _request(dryRun: false),
       );
+      if (!mounted) return;
       setState(() {
         _plan = res.plan;
         _appliedJobId = res.jobId;
         _step = 2;
       });
+      showToast(context, 'Cloned ${widget.profile.id} into ${res.plan.destinationTenant}');
     } catch (e) {
-      setState(() => _stepError = formatError(e));
+      if (mounted) setState(() => _stepError = ApiErrorInfo.from(e).message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -149,13 +173,18 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
             const Icon(Icons.move_to_inbox_outlined),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                'Clone ${widget.profile.id}@${widget.profile.version} '
-                'from ${widget.sourceTenant}',
+              child: Text.rich(
+                TextSpan(children: [
+                  const TextSpan(text: 'Clone '),
+                  TextSpan(text: '${widget.profile.id} v${widget.profile.version}', style: monoStyle(context, size: 16, weight: FontWeight.w600)),
+                  const TextSpan(text: ' from '),
+                  TextSpan(text: widget.sourceTenant, style: monoStyle(context, size: 16, weight: FontWeight.w600)),
+                ]),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
             IconButton(
+              tooltip: 'Close',
               onPressed: () => Navigator.of(context).pop(),
               icon: const Icon(Icons.close),
             ),
@@ -166,8 +195,7 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
           Expanded(child: SingleChildScrollView(child: _stepBody(context))),
           if (_stepError != null) ...[
             const SizedBox(height: 8),
-            Text(_stepError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            YBanner(tone: YBannerTone.error, message: _stepError!),
           ],
           const SizedBox(height: 12),
           _actions(context),
@@ -177,20 +205,16 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
   }
 
   Widget _stepIndicator(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     Widget chip(int idx, String label) {
       final selected = _step == idx;
       final done = _step > idx;
       return Padding(
         padding: const EdgeInsets.only(right: 12),
         child: Chip(
-          avatar: done
-              ? Icon(Icons.check, size: 16, color: theme.colorScheme.primary)
-              : Text('${idx + 1}'),
+          avatar: done ? Icon(Icons.check, size: 16, color: scheme.primary) : Text('${idx + 1}'),
           label: Text(label),
-          backgroundColor: selected
-              ? theme.colorScheme.primaryContainer
-              : theme.colorScheme.surface,
+          backgroundColor: selected ? scheme.primaryContainer : scheme.surface,
         ),
       );
     }
@@ -202,245 +226,171 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
     ]);
   }
 
-  Widget _stepBody(BuildContext context) {
-    return switch (_step) {
-      0 => _configBody(context),
-      1 => _planBody(context),
-      _ => _appliedBody(context),
-    };
-  }
+  Widget _stepBody(BuildContext context) => switch (_step) {
+        0 => _configBody(context),
+        1 => _planBody(context),
+        _ => _appliedBody(context),
+      };
 
   Widget _configBody(BuildContext context) {
     final tenants = ref.watch(tenantsProvider);
-    return tenants.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Text(formatError(e),
-          style: TextStyle(color: Theme.of(context).colorScheme.error)),
-      data: (list) {
-        final eligible = list
-            .where((t) => t.id != widget.sourceTenant && t.status != 'ARCHIVED')
-            .toList();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: _destinationTenant,
-              decoration: const InputDecoration(
-                labelText: 'destination tenant',
-                helperText: 'must exist and not be archived',
-              ),
-              items: eligible
-                  .map((t) => DropdownMenuItem(
-                        value: t.id,
-                        child: Text('${t.id}  (${t.status})'),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _destinationTenant = v),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _destinationProfileIdCtrl,
-              decoration: const InputDecoration(
-                labelText: 'destination profile id',
-                helperText: 'defaults to the source profile id',
-              ),
-            ),
-            const SizedBox(height: 16),
-            _policyPicker(
-              label: 'Conflict policy',
-              value: _conflictPolicy,
-              options: const {
-                'FAIL': 'Abort if any resource id already exists at destination.',
-                'SKIP': 'Reuse the destination\'s existing version.',
-                'NEW_VERSION': 'Bump the destination\'s version stream.',
-              },
-              onChanged: (v) => setState(() => _conflictPolicy = v),
-            ),
-            const SizedBox(height: 12),
-            _policyPicker(
-              label: 'Knowledge location strategy',
-              value: _knowledgeLocationStrategy,
-              options: const {
-                'RETAIN': 'Keep the location string verbatim. Edit before re-ingestion.',
-                'TEMPLATE': 'Substitute the source tenant id → destination in location strings.',
-                'OMIT': 'Clone the row but null out the location.',
-              },
-              onChanged: (v) => setState(() => _knowledgeLocationStrategy = v),
-            ),
-            const SizedBox(height: 12),
-            _policyPicker(
-              label: 'Personality policy',
-              value: _personalityPolicy,
-              options: const {
-                'AUTO': 'Only clone personality for locales the destination doesn\'t already have.',
-                'ALWAYS': 'Always create a new personality version at the destination.',
-                'NEVER': 'Skip personality entirely; require destination to already have one.',
-              },
-              onChanged: (v) => setState(() => _personalityPolicy = v),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _policyPicker({
-    required String label,
-    required String value,
-    required Map<String, String> options,
-    required ValueChanged<String> onChanged,
-  }) {
+    final list = tenants.valueOrNull ?? const [];
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(label, style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 4),
-        ...options.entries.map((e) => RadioListTile<String>(
-              value: e.key,
-              // ignore: deprecated_member_use — RadioGroup arrives later
-              groupValue: value,
-              // ignore: deprecated_member_use
-              onChanged: (v) {
-                if (v != null) onChanged(v);
-              },
-              title: Text(e.key),
-              subtitle: Text(e.value, style: const TextStyle(fontSize: 12)),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-            )),
+        if (_form.summary.isNotEmpty) ...[YErrorSummary(form: _form, action: 'running the dry-run'), const SizedBox(height: Gap.fieldGap)],
+        YResourcePicker(
+          label: 'Destination tenant',
+          form: _form,
+          name: 'destinationTenant',
+          required: true,
+          loading: tenants.isLoading && tenants.valueOrNull == null,
+          value: _destinationTenant,
+          resources: [
+            for (final t in list)
+              if (t.id != widget.sourceTenant)
+                YResource(
+                  id: t.id,
+                  name: t.displayName.isEmpty ? null : t.displayName,
+                  meta: t.status == 'ACTIVE' ? null : t.status.toLowerCase(),
+                  disabledReason: t.status == 'ARCHIVED' ? 'Archived' : null,
+                ),
+          ],
+          helper: 'The tenant must already be registered and not archived.',
+          onChanged: (v) => setState(() => _destinationTenant = v),
+        ),
+        if (tenants.hasError)
+          YBanner(tone: YBannerTone.error, message: 'Couldn’t load tenants: ${ApiErrorInfo.from(tenants.error!).message}'),
+        const SizedBox(height: Gap.fieldGap),
+        YTextField(
+          label: 'Profile ID at the destination',
+          wireKey: 'destinationProfileId',
+          controller: _destinationProfileIdCtrl,
+          form: _form,
+          name: 'destinationProfileId',
+          optional: true,
+          mono: true,
+          hint: widget.profile.id,
+          helper: 'Empty keeps the source profile’s ID.',
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: Gap.fieldGap),
+        YEnumCards<String>(
+          label: 'If a resource already exists there',
+          wireKey: 'conflictPolicy',
+          value: _conflictPolicy,
+          options: const [
+            YEnumOption('FAIL', 'Stop', wire: 'FAIL', description: 'Abort if any resource ID already exists at the destination.'),
+            YEnumOption('SKIP', 'Reuse theirs', wire: 'SKIP', description: 'Keep the destination’s existing version.'),
+            YEnumOption('NEW_VERSION', 'Publish a new version', wire: 'NEW_VERSION', caution: true,
+                description: 'Adds a version on top of the destination’s — its new sessions pick it up.'),
+          ],
+          onChanged: (v) => setState(() => _conflictPolicy = v),
+        ),
+        const SizedBox(height: Gap.fieldGap),
+        YEnumCards<String>(
+          label: 'Knowledge source locations',
+          wireKey: 'knowledgeLocationStrategy',
+          value: _knowledgeLocationStrategy,
+          options: const [
+            YEnumOption('RETAIN', 'Keep as is', wire: 'RETAIN', description: 'Copy the location verbatim. Edit it before re-ingesting.'),
+            YEnumOption('TEMPLATE', 'Swap the tenant ID', wire: 'TEMPLATE', description: 'Replace the source tenant ID with the destination’s in locations.'),
+            YEnumOption('OMIT', 'Leave empty', wire: 'OMIT', description: 'Copy the source but clear its location.'),
+          ],
+          onChanged: (v) => setState(() => _knowledgeLocationStrategy = v),
+        ),
+        const SizedBox(height: Gap.fieldGap),
+        YEnumCards<String>(
+          label: 'Personality',
+          wireKey: 'personalityPolicy',
+          value: _personalityPolicy,
+          options: const [
+            YEnumOption('AUTO', 'Only what’s missing', wire: 'AUTO', description: 'Clone personality only for locales the destination doesn’t have yet.'),
+            YEnumOption('ALWAYS', 'Always', wire: 'ALWAYS', caution: true, description: 'Always create a new personality version at the destination.'),
+            YEnumOption('NEVER', 'Never', wire: 'NEVER', description: 'Skip it; the destination must already have one.'),
+          ],
+          onChanged: (v) => setState(() => _personalityPolicy = v),
+        ),
       ],
     );
   }
 
   Widget _planBody(BuildContext context) {
     final plan = _plan!;
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('${plan.sourceTenant} → ${plan.destinationTenant}',
-            style: theme.textTheme.titleSmall),
-        Text('Destination profile: ${plan.destinationProfileId}',
-            style: theme.textTheme.bodySmall),
+        Text.rich(
+          TextSpan(children: [
+            TextSpan(text: plan.sourceTenant, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
+            const TextSpan(text: '  →  '),
+            TextSpan(text: plan.destinationTenant, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
+          ]),
+        ),
+        const SizedBox(height: 4),
+        Text.rich(TextSpan(children: [
+          TextSpan(text: 'Destination profile: ', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+          TextSpan(text: plan.destinationProfileId, style: monoStyle(context, size: 13)),
+        ])),
         const SizedBox(height: 12),
-        if (plan.warnings.isNotEmpty)
-          Card(
-            color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Warnings',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                          color: theme.colorScheme.error)),
-                  const SizedBox(height: 4),
-                  ...plan.warnings.map((w) => Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Text('• $w', style: const TextStyle(fontSize: 12)),
-                      )),
-                ],
-              ),
-            ),
+        if (plan.warnings.isNotEmpty) ...[
+          YBanner(
+            tone: YBannerTone.warning,
+            title: plan.warnings.length == 1 ? '1 warning' : '${plan.warnings.length} warnings',
+            message: plan.warnings.map((w) => '• $w').join('\n'),
           ),
-        const SizedBox(height: 12),
-        _planResourceGroup(context, 'Profile', [plan.profile]),
-        _planResourceGroup(context, 'Capabilities', plan.capabilities),
-        _planResourceGroup(context, 'Tools', plan.tools),
-        _planKnowledgeGroup(context, plan.knowledgeSources),
-        _planResourceGroup(context, 'Auth bindings', plan.authBindings),
-        _planResourceGroup(context, 'Recording strategies', plan.recordingStrategies),
-        _planPersonalityGroup(context, plan.personality),
+          const SizedBox(height: 12),
+        ],
+        _group(context, 'Profile', [for (final a in [plan.profile]) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Capabilities', [for (final a in plan.capabilities) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Tools', [for (final a in plan.tools) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Knowledge sources', [for (final a in plan.knowledgeSources) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Auth bindings', [for (final a in plan.authBindings) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Recording strategies', [for (final a in plan.recordingStrategies) (a.id, a.action, a.fromVersion, a.toVersion, a.notes)]),
+        _group(context, 'Personality', [for (final a in plan.personality) (a.locale ?? 'all locales', a.action, a.fromVersion, a.toVersion, a.notes)]),
       ],
     );
   }
 
-  Widget _planResourceGroup(BuildContext context, String label,
-      List<ResourceAction> items) {
+  Widget _group(BuildContext context, String label, List<(String, String, int?, int?, List<String>)> items) {
     if (items.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: theme.textTheme.labelLarge),
+          Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          ...items.map((a) => _actionRow(theme, a.id, a.action,
-              a.fromVersion, a.toVersion, a.notes)),
+          for (final (id, action, from, to, notes) in items) _actionRow(context, id, action, from, to, notes),
         ],
       ),
     );
   }
 
-  Widget _planKnowledgeGroup(BuildContext context, List<KnowledgeAction> items) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Knowledge sources', style: theme.textTheme.labelLarge),
-          const SizedBox(height: 4),
-          ...items.map((a) => _actionRow(theme, a.id, a.action,
-              a.fromVersion, a.toVersion, a.notes)),
-        ],
-      ),
-    );
-  }
-
-  Widget _planPersonalityGroup(BuildContext context, List<PersonalityAction> items) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Personality', style: theme.textTheme.labelLarge),
-          const SizedBox(height: 4),
-          ...items.map((a) => _actionRow(theme, a.locale ?? '(all)',
-              a.action, a.fromVersion, a.toVersion, a.notes)),
-        ],
-      ),
-    );
-  }
-
-  Widget _actionRow(ThemeData theme, String id, String action,
-      int? fromVersion, int? toVersion, List<String> notes) {
-    final color = switch (action) {
-      'CREATE_NEW_VERSION' || 'CREATE' => theme.colorScheme.primary,
-      'REUSE_EXISTING' => theme.colorScheme.tertiary,
-      'SKIP' || 'SKIP_DEFAULT_INHERITS' => theme.colorScheme.outline,
-      _ => theme.colorScheme.onSurface,
+  Widget _actionRow(BuildContext context, String id, String action, int? fromVersion, int? toVersion, List<String> notes) {
+    final scheme = Theme.of(context).colorScheme;
+    final tone = switch (action) {
+      'CREATE_NEW_VERSION' || 'CREATE' => YTone.brand,
+      'REUSE_EXISTING' => YTone.info,
+      'SKIP' || 'SKIP_DEFAULT_INHERITS' => YTone.neutral,
+      _ => YTone.neutral,
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Text(id, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            const SizedBox(width: 8),
-            Chip(
-              label: Text(action, style: TextStyle(fontSize: 10, color: color)),
-              visualDensity: VisualDensity.compact,
-              backgroundColor: color.withValues(alpha: 0.1),
-              side: BorderSide(color: color.withValues(alpha: 0.3)),
-            ),
-            if (fromVersion != null && toVersion != null) ...[
-              const SizedBox(width: 6),
-              Text('v$fromVersion → v$toVersion',
-                  style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-            ],
+          Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            Text(id, style: monoStyle(context, size: 13)),
+            YBadge(action, tone: tone, mono: true),
+            if (fromVersion != null && toVersion != null)
+              Text('v$fromVersion → v$toVersion', style: monoStyle(context, size: 12, color: scheme.onSurfaceVariant)),
           ]),
           for (final n in notes)
             Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: Text('· $n',
-                  style: TextStyle(
-                      fontSize: 11, color: theme.colorScheme.outline)),
+              padding: const EdgeInsets.only(left: 12, top: 2),
+              child: Text('· $n', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
             ),
         ],
       ),
@@ -448,117 +398,79 @@ class _CloneProfileWizardState extends ConsumerState<CloneProfileWizard> {
   }
 
   Widget _appliedBody(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final plan = _plan!;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(children: [
-          Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 28),
+          Icon(Icons.check_circle, color: StatusColors.of(context).success, size: 28),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              'Cloned ${widget.profile.id}@${widget.profile.version} → '
-              '${_plan!.destinationTenant} as '
-              '${_plan!.destinationProfileId}@v${_plan!.profile.toVersion}.',
-              style: theme.textTheme.titleSmall,
+            child: Text.rich(
+              TextSpan(children: [
+                const TextSpan(text: 'Cloned into '),
+                TextSpan(text: plan.destinationTenant, style: monoStyle(context, size: 15, weight: FontWeight.w600)),
+                const TextSpan(text: ' as '),
+                TextSpan(text: '${plan.destinationProfileId} v${plan.profile.toVersion ?? '?'}', style: monoStyle(context, size: 15, weight: FontWeight.w600)),
+                const TextSpan(text: '.'),
+              ]),
+              style: Theme.of(context).textTheme.titleSmall,
             ),
           ),
         ]),
+        if (_appliedJobId != null) ...[
+          const SizedBox(height: 12),
+          Row(children: [
+            Text('Audit job ', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+            Flexible(child: SelectableText(_appliedJobId!, style: monoStyle(context, size: 13))),
+          ]),
+        ],
         const SizedBox(height: 12),
-        if (_appliedJobId != null)
-          DetailRow(label: 'audit job id', value: _appliedJobId!, mono: true),
-        const SizedBox(height: 12),
-        Text(
-          'Tool urlTemplates were carried over as-is (paths only). The '
-          'destination tenant\'s host_base_url resolves at dispatch time. '
-          'Knowledge sources land UNINDEXED — operators must re-ingest under '
-          'the destination tenant\'s egress/API keys.',
-          style: theme.textTheme.bodySmall,
+        const YBanner(
+          tone: YBannerTone.info,
+          message: 'Tool request paths were copied as they are; the destination tenant’s base URL applies when they run. '
+              'Knowledge sources arrive unindexed — re-ingest them under the destination tenant’s keys.',
         ),
       ],
     );
   }
 
   Widget _actions(BuildContext context) {
+    Widget busy(IconData icon) => _busy
+        ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+        : Icon(icon, size: 18);
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
+        if (_step == 0)
+          OutlinedButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         if (_step == 1)
-          TextButton(
-            onPressed: _busy ? null : () => setState(() {
-              _step = 0;
-              _plan = null;
-            }),
+          OutlinedButton(
+            onPressed: _busy
+                ? null
+                : () => setState(() {
+                      _step = 0;
+                      _plan = null;
+                    }),
             child: const Text('Back'),
           ),
         const SizedBox(width: 8),
         if (_step == 2)
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Done'),
-          )
+          FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))
         else if (_step == 1)
           FilledButton.icon(
             onPressed: _busy ? null : _apply,
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.play_arrow),
-            label: const Text('Apply'),
+            icon: busy(Icons.play_arrow),
+            label: Text('Clone into ${_destinationTenant ?? 'tenant'}'),
           )
         else
           FilledButton.icon(
             onPressed: _busy ? null : _runDryRun,
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.preview),
-            label: const Text('Dry-run'),
+            icon: busy(Icons.preview),
+            label: const Text('Preview the plan'),
           ),
       ],
-    );
-  }
-}
-
-/// Convenience: a destination-tenant picker that hides the source tenant
-/// and any archived tenants. Exposed standalone so other flows can reuse it.
-class DestinationTenantPicker extends ConsumerWidget {
-  const DestinationTenantPicker({
-    super.key,
-    required this.sourceTenant,
-    required this.value,
-    required this.onChanged,
-  });
-  final String sourceTenant;
-  final String? value;
-  final ValueChanged<String?> onChanged;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final tenants = ref.watch(tenantsProvider);
-    return tenants.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (e, _) => Text(formatError(e),
-          style: TextStyle(color: Theme.of(context).colorScheme.error)),
-      data: (list) {
-        final eligible = list
-            .where((TenantResponse t) =>
-                t.id != sourceTenant && t.status != 'ARCHIVED')
-            .toList();
-        return DropdownButtonFormField<String?>(
-          initialValue: value,
-          decoration: const InputDecoration(labelText: 'destination tenant'),
-          items: eligible
-              .map((t) => DropdownMenuItem<String?>(
-                    value: t.id,
-                    child: Text('${t.id}  (${t.status})'),
-                  ))
-              .toList(),
-          onChanged: onChanged,
-        );
-      },
     );
   }
 }

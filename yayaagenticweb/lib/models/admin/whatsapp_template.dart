@@ -12,6 +12,9 @@ abstract interface class TemplateListRow {
 
   /// Left out of the lists unless «Show hidden» is on. Sending is unaffected.
   bool get hidden;
+
+  /// Why WhatsApp rejected it, when it did.
+  String? get rejectionReason;
 }
 
 class WhatsAppTemplateResponse implements TemplateListRow {
@@ -30,6 +33,10 @@ class WhatsAppTemplateResponse implements TemplateListRow {
     this.approvedAt,
     this.shared = false,
     this.hidden = false,
+    this.headerKind = 'NONE',
+    this.buttons = const [],
+    this.contentSid,
+    this.lastSyncAt,
   });
 
   @override
@@ -46,6 +53,7 @@ class WhatsAppTemplateResponse implements TemplateListRow {
   final int placeholderCount;
   @override
   final String status;
+  @override
   final String? rejectionReason;
   final String? submittedAt;
   final String? approvedAt;
@@ -55,6 +63,16 @@ class WhatsAppTemplateResponse implements TemplateListRow {
 
   @override
   final bool hidden;
+
+  /// `NONE`, `DOCUMENT` or `IMAGE` — set by the integration that declared it.
+  final String headerKind;
+  final List<String> buttons;
+
+  /// The provider's content resource, once submitted.
+  final String? contentSid;
+
+  /// When the review status was last read from WhatsApp.
+  final String? lastSyncAt;
 
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
   bool get isEditable => status == 'DRAFT' || status == 'REJECTED';
@@ -79,6 +97,10 @@ class WhatsAppTemplateResponse implements TemplateListRow {
         approvedAt: json['approvedAt']?.toString(),
         shared: json['shared'] == true,
         hidden: json['hidden'] == true,
+        headerKind: (json['headerKind'] ?? 'NONE') as String,
+        buttons: ((json['buttons'] as List?) ?? const []).map((e) => e.toString()).toList(),
+        contentSid: json['contentSid'] as String?,
+        lastSyncAt: json['lastSyncAt']?.toString(),
       );
 }
 
@@ -152,6 +174,8 @@ class WhatsAppAccountTemplate implements TemplateListRow {
     this.hidden = false,
     this.hiddenAt,
     this.hiddenBy,
+    this.contentSid,
+    this.lastSyncAt,
   });
 
   @override
@@ -170,6 +194,7 @@ class WhatsAppAccountTemplate implements TemplateListRow {
   final String headerKind;
   final List<String> buttons;
   final List<WhatsAppTemplateHolder> holders;
+  @override
   final String? rejectionReason;
   final String? submittedAt;
   final String? approvedAt;
@@ -177,6 +202,8 @@ class WhatsAppAccountTemplate implements TemplateListRow {
   final bool hidden;
   final String? hiddenAt;
   final String? hiddenBy;
+  final String? contentSid;
+  final String? lastSyncAt;
 
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
 
@@ -207,6 +234,8 @@ class WhatsAppAccountTemplate implements TemplateListRow {
         hidden: json['hidden'] == true,
         hiddenAt: json['hiddenAt']?.toString(),
         hiddenBy: json['hiddenBy'] as String?,
+        contentSid: json['contentSid'] as String?,
+        lastSyncAt: json['lastSyncAt']?.toString(),
       );
 }
 
@@ -285,7 +314,7 @@ class TemplateStatusInfo {
                 'Saved locally. Submit when you are ready for WhatsApp review.');
       case 'SUBMITTED':
         return const TemplateStatusInfo(
-            label: 'Awaiting review',
+            label: 'Pending review',
             description:
                 'WhatsApp is reviewing this template. Typically 1–3 business days.');
       case 'APPROVED':

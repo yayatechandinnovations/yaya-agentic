@@ -1,165 +1,146 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/form/unsaved_guard.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/tokens.dart';
 import '../application/members_controller.dart';
 import '../data/members_api.dart';
+import 'role_chip.dart';
 
-/// Invite-a-teammate modal. ADMIN can pick MEMBER or VIEWER; OWNERs (and
-/// platform admins) can additionally pick ADMIN. Promoting someone to
-/// OWNER is intentionally NOT done via invitation — see the membership
-/// service (must promote post-join).
-class InviteMemberDialog extends ConsumerStatefulWidget {
-  const InviteMemberDialog({
-    super.key,
-    required this.workspaceCode,
-    required this.actorRole,
-  });
+final _email = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 
-  final String workspaceCode;
-  /// Caller's role in the workspace. Drives which roles they may grant.
-  final String actorRole;
-
-  @override
-  ConsumerState<InviteMemberDialog> createState() => _InviteMemberDialogState();
+String? validateEmail(String v) {
+  final s = v.trim();
+  if (s.isEmpty) return 'Enter the teammate’s email address.';
+  if (!_email.hasMatch(s)) return 'Enter a full email address, e.g. ana@acme.com';
+  return null;
 }
 
-class _InviteMemberDialogState extends ConsumerState<InviteMemberDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _email = TextEditingController();
+/// Invite a teammate by email. Owner is never granted by invitation — the
+/// backend accepts ADMIN, MEMBER or VIEWER; promote to owner after they join.
+/// Pops with the invited email on success.
+class InviteMemberSheet extends ConsumerStatefulWidget {
+  const InviteMemberSheet({super.key, required this.workspaceCode, required this.workspaceName});
+  final String workspaceCode;
+  final String workspaceName;
+
+  @override
+  ConsumerState<InviteMemberSheet> createState() => _InviteMemberSheetState();
+}
+
+class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
+  static const _roles = ['ADMIN', 'MEMBER', 'VIEWER'];
+  final _emailCtrl = TextEditingController();
   String _role = 'MEMBER';
-  bool _sending = false;
-  String? _error;
+  late final YFormController _form;
+
+  @override
+  void initState() {
+    super.initState();
+    _form = YFormController(
+      snapshot: () => {'email': _emailCtrl.text.trim(), 'role': _role},
+      validate: () => {'email': validateEmail(_emailCtrl.text)},
+      labels: const {'email': 'Email', 'role': 'Role'},
+      draftKey: 'yaya.draft.invitation.${widget.workspaceCode}.new',
+    );
+    _form.addListener(_rebuild);
+    _form.loadDraft().then((d) {
+      if (d == null || !mounted) return;
+      _emailCtrl.text = (d.values['email'] as String?) ?? '';
+      final r = d.values['role'];
+      if (r is String && _roles.contains(r)) _role = r;
+      _form.refresh();
+    });
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
-    _email.dispose();
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    _emailCtrl.dispose();
     super.dispose();
   }
 
-  List<String> _allowedRoles() {
-    // ADMIN can grant ADMIN/MEMBER/VIEWER; OWNER + PLATFORM_ADMIN same set
-    // (OWNER is granted via a separate promotion path, not invitation).
-    return ['ADMIN', 'MEMBER', 'VIEWER'];
-  }
-
-  Future<void> _submit() async {
-    if (_sending) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _sending = true;
-      _error = null;
-    });
+  Future<void> _send() async {
+    if (!_form.submit()) return;
+    _form.saving = true;
     try {
       await ref.read(membersControllerProvider).invite(
             workspaceCode: widget.workspaceCode,
-            email: _email.text.trim(),
+            email: _emailCtrl.text.trim(),
             role: _role,
           );
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
+      _form.saving = false;
+      _form.markClean();
+      if (mounted) Navigator.of(context).pop(_emailCtrl.text.trim());
     } on MembersApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _sending = false;
-        _error = e.message;
-      });
+      _form.saving = false;
+      _form.applyServerError(ApiErrorInfo(message: e.message, code: e.errorCode, status: e.statusCode));
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _sending = false;
-        _error = 'Invite failed: $e';
-      });
+      _form.saving = false;
+      _form.applyServerError(e);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AlertDialog(
-      title: const Text('Invite a teammate'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    return YUnsavedGuard(
+      form: _form,
+      child: YSaveShortcut(
+        onSave: _send,
+        child: YSheetScaffold(
+          title: 'Invite a teammate',
+          subtitle: 'They get an email with a link to join ${widget.workspaceName}. The invitation expires in 7 days.',
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
             children: [
-              TextFormField(
-                controller: _email,
+              if (_form.summary.isNotEmpty || _form.formError != null) ...[
+                YErrorSummary(form: _form, action: 'sending the invitation'),
+                const SizedBox(height: Gap.lg),
+              ],
+              YTextField(
+                label: 'Email',
+                wireKey: 'email',
+                controller: _emailCtrl,
+                form: _form,
+                name: 'email',
+                required: true,
                 autofocus: true,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  hintText: 'teammate@example.com',
-                ),
-                validator: (v) {
-                  final s = v?.trim() ?? '';
-                  if (s.isEmpty) return 'Required';
-                  if (!s.contains('@') || !s.contains('.')) return 'Invalid email';
-                  return null;
-                },
+                hint: 'e.g. ana@acme.com',
+                onSubmitted: (_) => _send(),
               ),
-              const SizedBox(height: 12),
-              Text('Role', style: theme.textTheme.labelLarge),
-              const SizedBox(height: 4),
-              for (final role in _allowedRoles())
-                RadioListTile<String>(
-                  value: role,
-                  // groupValue/onChanged are the available API in this
-                  // Flutter channel; RadioGroup is post-3.32 only.
-                  // ignore: deprecated_member_use
-                  groupValue: _role,
-                  // ignore: deprecated_member_use
-                  onChanged: (v) => setState(() => _role = v ?? _role),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(role),
-                  subtitle: Text(_helpFor(role),
-                      style: theme.textTheme.bodySmall),
-                ),
-              const SizedBox(height: 4),
-              Text(
-                'The invitation expires in 7 days.',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.outline),
+              const SizedBox(height: Gap.fieldGap),
+              YEnumCards<String>(
+                label: 'Role',
+                wireKey: 'role',
+                form: _form,
+                name: 'role',
+                required: true,
+                value: _role,
+                options: roleOptions(_roles),
+                helper: 'To make someone an owner, invite them first, then change their role once they’ve joined.',
+                onChanged: (r) => setState(() => _role = r),
               ),
-              if (_error != null) const SizedBox(height: 12),
-              if (_error != null)
-                Text(_error!,
-                    style: TextStyle(color: theme.colorScheme.error)),
             ],
+          ),
+          footer: YActionBar(
+            form: _form,
+            primaryLabel: 'Send invitation',
+            onPrimary: _send,
+            onCancel: () => closeYSheet(context),
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _sending ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _sending ? null : _submit,
-          child: _sending
-              ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Send invitation'),
-        ),
-      ],
     );
-  }
-
-  String _helpFor(String role) {
-    switch (role) {
-      case 'ADMIN':
-        return 'Can manage members, secrets, and bindings.';
-      case 'MEMBER':
-        return 'Can build profiles, capabilities, and tools.';
-      case 'VIEWER':
-        return 'Read-only.';
-      default:
-        return '';
-    }
   }
 }

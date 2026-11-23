@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../models/admin/api_key.dart';
 import '../data/api_keys_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 
 export 'api_key_roles.dart' show roleTier, roleAtLeast, mintableRoles;
 
@@ -10,6 +12,7 @@ export 'api_key_roles.dart' show roleTier, roleAtLeast, mintableRoles;
 /// mutation via [ApiKeysController].
 final apiKeysProvider =
     FutureProvider.family<List<ApiKey>, String>((ref, workspaceCode) async {
+  liveResource(ref, AdminResourceKind.apiKey);
   final api = await ref.watch(apiKeysApiProvider.future);
   return api.list(workspaceCode);
 });
@@ -17,6 +20,7 @@ final apiKeysProvider =
 /// Recent audit events for one key. Keyed by (workspaceCode, keyId).
 final apiKeyAuditProvider = FutureProvider.family<List<ApiKeyAuditEvent>,
     (String, String)>((ref, key) async {
+  liveResource(ref, AdminResourceKind.apiKey);
   final api = await ref.watch(apiKeysApiProvider.future);
   return api.audit(key.$1, key.$2);
 });

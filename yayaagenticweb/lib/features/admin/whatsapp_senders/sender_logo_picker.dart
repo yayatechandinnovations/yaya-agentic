@@ -7,7 +7,8 @@ import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../chats/chats_admin_screen.dart' show resolveLogoUrl;
 import '../chats/web_image_picker.dart';
-import '../shared/admin_shared.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/form/y_fields.dart';
 
 /// Optional WhatsApp profile photo for a sender. The image is uploaded to the
 /// platform, which hosts it for Twilio to fetch at registration, and previewed
@@ -25,6 +26,9 @@ class SenderLogoPicker extends ConsumerStatefulWidget {
 class _SenderLogoPickerState extends ConsumerState<SenderLogoPicker> {
   bool _busy = false;
 
+  /// A rejected pick belongs next to the picker, not in a vanishing toast.
+  String? _error;
+
   // WhatsApp takes PNG or JPEG only; Meta's minimum is 192×192.
   static const _allowed = {'image/png', 'image/jpeg'};
   static const _maxBytes = 2 * 1024 * 1024; // keep in sync with ChatLogoService
@@ -36,22 +40,23 @@ class _SenderLogoPickerState extends ConsumerState<SenderLogoPicker> {
     final picked = await pickImageFromBrowser();
     if (picked == null) return;
     if (!_allowed.contains(picked.contentType)) {
-      if (mounted) showSnack(context, 'Pick a PNG or JPEG image.', error: true);
+      if (mounted) setState(() => _error = 'Pick a PNG or JPEG image.');
       return;
     }
     if (picked.bytes.length > _maxBytes) {
-      if (mounted) showSnack(context, 'The photo must be under 2 MB. Try a smaller image.', error: true);
+      if (mounted) setState(() => _error = 'The photo must be under 2 MB. Try a smaller image.');
       return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final image = await decodeImageFromList(picked.bytes);
       final tooSmall = image.width < _minSide || image.height < _minSide;
       image.dispose();
       if (tooSmall) {
-        if (mounted) {
-          showSnack(context, 'The photo must be at least $_minSide×$_minSide pixels.', error: true);
-        }
+        if (mounted) setState(() => _error = 'The photo must be at least $_minSide×$_minSide pixels.');
         return;
       }
       final api = await ref.read(adminApiProvider.future);
@@ -59,7 +64,7 @@ class _SenderLogoPickerState extends ConsumerState<SenderLogoPicker> {
           tenant, picked.contentType, base64Encode(picked.bytes));
       widget.onChanged(url);
     } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
+      if (mounted) setState(() => _error = ApiErrorInfo.from(e).message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -69,55 +74,53 @@ class _SenderLogoPickerState extends ConsumerState<SenderLogoPicker> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final hasLogo = widget.url.isNotEmpty;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        CircleAvatar(
-          radius: 28,
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          child: ClipOval(
-            child: hasLogo
-                ? Image.network(resolveLogoUrl(ref, widget.url),
-                    width: 56, height: 56, fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const Icon(Icons.broken_image_outlined))
-                : const Icon(Icons.storefront_outlined),
+    return YFieldShell(
+      label: 'Profile photo',
+      wireKey: 'businessProfile.logoUrl',
+      optional: true,
+      helper: 'Shown as the WhatsApp profile picture. A square PNG or JPEG, at least 192×192 px '
+          '(640×640 recommended), under 2 MB.',
+      error: _error,
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            child: ClipOval(
+              child: hasLogo
+                  ? Image.network(resolveLogoUrl(ref, widget.url),
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Icon(Icons.broken_image_outlined, color: theme.colorScheme.onSurfaceVariant))
+                  : Icon(Icons.storefront_outlined, color: theme.colorScheme.onSurfaceVariant),
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(width: 12),
+          Wrap(
+            spacing: 8,
             children: [
-              Text('Profile photo', style: theme.textTheme.labelLarge),
-              const SizedBox(height: 2),
-              Text(
-                'Optional. Shown as the WhatsApp profile picture. A square PNG or JPEG, '
-                'at least 192×192 px (640×640 recommended), under 2 MB.',
-                style: theme.textTheme.bodySmall,
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _pick,
+                icon: _busy
+                    ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.upload, size: 18),
+                label: Text(hasLogo ? 'Replace photo' : 'Upload photo'),
               ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _pick,
-                    icon: _busy
-                        ? const SizedBox.square(
-                            dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.upload, size: 18),
-                    label: Text(hasLogo ? 'Replace photo' : 'Upload photo'),
-                  ),
-                  if (hasLogo)
-                    TextButton(
-                      onPressed: _busy ? null : () => widget.onChanged(''),
-                      child: const Text('Remove'),
-                    ),
-                ],
-              ),
+              if (hasLogo)
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () {
+                          setState(() => _error = null);
+                          widget.onChanged('');
+                        },
+                  child: const Text('Remove'),
+                ),
             ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

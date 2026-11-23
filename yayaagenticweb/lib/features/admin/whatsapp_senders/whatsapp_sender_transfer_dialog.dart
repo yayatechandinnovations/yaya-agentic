@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../models/admin/profile.dart';
 import '../../../models/admin/whatsapp_sender.dart';
-import '../shared/admin_shared.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/tokens.dart';
 import '../tenants/tenants_screen.dart' show tenantsProvider;
 
 /// The assistants of a workspace, one entry per profile at its latest version.
 final _destinationProfilesProvider =
     FutureProvider.family<List<ProfileResponse>, String>((ref, tenant) async {
+  liveResource(ref, AdminResourceKind.profile);
   final api = await ref.watch(adminApiProvider.future);
   final latest = <String, ProfileResponse>{};
   for (final p in await api.listProfiles(tenant: tenant)) {
@@ -74,7 +80,7 @@ class _WhatsAppSenderTransferDialogState
         Navigator.pop(context, result);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = formatError(e));
+      if (mounted) setState(() => _error = ApiErrorInfo.from(e).message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -93,69 +99,73 @@ class _WhatsAppSenderTransferDialogState
     );
 
     return AlertDialog(
-      title: Text('Move ${widget.sender.phoneE164} to another workspace'),
+      title: Text('Move ${widget.sender.phoneE164} to another workspace?'),
       content: SizedBox(
-        width: 520,
+        width: 560,
         child: SingleChildScrollView(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'The number keeps its WhatsApp registration and approved name — no new '
-                'code and no new review. Its conversation history stays in this workspace.',
+              Text(
+                'The number keeps its WhatsApp registration and approved name — no new code and no new review. '
+                'Its conversation history stays in this workspace, and this workspace stops answering it.',
+                style: TextStyle(fontSize: 14, height: 1.5, color: theme.colorScheme.onSurface),
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                key: const Key('transfer-destination'),
-                initialValue: _destination,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Destination workspace',
-                  border: OutlineInputBorder(),
+              const SizedBox(height: Gap.lg),
+              YFieldShell(
+                label: 'Destination workspace',
+                wireKey: 'destinationTenant',
+                required: true,
+                helper: tenants.isLoading ? 'Loading workspaces…' : 'Only other active workspaces are listed.',
+                child: DropdownButtonFormField<String>(
+                  key: const Key('transfer-destination'),
+                  initialValue: _destination,
+                  isExpanded: true,
+                  hint: const Text('Choose a workspace'),
+                  items: [
+                    for (final t in destinations)
+                      DropdownMenuItem(
+                        value: t.id,
+                        child: Text('${t.displayName} (${t.id})', overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (v) => _change(() {
+                            _destination = v;
+                            _profileId = null;
+                          }),
                 ),
-                items: [
-                  for (final t in destinations)
-                    DropdownMenuItem(
-                      value: t.id,
-                      child: Text('${t.displayName} (${t.id})', overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: _busy
-                    ? null
-                    : (v) => _change(() {
-                          _destination = v;
-                          _profileId = null;
-                        }),
               ),
-              if (tenants.isLoading)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: LinearProgressIndicator(),
-                ),
-              const SizedBox(height: 12),
-              if (_destination != null) _assistantField(_destination!),
-              CheckboxListTile(
+              const SizedBox(height: Gap.fieldGap),
+              if (_destination != null) ...[
+                _assistantField(_destination!),
+                const SizedBox(height: Gap.fieldGap),
+              ],
+              KeyedSubtree(
                 key: const Key('transfer-copy-opt-outs'),
-                contentPadding: EdgeInsets.zero,
-                value: _copyOptOuts,
-                onChanged: _busy ? null : (v) => _change(() => _copyOptOuts = v ?? true),
-                title: const Text('Keep opt-outs'),
-                subtitle: const Text(
-                    'People who opted out of this number won\'t hear from it in the new '
-                    'workspace either.'),
+                child: YSwitchField(
+                  title: 'Keep opt-outs',
+                  wireKey: 'copyOptOuts',
+                  description: 'People who opted out of this number won’t hear from it in the new workspace either.',
+                  value: _copyOptOuts,
+                  onChanged: (v) {
+                    if (!_busy) _change(() => _copyOptOuts = v);
+                  },
+                ),
               ),
               if (_plan != null) _PlanSummary(plan: _plan!),
               if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                const SizedBox(height: Gap.md),
+                YBanner(tone: YBannerTone.error, title: 'Couldn’t move the number.', message: _error!),
               ],
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
           onPressed: _busy ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
@@ -168,7 +178,7 @@ class _WhatsAppSenderTransferDialogState
           FilledButton(
             key: const Key('transfer-apply'),
             onPressed: _busy ? null : () => _run(dryRun: false),
-            child: const Text('Move number'),
+            child: Text('Move ${widget.sender.phoneE164}'),
           ),
       ],
     );
@@ -176,32 +186,29 @@ class _WhatsAppSenderTransferDialogState
 
   Widget _assistantField(String destination) {
     final profiles = ref.watch(_destinationProfilesProvider(destination));
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: profiles.when(
-        loading: () => const LinearProgressIndicator(),
-        error: (e, _) => Text(formatError(e),
-            style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        data: (list) => DropdownButtonFormField<String?>(
-          key: Key('transfer-assistant-$destination'),
-          initialValue: _profileId,
-          isExpanded: true,
-          decoration: const InputDecoration(
-            labelText: 'Assistant that answers it',
-            helperText: 'You can also add a route later in the destination workspace',
-            border: OutlineInputBorder(),
-          ),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('None yet')),
-            for (final p in list)
-              DropdownMenuItem<String?>(
-                value: p.id,
-                child: Text(p.displayName, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChanged: _busy ? null : (v) => _change(() => _profileId = v),
-        ),
-      ),
+    return YFieldShell(
+      label: 'Assistant that answers it',
+      wireKey: 'profileId',
+      optional: true,
+      helper: profiles.hasError
+          ? 'Couldn’t load that workspace’s assistants: ${ApiErrorInfo.from(profiles.error!).message}'
+          : 'You can also add a route later in the destination workspace.',
+      child: profiles.isLoading && !profiles.hasValue
+          ? const Padding(padding: EdgeInsets.symmetric(vertical: 18), child: LinearProgressIndicator())
+          : DropdownButtonFormField<String?>(
+              key: Key('transfer-assistant-$destination'),
+              initialValue: _profileId,
+              isExpanded: true,
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('None yet')),
+                for (final p in profiles.valueOrNull ?? const <ProfileResponse>[])
+                  DropdownMenuItem<String?>(
+                    value: p.id,
+                    child: Text(p.displayName, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: _busy ? null : (v) => _change(() => _profileId = v),
+            ),
     );
   }
 }
@@ -232,18 +239,18 @@ class _PlanSummary extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        color: theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('What happens', style: theme.textTheme.labelLarge),
+          Text('What happens', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface)),
           const SizedBox(height: 6),
           for (final line in lines)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
-              child: Text('• $line', style: const TextStyle(fontSize: 13)),
+              child: Text('• $line', style: TextStyle(fontSize: 13, height: 1.45, color: theme.colorScheme.onSurface)),
             ),
           for (final w in plan.warnings)
             Padding(
@@ -251,9 +258,9 @@ class _PlanSummary extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.warning_amber_rounded, size: 16, color: theme.colorScheme.error),
+                  Icon(Icons.warning_amber_rounded, size: 16, color: StatusColors.of(context).onWarningContainer),
                   const SizedBox(width: 6),
-                  Expanded(child: Text(w, style: const TextStyle(fontSize: 13))),
+                  Expanded(child: Text(w, style: TextStyle(fontSize: 13, height: 1.45, color: theme.colorScheme.onSurface))),
                 ],
               ),
             ),

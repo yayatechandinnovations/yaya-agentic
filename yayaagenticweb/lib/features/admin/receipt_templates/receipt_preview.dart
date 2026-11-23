@@ -84,6 +84,9 @@ class ReceiptPreview extends StatelessWidget {
   final int paperCols;
   final Map<String, dynamic> data;
 
+  // Thermal paper is white and its ink near-black whatever the console theme,
+  // so the preview keeps its own fixed palette (both pairs ≥ 4.5:1).
+  // Fine print renders at 12px here, a little larger than the printed roll.
   static const _ink = Color(0xFF262626);
   static const _mutedInk = Color(0xFF5A5A5A);
 
@@ -219,7 +222,7 @@ class ReceiptPreview extends StatelessWidget {
               ),
               alignment: Alignment.center,
               child: const Text('LOGO',
-                  style: TextStyle(fontSize: 9, color: _mutedInk)),
+                  style: TextStyle(fontSize: 12, color: _mutedInk)),
             ),
           if (title.isNotEmpty)
             Text(title,
@@ -230,7 +233,7 @@ class ReceiptPreview extends StatelessWidget {
           if (subtitle.isNotEmpty)
             Text(subtitle,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10, color: _mutedInk)),
+                style: const TextStyle(fontSize: 12, color: _mutedInk)),
         ],
       ),
     );
@@ -256,11 +259,11 @@ class ReceiptPreview extends StatelessWidget {
       children: [
         Flexible(
             child: Text(_bind(el['left'], scope),
-                style: const TextStyle(fontSize: 11))),
+                style: const TextStyle(fontSize: 12))),
         Flexible(
             child: Text(_bind(el['right'], scope),
                 textAlign: TextAlign.right,
-                style: const TextStyle(fontSize: 11))),
+                style: const TextStyle(fontSize: 12))),
       ],
     );
   }
@@ -338,7 +341,7 @@ class ReceiptPreview extends StatelessWidget {
       if (subtitle.isNotEmpty) {
         children.add(Text(subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 10, color: _mutedInk)));
+            style: const TextStyle(fontSize: 12, color: _mutedInk)));
       }
       final inner = el['elements'];
       if (inner is List) {
@@ -477,7 +480,7 @@ class ReceiptPreview extends StatelessWidget {
         children: [
           if (label.isNotEmpty)
             Text(label,
-                style: const TextStyle(fontSize: 10, color: _mutedInk)),
+                style: const TextStyle(fontSize: 12, color: _mutedInk)),
           Text(_bind(el['value'], scope),
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -503,11 +506,11 @@ class ReceiptPreview extends StatelessWidget {
             alignment: Alignment.center,
             child: Text(symbology,
                 style: const TextStyle(
-                    fontSize: 11, letterSpacing: 4, color: _mutedInk)),
+                    fontSize: 12, letterSpacing: 4, color: _mutedInk)),
           ),
           if (value.isNotEmpty)
             Text(value,
-                style: const TextStyle(fontSize: 10, letterSpacing: 2)),
+                style: const TextStyle(fontSize: 12, letterSpacing: 2)),
         ],
       ),
     );
@@ -530,7 +533,7 @@ class ReceiptPreview extends StatelessWidget {
           if (value.isNotEmpty)
             Text(value,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 9, color: _mutedInk)),
+                style: const TextStyle(fontSize: 12, color: _mutedInk)),
         ],
       ),
     );
@@ -548,7 +551,7 @@ class ReceiptPreview extends StatelessWidget {
           for (final line in lines)
             Text(line,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10, color: _mutedInk)),
+                style: const TextStyle(fontSize: 12, color: _mutedInk)),
         ],
       ),
     );
@@ -662,9 +665,9 @@ class ReceiptPreview extends StatelessWidget {
     var style = base;
     final size = el['size'];
     if (size is num) {
-      style = style.copyWith(fontSize: (10 + size * 2).toDouble());
+      style = style.copyWith(fontSize: (10 + size * 2).clamp(12, 24).toDouble());
     } else if (size == 'small') {
-      style = style.copyWith(fontSize: 10);
+      style = style.copyWith(fontSize: 12);
     } else if (size == 'large') {
       style = style.copyWith(fontSize: 16);
     }

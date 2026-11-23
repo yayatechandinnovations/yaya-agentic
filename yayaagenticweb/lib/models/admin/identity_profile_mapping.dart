@@ -9,7 +9,7 @@ class IdentityProfileMappingResponse {
     required this.claimName,
     required this.claimValue,
     required this.profileId,
-    this.profileVersion = 1,
+    this.profileVersion,
     this.priority = 100,
     this.createdAt,
   });
@@ -19,7 +19,9 @@ class IdentityProfileMappingResponse {
   final String claimName;
   final String claimValue;
   final String profileId;
-  final int profileVersion;
+
+  /// Null = unpinned: the profile's latest published version at session start.
+  final int? profileVersion;
   final int priority;
   final String? createdAt;
 
@@ -30,7 +32,7 @@ class IdentityProfileMappingResponse {
         claimName: (json['claimName'] ?? '') as String,
         claimValue: (json['claimValue'] ?? '') as String,
         profileId: (json['profileId'] ?? '') as String,
-        profileVersion: (json['profileVersion'] as num?)?.toInt() ?? 1,
+        profileVersion: (json['profileVersion'] as num?)?.toInt(),
         priority: (json['priority'] as num?)?.toInt() ?? 100,
         createdAt: json['createdAt']?.toString(),
       );
@@ -41,14 +43,16 @@ class IdentityProfileMappingRequest {
     required this.claimName,
     required this.claimValue,
     required this.profileId,
-    this.profileVersion = 1,
+    this.profileVersion,
     this.priority = 100,
   });
 
   final String claimName;
   final String claimValue;
   final String profileId;
-  final int profileVersion;
+
+  /// Null = unpinned (follows new publishes); sent as null, never coerced to 1.
+  final int? profileVersion;
   final int priority;
 
   Map<String, dynamic> toJson() => <String, dynamic>{

@@ -1,0 +1,1 @@
+void setBeforeUnloadPrompt(bool enabled) {}

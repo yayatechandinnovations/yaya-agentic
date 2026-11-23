@@ -192,7 +192,12 @@ HttpResponseDto _$HttpResponseDtoFromJson(Map<String, dynamic> json) {
 /// @nodoc
 mixin _$HttpResponseDto {
   String? get jsonPath => throw _privateConstructorUsedError;
-  Map<String, String> get headerOutputs => throw _privateConstructorUsedError;
+  Map<String, String> get headerOutputs =>
+      throw _privateConstructorUsedError; // Carried through unedited so a republish from the console keeps them.
+  Map<String, String>? get mediaOutputs => throw _privateConstructorUsedError;
+  Map<String, String>? get tableOutputs => throw _privateConstructorUsedError;
+  List<Map<String, String>>? get cardFields =>
+      throw _privateConstructorUsedError;
 
   /// Serializes this HttpResponseDto to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -211,7 +216,13 @@ abstract class $HttpResponseDtoCopyWith<$Res> {
     $Res Function(HttpResponseDto) then,
   ) = _$HttpResponseDtoCopyWithImpl<$Res, HttpResponseDto>;
   @useResult
-  $Res call({String? jsonPath, Map<String, String> headerOutputs});
+  $Res call({
+    String? jsonPath,
+    Map<String, String> headerOutputs,
+    Map<String, String>? mediaOutputs,
+    Map<String, String>? tableOutputs,
+    List<Map<String, String>>? cardFields,
+  });
 }
 
 /// @nodoc
@@ -228,7 +239,13 @@ class _$HttpResponseDtoCopyWithImpl<$Res, $Val extends HttpResponseDto>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? jsonPath = freezed, Object? headerOutputs = null}) {
+  $Res call({
+    Object? jsonPath = freezed,
+    Object? headerOutputs = null,
+    Object? mediaOutputs = freezed,
+    Object? tableOutputs = freezed,
+    Object? cardFields = freezed,
+  }) {
     return _then(
       _value.copyWith(
             jsonPath: freezed == jsonPath
@@ -239,6 +256,18 @@ class _$HttpResponseDtoCopyWithImpl<$Res, $Val extends HttpResponseDto>
                 ? _value.headerOutputs
                 : headerOutputs // ignore: cast_nullable_to_non_nullable
                       as Map<String, String>,
+            mediaOutputs: freezed == mediaOutputs
+                ? _value.mediaOutputs
+                : mediaOutputs // ignore: cast_nullable_to_non_nullable
+                      as Map<String, String>?,
+            tableOutputs: freezed == tableOutputs
+                ? _value.tableOutputs
+                : tableOutputs // ignore: cast_nullable_to_non_nullable
+                      as Map<String, String>?,
+            cardFields: freezed == cardFields
+                ? _value.cardFields
+                : cardFields // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, String>>?,
           )
           as $Val,
     );
@@ -254,7 +283,13 @@ abstract class _$$HttpResponseDtoImplCopyWith<$Res>
   ) = __$$HttpResponseDtoImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String? jsonPath, Map<String, String> headerOutputs});
+  $Res call({
+    String? jsonPath,
+    Map<String, String> headerOutputs,
+    Map<String, String>? mediaOutputs,
+    Map<String, String>? tableOutputs,
+    List<Map<String, String>>? cardFields,
+  });
 }
 
 /// @nodoc
@@ -270,7 +305,13 @@ class __$$HttpResponseDtoImplCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
-  $Res call({Object? jsonPath = freezed, Object? headerOutputs = null}) {
+  $Res call({
+    Object? jsonPath = freezed,
+    Object? headerOutputs = null,
+    Object? mediaOutputs = freezed,
+    Object? tableOutputs = freezed,
+    Object? cardFields = freezed,
+  }) {
     return _then(
       _$HttpResponseDtoImpl(
         jsonPath: freezed == jsonPath
@@ -281,6 +322,18 @@ class __$$HttpResponseDtoImplCopyWithImpl<$Res>
             ? _value._headerOutputs
             : headerOutputs // ignore: cast_nullable_to_non_nullable
                   as Map<String, String>,
+        mediaOutputs: freezed == mediaOutputs
+            ? _value._mediaOutputs
+            : mediaOutputs // ignore: cast_nullable_to_non_nullable
+                  as Map<String, String>?,
+        tableOutputs: freezed == tableOutputs
+            ? _value._tableOutputs
+            : tableOutputs // ignore: cast_nullable_to_non_nullable
+                  as Map<String, String>?,
+        cardFields: freezed == cardFields
+            ? _value._cardFields
+            : cardFields // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, String>>?,
       ),
     );
   }
@@ -292,7 +345,13 @@ class _$HttpResponseDtoImpl implements _HttpResponseDto {
   const _$HttpResponseDtoImpl({
     this.jsonPath,
     final Map<String, String> headerOutputs = const <String, String>{},
-  }) : _headerOutputs = headerOutputs;
+    final Map<String, String>? mediaOutputs,
+    final Map<String, String>? tableOutputs,
+    final List<Map<String, String>>? cardFields,
+  }) : _headerOutputs = headerOutputs,
+       _mediaOutputs = mediaOutputs,
+       _tableOutputs = tableOutputs,
+       _cardFields = cardFields;
 
   factory _$HttpResponseDtoImpl.fromJson(Map<String, dynamic> json) =>
       _$$HttpResponseDtoImplFromJson(json);
@@ -308,9 +367,41 @@ class _$HttpResponseDtoImpl implements _HttpResponseDto {
     return EqualUnmodifiableMapView(_headerOutputs);
   }
 
+  // Carried through unedited so a republish from the console keeps them.
+  final Map<String, String>? _mediaOutputs;
+  // Carried through unedited so a republish from the console keeps them.
+  @override
+  Map<String, String>? get mediaOutputs {
+    final value = _mediaOutputs;
+    if (value == null) return null;
+    if (_mediaOutputs is EqualUnmodifiableMapView) return _mediaOutputs;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(value);
+  }
+
+  final Map<String, String>? _tableOutputs;
+  @override
+  Map<String, String>? get tableOutputs {
+    final value = _tableOutputs;
+    if (value == null) return null;
+    if (_tableOutputs is EqualUnmodifiableMapView) return _tableOutputs;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(value);
+  }
+
+  final List<Map<String, String>>? _cardFields;
+  @override
+  List<Map<String, String>>? get cardFields {
+    final value = _cardFields;
+    if (value == null) return null;
+    if (_cardFields is EqualUnmodifiableListView) return _cardFields;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(value);
+  }
+
   @override
   String toString() {
-    return 'HttpResponseDto(jsonPath: $jsonPath, headerOutputs: $headerOutputs)';
+    return 'HttpResponseDto(jsonPath: $jsonPath, headerOutputs: $headerOutputs, mediaOutputs: $mediaOutputs, tableOutputs: $tableOutputs, cardFields: $cardFields)';
   }
 
   @override
@@ -323,6 +414,18 @@ class _$HttpResponseDtoImpl implements _HttpResponseDto {
             const DeepCollectionEquality().equals(
               other._headerOutputs,
               _headerOutputs,
+            ) &&
+            const DeepCollectionEquality().equals(
+              other._mediaOutputs,
+              _mediaOutputs,
+            ) &&
+            const DeepCollectionEquality().equals(
+              other._tableOutputs,
+              _tableOutputs,
+            ) &&
+            const DeepCollectionEquality().equals(
+              other._cardFields,
+              _cardFields,
             ));
   }
 
@@ -332,6 +435,9 @@ class _$HttpResponseDtoImpl implements _HttpResponseDto {
     runtimeType,
     jsonPath,
     const DeepCollectionEquality().hash(_headerOutputs),
+    const DeepCollectionEquality().hash(_mediaOutputs),
+    const DeepCollectionEquality().hash(_tableOutputs),
+    const DeepCollectionEquality().hash(_cardFields),
   );
 
   /// Create a copy of HttpResponseDto
@@ -355,6 +461,9 @@ abstract class _HttpResponseDto implements HttpResponseDto {
   const factory _HttpResponseDto({
     final String? jsonPath,
     final Map<String, String> headerOutputs,
+    final Map<String, String>? mediaOutputs,
+    final Map<String, String>? tableOutputs,
+    final List<Map<String, String>>? cardFields,
   }) = _$HttpResponseDtoImpl;
 
   factory _HttpResponseDto.fromJson(Map<String, dynamic> json) =
@@ -363,7 +472,13 @@ abstract class _HttpResponseDto implements HttpResponseDto {
   @override
   String? get jsonPath;
   @override
-  Map<String, String> get headerOutputs;
+  Map<String, String> get headerOutputs; // Carried through unedited so a republish from the console keeps them.
+  @override
+  Map<String, String>? get mediaOutputs;
+  @override
+  Map<String, String>? get tableOutputs;
+  @override
+  List<Map<String, String>>? get cardFields;
 
   /// Create a copy of HttpResponseDto
   /// with the given fields replaced by the non-null parameter values.
@@ -928,7 +1043,13 @@ mixin _$ToolRequest {
   String get outputSchemaJson => throw _privateConstructorUsedError;
   Map<String, dynamic> get requires => throw _privateConstructorUsedError;
   ToolHandlerDto get handler => throw _privateConstructorUsedError;
-  Map<String, dynamic> get policy => throw _privateConstructorUsedError;
+  Map<String, dynamic> get policy =>
+      throw _privateConstructorUsedError; // Entity-memory hooks and suggestion rules: no editor here yet, but every
+  // save replaces the whole tool, so they must round-trip.
+  List<Map<String, dynamic>> get captures => throw _privateConstructorUsedError;
+  List<Map<String, dynamic>> get bindings => throw _privateConstructorUsedError;
+  List<Map<String, dynamic>> get suggestions =>
+      throw _privateConstructorUsedError;
 
   /// Serializes this ToolRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -955,6 +1076,9 @@ abstract class $ToolRequestCopyWith<$Res> {
     Map<String, dynamic> requires,
     ToolHandlerDto handler,
     Map<String, dynamic> policy,
+    List<Map<String, dynamic>> captures,
+    List<Map<String, dynamic>> bindings,
+    List<Map<String, dynamic>> suggestions,
   });
 
   $ToolHandlerDtoCopyWith<$Res> get handler;
@@ -982,6 +1106,9 @@ class _$ToolRequestCopyWithImpl<$Res, $Val extends ToolRequest>
     Object? requires = null,
     Object? handler = null,
     Object? policy = null,
+    Object? captures = null,
+    Object? bindings = null,
+    Object? suggestions = null,
   }) {
     return _then(
       _value.copyWith(
@@ -1013,6 +1140,18 @@ class _$ToolRequestCopyWithImpl<$Res, $Val extends ToolRequest>
                 ? _value.policy
                 : policy // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
+            captures: null == captures
+                ? _value.captures
+                : captures // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
+            bindings: null == bindings
+                ? _value.bindings
+                : bindings // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
+            suggestions: null == suggestions
+                ? _value.suggestions
+                : suggestions // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
           )
           as $Val,
     );
@@ -1046,6 +1185,9 @@ abstract class _$$ToolRequestImplCopyWith<$Res>
     Map<String, dynamic> requires,
     ToolHandlerDto handler,
     Map<String, dynamic> policy,
+    List<Map<String, dynamic>> captures,
+    List<Map<String, dynamic>> bindings,
+    List<Map<String, dynamic>> suggestions,
   });
 
   @override
@@ -1073,6 +1215,9 @@ class __$$ToolRequestImplCopyWithImpl<$Res>
     Object? requires = null,
     Object? handler = null,
     Object? policy = null,
+    Object? captures = null,
+    Object? bindings = null,
+    Object? suggestions = null,
   }) {
     return _then(
       _$ToolRequestImpl(
@@ -1104,6 +1249,18 @@ class __$$ToolRequestImplCopyWithImpl<$Res>
             ? _value._policy
             : policy // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
+        captures: null == captures
+            ? _value._captures
+            : captures // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
+        bindings: null == bindings
+            ? _value._bindings
+            : bindings // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
+        suggestions: null == suggestions
+            ? _value._suggestions
+            : suggestions // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
       ),
     );
   }
@@ -1120,8 +1277,14 @@ class _$ToolRequestImpl implements _ToolRequest {
     final Map<String, dynamic> requires = const <String, dynamic>{},
     required this.handler,
     final Map<String, dynamic> policy = const <String, dynamic>{},
+    final List<Map<String, dynamic>> captures = const [],
+    final List<Map<String, dynamic>> bindings = const [],
+    final List<Map<String, dynamic>> suggestions = const [],
   }) : _requires = requires,
-       _policy = policy;
+       _policy = policy,
+       _captures = captures,
+       _bindings = bindings,
+       _suggestions = suggestions;
 
   factory _$ToolRequestImpl.fromJson(Map<String, dynamic> json) =>
       _$$ToolRequestImplFromJson(json);
@@ -1154,9 +1317,40 @@ class _$ToolRequestImpl implements _ToolRequest {
     return EqualUnmodifiableMapView(_policy);
   }
 
+  // Entity-memory hooks and suggestion rules: no editor here yet, but every
+  // save replaces the whole tool, so they must round-trip.
+  final List<Map<String, dynamic>> _captures;
+  // Entity-memory hooks and suggestion rules: no editor here yet, but every
+  // save replaces the whole tool, so they must round-trip.
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get captures {
+    if (_captures is EqualUnmodifiableListView) return _captures;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_captures);
+  }
+
+  final List<Map<String, dynamic>> _bindings;
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get bindings {
+    if (_bindings is EqualUnmodifiableListView) return _bindings;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_bindings);
+  }
+
+  final List<Map<String, dynamic>> _suggestions;
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get suggestions {
+    if (_suggestions is EqualUnmodifiableListView) return _suggestions;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_suggestions);
+  }
+
   @override
   String toString() {
-    return 'ToolRequest(tenant: $tenant, id: $id, inputSchemaJson: $inputSchemaJson, outputSchemaJson: $outputSchemaJson, requires: $requires, handler: $handler, policy: $policy)';
+    return 'ToolRequest(tenant: $tenant, id: $id, inputSchemaJson: $inputSchemaJson, outputSchemaJson: $outputSchemaJson, requires: $requires, handler: $handler, policy: $policy, captures: $captures, bindings: $bindings, suggestions: $suggestions)';
   }
 
   @override
@@ -1172,7 +1366,13 @@ class _$ToolRequestImpl implements _ToolRequest {
                 other.outputSchemaJson == outputSchemaJson) &&
             const DeepCollectionEquality().equals(other._requires, _requires) &&
             (identical(other.handler, handler) || other.handler == handler) &&
-            const DeepCollectionEquality().equals(other._policy, _policy));
+            const DeepCollectionEquality().equals(other._policy, _policy) &&
+            const DeepCollectionEquality().equals(other._captures, _captures) &&
+            const DeepCollectionEquality().equals(other._bindings, _bindings) &&
+            const DeepCollectionEquality().equals(
+              other._suggestions,
+              _suggestions,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1186,6 +1386,9 @@ class _$ToolRequestImpl implements _ToolRequest {
     const DeepCollectionEquality().hash(_requires),
     handler,
     const DeepCollectionEquality().hash(_policy),
+    const DeepCollectionEquality().hash(_captures),
+    const DeepCollectionEquality().hash(_bindings),
+    const DeepCollectionEquality().hash(_suggestions),
   );
 
   /// Create a copy of ToolRequest
@@ -1211,6 +1414,9 @@ abstract class _ToolRequest implements ToolRequest {
     final Map<String, dynamic> requires,
     required final ToolHandlerDto handler,
     final Map<String, dynamic> policy,
+    final List<Map<String, dynamic>> captures,
+    final List<Map<String, dynamic>> bindings,
+    final List<Map<String, dynamic>> suggestions,
   }) = _$ToolRequestImpl;
 
   factory _ToolRequest.fromJson(Map<String, dynamic> json) =
@@ -1229,7 +1435,14 @@ abstract class _ToolRequest implements ToolRequest {
   @override
   ToolHandlerDto get handler;
   @override
-  Map<String, dynamic> get policy;
+  Map<String, dynamic> get policy; // Entity-memory hooks and suggestion rules: no editor here yet, but every
+  // save replaces the whole tool, so they must round-trip.
+  @override
+  List<Map<String, dynamic>> get captures;
+  @override
+  List<Map<String, dynamic>> get bindings;
+  @override
+  List<Map<String, dynamic>> get suggestions;
 
   /// Create a copy of ToolRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -1253,6 +1466,10 @@ mixin _$ToolResponse {
   Map<String, dynamic> get requires => throw _privateConstructorUsedError;
   ToolHandlerDto get handler => throw _privateConstructorUsedError;
   Map<String, dynamic> get policy => throw _privateConstructorUsedError;
+  List<Map<String, dynamic>> get captures => throw _privateConstructorUsedError;
+  List<Map<String, dynamic>> get bindings => throw _privateConstructorUsedError;
+  List<Map<String, dynamic>> get suggestions =>
+      throw _privateConstructorUsedError;
   String? get status => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
 
@@ -1282,6 +1499,9 @@ abstract class $ToolResponseCopyWith<$Res> {
     Map<String, dynamic> requires,
     ToolHandlerDto handler,
     Map<String, dynamic> policy,
+    List<Map<String, dynamic>> captures,
+    List<Map<String, dynamic>> bindings,
+    List<Map<String, dynamic>> suggestions,
     String? status,
     String? createdAt,
   });
@@ -1312,6 +1532,9 @@ class _$ToolResponseCopyWithImpl<$Res, $Val extends ToolResponse>
     Object? requires = null,
     Object? handler = null,
     Object? policy = null,
+    Object? captures = null,
+    Object? bindings = null,
+    Object? suggestions = null,
     Object? status = freezed,
     Object? createdAt = freezed,
   }) {
@@ -1349,6 +1572,18 @@ class _$ToolResponseCopyWithImpl<$Res, $Val extends ToolResponse>
                 ? _value.policy
                 : policy // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
+            captures: null == captures
+                ? _value.captures
+                : captures // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
+            bindings: null == bindings
+                ? _value.bindings
+                : bindings // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
+            suggestions: null == suggestions
+                ? _value.suggestions
+                : suggestions // ignore: cast_nullable_to_non_nullable
+                      as List<Map<String, dynamic>>,
             status: freezed == status
                 ? _value.status
                 : status // ignore: cast_nullable_to_non_nullable
@@ -1391,6 +1626,9 @@ abstract class _$$ToolResponseImplCopyWith<$Res>
     Map<String, dynamic> requires,
     ToolHandlerDto handler,
     Map<String, dynamic> policy,
+    List<Map<String, dynamic>> captures,
+    List<Map<String, dynamic>> bindings,
+    List<Map<String, dynamic>> suggestions,
     String? status,
     String? createdAt,
   });
@@ -1421,6 +1659,9 @@ class __$$ToolResponseImplCopyWithImpl<$Res>
     Object? requires = null,
     Object? handler = null,
     Object? policy = null,
+    Object? captures = null,
+    Object? bindings = null,
+    Object? suggestions = null,
     Object? status = freezed,
     Object? createdAt = freezed,
   }) {
@@ -1458,6 +1699,18 @@ class __$$ToolResponseImplCopyWithImpl<$Res>
             ? _value._policy
             : policy // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
+        captures: null == captures
+            ? _value._captures
+            : captures // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
+        bindings: null == bindings
+            ? _value._bindings
+            : bindings // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
+        suggestions: null == suggestions
+            ? _value._suggestions
+            : suggestions // ignore: cast_nullable_to_non_nullable
+                  as List<Map<String, dynamic>>,
         status: freezed == status
             ? _value.status
             : status // ignore: cast_nullable_to_non_nullable
@@ -1483,10 +1736,16 @@ class _$ToolResponseImpl implements _ToolResponse {
     final Map<String, dynamic> requires = const <String, dynamic>{},
     required this.handler,
     final Map<String, dynamic> policy = const <String, dynamic>{},
+    final List<Map<String, dynamic>> captures = const [],
+    final List<Map<String, dynamic>> bindings = const [],
+    final List<Map<String, dynamic>> suggestions = const [],
     this.status,
     this.createdAt,
   }) : _requires = requires,
-       _policy = policy;
+       _policy = policy,
+       _captures = captures,
+       _bindings = bindings,
+       _suggestions = suggestions;
 
   factory _$ToolResponseImpl.fromJson(Map<String, dynamic> json) =>
       _$$ToolResponseImplFromJson(json);
@@ -1521,6 +1780,33 @@ class _$ToolResponseImpl implements _ToolResponse {
     return EqualUnmodifiableMapView(_policy);
   }
 
+  final List<Map<String, dynamic>> _captures;
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get captures {
+    if (_captures is EqualUnmodifiableListView) return _captures;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_captures);
+  }
+
+  final List<Map<String, dynamic>> _bindings;
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get bindings {
+    if (_bindings is EqualUnmodifiableListView) return _bindings;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_bindings);
+  }
+
+  final List<Map<String, dynamic>> _suggestions;
+  @override
+  @JsonKey()
+  List<Map<String, dynamic>> get suggestions {
+    if (_suggestions is EqualUnmodifiableListView) return _suggestions;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_suggestions);
+  }
+
   @override
   final String? status;
   @override
@@ -1528,7 +1814,7 @@ class _$ToolResponseImpl implements _ToolResponse {
 
   @override
   String toString() {
-    return 'ToolResponse(id: $id, version: $version, tenant: $tenant, inputSchemaJson: $inputSchemaJson, outputSchemaJson: $outputSchemaJson, requires: $requires, handler: $handler, policy: $policy, status: $status, createdAt: $createdAt)';
+    return 'ToolResponse(id: $id, version: $version, tenant: $tenant, inputSchemaJson: $inputSchemaJson, outputSchemaJson: $outputSchemaJson, requires: $requires, handler: $handler, policy: $policy, captures: $captures, bindings: $bindings, suggestions: $suggestions, status: $status, createdAt: $createdAt)';
   }
 
   @override
@@ -1546,6 +1832,12 @@ class _$ToolResponseImpl implements _ToolResponse {
             const DeepCollectionEquality().equals(other._requires, _requires) &&
             (identical(other.handler, handler) || other.handler == handler) &&
             const DeepCollectionEquality().equals(other._policy, _policy) &&
+            const DeepCollectionEquality().equals(other._captures, _captures) &&
+            const DeepCollectionEquality().equals(other._bindings, _bindings) &&
+            const DeepCollectionEquality().equals(
+              other._suggestions,
+              _suggestions,
+            ) &&
             (identical(other.status, status) || other.status == status) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt));
@@ -1563,6 +1855,9 @@ class _$ToolResponseImpl implements _ToolResponse {
     const DeepCollectionEquality().hash(_requires),
     handler,
     const DeepCollectionEquality().hash(_policy),
+    const DeepCollectionEquality().hash(_captures),
+    const DeepCollectionEquality().hash(_bindings),
+    const DeepCollectionEquality().hash(_suggestions),
     status,
     createdAt,
   );
@@ -1591,6 +1886,9 @@ abstract class _ToolResponse implements ToolResponse {
     final Map<String, dynamic> requires,
     required final ToolHandlerDto handler,
     final Map<String, dynamic> policy,
+    final List<Map<String, dynamic>> captures,
+    final List<Map<String, dynamic>> bindings,
+    final List<Map<String, dynamic>> suggestions,
     final String? status,
     final String? createdAt,
   }) = _$ToolResponseImpl;
@@ -1614,6 +1912,12 @@ abstract class _ToolResponse implements ToolResponse {
   ToolHandlerDto get handler;
   @override
   Map<String, dynamic> get policy;
+  @override
+  List<Map<String, dynamic>> get captures;
+  @override
+  List<Map<String, dynamic>> get bindings;
+  @override
+  List<Map<String, dynamic>> get suggestions;
   @override
   String? get status;
   @override

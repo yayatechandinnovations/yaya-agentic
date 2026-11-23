@@ -119,8 +119,11 @@ class AdminApi {
         .toList();
   }
 
-  Future<ProfileResponse> createProfile(ProfileRequest req) async {
-    final res = await _dio.post('/v1/admin/profiles', data: req.toWireJson());
+  /// [baseVersion]: the version the edit started from; a newer one on the
+  /// server is a 409 version_conflict instead of a silent overwrite.
+  Future<ProfileResponse> createProfile(ProfileRequest req, {int? baseVersion}) async {
+    final res = await _dio.post('/v1/admin/profiles',
+        data: req.toWireJson(), queryParameters: {if (baseVersion != null) 'baseVersion': baseVersion});
     return ProfileResponse.fromJson(_asMap(res.data));
   }
 
@@ -133,8 +136,11 @@ class AdminApi {
         .toList();
   }
 
-  Future<CapabilityResponse> createCapability(CapabilityRequest req) async {
-    final res = await _dio.post('/v1/admin/capabilities', data: req.toJson());
+  /// [baseVersion]: the version the edit started from; a newer one on the
+  /// server is a 409 version_conflict instead of a silent overwrite.
+  Future<CapabilityResponse> createCapability(CapabilityRequest req, {int? baseVersion}) async {
+    final res = await _dio.post('/v1/admin/capabilities',
+        data: req.toJson(), queryParameters: {if (baseVersion != null) 'baseVersion': baseVersion});
     return CapabilityResponse.fromJson(_asMap(res.data));
   }
 
@@ -147,8 +153,11 @@ class AdminApi {
         .toList();
   }
 
-  Future<ToolResponse> createTool(ToolRequest req) async {
-    final res = await _dio.post('/v1/admin/tools', data: req.toJson());
+  /// [baseVersion]: the version the edit started from; a newer one on the
+  /// server is a 409 version_conflict instead of a silent overwrite.
+  Future<ToolResponse> createTool(ToolRequest req, {int? baseVersion}) async {
+    final res = await _dio.post('/v1/admin/tools',
+        data: req.toJson(), queryParameters: {if (baseVersion != null) 'baseVersion': baseVersion});
     return ToolResponse.fromJson(_asMap(res.data));
   }
 

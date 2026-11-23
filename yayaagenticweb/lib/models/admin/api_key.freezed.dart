@@ -30,7 +30,10 @@ mixin _$ApiKey {
   String? get expiresAt => throw _privateConstructorUsedError;
   String? get lastUsedAt => throw _privateConstructorUsedError;
   String? get lastUsedIp => throw _privateConstructorUsedError;
-  String get status => throw _privateConstructorUsedError;
+  String get status =>
+      throw _privateConstructorUsedError; // active | revoked | expired
+  /// Acts with platform-admin reach across every workspace.
+  bool get platformScope => throw _privateConstructorUsedError;
 
   /// Serializes this ApiKey to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -57,6 +60,7 @@ abstract class $ApiKeyCopyWith<$Res> {
     String? lastUsedAt,
     String? lastUsedIp,
     String status,
+    bool platformScope,
   });
 }
 
@@ -85,6 +89,7 @@ class _$ApiKeyCopyWithImpl<$Res, $Val extends ApiKey>
     Object? lastUsedAt = freezed,
     Object? lastUsedIp = freezed,
     Object? status = null,
+    Object? platformScope = null,
   }) {
     return _then(
       _value.copyWith(
@@ -128,6 +133,10 @@ class _$ApiKeyCopyWithImpl<$Res, $Val extends ApiKey>
                 ? _value.status
                 : status // ignore: cast_nullable_to_non_nullable
                       as String,
+            platformScope: null == platformScope
+                ? _value.platformScope
+                : platformScope // ignore: cast_nullable_to_non_nullable
+                      as bool,
           )
           as $Val,
     );
@@ -153,6 +162,7 @@ abstract class _$$ApiKeyImplCopyWith<$Res> implements $ApiKeyCopyWith<$Res> {
     String? lastUsedAt,
     String? lastUsedIp,
     String status,
+    bool platformScope,
   });
 }
 
@@ -180,6 +190,7 @@ class __$$ApiKeyImplCopyWithImpl<$Res>
     Object? lastUsedAt = freezed,
     Object? lastUsedIp = freezed,
     Object? status = null,
+    Object? platformScope = null,
   }) {
     return _then(
       _$ApiKeyImpl(
@@ -223,6 +234,10 @@ class __$$ApiKeyImplCopyWithImpl<$Res>
             ? _value.status
             : status // ignore: cast_nullable_to_non_nullable
                   as String,
+        platformScope: null == platformScope
+            ? _value.platformScope
+            : platformScope // ignore: cast_nullable_to_non_nullable
+                  as bool,
       ),
     );
   }
@@ -242,6 +257,7 @@ class _$ApiKeyImpl implements _ApiKey {
     this.lastUsedAt,
     this.lastUsedIp,
     required this.status,
+    this.platformScope = false,
   });
 
   factory _$ApiKeyImpl.fromJson(Map<String, dynamic> json) =>
@@ -267,10 +283,15 @@ class _$ApiKeyImpl implements _ApiKey {
   final String? lastUsedIp;
   @override
   final String status;
+  // active | revoked | expired
+  /// Acts with platform-admin reach across every workspace.
+  @override
+  @JsonKey()
+  final bool platformScope;
 
   @override
   String toString() {
-    return 'ApiKey(id: $id, name: $name, keyPrefix: $keyPrefix, role: $role, createdBy: $createdBy, createdAt: $createdAt, expiresAt: $expiresAt, lastUsedAt: $lastUsedAt, lastUsedIp: $lastUsedIp, status: $status)';
+    return 'ApiKey(id: $id, name: $name, keyPrefix: $keyPrefix, role: $role, createdBy: $createdBy, createdAt: $createdAt, expiresAt: $expiresAt, lastUsedAt: $lastUsedAt, lastUsedIp: $lastUsedIp, status: $status, platformScope: $platformScope)';
   }
 
   @override
@@ -293,7 +314,9 @@ class _$ApiKeyImpl implements _ApiKey {
                 other.lastUsedAt == lastUsedAt) &&
             (identical(other.lastUsedIp, lastUsedIp) ||
                 other.lastUsedIp == lastUsedIp) &&
-            (identical(other.status, status) || other.status == status));
+            (identical(other.status, status) || other.status == status) &&
+            (identical(other.platformScope, platformScope) ||
+                other.platformScope == platformScope));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -310,6 +333,7 @@ class _$ApiKeyImpl implements _ApiKey {
     lastUsedAt,
     lastUsedIp,
     status,
+    platformScope,
   );
 
   /// Create a copy of ApiKey
@@ -338,6 +362,7 @@ abstract class _ApiKey implements ApiKey {
     final String? lastUsedAt,
     final String? lastUsedIp,
     required final String status,
+    final bool platformScope,
   }) = _$ApiKeyImpl;
 
   factory _ApiKey.fromJson(Map<String, dynamic> json) = _$ApiKeyImpl.fromJson;
@@ -361,7 +386,10 @@ abstract class _ApiKey implements ApiKey {
   @override
   String? get lastUsedIp;
   @override
-  String get status;
+  String get status; // active | revoked | expired
+  /// Acts with platform-admin reach across every workspace.
+  @override
+  bool get platformScope;
 
   /// Create a copy of ApiKey
   /// with the given fields replaced by the non-null parameter values.
@@ -381,6 +409,9 @@ mixin _$ApiKeyCreateRequest {
   String get role => throw _privateConstructorUsedError;
   String? get expiresAt => throw _privateConstructorUsedError;
 
+  /// Only a platform admin may mint one; null = workspace-scoped.
+  bool? get platformScope => throw _privateConstructorUsedError;
+
   /// Serializes this ApiKeyCreateRequest to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
@@ -398,7 +429,7 @@ abstract class $ApiKeyCreateRequestCopyWith<$Res> {
     $Res Function(ApiKeyCreateRequest) then,
   ) = _$ApiKeyCreateRequestCopyWithImpl<$Res, ApiKeyCreateRequest>;
   @useResult
-  $Res call({String name, String role, String? expiresAt});
+  $Res call({String name, String role, String? expiresAt, bool? platformScope});
 }
 
 /// @nodoc
@@ -419,6 +450,7 @@ class _$ApiKeyCreateRequestCopyWithImpl<$Res, $Val extends ApiKeyCreateRequest>
     Object? name = null,
     Object? role = null,
     Object? expiresAt = freezed,
+    Object? platformScope = freezed,
   }) {
     return _then(
       _value.copyWith(
@@ -434,6 +466,10 @@ class _$ApiKeyCreateRequestCopyWithImpl<$Res, $Val extends ApiKeyCreateRequest>
                 ? _value.expiresAt
                 : expiresAt // ignore: cast_nullable_to_non_nullable
                       as String?,
+            platformScope: freezed == platformScope
+                ? _value.platformScope
+                : platformScope // ignore: cast_nullable_to_non_nullable
+                      as bool?,
           )
           as $Val,
     );
@@ -449,7 +485,7 @@ abstract class _$$ApiKeyCreateRequestImplCopyWith<$Res>
   ) = __$$ApiKeyCreateRequestImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String name, String role, String? expiresAt});
+  $Res call({String name, String role, String? expiresAt, bool? platformScope});
 }
 
 /// @nodoc
@@ -469,6 +505,7 @@ class __$$ApiKeyCreateRequestImplCopyWithImpl<$Res>
     Object? name = null,
     Object? role = null,
     Object? expiresAt = freezed,
+    Object? platformScope = freezed,
   }) {
     return _then(
       _$ApiKeyCreateRequestImpl(
@@ -484,6 +521,10 @@ class __$$ApiKeyCreateRequestImplCopyWithImpl<$Res>
             ? _value.expiresAt
             : expiresAt // ignore: cast_nullable_to_non_nullable
                   as String?,
+        platformScope: freezed == platformScope
+            ? _value.platformScope
+            : platformScope // ignore: cast_nullable_to_non_nullable
+                  as bool?,
       ),
     );
   }
@@ -496,6 +537,7 @@ class _$ApiKeyCreateRequestImpl implements _ApiKeyCreateRequest {
     required this.name,
     required this.role,
     this.expiresAt,
+    this.platformScope,
   });
 
   factory _$ApiKeyCreateRequestImpl.fromJson(Map<String, dynamic> json) =>
@@ -508,9 +550,13 @@ class _$ApiKeyCreateRequestImpl implements _ApiKeyCreateRequest {
   @override
   final String? expiresAt;
 
+  /// Only a platform admin may mint one; null = workspace-scoped.
+  @override
+  final bool? platformScope;
+
   @override
   String toString() {
-    return 'ApiKeyCreateRequest(name: $name, role: $role, expiresAt: $expiresAt)';
+    return 'ApiKeyCreateRequest(name: $name, role: $role, expiresAt: $expiresAt, platformScope: $platformScope)';
   }
 
   @override
@@ -521,12 +567,15 @@ class _$ApiKeyCreateRequestImpl implements _ApiKeyCreateRequest {
             (identical(other.name, name) || other.name == name) &&
             (identical(other.role, role) || other.role == role) &&
             (identical(other.expiresAt, expiresAt) ||
-                other.expiresAt == expiresAt));
+                other.expiresAt == expiresAt) &&
+            (identical(other.platformScope, platformScope) ||
+                other.platformScope == platformScope));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, name, role, expiresAt);
+  int get hashCode =>
+      Object.hash(runtimeType, name, role, expiresAt, platformScope);
 
   /// Create a copy of ApiKeyCreateRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -550,6 +599,7 @@ abstract class _ApiKeyCreateRequest implements ApiKeyCreateRequest {
     required final String name,
     required final String role,
     final String? expiresAt,
+    final bool? platformScope,
   }) = _$ApiKeyCreateRequestImpl;
 
   factory _ApiKeyCreateRequest.fromJson(Map<String, dynamic> json) =
@@ -561,6 +611,10 @@ abstract class _ApiKeyCreateRequest implements ApiKeyCreateRequest {
   String get role;
   @override
   String? get expiresAt;
+
+  /// Only a platform admin may mint one; null = workspace-scoped.
+  @override
+  bool? get platformScope;
 
   /// Create a copy of ApiKeyCreateRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -582,6 +636,7 @@ mixin _$ApiKeyCreated {
   String get role => throw _privateConstructorUsedError;
   String? get createdAt => throw _privateConstructorUsedError;
   String? get expiresAt => throw _privateConstructorUsedError;
+  bool get platformScope => throw _privateConstructorUsedError;
   String get secret => throw _privateConstructorUsedError;
 
   /// Serializes this ApiKeyCreated to a JSON map.
@@ -608,6 +663,7 @@ abstract class $ApiKeyCreatedCopyWith<$Res> {
     String role,
     String? createdAt,
     String? expiresAt,
+    bool platformScope,
     String secret,
   });
 }
@@ -633,6 +689,7 @@ class _$ApiKeyCreatedCopyWithImpl<$Res, $Val extends ApiKeyCreated>
     Object? role = null,
     Object? createdAt = freezed,
     Object? expiresAt = freezed,
+    Object? platformScope = null,
     Object? secret = null,
   }) {
     return _then(
@@ -661,6 +718,10 @@ class _$ApiKeyCreatedCopyWithImpl<$Res, $Val extends ApiKeyCreated>
                 ? _value.expiresAt
                 : expiresAt // ignore: cast_nullable_to_non_nullable
                       as String?,
+            platformScope: null == platformScope
+                ? _value.platformScope
+                : platformScope // ignore: cast_nullable_to_non_nullable
+                      as bool,
             secret: null == secret
                 ? _value.secret
                 : secret // ignore: cast_nullable_to_non_nullable
@@ -687,6 +748,7 @@ abstract class _$$ApiKeyCreatedImplCopyWith<$Res>
     String role,
     String? createdAt,
     String? expiresAt,
+    bool platformScope,
     String secret,
   });
 }
@@ -711,6 +773,7 @@ class __$$ApiKeyCreatedImplCopyWithImpl<$Res>
     Object? role = null,
     Object? createdAt = freezed,
     Object? expiresAt = freezed,
+    Object? platformScope = null,
     Object? secret = null,
   }) {
     return _then(
@@ -739,6 +802,10 @@ class __$$ApiKeyCreatedImplCopyWithImpl<$Res>
             ? _value.expiresAt
             : expiresAt // ignore: cast_nullable_to_non_nullable
                   as String?,
+        platformScope: null == platformScope
+            ? _value.platformScope
+            : platformScope // ignore: cast_nullable_to_non_nullable
+                  as bool,
         secret: null == secret
             ? _value.secret
             : secret // ignore: cast_nullable_to_non_nullable
@@ -758,6 +825,7 @@ class _$ApiKeyCreatedImpl implements _ApiKeyCreated {
     required this.role,
     this.createdAt,
     this.expiresAt,
+    this.platformScope = false,
     required this.secret,
   });
 
@@ -777,11 +845,14 @@ class _$ApiKeyCreatedImpl implements _ApiKeyCreated {
   @override
   final String? expiresAt;
   @override
+  @JsonKey()
+  final bool platformScope;
+  @override
   final String secret;
 
   @override
   String toString() {
-    return 'ApiKeyCreated(id: $id, name: $name, keyPrefix: $keyPrefix, role: $role, createdAt: $createdAt, expiresAt: $expiresAt, secret: $secret)';
+    return 'ApiKeyCreated(id: $id, name: $name, keyPrefix: $keyPrefix, role: $role, createdAt: $createdAt, expiresAt: $expiresAt, platformScope: $platformScope, secret: $secret)';
   }
 
   @override
@@ -798,6 +869,8 @@ class _$ApiKeyCreatedImpl implements _ApiKeyCreated {
                 other.createdAt == createdAt) &&
             (identical(other.expiresAt, expiresAt) ||
                 other.expiresAt == expiresAt) &&
+            (identical(other.platformScope, platformScope) ||
+                other.platformScope == platformScope) &&
             (identical(other.secret, secret) || other.secret == secret));
   }
 
@@ -811,6 +884,7 @@ class _$ApiKeyCreatedImpl implements _ApiKeyCreated {
     role,
     createdAt,
     expiresAt,
+    platformScope,
     secret,
   );
 
@@ -836,6 +910,7 @@ abstract class _ApiKeyCreated implements ApiKeyCreated {
     required final String role,
     final String? createdAt,
     final String? expiresAt,
+    final bool platformScope,
     required final String secret,
   }) = _$ApiKeyCreatedImpl;
 
@@ -854,6 +929,8 @@ abstract class _ApiKeyCreated implements ApiKeyCreated {
   String? get createdAt;
   @override
   String? get expiresAt;
+  @override
+  bool get platformScope;
   @override
   String get secret;
 

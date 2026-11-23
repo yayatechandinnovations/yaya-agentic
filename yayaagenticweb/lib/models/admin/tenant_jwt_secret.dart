@@ -12,6 +12,8 @@ class TenantJwtSecretResponse {
     this.audiences = const <String>[],
     this.createdAt,
     this.updatedAt,
+    this.principalKind,
+    this.requiredClaims = const <String, String>{},
   });
 
   final int id;
@@ -20,6 +22,14 @@ class TenantJwtSecretResponse {
   final List<String> audiences;
   final String? createdAt;
   final String? updatedAt;
+
+  /// The caller kind this issuer vouches for (profiles admit by kind via
+  /// `metadata.principalKinds`). Null = no kind.
+  final String? principalKind;
+
+  /// Claims every token must carry with these exact values — pins a signing
+  /// key that several tenants share to this one.
+  final Map<String, String> requiredClaims;
 
   factory TenantJwtSecretResponse.fromJson(Map<String, dynamic> json) =>
       TenantJwtSecretResponse(
@@ -31,6 +41,10 @@ class TenantJwtSecretResponse {
             : (json['audiences'] as List).map((e) => e.toString()).toList(),
         createdAt: json['createdAt']?.toString(),
         updatedAt: json['updatedAt']?.toString(),
+        principalKind: json['principalKind'] as String?,
+        requiredClaims: json['requiredClaims'] is Map
+            ? (json['requiredClaims'] as Map).map((k, v) => MapEntry('$k', '$v'))
+            : const <String, String>{},
       );
 }
 
@@ -39,6 +53,8 @@ class TenantJwtSecretRequest {
     required this.iss,
     this.secret,
     this.audiences = const <String>[],
+    this.principalKind,
+    this.requiredClaims,
   });
 
   final String iss;
@@ -48,9 +64,17 @@ class TenantJwtSecretRequest {
   final String? secret;
   final List<String> audiences;
 
+  /// Null = leave the stored kind as-is; empty string clears it.
+  final String? principalKind;
+
+  /// Null = leave the stored pins as-is; an empty map clears them.
+  final Map<String, String>? requiredClaims;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
         'iss': iss,
         if (secret != null && secret!.isNotEmpty) 'secret': secret,
         'audiences': audiences,
+        'principalKind': ?principalKind,
+        'requiredClaims': ?requiredClaims,
       };
 }

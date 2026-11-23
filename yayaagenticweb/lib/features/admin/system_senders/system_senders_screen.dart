@@ -2,65 +2,92 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/chat_entry_point.dart';
 import '../../../models/admin/system_sender.dart';
 import '../../../models/admin/whatsapp_sender.dart';
-import '../shared/admin_shared.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_sheet.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
+import '../../../ui/feedback/api_error.dart';
+import '../../../ui/feedback/confirm.dart';
+import '../../../ui/feedback/toast.dart';
+import '../../../ui/form/unsaved_guard.dart';
+import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
+import '../../../ui/form/y_form_layout.dart';
+import '../../../ui/form/y_resource_picker.dart';
+import '../../../ui/tokens.dart';
+import '../channel_bindings/channel_ui.dart';
+import '../shared/admin_shared.dart' show TenantScopedEmptyState;
 
-/// Refetched after every write so the list reflects the latest config.
-final systemSendersProvider =
-    FutureProvider.family<List<SystemSenderResponse>, String>((ref, tenantId) async {
+final systemSendersProvider = FutureProvider.family<List<SystemSenderResponse>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.systemSender);
   final api = await ref.watch(adminApiProvider.future);
   return api.listSystemSenders(tenantId);
 });
 
-// ---- Option sources for the config dropdowns -------------------------------
+// ---- Option sources for the pickers ---------------------------------------
 // The form binds configured resources, not free text: an operator picks a JWT
 // secret / OIDC issuer / tool that already exists rather than retyping its id.
 
-/// Chat entry points this sender can deliver into (value = id, label = handle).
-final _entryPointsProvider =
-    FutureProvider.family<List<ChatEntryPointResponse>, String>((ref, tenantId) async {
+final _entryPointsProvider = FutureProvider.family<List<ChatEntryPointResponse>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.chatEntryPoint);
   final api = await ref.watch(adminApiProvider.future);
   return api.listChatEntryPoints(tenantId);
 });
 
-/// WhatsApp numbers this tenant owns — the optional proactive WhatsApp leg.
-final _whatsappSendersProvider =
-    FutureProvider.family<List<WhatsAppSenderResponse>, String>((ref, tenantId) async {
+final _whatsappSendersProvider = FutureProvider.family<List<WhatsAppSenderResponse>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.whatsappSender);
   final api = await ref.watch(adminApiProvider.future);
   return api.listWhatsAppSenders(tenantId);
 });
 
 /// `iss` of every configured HS256 shared secret — the credentialRef a
 /// `shared-secret-jwt` sender pins (matched against the token's iss).
-final _jwtSecretIssProvider =
-    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+final _jwtSecretIssProvider = FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.jwtSecret);
   final api = await ref.watch(adminApiProvider.future);
   final rows = await api.listTenantJwtSecrets(tenantId);
-  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toList()..sort();
+  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toSet().toList()..sort();
 });
 
 /// `iss` of every trusted OIDC issuer — the credentialRef an `oidc` sender pins.
-final _oidcIssuerIssProvider =
-    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+final _oidcIssuerIssProvider = FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.oidcIssuer);
   final api = await ref.watch(adminApiProvider.future);
   final rows = await api.listTenantOidcIssuers(tenantId);
-  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toList()..sort();
+  return rows.map((r) => r.iss).where((s) => s.isNotEmpty).toSet().toList()..sort();
 });
 
 /// Tool ids the agent could call to answer (the response tool).
-final _toolIdsProvider =
-    FutureProvider.family<List<String>, String>((ref, tenantId) async {
+final _toolIdsProvider = FutureProvider.family<List<String>, String>((ref, tenantId) async {
+  liveResource(ref, AdminResourceKind.tool);
   final api = await ref.watch(adminApiProvider.future);
   final tools = await api.listTools(tenant: tenantId);
-  return tools.map((t) => t.id).toList()..sort();
+  return tools.map((t) => t.id).toSet().toList()..sort();
 });
 
-/// The "System Inbound" configuration surface (system-messaging-design.md §14):
-/// enable a linked application to inject messages into a user's chat, choose HOW
-/// it proves trust, whether the LLM mediates, and which tool answers.
+/// Id prefix of the per-workspace Playground simulator (backend `PlaygroundSenders.PREFIX`).
+const _playgroundSenderPrefix = 'snd_playground_sim__';
+
+const _authenticators = {
+  'shared-secret-jwt': ('Shared-secret JWT', 'The system signs an HS256 token with a secret from “JWT secrets”.'),
+  'oidc': ('OIDC token', 'The system presents a token from a trusted issuer in “OIDC issuers”.'),
+  'api-key': ('API key', 'The system calls with a workspace API key.'),
+};
+
+String _authLabel(String name) => _authenticators[name]?.$1 ?? (name.isEmpty ? 'Not set' : name);
+
+/// The "System inbound" configuration surface (system-messaging-design.md §14):
+/// let a linked application inject messages into a user's chat, choose HOW it
+/// proves trust, whether the assistant mediates, and which tool answers.
 class SystemSendersScreen extends ConsumerStatefulWidget {
   const SystemSendersScreen({super.key});
 
@@ -69,376 +96,36 @@ class SystemSendersScreen extends ConsumerStatefulWidget {
 }
 
 class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
-  final _entryPointCtrl = TextEditingController();
-  final _displayNameCtrl = TextEditingController();
-  final _credentialRefCtrl = TextEditingController();
-  final _scopesCtrl = TextEditingController(); // one scope per line
-  final _responseToolCtrl = TextEditingController();
-  final _subjectsCtrl = TextEditingController(); // allowed subjects, one per line
-  String _authenticator = 'shared-secret-jwt';
-  String _mediation = 'VERBATIM';
-  String _whatsappSenderId = '';
-  bool _enabled = false;
-  String? _editingId;
-  bool _saving = false;
+  String? _handledLink;
+  String? _openId;
 
-  static const _authenticators = [
-    'shared-secret-jwt',
-    'oidc',
-    'api-key',
-  ];
-
-  void _resetForm() {
-    setState(() {
-      _editingId = null;
-      _entryPointCtrl.clear();
-      _displayNameCtrl.clear();
-      _credentialRefCtrl.clear();
-      _scopesCtrl.clear();
-      _responseToolCtrl.clear();
-      _subjectsCtrl.clear();
-      _authenticator = 'shared-secret-jwt';
-      _mediation = 'VERBATIM';
-      _whatsappSenderId = '';
-      _enabled = false;
-    });
-  }
-
-  void _loadIntoForm(SystemSenderResponse row) {
-    setState(() {
-      _editingId = row.id;
-      _entryPointCtrl.text = row.entryPoint;
-      _displayNameCtrl.text = row.displayName;
-      _credentialRefCtrl.text = row.trust.credentialRef;
-      _scopesCtrl.text = row.trust.requiredScopes.join('\n');
-      _responseToolCtrl.text = row.responseToolId ?? '';
-      _subjectsCtrl.text = row.addressing.allowedSubjects.join('\n');
-      _authenticator = _authenticators.contains(row.trust.authenticatorName)
-          ? row.trust.authenticatorName
-          : 'shared-secret-jwt';
-      _mediation = row.mediation;
-      _whatsappSenderId = row.whatsappSenderId ?? '';
-      _enabled = row.enabled;
-    });
-  }
-
-  @override
-  void dispose() {
-    _entryPointCtrl.dispose();
-    _displayNameCtrl.dispose();
-    _credentialRefCtrl.dispose();
-    _scopesCtrl.dispose();
-    _responseToolCtrl.dispose();
-    _subjectsCtrl.dispose();
-    super.dispose();
-  }
-
-  List<String> _lines(TextEditingController c) =>
-      c.text.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-
-  /// A dropdown backed by a live list of configured values (jwt iss, oidc iss,
-  /// tool ids). Falls back to a plain text field if the list can't be loaded so
-  /// the operator is never blocked. Tolerates a stored value that no longer
-  /// exists by surfacing it as a "(not configured)" option instead of dropping it.
-  Widget _asyncStringDropdown({
-    required String label,
-    String? helperText,
-    required String emptyLabel,
-    required String emptyListHelper,
-    required String currentValue,
-    required AsyncValue<List<String>> options,
-    required ValueChanged<String> onChanged,
-  }) {
-    return options.when(
-      loading: () => InputDecorator(
-        decoration: InputDecoration(labelText: label, helperText: helperText),
-        child: const Padding(
-          padding: EdgeInsets.symmetric(vertical: 10),
-          child: LinearProgressIndicator(),
-        ),
-      ),
-      error: (_, _) => TextFormField(
-        initialValue: currentValue,
-        decoration: InputDecoration(
-          labelText: label,
-          helperText: 'Could not load options — enter the value manually.',
-        ),
-        onChanged: onChanged,
-      ),
-      data: (list) {
-        final missing = currentValue.isNotEmpty && !list.contains(currentValue);
-        return DropdownButtonFormField<String>(
-          initialValue: currentValue,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: label,
-            helperText: list.isEmpty ? emptyListHelper : helperText,
-          ),
-          items: [
-            DropdownMenuItem(
-              value: '',
-              child: Text(emptyLabel, style: const TextStyle(fontStyle: FontStyle.italic)),
-            ),
-            ...list.map((v) => DropdownMenuItem(value: v, child: Text(v, overflow: TextOverflow.ellipsis))),
-            if (missing)
-              DropdownMenuItem(value: currentValue, child: Text('$currentValue  (not configured)')),
-          ],
-          onChanged: (v) => onChanged(v ?? ''),
-        );
-      },
+  Future<void> _open(SystemSenderResponse? existing) async {
+    setState(() => _openId = existing?.id);
+    await showYSheet<void>(
+      context,
+      width: 680,
+      label: existing == null ? 'New system sender' : 'Edit system sender',
+      builder: (_) => SystemSenderEditorSheet(existing: existing),
     );
+    if (mounted) setState(() => _openId = null);
   }
 
-  /// The credential the sender's token must carry (matched against its `iss`).
-  /// Which resource that is depends on the chosen authenticator, so the field
-  /// itself changes: a JWT-secret picker, an OIDC-issuer picker, or free text.
-  Widget _credentialField(AsyncValue<List<String>> jwtIss, AsyncValue<List<String>> oidcIss) {
-    switch (_authenticator) {
-      case 'shared-secret-jwt':
-        return _asyncStringDropdown(
-          label: 'JWT shared secret (iss)',
-          helperText: 'The configured shared secret that signs this sender\'s token.',
-          emptyLabel: '(any trusted secret)',
-          emptyListHelper: 'No JWT secrets yet — add one under "JWT secrets".',
-          currentValue: _credentialRefCtrl.text,
-          options: jwtIss,
-          onChanged: (v) => setState(() => _credentialRefCtrl.text = v),
-        );
-      case 'oidc':
-        return _asyncStringDropdown(
-          label: 'OIDC issuer (iss)',
-          helperText: 'The trusted issuer whose tokens this sender presents.',
-          emptyLabel: '(any trusted issuer)',
-          emptyListHelper: 'No OIDC issuers yet — add one under "OIDC issuers".',
-          currentValue: _credentialRefCtrl.text,
-          options: oidcIss,
-          onChanged: (v) => setState(() => _credentialRefCtrl.text = v),
-        );
-      default:
-        return TextField(
-          controller: _credentialRefCtrl,
-          decoration: const InputDecoration(
-            labelText: 'API key id / issuer (optional)',
-            helperText: 'Which credential to accept. Blank = any the authenticator trusts.',
-          ),
-        );
-    }
-  }
-
-  /// Entry-point picker (required). Value is the entry-point id; the label shows
-  /// the human name + handle so the operator recognises the chat.
-  Widget _entryPointField(AsyncValue<List<ChatEntryPointResponse>> options) {
-    final current = _entryPointCtrl.text;
-    return options.when(
-      loading: () => const InputDecorator(
-        decoration: InputDecoration(labelText: 'chat entry point'),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 10),
-          child: LinearProgressIndicator(),
-        ),
-      ),
-      error: (_, _) => TextFormField(
-        initialValue: current,
-        decoration: const InputDecoration(
-          labelText: 'chat entry point id',
-          helperText: 'Could not load entry points — enter the id manually.',
-        ),
-        onChanged: (v) => _entryPointCtrl.text = v,
-      ),
-      data: (list) {
-        final missing = current.isNotEmpty && !list.any((e) => e.id == current);
-        return DropdownButtonFormField<String>(
-          initialValue: current.isEmpty ? null : current,
-          isExpanded: true,
-          hint: const Text('select a chat…'),
-          decoration: InputDecoration(
-            labelText: 'chat entry point',
-            helperText: list.isEmpty
-                ? 'No chat entry points yet — create one under "Chats".'
-                : 'The chat this sender delivers into (the chat the user added).',
-          ),
-          items: [
-            ...list.map((e) => DropdownMenuItem(
-                  value: e.id,
-                  child: Text('${e.displayName}  ·  @${e.handle}', overflow: TextOverflow.ellipsis),
-                )),
-            if (missing)
-              DropdownMenuItem(value: current, child: Text('$current  (not found)')),
-          ],
-          onChanged: (v) => setState(() => _entryPointCtrl.text = v ?? ''),
-        );
-      },
-    );
-  }
-
-  /// Id prefix of the per-workspace Playground simulator (backend `PlaygroundSenders.PREFIX`).
-  static const _playgroundSenderPrefix = 'snd_playground_sim__';
-
-  /// Optional WhatsApp leg: when linked, a message whose envelope asks for
-  /// WhatsApp goes out on this number (template outside the 24 h window) and
-  /// falls back to the chat when it cannot. The workspace's own Playground
-  /// simulator is offered too: its messages appear in the Playground
-  /// conversation of the recipient phone, buttons included.
-  Widget _whatsappField(AsyncValue<List<WhatsAppSenderResponse>> options) {
-    return options.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (_, _) => const Text('Could not load WhatsApp numbers.'),
-      data: (all) {
-        final tenant = ref.watch(currentTenantOrNull);
-        final ownSimulator = tenant == null ? null : '$_playgroundSenderPrefix$tenant';
-        final list = all.where((s) => !s.id.startsWith(_playgroundSenderPrefix)).toList();
-        final onSimulator = _whatsappSenderId.isNotEmpty && _whatsappSenderId == ownSimulator;
-        final missing = _whatsappSenderId.isNotEmpty && !onSimulator && !list.any((s) => s.id == _whatsappSenderId);
-        return DropdownButtonFormField<String>(
-          initialValue: _whatsappSenderId,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: 'WhatsApp number (optional)',
-            helperText: onSimulator
-                ? 'Messages appear in the Playground, in the conversation of the recipient phone '
-                    '(it must have written there first).'
-                : 'Proactive messages that ask for WhatsApp go out on this number; '
-                    'otherwise they land in the chat.',
-            helperMaxLines: 2,
-          ),
-          items: [
-            const DropdownMenuItem(value: '', child: Text('Chat only')),
-            ...list.map((s) => DropdownMenuItem(
-                  value: s.id,
-                  child: Text('${s.displayName}  ·  ${s.phoneE164}  ·  ${s.status}',
-                      overflow: TextOverflow.ellipsis),
-                )),
-            if (ownSimulator != null)
-              DropdownMenuItem(
-                value: ownSimulator,
-                child: const Text('Playground simulator  ·  messages appear in the Playground',
-                    overflow: TextOverflow.ellipsis),
-              ),
-            if (missing)
-              DropdownMenuItem(value: _whatsappSenderId, child: Text('$_whatsappSenderId  (not found)')),
-          ],
-          onChanged: (v) => setState(() => _whatsappSenderId = v ?? ''),
-        );
-      },
-    );
-  }
-
-  Future<void> _save() async {
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) {
-      showSnack(context, 'select a tenant first', error: true);
-      return;
-    }
-    if (_entryPointCtrl.text.trim().isEmpty || _displayNameCtrl.text.trim().isEmpty) {
-      showSnack(context, 'entry point and display name are required', error: true);
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      final body = SystemSenderRequest(
-        entryPoint: _entryPointCtrl.text.trim(),
-        displayName: _displayNameCtrl.text.trim(),
-        enabled: _enabled,
-        trust: SenderTrust(
-          authenticatorName: _authenticator,
-          requiredScopes: _lines(_scopesCtrl),
-          credentialRef: _credentialRefCtrl.text.trim(),
-        ),
-        mediation: _mediation,
-        addressing: AddressingPolicy(
-          allowedKinds: const ['PRINCIPAL'],
-          allowedSubjects: _lines(_subjectsCtrl),
-        ),
-        responseToolId:
-            _responseToolCtrl.text.trim().isEmpty ? null : _responseToolCtrl.text.trim(),
-        whatsappSenderId: _whatsappSenderId,
-      );
-      if (_editingId == null) {
-        await api.createSystemSender(tenant, body);
-      } else {
-        await api.updateSystemSender(tenant, _editingId!, body);
-      }
-      ref.invalidate(systemSendersProvider(tenant));
+  void _handleDeepLink(List<SystemSenderResponse> list) {
+    final params = routeQuery(context);
+    final link = params['id'] ?? (params['new'] != null ? '' : null);
+    if (link == null || link == _handledLink) return;
+    _handledLink = link;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      final wasEdit = _editingId != null;
-      _resetForm();
-      showSnack(context, wasEdit ? 'sender updated' : 'sender created');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _delete(SystemSenderResponse row) async {
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) return;
-    final ok = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Delete system sender?'),
-            content: Text('"${row.displayName}" will no longer be able to inject messages.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
-            ],
-          ),
-        ) ??
-        false;
-    if (!ok) return;
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      await api.deleteSystemSender(tenant, row.id);
-      ref.invalidate(systemSendersProvider(tenant));
-      if (mounted) showSnack(context, 'sender deleted');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    }
-  }
-
-  Future<void> _simulate(SystemSenderResponse row) async {
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) return;
-    final subjectCtrl = TextEditingController();
-    final bodyCtrl = TextEditingController(text: 'cash closed: 1000');
-    final ok = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: Text('Simulate a message from ${row.displayName}'),
-            content: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                controller: subjectCtrl,
-                decoration: const InputDecoration(labelText: 'recipient subject (operator id)'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: bodyCtrl,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'message body'),
-              ),
-            ]),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Send')),
-            ],
-          ),
-        ) ??
-        false;
-    if (!ok) return;
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      final res = await api.simulateSystemMessage(tenant, row.id, {
-        'subject': subjectCtrl.text.trim(),
-        'body': bodyCtrl.text.trim(),
-        'originatorName': row.displayName,
-        'subjectLine': 'simulated',
-      });
-      if (mounted) showSnack(context, 'delivered: ${res['disposition']}');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    }
+      final match = link.isEmpty ? null : list.where((s) => s.id == link).firstOrNull;
+      if (link.isNotEmpty && match == null) {
+        showToast(context, 'No system sender “$link” in this workspace', error: true);
+      } else {
+        await _open(match);
+      }
+      if (mounted) clearRouteQuery(context, '/admin/system-senders');
+      _handledLink = null;
+    });
   }
 
   @override
@@ -448,133 +135,109 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
       return const TenantScopedEmptyState(resourceLabel: 'System senders');
     }
     final senders = ref.watch(systemSendersProvider(tenant));
-    final entryPoints = ref.watch(_entryPointsProvider(tenant));
-    final jwtIss = ref.watch(_jwtSecretIssProvider(tenant));
-    final oidcIss = ref.watch(_oidcIssuerIssProvider(tenant));
-    final toolIds = ref.watch(_toolIdsProvider(tenant));
-    final whatsappSenders = ref.watch(_whatsappSendersProvider(tenant));
+    final entryPoints = {for (final e in ref.watch(_entryPointsProvider(tenant)).valueOrNull ?? const <ChatEntryPointResponse>[]) e.id: e};
+    final fresh = ref.watch(freshIdsProvider(AdminResourceKind.systemSender));
+    senders.whenData(_handleDeepLink);
 
-    return AdminTwoPane(
-      title: 'System inbound senders',
-      subtitle:
-          'Let a linked application (POS / ERP / back-office) inject messages into a user\'s chat for '
-          'tenant "$tenant". Trust is a configured Authenticator; mediation decides whether the agent '
-          'frames the message; the response tool carries the reply back.',
-      list: senders.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Text(formatError(e), style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        data: (list) => list.isEmpty
-            ? const Center(child: Text('No system senders yet.'))
-            : ListView.separated(
-                itemBuilder: (_, i) => _SenderTile(
-                  row: list[i],
-                  onEdit: () => _loadIntoForm(list[i]),
-                  onDelete: () => _delete(list[i]),
-                  onSimulate: () => _simulate(list[i]),
-                ),
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemCount: list.length,
-              ),
-      ),
-      form: SingleChildScrollView(
-        child: FormCard(
-          title: _editingId == null ? 'Add system sender' : 'Editing "${_displayNameCtrl.text}"',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _displayNameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'display name',
-                  helperText: 'Shown to the user, e.g. "Cash Register #3".',
-                ),
-              ),
-              const SizedBox(height: 12),
-              _entryPointField(entryPoints),
-              const SizedBox(height: 12),
-              _whatsappField(whatsappSenders),
-              const SizedBox(height: 12),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enable inbound from systems'),
-                value: _enabled,
-                onChanged: (v) => setState(() => _enabled = v),
-              ),
-              const Divider(),
-              Text('Trust', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _authenticator,
-                decoration: const InputDecoration(
-                  labelText: 'security mechanism',
-                  helperText: 'How the sender proves trust — determines the credential field below.',
-                ),
-                items: _authenticators
-                    .map((a) => DropdownMenuItem(value: a, child: Text(a)))
-                    .toList(),
-                // Credential meaning differs per authenticator, so clear it on switch.
-                onChanged: (v) => setState(() {
-                  _authenticator = v ?? 'shared-secret-jwt';
-                  _credentialRefCtrl.clear();
-                }),
-              ),
-              const SizedBox(height: 12),
-              _credentialField(jwtIss, oidcIss),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _scopesCtrl,
-                minLines: 1,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'required scopes (one per line)',
-                  helperText: 'Beyond the baseline system:inbound:send.',
-                ),
-              ),
-              const Divider(),
-              Text('Mediation & reply', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _mediation,
-                decoration: const InputDecoration(labelText: 'mediation'),
-                items: const [
-                  DropdownMenuItem(value: 'VERBATIM', child: Text('VERBATIM — deliver as-is')),
-                  DropdownMenuItem(
-                      value: 'LLM_MEDIATED', child: Text('LLM_MEDIATED — agent frames it')),
-                ],
-                onChanged: (v) => setState(() => _mediation = v ?? 'VERBATIM'),
-              ),
-              const SizedBox(height: 12),
-              _asyncStringDropdown(
-                label: 'response tool (optional)',
-                helperText: 'The tool the agent calls to answer, e.g. system.reply.',
-                emptyLabel: '(no reply tool)',
-                emptyListHelper: 'No tools configured yet — add one under "Tools".',
-                currentValue: _responseToolCtrl.text,
-                options: toolIds,
-                onChanged: (v) => setState(() => _responseToolCtrl.text = v),
-              ),
-              const Divider(),
-              Text('Addressing', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _subjectsCtrl,
-                minLines: 1,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'allowed subjects (one per line, optional)',
-                  helperText: 'Empty = any subject the sender\'s scope permits.',
-                ),
-              ),
-            ],
+    final create = FilledButton.icon(
+      onPressed: () => _open(null),
+      icon: const Icon(Icons.add, size: 18),
+      label: const Text('New system sender'),
+    );
+
+    String entryLabel(SystemSenderResponse s) {
+      final e = entryPoints[s.entryPoint];
+      return e == null ? s.entryPoint : '${e.displayName} · @${e.handle}';
+    }
+
+    return YPage(
+      title: 'System inbound',
+      subtitle: 'Let a linked application (POS, ERP, back office) post messages into a user’s chat. Trust is a '
+          'configured authenticator; mediation decides whether the assistant frames the message.',
+      actions: [create],
+      child: LiveAsyncView<List<SystemSenderResponse>>(
+        value: senders,
+        what: 'system senders',
+        onRetry: () => ref.invalidate(systemSendersProvider(tenant)),
+        data: (context, list) => YTable<SystemSenderResponse>(
+          rows: list,
+          noun: 'senders',
+          idOf: (s) => s.id,
+          selectedId: _openId,
+          highlightIds: fresh,
+          searchHint: 'Search by name, chat or credential',
+          searchTextOf: (s) => '${s.displayName} ${s.id} ${entryLabel(s)} ${s.trust.authenticatorName} ${s.trust.credentialRef}',
+          onRowTap: _open,
+          filters: [
+            YFilter('Enabled', (s) => s.enabled),
+            YFilter('Off', (s) => !s.enabled),
+            YFilter('Assistant-framed', (s) => s.mediation == 'LLM_MEDIATED'),
+            YFilter('WhatsApp leg', (s) => (s.whatsappSenderId ?? '').isNotEmpty),
+          ],
+          empty: YEmptyState(
+            icon: Icons.mail_outline,
+            title: 'No system senders yet',
+            message: 'A system sender is an application you trust to post into users’ chats — a cash register '
+                'closing, a ride arriving, an order shipping.',
+            action: FilledButton.icon(
+              onPressed: () => _open(null),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Create your first system sender'),
+            ),
           ),
-          actions: [
-            if (_editingId != null)
-              TextButton(onPressed: _saving ? null : _resetForm, child: const Text('Cancel')),
-            FilledButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text(_editingId == null ? 'Add' : 'Save'),
+          columns: [
+            YColumn(
+              label: 'Sender',
+              flex: 3,
+              sortKey: (s) => s.displayName.toLowerCase(),
+              cell: (context, s) => YCellStack(primary: s.displayName, secondary: s.id),
+            ),
+            YColumn(
+              label: 'Delivers into',
+              flex: 3,
+              sortKey: entryLabel,
+              cell: (context, s) => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(entryLabel(s), overflow: TextOverflow.ellipsis),
+                if ((s.whatsappSenderId ?? '').isNotEmpty)
+                  Text(
+                    s.whatsappSenderId!.startsWith(_playgroundSenderPrefix) ? '+ Playground simulator' : '+ WhatsApp',
+                    style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+              ]),
+            ),
+            YColumn(
+              label: 'Trust',
+              flex: 3,
+              sortKey: (s) => s.trust.authenticatorName,
+              cell: (context, s) => YCellStack(
+                primary: _authLabel(s.trust.authenticatorName),
+                secondary: s.trust.credentialRef.isEmpty ? 'Any trusted credential' : s.trust.credentialRef,
+              ),
+            ),
+            YColumn(
+              label: 'Mediation',
+              width: 150,
+              sortKey: (s) => s.mediation,
+              cell: (context, s) => YBadge(
+                s.mediation == 'LLM_MEDIATED' ? 'Assistant frames' : 'Verbatim',
+                tone: s.mediation == 'LLM_MEDIATED' ? YTone.brand : YTone.neutral,
+              ),
+            ),
+            YColumn(
+              label: 'Status',
+              width: 120,
+              sortKey: (s) => s.enabled ? 0 : 1,
+              cell: (context, s) => YBadge(
+                s.enabled ? 'Enabled' : 'Off',
+                tone: s.enabled ? YTone.success : YTone.neutral,
+                icon: s.enabled ? Icons.check_circle_outline : Icons.pause_circle_outline,
+              ),
+            ),
+            YColumn(
+              label: 'Updated',
+              width: 120,
+              sortKey: (s) => s.updatedAt ?? s.createdAt ?? '',
+              cell: (context, s) => Text(fresh.contains(s.id) ? 'Just now' : formatRelativeIso(s.updatedAt ?? s.createdAt)),
             ),
           ],
         ),
@@ -583,67 +246,548 @@ class _SystemSendersScreenState extends ConsumerState<SystemSendersScreen> {
   }
 }
 
-class _SenderTile extends StatelessWidget {
-  const _SenderTile({
-    required this.row,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onSimulate,
-  });
+const _labels = {
+  'displayName': 'Display name',
+  'entryPoint': 'Chat',
+  'whatsappSenderId': 'WhatsApp number',
+  'authenticatorName': 'Security mechanism',
+  'credentialRef': 'Credential',
+  'requiredScopes': 'Required scopes',
+  'responseToolId': 'Response tool',
+  'allowedSubjects': 'Allowed recipients',
+};
 
-  final SystemSenderResponse row;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final VoidCallback onSimulate;
+/// Create or edit one system sender, in a side sheet.
+class SystemSenderEditorSheet extends ConsumerStatefulWidget {
+  const SystemSenderEditorSheet({super.key, this.existing});
+  final SystemSenderResponse? existing;
+
+  @override
+  ConsumerState<SystemSenderEditorSheet> createState() => _SystemSenderEditorSheetState();
+}
+
+class _SystemSenderEditorSheetState extends ConsumerState<SystemSenderEditorSheet> {
+  final _displayName = TextEditingController();
+  final _credentialRef = TextEditingController();
+  final _scopes = TextEditingController(); // one per line
+  final _subjects = TextEditingController(); // one per line
+  String? _entryPoint;
+  String? _responseTool;
+  String _authenticator = 'shared-secret-jwt';
+  String _mediation = 'VERBATIM';
+  String _whatsappSenderId = '';
+  bool _enabled = false;
+  late final YFormController _form;
+
+  SystemSenderResponse? get _existing => widget.existing;
+  bool get _editing => _existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final row = _existing;
+    if (row != null) {
+      _displayName.text = row.displayName;
+      _entryPoint = row.entryPoint.isEmpty ? null : row.entryPoint;
+      _credentialRef.text = row.trust.credentialRef;
+      _scopes.text = row.trust.requiredScopes.join('\n');
+      _responseTool = row.responseToolId;
+      _subjects.text = row.addressing.allowedSubjects.join('\n');
+      _authenticator = row.trust.authenticatorName.isEmpty ? 'shared-secret-jwt' : row.trust.authenticatorName;
+      _mediation = row.mediation;
+      _whatsappSenderId = row.whatsappSenderId ?? '';
+      _enabled = row.enabled;
+    }
+    final tenant = ref.read(currentTenantOrNull);
+    _form = YFormController(
+      snapshot: () => {
+        'displayName': _displayName.text.trim(),
+        'entryPoint': _entryPoint,
+        'whatsappSenderId': _whatsappSenderId,
+        'enabled': _enabled,
+        'authenticatorName': _authenticator,
+        'credentialRef': _credentialRef.text.trim(),
+        'requiredScopes': _lines(_scopes),
+        'mediation': _mediation,
+        'responseToolId': _responseTool,
+        'allowedSubjects': _lines(_subjects),
+      },
+      validate: _validate,
+      labels: _labels,
+      draftKey: 'yaya.draft.systemSender.$tenant.${_existing?.id ?? 'new'}',
+    );
+    _form.addListener(_rebuild);
+    _form.loadDraft().then((d) {
+      if (d == null || !mounted) return;
+      final v = d.values;
+      _displayName.text = (v['displayName'] as String?) ?? _displayName.text;
+      _entryPoint = (v['entryPoint'] as String?) ?? _entryPoint;
+      _whatsappSenderId = (v['whatsappSenderId'] as String?) ?? _whatsappSenderId;
+      _enabled = (v['enabled'] as bool?) ?? _enabled;
+      _authenticator = (v['authenticatorName'] as String?) ?? _authenticator;
+      _credentialRef.text = (v['credentialRef'] as String?) ?? _credentialRef.text;
+      if (v['requiredScopes'] is List) _scopes.text = (v['requiredScopes'] as List).join('\n');
+      _mediation = (v['mediation'] as String?) ?? _mediation;
+      _responseTool = v.containsKey('responseToolId') ? v['responseToolId'] as String? : _responseTool;
+      if (v['allowedSubjects'] is List) _subjects.text = (v['allowedSubjects'] as List).join('\n');
+      _form.refresh();
+    });
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    for (final c in [_displayName, _credentialRef, _scopes, _subjects]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  List<String> _lines(TextEditingController c) => c.text.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+
+  Map<String, String?> _validate() {
+    final scopes = _lines(_scopes);
+    return {
+      'displayName': Validators.required(_displayName.text, 'the name users see'),
+      'entryPoint': _entryPoint == null || _entryPoint!.isEmpty ? 'Choose the chat this sender posts into.' : null,
+      'requiredScopes': scopes.any((s) => s.contains(' ')) ? 'One scope per line, without spaces.' : null,
+    };
+  }
+
+  Future<void> _save() async {
+    if (!_form.submit()) return;
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    _form.saving = true;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      final old = _existing?.addressing;
+      final body = SystemSenderRequest(
+        entryPoint: _entryPoint!,
+        displayName: _displayName.text.trim(),
+        enabled: _enabled,
+        trust: SenderTrust(
+          authenticatorName: _authenticator,
+          requiredScopes: _lines(_scopes),
+          credentialRef: _credentialRef.text.trim(),
+        ),
+        mediation: _mediation,
+        // Kinds and roles aren't edited here; keep whatever is stored.
+        addressing: AddressingPolicy(
+          allowedKinds: old?.allowedKinds ?? const ['PRINCIPAL'],
+          allowedSubjects: _lines(_subjects),
+          allowedRoles: old?.allowedRoles ?? const [],
+        ),
+        responseToolId: _responseTool,
+        whatsappSenderId: _whatsappSenderId,
+        capabilityMask: _existing?.capabilityMask,
+        limits: _existing?.limits,
+      );
+      final saved = _editing
+          ? await api.updateSystemSender(tenant, _existing!.id, body)
+          : await api.createSystemSender(tenant, body);
+      ref.invalidate(systemSendersProvider(tenant));
+      _form.saving = false;
+      _form.markClean();
+      if (!mounted) return;
+      showToast(context, _editing ? 'Saved ${saved.displayName}' : 'Created ${saved.displayName}');
+      Navigator.of(context).pop();
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(e);
+    }
+  }
+
+  Future<void> _delete() async {
+    final row = _existing!;
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    final ok = await confirmTyped(
+      context,
+      title: 'Delete ${row.displayName}?',
+      message: 'The linked system can no longer post into “${row.entryPoint}” — its next message is rejected. '
+          'Messages already delivered stay in users’ chats.',
+      expected: row.displayName,
+      confirmLabel: 'Delete sender',
+    );
+    if (!ok) return;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      await api.deleteSystemSender(tenant, row.id);
+      ref.invalidate(systemSendersProvider(tenant));
+      _form.markClean();
+      if (!mounted) return;
+      showToast(context, 'Deleted ${row.displayName}');
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) showToast(context, ApiErrorInfo.from(e).message, error: true);
+    }
+  }
+
+  Future<void> _simulate() async {
+    final row = _existing!;
+    final tenant = ref.read(currentTenantOrNull);
+    if (tenant == null) return;
+    await showDialog<void>(context: context, builder: (_) => _SimulateDialog(tenant: tenant, sender: row));
+  }
+
+  Widget _credentialField(String tenant) {
+    switch (_authenticator) {
+      case 'shared-secret-jwt':
+      case 'oidc':
+        final jwt = _authenticator == 'shared-secret-jwt';
+        final options = ref.watch(jwt ? _jwtSecretIssProvider(tenant) : _oidcIssuerIssProvider(tenant));
+        final list = options.valueOrNull ?? const <String>[];
+        if (options.hasError && !options.hasValue) {
+          return YTextField(
+            label: jwt ? 'JWT shared secret (iss)' : 'OIDC issuer (iss)',
+            wireKey: 'trust.credentialRef',
+            controller: _credentialRef,
+            form: _form,
+            name: 'credentialRef',
+            optional: true,
+            mono: true,
+            helper: 'Couldn’t load the configured ${jwt ? 'secrets' : 'issuers'} — enter the iss by hand. Blank accepts any trusted one.',
+          );
+        }
+        return YResourcePicker(
+          label: jwt ? 'JWT shared secret (iss)' : 'OIDC issuer (iss)',
+          wireKey: 'trust.credentialRef',
+          form: _form,
+          name: 'credentialRef',
+          optional: true,
+          loading: options.isLoading,
+          value: _credentialRef.text.trim().isEmpty ? null : _credentialRef.text.trim(),
+          noneLabel: jwt ? 'Any trusted secret' : 'Any trusted issuer',
+          resources: [for (final iss in list) YResource(id: iss)],
+          helper: list.isEmpty && !options.isLoading
+              ? 'None configured yet — add one under “${jwt ? 'JWT secrets' : 'OIDC issuers'}”.'
+              : jwt
+                  ? 'The secret that signs this system’s token, matched by its iss.'
+                  : 'The issuer whose tokens this system presents.',
+          onChanged: (v) => setState(() => _credentialRef.text = v ?? ''),
+        );
+      default:
+        return YTextField(
+          label: 'API key ID or issuer',
+          wireKey: 'trust.credentialRef',
+          controller: _credentialRef,
+          form: _form,
+          name: 'credentialRef',
+          optional: true,
+          mono: true,
+          helper: 'Which credential to accept. Blank accepts any the authenticator trusts.',
+        );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return EditableRecordCard(
-      onCloneEdit: onEdit,
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Expanded(child: Text(row.displayName, style: Theme.of(context).textTheme.titleSmall)),
-            Chip(
-              visualDensity: VisualDensity.compact,
-              label: Text(row.enabled ? 'enabled' : 'disabled'),
-              backgroundColor: row.enabled
-                  ? Theme.of(context).colorScheme.secondaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-          ]),
-          Text('${row.trust.authenticatorName} · ${row.mediation}',
-              style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
-        ],
+    final tenant = ref.watch(currentTenantOrNull) ?? '';
+    final entryPoints = ref.watch(_entryPointsProvider(tenant));
+    final whatsapp = ref.watch(_whatsappSendersProvider(tenant));
+    final tools = ref.watch(_toolIdsProvider(tenant));
+    final ownSimulator = '$_playgroundSenderPrefix$tenant';
+    final onSimulator = _whatsappSenderId.isNotEmpty && _whatsappSenderId == ownSimulator;
+    final numbers = (whatsapp.valueOrNull ?? const <WhatsAppSenderResponse>[])
+        .where((s) => !s.id.startsWith(_playgroundSenderPrefix))
+        .toList();
+    final authOptions = [
+      for (final e in _authenticators.entries) YEnumOption(e.key, e.value.$1, wire: e.key, description: e.value.$2),
+      // A mechanism configured outside the console stays selectable rather than being silently replaced.
+      if (!_authenticators.containsKey(_authenticator))
+        YEnumOption(_authenticator, _authenticator, wire: _authenticator, description: 'Configured outside the console.'),
+    ];
+
+    final fields = <Widget>[
+      if (_form.summary.isNotEmpty || _form.formError != null)
+        YErrorSummary(form: _form, action: _editing ? 'saving' : 'creating this sender'),
+      YTextField(
+        label: 'Display name',
+        wireKey: 'displayName',
+        controller: _displayName,
+        form: _form,
+        name: 'displayName',
+        required: true,
+        autofocus: !_editing,
+        hint: 'e.g. Cash Register #3',
+        helper: 'Shown to the user as the sender of the message.',
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      YResourcePicker(
+        label: 'Chat',
+        wireKey: 'entryPoint',
+        form: _form,
+        name: 'entryPoint',
+        required: true,
+        value: _entryPoint,
+        loading: entryPoints.isLoading,
+        resources: [
+          for (final e in entryPoints.valueOrNull ?? const <ChatEntryPointResponse>[])
+            YResource(id: e.id, name: e.displayName, meta: '@${e.handle}'),
+        ],
+        hint: 'Search chats…',
+        helper: (entryPoints.valueOrNull ?? const []).isEmpty && !entryPoints.isLoading
+            ? 'No chats yet — create one under “Chats”.'
+            : 'The chat this sender posts into (the one the user added).',
+        onChanged: (v) => setState(() => _entryPoint = v),
+      ),
+      YResourcePicker(
+        label: 'WhatsApp number',
+        wireKey: 'whatsappSenderId',
+        form: _form,
+        name: 'whatsappSenderId',
+        optional: true,
+        value: _whatsappSenderId.isEmpty ? null : _whatsappSenderId,
+        noneLabel: 'Chat only',
+        loading: whatsapp.isLoading,
+        resources: [
+          for (final s in numbers)
+            YResource(id: s.id, name: '${s.displayName} · ${s.phoneE164}', meta: SenderStatusInfo.of(s.status).label),
+          if (tenant.isNotEmpty) YResource(id: ownSimulator, name: 'Playground simulator'),
+        ],
+        helper: onSimulator
+            ? 'Messages appear in the Playground, in the conversation of the recipient phone (it must have written '
+                'there first).'
+            : 'Messages that ask for WhatsApp go out on this number (a template outside the 24-hour window); '
+                'otherwise they land in the chat.',
+        onChanged: (v) => setState(() => _whatsappSenderId = v ?? ''),
+      ),
+      YSwitchField(
+        title: 'Accept messages from this system',
+        wireKey: 'enabled',
+        description: _enabled
+            ? 'The ingest endpoint accepts this sender’s messages.'
+            : 'Off — the system’s messages are rejected until you turn this on.',
+        value: _enabled,
+        onChanged: (v) {
+          setState(() => _enabled = v);
+          _form.refresh();
+        },
+      ),
+      YFormSection(
+        title: 'Trust',
+        description: 'How the system proves it is who it says it is. Baseline scope system:inbound:send is always required.',
+        card: false,
         children: [
-          DetailRow(label: 'entry point', value: row.entryPoint, mono: true),
-          DetailRow(label: 'credential', value: row.trust.credentialRef.isEmpty ? '(any)' : row.trust.credentialRef),
-          if (row.responseToolId != null)
-            DetailRow(label: 'response tool', value: row.responseToolId!, mono: true),
-          DetailRow(
-            label: 'addressing',
-            value: row.addressing.allowedSubjects.isEmpty
-                ? 'any ${row.addressing.allowedKinds.join("/")}'
-                : row.addressing.allowedSubjects.join(', '),
+          YEnumCards<String>(
+            label: 'Security mechanism',
+            wireKey: 'trust.authenticatorName',
+            form: _form,
+            name: 'authenticatorName',
+            value: _authenticator,
+            options: authOptions,
+            // The credential means something different per mechanism, so it resets on a switch.
+            onChanged: (v) => setState(() {
+              if (v != _authenticator) _credentialRef.clear();
+              _authenticator = v;
+            }),
+          ),
+          _credentialField(tenant),
+          YTextField(
+            label: 'Required scopes',
+            wireKey: 'trust.requiredScopes',
+            controller: _scopes,
+            form: _form,
+            name: 'requiredScopes',
+            optional: true,
+            mono: true,
+            minLines: 1,
+            maxLines: 4,
+            hint: 'e.g. pos:cash',
+            helper: 'One per line, beyond the baseline system:inbound:send.',
           ),
         ],
       ),
-      extraActions: [
-        TextButton.icon(
-          onPressed: onSimulate,
-          icon: const Icon(Icons.send_outlined, size: 18),
-          label: const Text('Simulate'),
+      YFormSection(
+        title: 'Mediation & reply',
+        card: false,
+        children: [
+          YEnumCards<String>(
+            label: 'How the message reaches the user',
+            wireKey: 'mediation',
+            value: _mediation,
+            onChanged: (v) {
+              setState(() => _mediation = v);
+              _form.refresh();
+            },
+            options: const [
+              YEnumOption('VERBATIM', 'Deliver as written', wire: 'VERBATIM', description: 'The user sees exactly what the system sent.'),
+              YEnumOption('LLM_MEDIATED', 'Let the assistant frame it',
+                  wire: 'LLM_MEDIATED',
+                  caution: true,
+                  description: 'The assistant rewrites it in the conversation’s voice — the user may not see the original wording.'),
+            ],
+          ),
+          YResourcePicker(
+            label: 'Response tool',
+            wireKey: 'responseToolId',
+            form: _form,
+            name: 'responseToolId',
+            optional: true,
+            value: _responseTool,
+            noneLabel: 'No reply tool',
+            loading: tools.isLoading,
+            resources: [for (final t in tools.valueOrNull ?? const <String>[]) YResource(id: t)],
+            helper: (tools.valueOrNull ?? const []).isEmpty && !tools.isLoading
+                ? 'No tools yet — add one under “Tools”.'
+                : 'The tool the assistant calls to answer the system, e.g. system.reply.',
+            onChanged: (v) => setState(() => _responseTool = v),
+          ),
+        ],
+      ),
+      YFormSection(
+        title: 'Addressing',
+        card: false,
+        children: [
+          YTextField(
+            label: 'Allowed recipients',
+            wireKey: 'addressing.allowedSubjects',
+            controller: _subjects,
+            form: _form,
+            name: 'allowedSubjects',
+            optional: true,
+            mono: true,
+            minLines: 1,
+            maxLines: 5,
+            hint: 'e.g. operator-42',
+            helper: 'User subjects this system may write to, one per line. Empty allows any subject its scopes permit.',
+          ),
+        ],
+      ),
+    ];
+
+    return YUnsavedGuard(
+      form: _form,
+      child: YSaveShortcut(
+        onSave: _save,
+        child: YSheetScaffold(
+          title: _editing ? _existing!.displayName : 'New system sender',
+          subtitle: _editing ? '${_existing!.id} · fields marked * are required.' : 'Fields marked * are required.',
+          headerActions: [
+            if (_editing) ...[
+              IconButton(tooltip: 'Send a test message', icon: const Icon(Icons.send_outlined), onPressed: _simulate),
+              IconButton(
+                tooltip: 'Delete sender',
+                icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                onPressed: _delete,
+              ),
+            ],
+          ],
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[if (i > 0) const SizedBox(height: Gap.fieldGap), fields[i]],
+            ],
+          ),
+          footer: YActionBar(
+            form: _form,
+            primaryLabel: _editing ? 'Save sender' : 'Create sender',
+            onPrimary: _save,
+            onCancel: () => closeYSheet(context),
+          ),
         ),
-        TextButton.icon(
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Delete'),
-          style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
-        ),
+      ),
+    );
+  }
+}
+
+/// Posts as if the linked system had — same delivery path, trust skipped.
+class _SimulateDialog extends ConsumerStatefulWidget {
+  const _SimulateDialog({required this.tenant, required this.sender});
+  final String tenant;
+  final SystemSenderResponse sender;
+
+  @override
+  ConsumerState<_SimulateDialog> createState() => _SimulateDialogState();
+}
+
+class _SimulateDialogState extends ConsumerState<_SimulateDialog> {
+  final _subject = TextEditingController();
+  final _body = TextEditingController(text: 'cash closed: 1000');
+  late final YFormController _form = YFormController(
+    snapshot: () => {'subject': _subject.text.trim(), 'body': _body.text.trim()},
+    validate: () => {
+      'subject': Validators.required(_subject.text, 'the recipient’s subject'),
+      'body': Validators.required(_body.text, 'a message'),
+    },
+    labels: const {'subject': 'Recipient', 'body': 'Message'},
+  )..addListener(_rebuild);
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _form.removeListener(_rebuild);
+    _form.dispose();
+    _subject.dispose();
+    _body.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    if (!_form.submit()) return;
+    _form.saving = true;
+    try {
+      final api = await ref.read(adminApiProvider.future);
+      final res = await api.simulateSystemMessage(widget.tenant, widget.sender.id, {
+        'subject': _subject.text.trim(),
+        'body': _body.text.trim(),
+        'originatorName': widget.sender.displayName,
+        'subjectLine': 'simulated',
+      });
+      _form.saving = false;
+      if (!mounted) return;
+      showToast(context, 'Test message ${humanizeWire('${res['disposition'] ?? 'sent'}').toLowerCase()}');
+      Navigator.of(context).pop();
+    } catch (e) {
+      _form.saving = false;
+      _form.applyServerError(e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Send a test message from ${widget.sender.displayName}'),
+      content: SizedBox(
+        width: 480,
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (_form.formError != null) ...[YErrorSummary(form: _form, action: 'sending'), const SizedBox(height: Gap.md)],
+          YTextField(
+            label: 'Recipient',
+            wireKey: 'subject',
+            controller: _subject,
+            form: _form,
+            name: 'subject',
+            required: true,
+            autofocus: true,
+            mono: true,
+            hint: 'e.g. operator-42',
+            helper: 'The user’s subject (operator id). It goes through the real delivery path.',
+          ),
+          const SizedBox(height: Gap.fieldGap),
+          YTextField(
+            label: 'Message',
+            wireKey: 'body',
+            controller: _body,
+            form: _form,
+            name: 'body',
+            required: true,
+            minLines: 2,
+            maxLines: 4,
+          ),
+        ]),
+      ),
+      actions: [
+        OutlinedButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: _form.saving ? null : _send, child: const Text('Send test message')),
       ],
     );
   }

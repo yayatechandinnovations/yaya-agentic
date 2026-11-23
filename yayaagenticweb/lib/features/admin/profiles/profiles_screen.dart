@@ -1,19 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../api/admin_api.dart';
+import '../../../app/live/live_resource.dart';
+import '../../../app/live/resource_kind.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/auth_binding.dart';
 import '../../../models/admin/capability.dart';
 import '../../../models/admin/profile.dart';
-import '../flows/start_flow_picker.dart';
+import '../../../ui/data/live_async.dart';
+import '../../../ui/data/relative_time.dart';
+import '../../../ui/data/y_badge.dart';
+import '../../../ui/data/y_page.dart';
+import '../../../ui/data/y_states.dart';
+import '../../../ui/data/y_table.dart';
+import '../../../ui/tokens.dart';
 import '../shared/admin_shared.dart';
-import 'clone_profile_wizard.dart';
+import 'profile_form.dart';
 
 /// Empty list when no tenant is selected — the scoped screen renders a
 /// "register a tenant first" banner via [TenantScopedEmptyState] instead
 /// of dispatching against `default` and confusing the operator.
 final profilesProvider = FutureProvider<List<ProfileResponse>>((ref) async {
+  liveResource(ref, AdminResourceKind.profile);
   final tenant = ref.watch(currentTenantOrNull);
   if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
@@ -21,6 +31,7 @@ final profilesProvider = FutureProvider<List<ProfileResponse>>((ref) async {
 });
 
 final capabilitiesProvider = FutureProvider<List<CapabilityResponse>>((ref) async {
+  liveResource(ref, AdminResourceKind.capability);
   final tenant = ref.watch(currentTenantOrNull);
   if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
@@ -28,436 +39,129 @@ final capabilitiesProvider = FutureProvider<List<CapabilityResponse>>((ref) asyn
 });
 
 final authBindingsProvider = FutureProvider<List<AuthBindingResponse>>((ref) async {
+  liveResource(ref, AdminResourceKind.authBinding);
   final tenant = ref.watch(currentTenantOrNull);
   if (tenant == null) return const [];
   final api = await ref.watch(adminApiProvider.future);
   return api.listAuthBindings(tenant: tenant);
 });
 
-class ProfilesScreen extends ConsumerStatefulWidget {
+/// Latest version of every profile, with its version history.
+final profileSummariesProvider = Provider<AsyncValue<List<ProfileSummary>>>(
+  (ref) => ref.watch(profilesProvider).whenData(summarizeProfiles),
+);
+
+class ProfilesScreen extends ConsumerWidget {
   const ProfilesScreen({super.key});
-  @override
-  ConsumerState<ProfilesScreen> createState() => _ProfilesScreenState();
-}
-
-class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
-  final _idCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  final _introCtrl = TextEditingController();
-  final _promptCtrl = TextEditingController();
-  // Blank = the deployment's model / the server's default tool rounds.
-  final _modelCtrl = TextEditingController();
-  final _maxToolRoundsCtrl = TextEditingController();
-  bool _metered = false;
-  final _capsSelected = <String>{};
-  String? _authBinding;
-  String _language = 'en';
-  String? _defaultStartFlowId;
-  bool _saving = false;
-  int? _cloningFromVersion;
-
-  /// The profile being cloned, or null for a brand-new one. Everything the
-  /// form has no control for (metadata — which carries `principalKinds` and
-  /// `policy` —, extensions other than the store binding, fields this console
-  /// does not model) is saved from here unchanged; each POST replaces the
-  /// whole profile, so a field left out of the body is a field cleared.
-  ProfileResponse? _cloneSource;
-
-  // Commerce binding (nullable on the profile): points this profile at a
-  // yaya-sales store. Catalogs/pricing/PSP config live in the yaya-sales
-  // console, not here.
-  bool _commerceEnabled = false;
-  final _commerceStoreIdCtrl = TextEditingController();
-  final _commerceCheckoutToolCtrl = TextEditingController(text: 'checkout');
-  bool _commerceCartEnabled = true;
-
-  /// Languages we surface in the dropdown. The backend accepts any BCP 47
-  /// tag — operators with niche needs can extend the dropdown later. Until
-  /// then, two covers 99% of demo use.
-  static const _languageOptions = {
-    'en': 'English',
-    'es': 'Spanish',
-  };
-
-  void _cloneEditFrom(ProfileResponse p) {
-    setState(() {
-      _idCtrl.text = p.id;
-      _nameCtrl.text = p.displayName;
-      _introCtrl.text = p.introOneLiner;
-      _promptCtrl.text = p.systemPromptFragment;
-      _capsSelected
-        ..clear()
-        ..addAll(p.capabilities);
-      _authBinding = p.authBindingId;
-      _language = p.language;
-      _defaultStartFlowId = p.defaultStartFlowId;
-      _modelCtrl.text = p.model ?? '';
-      _maxToolRoundsCtrl.text = p.maxToolRounds?.toString() ?? '';
-      _metered = p.metered;
-      _loadCommerce(_storeExtension(p.extensions));
-      _cloningFromVersion = p.version;
-      _cloneSource = p;
-    });
-    showSnack(context,
-        'Cloned ${p.id}@${p.version} → will save as v${p.version + 1}');
-  }
-
-  void _cancelClone() {
-    setState(() {
-      _cloningFromVersion = null;
-      _cloneSource = null;
-      _idCtrl.clear();
-      _nameCtrl.clear();
-      _introCtrl.clear();
-      _promptCtrl.clear();
-      _modelCtrl.clear();
-      _maxToolRoundsCtrl.clear();
-      _metered = false;
-      _capsSelected.clear();
-      _authBinding = null;
-      _language = 'en';
-      _defaultStartFlowId = null;
-      _loadCommerce(null);
-    });
-  }
-
-  /// The store binding rides under the yaya-sales-owned `sales.store` kind in a
-  /// profile's domain-neutral `extensions` map (S7). The framework stores it
-  /// opaquely; this admin is the app-side editor for that payload.
-  static const String _storeKind = 'sales.store';
-
-  /// Pulls the `sales.store` payload out of a profile's extensions map, or null.
-  Map<String, dynamic>? _storeExtension(Map<String, dynamic>? extensions) {
-    final store = extensions?[_storeKind];
-    return store is Map ? Map<String, dynamic>.from(store) : null;
-  }
-
-  /// Populates the store controls from a `sales.store` payload, whose shape is
-  /// {storeId, cartEnabled, checkoutTool}. Tolerates the legacy {value} wrapper
-  /// on checkoutTool.
-  void _loadCommerce(Map<String, dynamic>? commerce) {
-    if (commerce == null) {
-      _commerceEnabled = false;
-      _commerceStoreIdCtrl.text = '';
-      _commerceCheckoutToolCtrl.text = 'checkout';
-      _commerceCartEnabled = true;
-      return;
-    }
-    _commerceEnabled = true;
-    _commerceStoreIdCtrl.text = commerce['storeId']?.toString() ?? '';
-    final tool = commerce['checkoutTool'];
-    final toolId = tool is Map ? tool['value']?.toString() : tool?.toString();
-    _commerceCheckoutToolCtrl.text =
-        (toolId == null || toolId.isEmpty) ? 'checkout' : toolId;
-    _commerceCartEnabled = commerce['cartEnabled'] != false;
-  }
 
   @override
-  void dispose() {
-    _idCtrl.dispose();
-    _nameCtrl.dispose();
-    _introCtrl.dispose();
-    _promptCtrl.dispose();
-    _modelCtrl.dispose();
-    _maxToolRoundsCtrl.dispose();
-    _commerceStoreIdCtrl.dispose();
-    _commerceCheckoutToolCtrl.dispose();
-    super.dispose();
-  }
-
-  /// Builds the profile's `extensions` map, or null when it ends up empty. The
-  /// form edits only the `sales.store` kind (set from the store controls, or
-  /// removed when the toggle is off); every other kind of the cloned profile,
-  /// and any store-payload key the controls do not cover, is kept as it was.
-  /// The backend stores/echoes the map opaquely.
-  Map<String, dynamic>? _buildExtensions() {
-    final source = _cloneSource?.extensions;
-    final extensions = <String, dynamic>{...?source}..remove(_storeKind);
-    if (_commerceEnabled) {
-      final storeId = _commerceStoreIdCtrl.text.trim();
-      final checkoutTool = _commerceCheckoutToolCtrl.text.trim();
-      extensions[_storeKind] = {
-        ...?_storeExtension(source),
-        'storeId': storeId.isEmpty ? null : storeId,
-        'checkoutTool': checkoutTool.isEmpty ? 'checkout' : checkoutTool,
-        'cartEnabled': _commerceCartEnabled,
-      };
-    }
-    return extensions.isEmpty ? null : extensions;
-  }
-
-  Future<void> _save() async {
-    if (_idCtrl.text.isBlank || _nameCtrl.text.isBlank || _introCtrl.text.isBlank || _promptCtrl.text.isBlank) {
-      showSnack(context, 'fill id, display name, intro, and system prompt', error: true);
-      return;
-    }
-    final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) {
-      showSnack(context, 'select a tenant first', error: true);
-      return;
-    }
-    final roundsText = _maxToolRoundsCtrl.text.trim();
-    final rounds = roundsText.isEmpty ? null : int.tryParse(roundsText);
-    if (roundsText.isNotEmpty && (rounds == null || rounds < 1 || rounds > 16)) {
-      showSnack(context, 'max tool rounds must be a number from 1 to 16, or blank',
-          error: true);
-      return;
-    }
-    final model = _modelCtrl.text.trim();
-    setState(() => _saving = true);
-    try {
-      final api = await ref.read(adminApiProvider.future);
-      await api.createProfile(ProfileRequest(
-        tenant: tenant,
-        id: _idCtrl.text.trim(),
-        displayName: _nameCtrl.text.trim(),
-        introOneLiner: _introCtrl.text.trim(),
-        systemPromptFragment: _promptCtrl.text.trim(),
-        capabilities: _capsSelected.toList(),
-        authBindingId: _authBinding,
-        language: _language,
-        metadata: _cloneSource?.metadata ?? const <String, dynamic>{},
-        defaultStartFlowId: _defaultStartFlowId,
-        extensions: _buildExtensions(),
-        // The server keeps a field of the latest version when a save leaves
-        // it out, so what the form shows is always sent: an emptied model is
-        // "" (the deployment's model), and emptied rounds on a clone are the
-        // default itself.
-        model: model,
-        maxToolRounds: rounds ?? (_cloneSource == null ? null : 5),
-        metered: _metered,
-        carried: _cloneSource?.raw ?? const <String, dynamic>{},
-      ));
-      ref.invalidate(profilesProvider);
-      if (!mounted) return;
-      final wasCloning = _cloningFromVersion;
-      _idCtrl.clear();
-      _nameCtrl.clear();
-      _introCtrl.clear();
-      _promptCtrl.clear();
-      _modelCtrl.clear();
-      _maxToolRoundsCtrl.clear();
-      setState(() {
-        _metered = false;
-        _capsSelected.clear();
-        _authBinding = null;
-        _language = 'en';
-        _defaultStartFlowId = null;
-        _loadCommerce(null);
-        _cloningFromVersion = null;
-        _cloneSource = null;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final params = GoRouterState.of(context).uri.queryParameters;
+    // Old links and the palette's generic form: ?id= / ?new=1.
+    if (params['id'] != null || params['new'] != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        context.go(params['id'] != null ? '/admin/profiles/${Uri.encodeComponent(params['id']!)}' : '/admin/profiles/new');
       });
-      showSnack(context,
-          wasCloning == null
-              ? 'profile saved'
-              : 'saved as v${wasCloning + 1}');
-    } catch (e) {
-      if (mounted) showSnack(context, formatError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _saving = false);
     }
-  }
-
-  Widget _commerceSection(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        TextField(
-          controller: _commerceStoreIdCtrl,
-          decoration: const InputDecoration(
-            labelText: 'store id',
-            helperText: 'The yaya-sales store this profile sells from.',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _commerceCheckoutToolCtrl,
-          decoration: const InputDecoration(
-            labelText: 'checkout tool',
-            helperText: 'Tool id the agent calls to check out (default: checkout).',
-          ),
-        ),
-        const SizedBox(height: 4),
-        SwitchListTile(
-          value: _commerceCartEnabled,
-          onChanged: (v) => setState(() => _commerceCartEnabled = v),
-          title: const Text('Cart enabled'),
-          subtitle: const Text('Shows the cart affordance to shoppers.',
-              style: TextStyle(fontSize: 12)),
-          contentPadding: EdgeInsets.zero,
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
     if (ref.watch(currentTenantOrNull) == null) {
       return const TenantScopedEmptyState(resourceLabel: 'Profiles');
     }
-    final profiles = ref.watch(profilesProvider);
-    final caps = ref.watch(capabilitiesProvider);
-    final bindings = ref.watch(authBindingsProvider);
+    final summaries = ref.watch(profileSummariesProvider);
+    final fresh = ref.watch(freshIdsProvider(AdminResourceKind.profile));
 
-    return AdminTwoPane(
+    void openNew() => context.go('/admin/profiles/new');
+
+    return YPage(
       title: 'Profiles',
-      subtitle: 'Each POST creates a new version. Earlier versions stay sticky for in-flight sessions.',
-      list: profiles.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Text(formatError(e), style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        data: (list) => list.isEmpty
-            ? const Center(child: Text('No profiles yet.'))
-            : ListView.separated(
-                itemBuilder: (_, i) => _ProfileTile(
-                  profile: list[i],
-                  onCloneEdit: () => _cloneEditFrom(list[i]),
-                ),
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemCount: list.length,
-              ),
-      ),
-      form: SingleChildScrollView(
-        child: FormCard(
-          title: _cloningFromVersion == null
-              ? 'New profile'
-              : 'Editing clone of ${_idCtrl.text}@$_cloningFromVersion → '
-                  'saves as v${_cloningFromVersion! + 1}',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(controller: _idCtrl, decoration: const InputDecoration(labelText: 'id')),
-              const SizedBox(height: 8),
-              TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'display name')),
-              const SizedBox(height: 8),
-              TextField(controller: _introCtrl, decoration: const InputDecoration(labelText: 'intro one-liner')),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _promptCtrl,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'system prompt fragment'),
-              ),
-              const SizedBox(height: 16),
-              Text('Capabilities', style: Theme.of(context).textTheme.labelLarge),
-              caps.when(
-                loading: () => const LinearProgressIndicator(),
-                error: (e, _) => Text(formatError(e),
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                data: (list) => Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: list
-                      .map((c) => FilterChip(
-                            label: Text('${c.id}@${c.version}'),
-                            selected: _capsSelected.contains(c.id),
-                            onSelected: (sel) => setState(() {
-                              if (sel) {
-                                _capsSelected.add(c.id);
-                              } else {
-                                _capsSelected.remove(c.id);
-                              }
-                            }),
-                          ))
-                      .toList(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              bindings.when(
-                loading: () => const SizedBox.shrink(),
-                error: (e, _) => Text(formatError(e),
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                data: (list) => DropdownButtonFormField<String?>(
-                  initialValue: _authBinding,
-                  decoration: const InputDecoration(labelText: 'auth binding'),
-                  items: [
-                    const DropdownMenuItem(value: null, child: Text('— none —')),
-                    ...list.map((b) => DropdownMenuItem(value: b.id, child: Text(b.id))),
-                  ],
-                  onChanged: (v) => setState(() => _authBinding = v),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _language,
-                decoration: const InputDecoration(
-                  labelText: 'response language',
-                  helperText: 'the LLM responds in this language regardless of user input',
-                ),
-                items: [
-                  ..._languageOptions.entries.map((e) => DropdownMenuItem(
-                        value: e.key,
-                        child: Text('${e.value}  (${e.key})'),
-                      )),
-                  // A cloned profile keeps its own tag even when it is not
-                  // one of the options above.
-                  if (!_languageOptions.containsKey(_language))
-                    DropdownMenuItem(value: _language, child: Text(_language)),
-                ],
-                onChanged: (v) => setState(() => _language = v ?? 'en'),
-              ),
-              const SizedBox(height: 12),
-              StartFlowPicker(
-                tenant: ref.watch(currentTenantOrNull) ?? 'default',
-                value: _defaultStartFlowId,
-                label: 'Default start flow (optional)',
-                onChanged: (v) => setState(() => _defaultStartFlowId = v),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _modelCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'model (optional)',
-                  helperText:
-                      "blank = the deployment's model; must be on the server's allowed-models list",
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _maxToolRoundsCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'max tool rounds per turn (optional)',
-                  helperText: '1–16; blank = 5',
-                ),
-              ),
-              SwitchListTile(
-                value: _metered,
-                onChanged: (v) => setState(() => _metered = v),
-                title: const Text('Metered'),
-                subtitle: const Text(
-                    "Turns count against the tenant's monthly message allowance "
-                    'and are refused once it is used up.',
-                    style: TextStyle(fontSize: 12)),
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 16),
-              const Divider(),
-              SwitchListTile(
-                value: _commerceEnabled,
-                onChanged: (v) => setState(() => _commerceEnabled = v),
-                title: const Text('Commerce (storefront)'),
-                subtitle: const Text(
-                    'Bind this profile to a yaya-sales store. Catalogs, pricing, '
-                    'and payment providers are managed in the yaya-sales console.',
-                    style: TextStyle(fontSize: 12)),
-                contentPadding: EdgeInsets.zero,
-              ),
-              if (_commerceEnabled) _commerceSection(context),
-            ],
+      subtitle: 'The roles users talk to. A profile pins the instructions, the capabilities the agent may use, and how users sign in.',
+      actions: [FilledButton.icon(onPressed: openNew, icon: const Icon(Icons.add, size: 18), label: const Text('New profile'))],
+      child: LiveAsyncView<List<ProfileSummary>>(
+        value: summaries,
+        what: 'profiles',
+        onRetry: () => ref.invalidate(profilesProvider),
+        data: (context, list) => YTable<ProfileSummary>(
+          rows: list,
+          noun: 'profiles',
+          idOf: (s) => s.latest.id,
+          searchHint: 'Search by name, ID or capability',
+          searchTextOf: (s) => '${s.latest.displayName} ${s.latest.id} ${s.latest.capabilities.join(' ')} ${s.latest.authBindingId ?? ''}',
+          highlightIds: fresh,
+          onRowTap: (s) => context.go('/admin/profiles/${Uri.encodeComponent(s.latest.id)}'),
+          filters: [
+            YFilter('Sells from a store', (s) => storeExtensionOf(s.latest.extensions) != null),
+            YFilter('Metered', (s) => s.latest.metered),
+            YFilter('No sign-in binding', (s) => (s.latest.authBindingId ?? '').isEmpty),
+            YFilter('No capabilities', (s) => s.latest.capabilities.isEmpty),
+          ],
+          empty: YEmptyState(
+            icon: Icons.badge_outlined,
+            title: 'No profiles yet',
+            message: 'A profile is a role users talk to — its instructions, the capabilities it may use, and how users sign in.',
+            action: FilledButton.icon(onPressed: openNew, icon: const Icon(Icons.add, size: 18), label: const Text('Create your first profile')),
           ),
-          actions: [
-            if (_cloningFromVersion != null)
-              TextButton(
-                onPressed: _saving ? null : _cancelClone,
-                child: const Text('Cancel'),
+          columns: [
+            YColumn(
+              label: 'Profile',
+              flex: 3,
+              sortKey: (s) => s.latest.displayName.toLowerCase(),
+              cell: (context, s) => _NameCell(profile: s.latest),
+            ),
+            YColumn(
+              label: 'Capabilities',
+              flex: 2,
+              sortKey: (s) => s.latest.capabilities.length,
+              cell: (context, s) {
+                final caps = s.latest.capabilities;
+                return Text(
+                  caps.isEmpty ? 'None' : caps.length == 1 ? caps.first : '${caps.length} capabilities',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, color: caps.isEmpty ? Theme.of(context).colorScheme.onSurfaceVariant : null),
+                );
+              },
+            ),
+            YColumn(
+              label: 'Sign-in',
+              flex: 2,
+              sortKey: (s) => s.latest.authBindingId ?? '',
+              cell: (context, s) {
+                final b = s.latest.authBindingId;
+                return b == null || b.isEmpty
+                    ? const YBadge('None')
+                    : Text(b, overflow: TextOverflow.ellipsis, style: monoStyle(context, size: 13));
+              },
+            ),
+            YColumn(
+              label: 'Language',
+              width: 130,
+              sortKey: (s) => s.latest.language,
+              cell: (context, s) => Text(profileLanguages[s.latest.language] ?? s.latest.language, style: const TextStyle(fontSize: 14)),
+            ),
+            YColumn(
+              label: 'Version',
+              width: 110,
+              sortKey: (s) => s.latest.version,
+              cell: (context, s) => YCellStack(
+                primary: 'v${s.latest.version}',
+                mono: true,
+                secondary: s.versions.length == 1 ? null : '${s.versions.length} versions',
               ),
-            FilledButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text(_cloningFromVersion == null
-                      ? 'Save'
-                      : 'Save as v${_cloningFromVersion! + 1}'),
+            ),
+            YColumn(
+              label: 'Updated',
+              width: 120,
+              sortKey: (s) => s.latest.createdAt ?? '',
+              cell: (context, s) {
+                final isFresh = fresh.contains(s.latest.id);
+                return Text(
+                  isFresh ? 'Just now' : formatRelativeIso(s.latest.createdAt),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isFresh ? FontWeight.w600 : null,
+                    color: isFresh ? Theme.of(context).colorScheme.primary : null,
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -466,73 +170,31 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   }
 }
 
-class _ProfileTile extends StatelessWidget {
-  const _ProfileTile({required this.profile, required this.onCloneEdit});
+class _NameCell extends StatelessWidget {
+  const _NameCell({required this.profile});
   final ProfileResponse profile;
-  final VoidCallback onCloneEdit;
 
   @override
   Widget build(BuildContext context) {
-    return EditableRecordCard(
-      onCloneEdit: onCloneEdit,
-      extraActions: [
-        OutlinedButton.icon(
-          onPressed: () => CloneProfileWizard.show(
-            context,
-            sourceTenant: profile.tenant,
-            profile: profile,
-          ),
-          icon: const Icon(Icons.move_to_inbox_outlined, size: 18),
-          label: const Text('Clone to another tenant…'),
+    final scheme = Theme.of(context).colorScheme;
+    final status = profile.status;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      Row(children: [
+        Flexible(
+          child: Text(profile.displayName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: scheme.onSurface)),
         ),
-      ],
-      header: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${profile.id}@${profile.version}',
-              style: Theme.of(context).textTheme.titleSmall),
-          Text(profile.displayName, style: Theme.of(context).textTheme.bodyMedium),
+        if (status != null && status.isNotEmpty && status != 'ACTIVE') ...[
+          const SizedBox(width: 8),
+          YBadge(status[0] + status.substring(1).toLowerCase(), tone: YTone.warning),
         ],
-      ),
-      trailing: profile.status == null
-          ? null
-          : Chip(
-              label: Text(profile.status!, style: const TextStyle(fontSize: 11)),
-              visualDensity: VisualDensity.compact,
-            ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          DetailRow(label: 'displayName', value: profile.displayName),
-          DetailRow(label: 'introOneLiner', value: profile.introOneLiner),
-          DetailRow(
-            label: 'systemPromptFragment',
-            value: profile.systemPromptFragment,
-            mono: true,
-          ),
-          DetailRow(
-            label: 'capabilities',
-            value: profile.capabilities.isEmpty
-                ? '(none)'
-                : profile.capabilities.join(', '),
-          ),
-          DetailRow(
-            label: 'authBindingId',
-            value: profile.authBindingId ?? '(none)',
-          ),
-          DetailRow(label: 'language', value: profile.language),
-          DetailRow(label: 'model', value: profile.model ?? '(deployment default)'),
-          DetailRow(
-            label: 'maxToolRounds',
-            value: profile.maxToolRounds?.toString() ?? '(default)',
-          ),
-          DetailRow(label: 'metered', value: profile.metered ? 'yes' : 'no'),
+        if (storeExtensionOf(profile.extensions) != null) ...[
+          const SizedBox(width: 8),
+          const YBadge('Store', tone: YTone.brand, icon: Icons.storefront_outlined),
         ],
-      ),
-    );
+      ]),
+      Text(profile.id, overflow: TextOverflow.ellipsis, style: monoStyle(context, size: 12.5, color: scheme.onSurfaceVariant)),
+    ]);
   }
-}
-
-extension on String {
-  bool get isBlank => trim().isEmpty;
 }

@@ -41,3 +41,15 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # The web renderer has no system monospace font, so ids, versions and JSON
+  # fell back to the proportional default. Registered as `monospace` so the
+  # existing fontFamily: 'monospace' call sites pick it up unchanged.
+  fonts:
+    - family: monospace
+      fonts:
+        - asset: assets/fonts/roboto_mono/RobotoMono-Regular.ttf
+        - asset: assets/fonts/roboto_mono/RobotoMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/roboto_mono/RobotoMono-Bold.ttf
+          weight: 700
