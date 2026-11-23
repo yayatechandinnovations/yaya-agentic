@@ -3,6 +3,8 @@ package com.yayatechandinnovations.yayaagentic.persistence;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -16,7 +18,10 @@ public interface ForumReportRepository extends JpaRepository<ForumReportEntity, 
 
     Optional<ForumReportEntity> findByPostIdAndAccountIdAndResolvedAtIsNull(String postId, UUID accountId);
 
-    List<ForumReportEntity> findByResolvedAtIsNullOrderByCreatedAtAsc(Pageable page);
+    /** Open reports on one tenant's posts — reports carry no tenant of their own. */
+    @Query("select r from ForumReportEntity r where r.resolvedAt is null and r.postId in "
+            + "(select p.id from ForumPostEntity p where p.tenantId = :tenantId) order by r.createdAt asc")
+    List<ForumReportEntity> findOpenForTenant(@Param("tenantId") String tenantId, Pageable page);
 
     List<ForumReportEntity> findByPostIdAndResolvedAtIsNull(String postId);
 }

@@ -114,7 +114,7 @@ public class ForumAdminController {
                                              ServerWebExchange exchange) {
         requireMember(tenantId, exchange);
         return new ForumDtos.ReportsResponse(
-                forum.openReports().stream().map(ForumDtos.ReportView::of).toList());
+                forum.openReports(tenantId).stream().map(ForumDtos.ReportView::of).toList());
     }
 
     /* ------------------------------ helpers --------------------------------- */

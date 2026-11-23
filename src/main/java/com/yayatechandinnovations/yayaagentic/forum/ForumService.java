@@ -317,8 +317,8 @@ public class ForumService {
     }
 
     @Transactional(readOnly = true)
-    public List<ForumReportEntity> openReports() {
-        return reports.findByResolvedAtIsNullOrderByCreatedAtAsc(PageRequest.of(0, 200));
+    public List<ForumReportEntity> openReports(String tenantId) {
+        return reports.findOpenForTenant(tenantId, PageRequest.of(0, 200));
     }
 
     @Transactional
