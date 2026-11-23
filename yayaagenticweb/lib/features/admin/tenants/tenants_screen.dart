@@ -533,7 +533,7 @@ class _TenantHealthCard extends ConsumerWidget {
               Text('Health', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),
               _check(context, 'hostBaseUrl set', h.hostBaseUrlSet),
-              _check(context, 'auth binding resolves', h.authBindingResolves),
+              _check(context, 'default auth binding resolves', h.authBindingResolves),
               _check(context, 'recording strategy resolves', h.recordingStrategyResolves),
               if (h.warnings.isNotEmpty) ...[
                 const SizedBox(height: 8),

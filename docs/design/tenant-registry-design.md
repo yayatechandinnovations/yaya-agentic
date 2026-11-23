@@ -68,7 +68,7 @@ Reading the row gives the **complete trust bundle**: who can talk to us *for* th
 | `host_base_url_allowlist` | no | array of glob patterns (`*` only, not regex); see `tool-url-resolution-design.md` §5 |
 | `inbound_origin_allowlist` | no | array of glob patterns; empty array means "host_base_url's origin only" (see §5) |
 | `require_https` | yes | default `true`; flipping to `false` requires explicit operator confirmation |
-| `default_authenticator_binding_id` | yes | must reference an existing `auth_bindings(tenant_id=this.id, id=…)` row |
+| `default_authenticator_binding_id` | no | if set, must reference an existing `auth_bindings(tenant_id=this.id, id=…)` row. Not consumed at runtime (authentication runs through the Authenticator chain + per-tenant OIDC issuers / JWT secrets), so unset is healthy |
 | `default_recording_strategy_id` | no | if set, must reference a `recording_strategies` row scoped TENANT |
 
 Empty `host_base_url` is permitted **only on archived tenants** (so historical rows don't fail validation after a schema migration). For an `ACTIVE` tenant it is hard-required, because the alternative is silent fall-through and the failure mode is "tools dispatch to nowhere with no audit trail."
@@ -140,7 +140,7 @@ GET    /v1/admin/tenants/{id}/health              { hostBaseUrlSet, authBindingR
 1. Slug shape (regex above).
 2. URL grammar — `http(s)://host[:port][/path]`, no `?`, no `#`, no control chars. (Same as the existing v2 rule.)
 3. `require_https=true` ⇒ all URLs in `host_base_url`, `host_base_url_allowlist`, and `inbound_origin_allowlist` must be `https://`.
-4. Referenced `defaultAuthenticatorBindingId` exists.
+4. Referenced `defaultAuthenticatorBindingId` exists (when set).
 5. Referenced `defaultRecordingStrategyId` exists (when set) and is scoped TENANT.
 6. The tenant cannot be its own dependency (no self-loops in `default_*` fields after a future "linked tenants" feature lands).
 

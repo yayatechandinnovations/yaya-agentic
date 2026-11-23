@@ -208,7 +208,9 @@ public class TenantController {
             warnings.add("hostBaseUrl is not set; HTTP tool dispatch will refuse to fire");
         }
 
-        boolean authResolves = false;
+        // Unset is healthy: authentication runs through the Authenticator chain and the
+        // tenant's OIDC issuers / JWT secrets, not through this default binding.
+        boolean authResolves = true;
         if (entity.getDefaultAuthenticatorBindingId() != null) {
             authResolves = authBindings.existsById(new AuthBindingEntity.PK(
                     entity.getId(), entity.getDefaultAuthenticatorBindingId()));
@@ -216,8 +218,6 @@ public class TenantController {
                 warnings.add("defaultAuthenticatorBindingId references a missing binding: "
                         + entity.getDefaultAuthenticatorBindingId());
             }
-        } else {
-            warnings.add("defaultAuthenticatorBindingId is not set");
         }
 
         boolean recordingResolves = true;

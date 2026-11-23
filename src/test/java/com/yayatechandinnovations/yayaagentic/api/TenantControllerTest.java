@@ -177,6 +177,8 @@ class TenantControllerTest {
         assertThat(res).isNotNull();
         assertThat(res.hostBaseUrlSet()).isFalse();
         assertThat(res.warnings()).anyMatch(w -> w.contains("hostBaseUrl is not set"));
+        assertThat(res.authBindingResolves()).isTrue();
+        assertThat(res.warnings()).noneMatch(w -> w.contains("defaultAuthenticatorBindingId"));
     }
 
     @Test @Order(10)
