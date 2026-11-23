@@ -42,6 +42,16 @@ public interface MessagingChannelProvider {
         throw new UnsupportedOperationException("verifySender not supported by " + id());
     }
 
+    /**
+     * Point an existing sender's inbound and status webhooks at new URLs,
+     * leaving its profile untouched — a transferred sender keeps its approved
+     * display name (whatsapp-sender-transfer-design.md §6.2).
+     */
+    default void repointWebhooks(SenderRef ref, String webhookUrl, String statusCallbackUrl,
+                                 ProviderCreds creds) {
+        throw new UnsupportedOperationException("repointWebhooks not supported by " + id());
+    }
+
     /* ------------------------------ Inbound trust (§9) -------------------- */
 
     InboundValidation validateInbound(RawInboundRequest req, SenderTrustMaterial trust);

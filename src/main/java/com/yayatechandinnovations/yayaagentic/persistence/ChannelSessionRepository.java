@@ -15,6 +15,9 @@ public interface ChannelSessionRepository extends JpaRepository<ChannelSessionEn
 
     Optional<ChannelSessionEntity> findByTenantIdAndSessionId(String tenantId, String sessionId);
 
+    List<ChannelSessionEntity> findByTenantIdAndSenderIdAndStatus(
+            String tenantId, String senderId, String status);
+
     /** Used by the operator admin "live channel sessions" view (later W). */
     List<ChannelSessionEntity> findByTenantIdAndStatusOrderByLastInboundAtDesc(
             String tenantId, String status);

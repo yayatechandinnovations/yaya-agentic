@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -131,6 +132,20 @@ public class ChannelSessionService {
                     close(e, reason);
                     return e;
                 });
+    }
+
+    /** Close every open thread on a sender — it is leaving this workspace
+     *  (whatsapp-sender-transfer-design.md §4). Returns how many were open. */
+    @Transactional
+    public int closeAllOpenForSender(Ids.TenantId tenant, SenderId sender, String reason) {
+        List<ChannelSessionEntity> open = repo.findByTenantIdAndSenderIdAndStatus(
+                tenant.value(), sender.value(), OPEN);
+        open.forEach(row -> close(row, reason));
+        return open.size();
+    }
+
+    public int countOpenForSender(Ids.TenantId tenant, SenderId sender) {
+        return repo.findByTenantIdAndSenderIdAndStatus(tenant.value(), sender.value(), OPEN).size();
     }
 
     private void close(ChannelSessionEntity row, String reason) {

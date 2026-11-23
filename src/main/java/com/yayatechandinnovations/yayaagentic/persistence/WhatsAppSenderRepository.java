@@ -24,6 +24,11 @@ public interface WhatsAppSenderRepository extends JpaRepository<WhatsAppSenderEn
         return findFirstByPhoneE164AndStatusNot(phoneE164, "REVOKED");
     }
 
+    /** Revoked rows for a number across workspaces — tells whether a removed
+     *  registration may still be live at the BSP under another workspace. */
+    @WorkspaceUnscoped("a number's revoked history spans workspaces; read to refuse adopting another workspace's BSP sender")
+    List<WhatsAppSenderEntity> findByPhoneE164AndStatus(String phoneE164, String status);
+
     /** Used by the W2 poller: sweeps senders across all tenants. Cross-tenant
      *  by design — the poller is platform infrastructure, not a tenant-facing
      *  query. */

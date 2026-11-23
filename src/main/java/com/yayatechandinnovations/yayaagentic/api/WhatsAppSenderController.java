@@ -6,6 +6,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.BusinessProfile;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderTransferService;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
@@ -43,15 +44,18 @@ public class WhatsAppSenderController {
     private final TenantGuard tenantGuard;
     private final WorkspaceAccessHelper workspaceAccess;
     private final WhatsAppSenderService senders;
+    private final WhatsAppSenderTransferService transfers;
     private final ChatLogoService logos;
 
     public WhatsAppSenderController(TenantGuard tenantGuard,
                                     WorkspaceAccessHelper workspaceAccess,
                                     WhatsAppSenderService senders,
+                                    WhatsAppSenderTransferService transfers,
                                     ChatLogoService logos) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.senders = senders;
+        this.transfers = transfers;
         this.logos = logos;
     }
 
@@ -217,6 +221,47 @@ public class WhatsAppSenderController {
         tenantGuard.requireWritable(tenantId);
         WhatsAppSender s = senders.revoke(new Ids.TenantId(tenantId), new SenderId(senderId));
         return WhatsAppSenderDtos.SenderResponse.of(s);
+    }
+
+    /**
+     * Move the sender to another workspace, keeping its WhatsApp registration
+     * (whatsapp-sender-transfer-design.md). Platform admins only (§5): moving
+     * a number changes which business answers it.
+     */
+    @PostMapping("/{senderId}/transfer")
+    public Mono<WhatsAppSenderDtos.TransferResponse> transfer(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun,
+            @RequestBody WhatsAppSenderDtos.TransferRequest req,
+            ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                    workspaceAccess.requirePlatformAdmin(exchange);
+                    tenantGuard.requireWritable(tenantId);
+                    var outcome = transfers.transfer(
+                            new Ids.TenantId(tenantId), new SenderId(senderId),
+                            req == null ? null : new WhatsAppSenderTransferService.TransferRequest(
+                                    req.destinationTenant(), req.profileId(), req.profileVersion(),
+                                    req.copyOptOuts()),
+                            workspaceAccess.actorOf(exchange), dryRun);
+                    return WhatsAppSenderDtos.TransferResponse.of(outcome, dryRun);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** Retry pointing WhatsApp at a transferred sender, after the automatic retries. */
+    @PostMapping("/{senderId}/repoint-webhooks")
+    public Mono<WhatsAppSenderDtos.SenderResponse> repointWebhooks(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                    workspaceAccess.requirePlatformAdmin(exchange);
+                    tenantGuard.requireWritable(tenantId);
+                    WhatsAppSender s = transfers.retryRepoint(new Ids.TenantId(tenantId), new SenderId(senderId));
+                    return WhatsAppSenderDtos.SenderResponse.of(s);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     /* ---------------------------- helpers --------------------------------- */

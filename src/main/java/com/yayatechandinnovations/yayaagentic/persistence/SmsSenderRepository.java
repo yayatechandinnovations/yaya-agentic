@@ -12,11 +12,17 @@ public interface SmsSenderRepository extends JpaRepository<SmsSenderEntity, Stri
 
     Optional<SmsSenderEntity> findByTenantIdAndId(String tenantId, String id);
 
-    /** Phone numbers are globally unique in {@code sms_senders} (UNIQUE in V44).
-     *  Cross-tenant by design — backs the create-time conflict check and the
-     *  inbound-webhook sender resolve. */
-    @WorkspaceUnscoped("phone_e164 is globally unique; lookup must cross workspaces")
-    Optional<SmsSenderEntity> findByPhoneE164(String phoneE164);
+    /** A phone number belongs to at most one non-revoked sender platform-wide
+     *  (partial UNIQUE index, V98); revoked rows stay as history and free the
+     *  number for re-registration. Cross-tenant by design — backs the
+     *  create-time conflict check. */
+    @WorkspaceUnscoped("phone_e164 is globally unique among live senders; lookup must cross workspaces")
+    Optional<SmsSenderEntity> findFirstByPhoneE164AndStatusNot(String phoneE164, String status);
+
+    @WorkspaceUnscoped("phone_e164 is globally unique among live senders; lookup must cross workspaces")
+    default Optional<SmsSenderEntity> findLiveByPhoneE164(String phoneE164) {
+        return findFirstByPhoneE164AndStatusNot(phoneE164, "REVOKED");
+    }
 
     /** Senders attached to a given campaign — used to re-gate them ACTIVE when
      *  the campaign flips APPROVED. {@code campaign_id} is a globally-unique

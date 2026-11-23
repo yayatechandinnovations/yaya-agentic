@@ -86,6 +86,10 @@ public class WhatsAppSenderEntity {
     @Column(name = "messaging_account_id", length = 64)
     private String messagingAccountId;
 
+    /** whatsapp-sender-transfer-design.md §6.3 — the row a transferred sender's webhooks forward to. */
+    @Column(name = "transferred_to_sender_id", length = 64)
+    private String transferredToSenderId;
+
     protected WhatsAppSenderEntity() {}
 
     public WhatsAppSenderEntity(String id, String tenantId, String phoneE164,
@@ -124,6 +128,8 @@ public class WhatsAppSenderEntity {
     public void setMetaPhoneNumberId(String v) { this.metaPhoneNumberId = v; }
     public String getMessagingAccountId() { return messagingAccountId; }
     public void setMessagingAccountId(String v) { this.messagingAccountId = v; }
+    public String getTransferredToSenderId() { return transferredToSenderId; }
+    public void setTransferredToSenderId(String v) { this.transferredToSenderId = v; }
 
     public void setPhoneE164(String v) { this.phoneE164 = v; }
     public void setDisplayName(String v) { this.displayName = v; }

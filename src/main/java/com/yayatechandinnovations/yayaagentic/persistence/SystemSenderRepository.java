@@ -10,4 +10,6 @@ public interface SystemSenderRepository extends JpaRepository<SystemSenderEntity
     List<SystemSenderEntity> findByTenantIdOrderByCreatedAtDesc(String tenantId);
 
     Optional<SystemSenderEntity> findByTenantIdAndId(String tenantId, String id);
+
+    List<SystemSenderEntity> findByTenantIdAndWhatsappSenderId(String tenantId, String whatsappSenderId);
 }

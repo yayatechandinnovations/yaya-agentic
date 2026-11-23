@@ -504,6 +504,27 @@ class AdminApi {
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 
+  /// Move a live sender to another workspace, keeping its WhatsApp
+  /// registration. Platform admins only. [dryRun] reports the effects
+  /// without changing anything.
+  Future<WhatsAppSenderTransferResponse> transferWhatsAppSender(
+      String tenantId, String senderId, WhatsAppSenderTransferRequest body,
+      {bool dryRun = false}) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/transfer',
+        queryParameters: {'dryRun': dryRun},
+        data: body.toJson());
+    return WhatsAppSenderTransferResponse.fromJson(_asMap(res.data));
+  }
+
+  /// Retry pointing WhatsApp at a transferred sender. Platform admins only.
+  Future<WhatsAppSenderResponse> repointWhatsAppSenderWebhooks(
+      String tenantId, String senderId) async {
+    final res = await _dio.post(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/repoint-webhooks');
+    return WhatsAppSenderResponse.fromJson(_asMap(res.data));
+  }
+
   /// Probe whether sender registration is enabled on this instance. Used
   /// by the admin UI to render an actionable banner BEFORE the operator
   /// tries to submit a sender for review.

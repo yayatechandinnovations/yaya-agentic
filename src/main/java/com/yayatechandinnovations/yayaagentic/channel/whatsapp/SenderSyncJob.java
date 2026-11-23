@@ -28,13 +28,16 @@ public class SenderSyncJob {
     private static final Duration SUBMIT_RETRY_GRACE = Duration.ofMinutes(2);
 
     private final WhatsAppSenderService senders;
+    private final WhatsAppSenderTransferService transfers;
     private final ProviderCredsResolver credsResolver;
     private final boolean enabled;
 
     public SenderSyncJob(WhatsAppSenderService senders,
+                         WhatsAppSenderTransferService transfers,
                          ProviderCredsResolver credsResolver,
                          @Value("${yaya.agentic.channels.whatsapp.poller.enabled:true}") boolean enabled) {
         this.senders = senders;
+        this.transfers = transfers;
         this.credsResolver = credsResolver;
         this.enabled = enabled;
     }
@@ -57,6 +60,7 @@ public class SenderSyncJob {
             // a dev box would be Worse Than Useless.
             return;
         }
+        transfers.retryPendingRepoints();
         List<WhatsAppSender> inFlight = senders.findInFlight();
         if (inFlight.isEmpty()) return;
         log.info("WhatsApp sender poller: syncing {} in-flight senders", inFlight.size());

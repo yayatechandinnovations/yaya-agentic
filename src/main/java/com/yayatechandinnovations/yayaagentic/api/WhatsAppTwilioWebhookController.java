@@ -12,6 +12,7 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.ChannelRateLimite
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.ChannelTracing;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.InboundDispatchWorker;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderStatus;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.signup.WhatsAppMessagingAccountService;
@@ -159,16 +160,24 @@ public class WhatsAppTwilioWebhookController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
+        // whatsapp-sender-transfer-design.md §6.3 — a transferred sender's
+        // webhooks belong to its successor: queued retries and a re-point that
+        // hasn't landed still post here. The signature was checked against
+        // this row; both rows share the BSP account that signed it.
+        WhatsAppSender target = sender.status() == SenderStatus.REVOKED
+                ? senders.findLiveSuccessor(sender.id()).orElse(sender)
+                : sender;
+
         // §16 + §9 step 3 — dedup by MessageSid. Concurrent retries collapse
         // on the PK violation.
         String messageSid = form.getFirst("MessageSid");
         if (messageSid == null || messageSid.isBlank()) {
-            log.warn("WhatsApp webhook missing MessageSid for sender={}", sender.id().value());
+            log.warn("WhatsApp webhook missing MessageSid for sender={}", target.id().value());
             return ResponseEntity.badRequest().build();
         }
         if (inbound.existsById(messageSid)) {
             // Already processed (or queued); idempotent ack.
-            metrics.inbound(sender.tenant().value(), sender.id().value(),
+            metrics.inbound(target.tenant().value(), target.id().value(),
                     "whatsapp", "duplicate");
             return ResponseEntity.ok().build();
         }
@@ -176,12 +185,12 @@ public class WhatsAppTwilioWebhookController {
         String from = stripWhatsAppPrefix(form.getFirst("From"));
         if (from == null) {
             log.warn("WhatsApp webhook missing From for sender={} sid={}",
-                    sender.id().value(), messageSid);
+                    target.id().value(), messageSid);
             return ResponseEntity.badRequest().build();
         }
-        if (!rateLimiter.allowEndUser(sender.id().value(), from)) {
-            metrics.rateLimited(sender.tenant().value(), sender.id().value(), "end_user");
-            metrics.inbound(sender.tenant().value(), sender.id().value(),
+        if (!rateLimiter.allowEndUser(target.id().value(), from)) {
+            metrics.rateLimited(target.tenant().value(), target.id().value(), "end_user");
+            metrics.inbound(target.tenant().value(), target.id().value(),
                     "whatsapp", "end_user_rate_limited");
             return ResponseEntity.ok().build();
         }
@@ -193,8 +202,8 @@ public class WhatsAppTwilioWebhookController {
         try {
             InboundMessageEntity row = new InboundMessageEntity(
                     messageSid,
-                    sender.tenant().value(),
-                    sender.id().value(),
+                    target.tenant().value(),
+                    target.id().value(),
                     from,
                     numMedia,
                     writeJson(raw));
@@ -205,7 +214,7 @@ public class WhatsAppTwilioWebhookController {
         }
 
         worker.schedule(messageSid);
-        metrics.inbound(sender.tenant().value(), sender.id().value(),
+        metrics.inbound(target.tenant().value(), target.id().value(),
                 "whatsapp", "enqueued");
         return ResponseEntity.ok().build();
     }

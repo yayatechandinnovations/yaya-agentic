@@ -244,6 +244,24 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
         }
     }
 
+    /* --------------------------- repointWebhooks ------------------------- */
+
+    @Override
+    public void repointWebhooks(SenderRef ref, String webhookUrl, String statusCallbackUrl,
+                                ProviderCreds creds) {
+        ensureCreds(creds);
+        ensureSameProvider(ref);
+        try {
+            postJson(messagingUrl(SENDERS_PATH + "/" + ref.externalId()),
+                    Map.of("webhook", webhookConfig(webhookUrl, statusCallbackUrl)), creds);
+        } catch (WebClientResponseException e) {
+            throw new TwilioApiException("twilio_repoint_failed", twilioErrorMessage(e));
+        } catch (Exception e) {
+            throw new TwilioApiException("twilio_transport_error",
+                    "Could not reach Twilio to re-point " + ref.externalId() + ": " + e.getMessage());
+        }
+    }
+
     /* --------------------------- inbound (W4) ---------------------------- */
 
     @Override
@@ -573,10 +591,14 @@ public class TwilioMessagingChannelProvider implements MessagingChannelProvider 
     }
 
     private static Map<String, Object> webhookConfig(SenderRegistrationRequest req) {
+        return webhookConfig(req.webhookUrl(), req.statusCallbackUrl());
+    }
+
+    private static Map<String, Object> webhookConfig(String webhookUrl, String statusCallbackUrl) {
         return Map.of(
-                "callback_url", req.webhookUrl(),
+                "callback_url", webhookUrl,
                 "callback_method", "POST",
-                "status_callback_url", req.statusCallbackUrl() == null ? "" : req.statusCallbackUrl(),
+                "status_callback_url", statusCallbackUrl == null ? "" : statusCallbackUrl,
                 "status_callback_method", "POST");
     }
 

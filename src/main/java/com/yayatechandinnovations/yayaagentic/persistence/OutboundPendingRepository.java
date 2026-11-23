@@ -11,4 +11,7 @@ public interface OutboundPendingRepository extends JpaRepository<OutboundPending
      *  order. */
     List<OutboundPendingEntity> findByTenantIdAndSenderIdAndEndUserPhoneAndReleasedAtIsNullOrderByQueuedAtAsc(
             String tenantId, String senderId, String endUserPhone);
+
+    List<OutboundPendingEntity> findByTenantIdAndSenderIdAndReleasedAtIsNull(
+            String tenantId, String senderId);
 }

@@ -6,9 +6,12 @@ import '../../../api/admin_api.dart';
 import '../../../app/selected_tenant.dart';
 import '../../../models/admin/whatsapp_embedded_signup.dart';
 import '../../../models/admin/whatsapp_sender.dart';
+import '../../auth/application/auth_controller.dart';
+import '../../auth/models/auth_state.dart';
 import '../channel_bindings/sender_routes_section.dart';
 import '../shared/admin_shared.dart';
 import 'whatsapp_connect_wizard.dart';
+import 'whatsapp_sender_transfer_dialog.dart';
 import 'whatsapp_sender_wizard.dart';
 
 /// Refetched on every write to keep status chips fresh.
@@ -96,6 +99,24 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
     }
   }
 
+  Future<void> _transfer(String tenant, WhatsAppSenderResponse sender) async {
+    final result = await showDialog<WhatsAppSenderTransferResponse>(
+      context: context,
+      builder: (_) => WhatsAppSenderTransferDialog(tenant: tenant, sender: sender),
+    );
+    if (result == null) return;
+    final dest = result.destination;
+    ref.invalidate(whatsAppSendersProvider(tenant));
+    if (dest != null) ref.invalidate(whatsAppSendersProvider(dest.tenantId));
+    if (!mounted) return;
+    showSnack(
+        context,
+        result.webhookRepoint == 'DONE'
+            ? 'Moved to ${dest?.tenantId}.'
+            : 'Moved to ${dest?.tenantId}. WhatsApp is still being pointed at it — '
+                'messages arrive there in the meantime.');
+  }
+
   Future<bool> _confirm(String title, String body, String confirmLabel) async {
     final result = await showDialog<bool>(
       context: context,
@@ -122,6 +143,8 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
       return const TenantScopedEmptyState(resourceLabel: 'WhatsApp senders');
     }
     final senders = ref.watch(whatsAppSendersProvider(tenant));
+    final auth = ref.watch(authProvider);
+    final platformAdmin = auth is AuthAuthenticated && auth.operator.platformAdmin;
     final submitsEnabled = ref.watch(whatsAppSubmitEnabledProvider(tenant));
     final canSubmit = submitsEnabled.maybeWhen(
       data: (ready) => ready,
@@ -150,6 +173,20 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
                   sender: list[i],
                   busy: _busySenderId == list[i].id,
                   canSubmit: canSubmit,
+                  platformAdmin: platformAdmin,
+                  onTransfer: () => _transfer(tenant, list[i]),
+                  onRetryRepoint: () => _runTransition(
+                    tenant: tenant,
+                    sender: list[i],
+                    call: (api) => api.repointWhatsAppSenderWebhooks(tenant, list[i].id),
+                    successCopy: 'WhatsApp now delivers to this workspace directly',
+                  ),
+                  onFinishRemoval: () => _runTransition(
+                    tenant: tenant,
+                    sender: list[i],
+                    call: (api) => api.revokeWhatsAppSender(tenant, list[i].id),
+                    successCopy: 'Removal finished — the number can be registered again',
+                  ),
                   onEdit: () => _editSender(list[i]),
                   onSubmit: () async {
                     final method = await showDialog<String>(
@@ -332,6 +369,10 @@ class _SenderTile extends StatelessWidget {
     required this.sender,
     required this.busy,
     required this.canSubmit,
+    required this.platformAdmin,
+    required this.onTransfer,
+    required this.onRetryRepoint,
+    required this.onFinishRemoval,
     required this.onEdit,
     required this.onSubmit,
     required this.onVerify,
@@ -344,6 +385,10 @@ class _SenderTile extends StatelessWidget {
   final WhatsAppSenderResponse sender;
   final bool busy;
   final bool canSubmit;
+  final bool platformAdmin;
+  final VoidCallback onTransfer;
+  final VoidCallback onRetryRepoint;
+  final VoidCallback onFinishRemoval;
   final VoidCallback onEdit;
   final VoidCallback onSubmit;
   final VoidCallback onVerify;
@@ -427,6 +472,28 @@ class _SenderTile extends StatelessWidget {
             ),
             const SizedBox(height: 8),
           ],
+          if (sender.transferStillForwarding) ...[
+            const SizedBox(height: 4),
+            _ProblemNote(
+              title: 'Still finishing the move',
+              message: sender.transferWebhooks == 'FAILED'
+                  ? 'WhatsApp could not be pointed at this workspace yet.'
+                  : 'WhatsApp is being pointed at this workspace.',
+              hint: 'Messages to this number reach this workspace in the meantime'
+                  '${platformAdmin ? '. Use "Retry move" to try again now.' : '.'}',
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (sender.status == 'REVOKED' && sender.removalIncomplete) ...[
+            const SizedBox(height: 4),
+            const _ProblemNote(
+              title: 'Removal not finished',
+              message: 'WhatsApp could not be reached to remove this number.',
+              hint: 'Until it is, the number can\'t be registered in another workspace. '
+                  'Use "Finish removal" to try again.',
+            ),
+            const SizedBox(height: 8),
+          ],
           if (progress != null) DetailRow(label: 'Progress', value: progress),
           if (sender.canEnterVerificationCode || sender.needsVerificationCode) ...[
             const SizedBox(height: 8),
@@ -459,6 +526,8 @@ class _SenderTile extends StatelessWidget {
             DetailRow(
                 label: 'Review notes',
                 value: sender.onboarding.failureMessage!),
+          if (sender.transferredFromTenant != null)
+            DetailRow(label: 'Moved from', value: sender.transferredFromTenant!, mono: true),
           if (sender.createdAt != null)
             DetailRow(label: 'Created', value: sender.createdAt!),
           if (sender.status != 'REVOKED') ...[
@@ -502,6 +571,25 @@ class _SenderTile extends StatelessWidget {
             onPressed: busy ? null : onResume,
             icon: spinnerOr(Icons.play_circle_outline),
             label: const Text('Resume'),
+          ),
+        if (platformAdmin && sender.transferStillForwarding)
+          TextButton.icon(
+            onPressed: busy ? null : onRetryRepoint,
+            icon: spinnerOr(Icons.sync),
+            label: const Text('Retry move'),
+          ),
+        if (platformAdmin && sender.canTransfer)
+          TextButton.icon(
+            key: const Key('sender-transfer'),
+            onPressed: busy ? null : onTransfer,
+            icon: spinnerOr(Icons.drive_file_move_outline),
+            label: const Text('Move to workspace…'),
+          ),
+        if (sender.status == 'REVOKED' && sender.removalIncomplete)
+          FilledButton.tonalIcon(
+            onPressed: busy ? null : onFinishRemoval,
+            icon: spinnerOr(Icons.delete_sweep_outlined),
+            label: const Text('Finish removal'),
           ),
         if (sender.status != 'REVOKED')
           TextButton.icon(

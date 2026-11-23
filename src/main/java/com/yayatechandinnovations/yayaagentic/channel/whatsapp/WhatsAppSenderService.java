@@ -59,6 +59,11 @@ public class WhatsAppSenderService {
     private static final TypeReference<Map<String, Object>> METADATA_TYPE = new TypeReference<>() {};
     private static final String INBOUND_WEBHOOK_PATH    = "/v1/channels/whatsapp/twilio/webhook/";
     private static final String STATUS_CALLBACK_PATH    = "/v1/channels/whatsapp/twilio/status-callback/";
+    /** Metadata flag: the sender was revoked but its BSP sender may still exist. */
+    static final String BSP_DELETE_FAILED = "bspDeleteFailed";
+    /** Metadata on a transfer's destination sender: where it came from, re-point progress. */
+    static final String TRANSFER_METADATA = "transfer";
+    private static final int MAX_TRANSFER_HOPS = 8;
 
     private final WhatsAppSenderRepository repo;
     private final SecretCipher cipher;
@@ -133,6 +138,7 @@ public class WhatsAppSenderService {
             throw AdminApiException.conflict("phone_in_use",
                     "phone number " + phoneE164 + " is already registered to another sender");
         });
+        refuseIfHeldElsewhere(tenant, phoneE164);
 
         SenderId id = mintSenderId();
         String webhookSecret = mintWebhookSecret();
@@ -236,6 +242,7 @@ public class WhatsAppSenderService {
                         throw AdminApiException.conflict("phone_in_use",
                                 "phone number " + phoneE164 + " is already registered to another sender");
                     });
+            refuseIfHeldElsewhere(tenant, phoneE164);
             entity.setPhoneE164(phoneE164);
         }
         entity.setDisplayName(displayName);
@@ -492,26 +499,164 @@ public class WhatsAppSenderService {
         return transition(tenant, id, SenderStatus.ACTIVE, "operator_resume");
     }
 
+    /**
+     * Retire the sender and delete it at the BSP. Revoking an already revoked
+     * sender retries a BSP delete that didn't take, and otherwise changes
+     * nothing — in particular a transferred sender's row never reaches the
+     * BSP again, since the BSP sender now belongs to the destination.
+     */
     public WhatsAppSender revoke(Ids.TenantId tenant, SenderId id) {
         // Revoke calls Twilio outside the DB transaction — same reasoning as
         // submit: don't hold the row lock for a remote call.
-        WhatsAppSender sender = requireForTenant(tenant, id);
-        String externalSid = sender.onboarding().twilioSenderSid();
-        if (externalSid != null && credsResolver.isReady()) {
-            try {
-                twilio.revokeSender(
-                        new SenderRef(twilio.id(), externalSid),
-                        credsResolver.resolve(sender));
-            } catch (RuntimeException e) {
-                // We still flip the row to REVOKED — the platform stops
-                // listening to the sender, which is the operator's intent.
-                // The BSP-side cleanup is best-effort; an operator-tier
-                // dashboard can replay revoke for any rows that didn't take.
-                log.warn("Twilio revoke failed for sender {} (still flipping to REVOKED locally): {}",
-                        id.value(), e.getMessage());
-            }
+        WhatsAppSenderEntity current = loadEntity(tenant, id);
+        boolean alreadyRevoked = SenderStatus.REVOKED.name().equals(current.getStatus());
+        if (alreadyRevoked && !bspDeleteFailed(current)) {
+            return toDomain(current);
         }
-        return transition(tenant, id, SenderStatus.REVOKED, "operator_revoke");
+        boolean deleted = deleteAtBsp(current);
+        if (alreadyRevoked) {
+            if (!deleted) {
+                throw new AdminApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "removal_incomplete",
+                        "WhatsApp could not be reached to finish removing this number — try again in a minute.");
+            }
+            return setBspDeleteFailed(tenant, id, false);
+        }
+        WhatsAppSender revoked = transition(tenant, id, SenderStatus.REVOKED, "operator_revoke");
+        // The row still flips — the platform stops listening, which is the
+        // operator's intent — but the number stays unclaimable by another
+        // workspace until the BSP delete is retried (refuseIfHeldElsewhere).
+        return deleted ? revoked : setBspDeleteFailed(tenant, id, true);
+    }
+
+    private boolean deleteAtBsp(WhatsAppSenderEntity entity) {
+        String externalSid = bspSenderSid(entity);
+        if (externalSid == null) return true;
+        if (!credsResolver.isReady()) return false;
+        try {
+            twilio.revokeSender(new SenderRef(twilio.id(), externalSid), credsResolver.resolve(toDomain(entity)));
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Twilio revoke failed for sender {}: {}", entity.getId(), e.getMessage());
+            return false;
+        }
+    }
+
+    /** The column is the BSP sid of record; onboarding state mirrors it for display. */
+    private String bspSenderSid(WhatsAppSenderEntity entity) {
+        if (entity.getTwilioSenderSid() != null && !entity.getTwilioSenderSid().isBlank()) {
+            return entity.getTwilioSenderSid();
+        }
+        return readJson(entity.getOnboardingStateJson(), OnboardingState.class).twilioSenderSid();
+    }
+
+    @Transactional
+    protected WhatsAppSender setBspDeleteFailed(Ids.TenantId tenant, SenderId id, boolean failed) {
+        WhatsAppSenderEntity entity = loadEntity(tenant, id);
+        Map<String, Object> meta = new LinkedHashMap<>(readMetadata(entity.getMetadataJson()));
+        if (failed) meta.put(BSP_DELETE_FAILED, true); else meta.remove(BSP_DELETE_FAILED);
+        entity.setMetadataJson(writeJson(meta));
+        entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return toDomain(repo.save(entity));
+    }
+
+    private boolean bspDeleteFailed(WhatsAppSenderEntity entity) {
+        return Boolean.TRUE.equals(readMetadata(entity.getMetadataJson()).get(BSP_DELETE_FAILED));
+    }
+
+    /**
+     * A number whose revoked registration may still be live at the BSP under
+     * another workspace can't be registered here: registering adopts an
+     * existing BSP sender without asking for the WhatsApp code, which would
+     * hand this workspace another business's number.
+     */
+    private void refuseIfHeldElsewhere(Ids.TenantId tenant, String phoneE164) {
+        boolean heldElsewhere = repo.findByPhoneE164AndStatus(phoneE164, SenderStatus.REVOKED.name())
+                .stream()
+                .anyMatch(e -> !e.getTenantId().equals(tenant.value()) && bspDeleteFailed(e));
+        if (heldElsewhere) {
+            throw AdminApiException.conflict("phone_held_elsewhere",
+                    "this number was used by another workspace and its WhatsApp registration was not "
+                            + "fully removed there — ask a platform admin to finish removing it, or to "
+                            + "transfer the number");
+        }
+    }
+
+    /* ---------------------------- transfer support ------------------------ */
+
+    /**
+     * The live sender a transferred sender's webhooks now belong to, following
+     * transfers in a row (whatsapp-sender-transfer-design.md §6.3). Empty for a
+     * sender that is live itself or was revoked without a transfer.
+     */
+    public Optional<WhatsAppSender> findLiveSuccessor(SenderId id) {
+        String next = id.value();
+        for (int hop = 0; hop <= MAX_TRANSFER_HOPS; hop++) {
+            Optional<WhatsAppSenderEntity> row = repo.findById(next);
+            if (row.isEmpty()) return Optional.empty();
+            WhatsAppSenderEntity e = row.get();
+            if (!SenderStatus.REVOKED.name().equals(e.getStatus())) {
+                return hop == 0 ? Optional.empty() : Optional.of(toDomain(e));
+            }
+            if (e.getTransferredToSenderId() == null) return Optional.empty();
+            next = e.getTransferredToSenderId();
+        }
+        return Optional.empty();
+    }
+
+    /** The destination row of a transfer: the source's BSP sender and profile
+     *  under a fresh id and webhook secret in {@code dest}. The caller has
+     *  already retired the source row in the same transaction, so the status
+     *  it had while live comes separately. */
+    WhatsAppSenderEntity insertTransferredCopy(WhatsAppSenderEntity source, SenderStatus liveStatus,
+                                               Ids.TenantId dest, Map<String, Object> transferMetadata) {
+        byte[] webhookSecretEnc = cipher.encrypt(mintWebhookSecret());
+        WhatsAppSenderEntity copy = new WhatsAppSenderEntity(
+                mintSenderId().value(),
+                dest.value(),
+                source.getPhoneE164(),
+                source.getDisplayName(),
+                source.getBusinessProfileJson(),
+                liveStatus.name(),
+                webhookSecretEnc);
+        copy.setApprovedDisplayName(source.getApprovedDisplayName());
+        copy.setTwilioSenderSid(source.getTwilioSenderSid());
+        copy.setOnboardingStateJson(source.getOnboardingStateJson());
+        copy.setDefaultLocale(source.getDefaultLocale());
+        Map<String, Object> meta = new LinkedHashMap<>(readMetadata(source.getMetadataJson()));
+        meta.remove(BSP_DELETE_FAILED);
+        meta.put(TRANSFER_METADATA, transferMetadata);
+        copy.setMetadataJson(writeJson(meta));
+        copy.setLastSyncAt(source.getLastSyncAt());
+        copy.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return repo.saveAndFlush(copy);
+    }
+
+    /** Point the BSP sender's webhooks at this sender's URLs. */
+    public void repointWebhooks(Ids.TenantId tenant, SenderId id) {
+        if (!credsResolver.isReady()) {
+            throw new TwilioMessagingChannelProvider.TwilioApiException("provider_not_ready",
+                    "WhatsApp provisioning is not configured on this instance");
+        }
+        WhatsAppSenderEntity entity = loadEntity(tenant, id);
+        twilio.repointWebhooks(
+                new SenderRef(twilio.id(), bspSenderSid(entity)),
+                webhookUrlFor(id), statusCallbackUrlFor(id),
+                credsResolver.resolve(toDomain(entity)));
+    }
+
+    /** Record on the destination sender how far the webhook re-point got, for the console. */
+    @Transactional
+    public void recordRepointStatus(Ids.TenantId tenant, SenderId id, String status) {
+        WhatsAppSenderEntity entity = loadEntity(tenant, id);
+        Map<String, Object> meta = new LinkedHashMap<>(readMetadata(entity.getMetadataJson()));
+        if (!(meta.get(TRANSFER_METADATA) instanceof Map<?, ?> transfer)) return;
+        Map<String, Object> updated = new LinkedHashMap<>();
+        transfer.forEach((k, v) -> updated.put(String.valueOf(k), v));
+        updated.put("webhooks", status);
+        meta.put(TRANSFER_METADATA, updated);
+        entity.setMetadataJson(writeJson(meta));
+        repo.save(entity);
     }
 
     /* ---------------------------- helpers --------------------------------- */
@@ -532,17 +677,15 @@ public class WhatsAppSenderService {
             payload.put("wabaId", sender.wabaId());
         }
 
-        String hostBase = twilioProps.webhookBaseUrl() == null || twilioProps.webhookBaseUrl().isBlank()
-                ? yayaProps.publicBaseUrl()
-                : twilioProps.webhookBaseUrl();
+        String hostBase = webhookHostBase();
         if (b.logoUrl() != null && !b.logoUrl().isBlank()) {
             // Twilio downloads the photo itself; a platform-hosted logo may be
             // stored root-relative, so anchor it on the host Twilio already reaches.
             String logo = b.logoUrl().trim();
             payload.put("logoUrl", logo.startsWith("/") ? hostBase + logo : logo);
         }
-        String webhookUrl       = hostBase + INBOUND_WEBHOOK_PATH + sender.id().value();
-        String statusCallbackUrl = hostBase + STATUS_CALLBACK_PATH + sender.id().value();
+        String webhookUrl        = webhookUrlFor(sender.id());
+        String statusCallbackUrl = statusCallbackUrlFor(sender.id());
 
         return new SenderRegistrationRequest(
                 new ChannelKind.WhatsApp(),
@@ -553,6 +696,20 @@ public class WhatsAppSenderService {
                 payload,
                 sender.id().value()
         );
+    }
+
+    private String webhookHostBase() {
+        return twilioProps.webhookBaseUrl() == null || twilioProps.webhookBaseUrl().isBlank()
+                ? yayaProps.publicBaseUrl()
+                : twilioProps.webhookBaseUrl();
+    }
+
+    private String webhookUrlFor(SenderId id) {
+        return webhookHostBase() + INBOUND_WEBHOOK_PATH + id.value();
+    }
+
+    private String statusCallbackUrlFor(SenderId id) {
+        return webhookHostBase() + STATUS_CALLBACK_PATH + id.value();
     }
 
     private SenderStatus mapBspStatusToInternal(SenderStatus current, SenderSyncResult result) {

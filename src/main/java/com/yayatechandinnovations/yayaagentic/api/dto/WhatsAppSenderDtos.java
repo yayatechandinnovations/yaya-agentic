@@ -4,8 +4,10 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.BusinessProfile;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.OnboardingState;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderStatus;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderTransferService;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -134,6 +136,48 @@ public final class WhatsAppSenderDtos {
                     o.lastPolledAt(),
                     o.pollAttempts()
             );
+        }
+    }
+
+    /** POST {@code .../{id}/transfer} — whatsapp-sender-transfer-design.md §6.1. */
+    public record TransferRequest(
+            String  destinationTenant,
+            String  profileId,
+            Integer profileVersion,
+            Boolean copyOptOuts
+    ) {}
+
+    public record TransferEffectsView(
+            int          optOutsCopied,
+            int          openSessionsClosed,
+            int          parkedOutboundDropped,
+            int          bindingsDeactivated,
+            List<String> systemSendersUnlinked,
+            List<String> templatesNotHeldByDestination
+    ) {}
+
+    /** {@code destination} and {@code webhookRepoint} are null on a dry run. */
+    public record TransferResponse(
+            String              transferId,
+            boolean             dryRun,
+            SenderResponse      source,
+            SenderResponse      destination,
+            String              webhookRepoint,
+            TransferEffectsView effects,
+            List<String>        warnings
+    ) {
+        public static TransferResponse of(WhatsAppSenderTransferService.Outcome o, boolean dryRun) {
+            var e = o.effects();
+            return new TransferResponse(
+                    o.transferId(),
+                    dryRun,
+                    SenderResponse.of(o.source()),
+                    o.destination().map(SenderResponse::of).orElse(null),
+                    o.webhookRepoint().orElse(null),
+                    new TransferEffectsView(e.optOutsCopied(), e.openSessionsClosed(),
+                            e.parkedOutboundDropped(), e.bindingsDeactivated(),
+                            e.systemSendersUnlinked(), e.templatesNotHeldByDestination()),
+                    o.warnings());
         }
     }
 }

@@ -21,6 +21,7 @@ class WhatsAppSenderResponse {
     this.updatedAt,
     this.lastSyncAt,
     this.startFlowId,
+    this.messagingAccountId,
   });
 
   final String id;
@@ -37,6 +38,35 @@ class WhatsAppSenderResponse {
   final String? updatedAt;
   final String? lastSyncAt;
   final String? startFlowId;
+
+  /// Set when the number was connected with the business's own WhatsApp
+  /// account (Connect WhatsApp); such a sender can't move on its own.
+  final String? messagingAccountId;
+
+  /// A platform admin may move a live or paused number to another workspace.
+  bool get canTransfer =>
+      (status == 'ACTIVE' || status == 'SUSPENDED') &&
+      (onboarding.twilioSenderSid?.isNotEmpty ?? false) &&
+      messagingAccountId == null &&
+      !phoneE164.startsWith('+155501');
+
+  Map<String, dynamic>? get _transfer => metadata['transfer'] is Map
+      ? Map<String, dynamic>.from(metadata['transfer'] as Map)
+      : null;
+
+  /// The workspace this number was moved from, when it was.
+  String? get transferredFromTenant => _transfer?['fromTenant'] as String?;
+
+  /// Whether WhatsApp delivers to this sender directly yet — `PENDING` or
+  /// `FAILED` while messages still arrive through the workspace it came from.
+  String? get transferWebhooks => _transfer?['webhooks'] as String?;
+
+  bool get transferStillForwarding =>
+      transferWebhooks == 'PENDING' || transferWebhooks == 'FAILED';
+
+  /// Removed here, but WhatsApp still has the number registered — the
+  /// removal has to be retried before another workspace can register it.
+  bool get removalIncomplete => metadata['bspDeleteFailed'] == true;
 
   bool get isEditable => status == 'DRAFT' || status == 'FAILED';
 
@@ -75,6 +105,7 @@ class WhatsAppSenderResponse {
       updatedAt: json['updatedAt']?.toString(),
       lastSyncAt: json['lastSyncAt']?.toString(),
       startFlowId: json['startFlowId'] as String?,
+      messagingAccountId: json['messagingAccountId'] as String?,
     );
   }
 }
@@ -348,5 +379,100 @@ class SenderStatusInfo {
       default:
         return SenderStatusInfo(label: status, description: '');
     }
+  }
+}
+
+/// Body of `POST …/whatsapp-senders/{id}/transfer`.
+class WhatsAppSenderTransferRequest {
+  const WhatsAppSenderTransferRequest({
+    required this.destinationTenant,
+    this.profileId,
+    this.profileVersion,
+    this.copyOptOuts = true,
+  });
+
+  final String destinationTenant;
+  final String? profileId;
+  final int? profileVersion;
+  final bool copyOptOuts;
+
+  Map<String, dynamic> toJson() => {
+        'destinationTenant': destinationTenant,
+        if (profileId != null) 'profileId': profileId,
+        if (profileVersion != null) 'profileVersion': profileVersion,
+        'copyOptOuts': copyOptOuts,
+      };
+}
+
+/// What a transfer did — or, on a dry run, would do.
+class WhatsAppSenderTransferEffects {
+  const WhatsAppSenderTransferEffects({
+    this.optOutsCopied = 0,
+    this.openSessionsClosed = 0,
+    this.parkedOutboundDropped = 0,
+    this.bindingsDeactivated = 0,
+    this.systemSendersUnlinked = const [],
+    this.templatesNotHeldByDestination = const [],
+  });
+
+  final int optOutsCopied;
+  final int openSessionsClosed;
+  final int parkedOutboundDropped;
+  final int bindingsDeactivated;
+  final List<String> systemSendersUnlinked;
+  final List<String> templatesNotHeldByDestination;
+
+  factory WhatsAppSenderTransferEffects.fromJson(Map<String, dynamic> json) {
+    List<String> strings(Object? v) =>
+        v is List ? v.map((e) => e.toString()).toList() : const [];
+    int count(Object? v) => v is num ? v.toInt() : 0;
+    return WhatsAppSenderTransferEffects(
+      optOutsCopied: count(json['optOutsCopied']),
+      openSessionsClosed: count(json['openSessionsClosed']),
+      parkedOutboundDropped: count(json['parkedOutboundDropped']),
+      bindingsDeactivated: count(json['bindingsDeactivated']),
+      systemSendersUnlinked: strings(json['systemSendersUnlinked']),
+      templatesNotHeldByDestination: strings(json['templatesNotHeldByDestination']),
+    );
+  }
+}
+
+class WhatsAppSenderTransferResponse {
+  const WhatsAppSenderTransferResponse({
+    this.transferId,
+    required this.dryRun,
+    required this.source,
+    this.destination,
+    this.webhookRepoint,
+    required this.effects,
+    this.warnings = const [],
+  });
+
+  final String? transferId;
+  final bool dryRun;
+  final WhatsAppSenderResponse source;
+  final WhatsAppSenderResponse? destination;
+
+  /// `DONE`, or `PENDING` while messages still arrive through the old workspace.
+  final String? webhookRepoint;
+  final WhatsAppSenderTransferEffects effects;
+  final List<String> warnings;
+
+  factory WhatsAppSenderTransferResponse.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic> map(Object? v) =>
+        v is Map ? Map<String, dynamic>.from(v) : const <String, dynamic>{};
+    return WhatsAppSenderTransferResponse(
+      transferId: json['transferId'] as String?,
+      dryRun: json['dryRun'] == true,
+      source: WhatsAppSenderResponse.fromJson(map(json['source'])),
+      destination: json['destination'] is Map
+          ? WhatsAppSenderResponse.fromJson(map(json['destination']))
+          : null,
+      webhookRepoint: json['webhookRepoint'] as String?,
+      effects: WhatsAppSenderTransferEffects.fromJson(map(json['effects'])),
+      warnings: json['warnings'] is List
+          ? (json['warnings'] as List).map((e) => e.toString()).toList()
+          : const [],
+    );
   }
 }

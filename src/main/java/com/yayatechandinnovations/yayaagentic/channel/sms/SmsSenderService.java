@@ -94,7 +94,7 @@ public class SmsSenderService {
 
         SmsCampaignId campaignId = resolveCampaignForCreate(tenant, cmd);
 
-        repo.findByPhoneE164(cmd.phoneE164()).ifPresent(existing -> {
+        repo.findLiveByPhoneE164(cmd.phoneE164()).ifPresent(existing -> {
             throw AdminApiException.conflict("phone_in_use",
                     "phone number " + cmd.phoneE164() + " is already registered to another sender");
         });
