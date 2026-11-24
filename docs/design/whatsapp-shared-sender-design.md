@@ -520,7 +520,9 @@ member write goes through the hub.
 
 Every catalog template gains a leading business-name variable and declares `businessLabelVar: 1`:
 
-> `sl_cash_handoff_closed_v2`: «*{{1}}* · La oficina confirmó la entrega {{2}} por {{3}}. Quedó cerrada y no requiere más acción.»
+> `sl_cash_handoff_closed_v2`: «De *{{1}}* · La oficina confirmó la entrega {{2}} por {{3}}. Quedó cerrada y no requiere más acción.»
+>
+> Meta refuses a body that starts or ends with a variable, even inside `*…*` («Variables can't be at the start or end of the template», subCode 2388299, first submission 2026-11-24). That is why the opening is «De *{{1}}* · », not «*{{1}}* · ».
 
 - The R5 lint is satisfied: there are words between the variables.
 - Each template gets a version bump, so one Meta review per template, done once for the whole
