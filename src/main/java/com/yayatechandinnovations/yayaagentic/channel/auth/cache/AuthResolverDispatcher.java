@@ -51,6 +51,8 @@ public class AuthResolverDispatcher {
     private final AuthResolverTokenCache cache;
     private final AuthResolverCallRepository auditRepo;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository whatsappSenders;
 
     public AuthResolverDispatcher(AuthResolverRegistry registry,
                                   ChannelAuthResolverRepository resolverRepo,
@@ -123,7 +125,7 @@ public class AuthResolverDispatcher {
         try {
             resolved = resolver.resolveIdentity(new AuthResolver.ResolveRequest(
                     tenant, sender, senderPhone, senderKey, callerPhone, session, channel,
-                    reason, Instant.now(clock)));
+                    reason, Instant.now(clock), isPlatformSender(sender)));
         } catch (AuthResolverException are) {
             int elapsed = (int) (Instant.now(clock).toEpochMilli() - startedAtMillis);
             audit(tenant, row.getName(), session, sender, callerPhone, channel,
@@ -211,6 +213,12 @@ public class AuthResolverDispatcher {
             log.warn("auth_resolver_calls audit write failed: {} ({})",
                     e.getMessage(), e.getClass().getSimpleName());
         }
+    }
+
+    private boolean isPlatformSender(SenderId sender) {
+        if (sender == null || whatsappSenders == null) return false;
+        return whatsappSenders.findByIdAndOwnerKind(sender.value(),
+                com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderEntity.OWNER_PLATFORM).isPresent();
     }
 
     private static UUID parseUuid(String s) {

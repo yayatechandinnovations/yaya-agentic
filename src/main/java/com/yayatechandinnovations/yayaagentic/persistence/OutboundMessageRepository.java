@@ -10,6 +10,12 @@ public interface OutboundMessageRepository extends JpaRepository<OutboundMessage
 
     Optional<OutboundMessageEntity> findByTenantIdAndMessageSid(String tenantId, String messageSid);
 
+    /** Who wrote to this phone on a platform sender, newest first (§7.2 step C, §8.3). */
+    @com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceUnscoped(
+            "the router reads which workspaces wrote to a phone on a shared number; never the bodies")
+    List<OutboundMessageEntity> findTop50BySenderIdAndEndUserPhoneAndSentAtAfterOrderBySentAtDesc(
+            String senderId, String endUserPhone, java.time.OffsetDateTime after);
+
     List<OutboundMessageEntity> findByTenantIdAndSenderIdAndEndUserPhoneOrderBySentAtDesc(
             String tenantId, String senderId, String endUserPhone);
 

@@ -22,6 +22,7 @@ import com.yayatechandinnovations.yayaagentic.persistence.SystemSenderRepository
 import com.yayatechandinnovations.yayaagentic.persistence.TenantEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderTransferEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderTransferEntity.RepointStatus;
@@ -77,6 +78,7 @@ public class WhatsAppSenderTransferService {
     private final ProfileRepository profiles;
     private final ObjectMapper json;
     private final TransactionTemplate tx;
+    private final WhatsAppSenderAssignmentRepository assignments;
 
     public WhatsAppSenderTransferService(WhatsAppSenderService senders,
                                          WhatsAppSenderRepository senderRepo,
@@ -91,7 +93,8 @@ public class WhatsAppSenderTransferService {
                                          WhatsAppTemplateRepository templates,
                                          ProfileRepository profiles,
                                          ObjectMapper json,
-                                         PlatformTransactionManager txManager) {
+                                         PlatformTransactionManager txManager,
+                                         WhatsAppSenderAssignmentRepository assignments) {
         this.senders = senders;
         this.senderRepo = senderRepo;
         this.transfers = transfers;
@@ -106,6 +109,7 @@ public class WhatsAppSenderTransferService {
         this.profiles = profiles;
         this.json = json;
         this.tx = new TransactionTemplate(txManager);
+        this.assignments = assignments;
     }
 
     /**
@@ -114,7 +118,17 @@ public class WhatsAppSenderTransferService {
      * @param copyOptOuts    null means true — nobody who opted out of this number hears from it again
      */
     public record TransferRequest(String destinationTenant, String profileId, Integer profileVersion,
-                                  Boolean copyOptOuts) {}
+                                  Boolean copyOptOuts, Boolean destinationPlatform) {
+        public TransferRequest(String destinationTenant, String profileId, Integer profileVersion,
+                               Boolean copyOptOuts) {
+            this(destinationTenant, profileId, profileVersion, copyOptOuts, null);
+        }
+
+        /** whatsapp-shared-sender-design.md §5.2 — the number becomes a platform sender. */
+        public boolean toPlatform() {
+            return Boolean.TRUE.equals(destinationPlatform);
+        }
+    }
 
     public record Effects(int optOutsCopied,
                           int openSessionsClosed,
@@ -143,11 +157,12 @@ public class WhatsAppSenderTransferService {
             WhatsAppSender sender = senders.toDomain(row);
             Effects effects = new Effects(
                     copyOptOuts(req) ? optOuts.findBySenderId(row.getId()).size() : 0,
-                    channelSessions.countOpenForSender(source, senderId),
-                    parkedOutbound.findByTenantIdAndSenderIdAndReleasedAtIsNull(source.value(), row.getId()).size(),
+                    source == null ? 0 : channelSessions.countOpenForSender(source, senderId),
+                    source == null ? 0 : parkedOutbound.findByTenantIdAndSenderIdAndReleasedAtIsNull(
+                            source.value(), row.getId()).size(),
                     liveBindings(source, row.getId()).size(),
                     linkedSystemSenders(source, row.getId()).stream().map(SystemSenderEntity::getId).toList(),
-                    templatesNotHeld(source.value(), req.destinationTenant()));
+                    templatesNotHeld(source, req));
             return new Outcome(null, sender, Optional.empty(), Optional.empty(), effects, warnings(req, effects));
         }
 
@@ -171,14 +186,17 @@ public class WhatsAppSenderTransferService {
 
     private Applied apply(Ids.TenantId source, SenderId senderId, TransferRequest req, String requestedBy) {
         WhatsAppSenderEntity row = validate(source, senderId, req);
-        Ids.TenantId dest = new Ids.TenantId(req.destinationTenant());
+        Ids.TenantId dest = req.toPlatform() ? null : new Ids.TenantId(req.destinationTenant().trim());
         String transferId = "wst_" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
 
-        int sessionsClosed = channelSessions.closeAllOpenForSender(source, senderId, "SENDER_TRANSFERRED");
+        // A platform source has no workspace of its own: validate() refused it
+        // while any workspace was still assigned, so there is nothing to close.
+        int sessionsClosed = source == null ? 0
+                : channelSessions.closeAllOpenForSender(source, senderId, "SENDER_TRANSFERRED");
 
-        List<OutboundPendingEntity> parked =
-                parkedOutbound.findByTenantIdAndSenderIdAndReleasedAtIsNull(source.value(), row.getId());
+        List<OutboundPendingEntity> parked = source == null ? List.of()
+                : parkedOutbound.findByTenantIdAndSenderIdAndReleasedAtIsNull(source.value(), row.getId());
         parkedOutbound.deleteAll(parked);
 
         List<ChannelBindingEntity> sourceBindings = liveBindings(source, row.getId());
@@ -192,7 +210,7 @@ public class WhatsAppSenderTransferService {
         linked.forEach(s -> s.setWhatsappSenderId(null));
         systemSenders.saveAll(linked);
 
-        List<String> templatesNotHeld = templatesNotHeld(source.value(), dest.value());
+        List<String> templatesNotHeld = templatesNotHeld(source, req);
 
         // The partial unique indexes (V92) allow one live row per phone and BSP
         // sid: the source must be retired and flushed before the copy inserts,
@@ -204,7 +222,7 @@ public class WhatsAppSenderTransferService {
 
         Map<String, Object> transferMeta = new LinkedHashMap<>();
         transferMeta.put("transferId", transferId);
-        transferMeta.put("fromTenant", source.value());
+        transferMeta.put("fromTenant", source == null ? null : source.value());
         transferMeta.put("fromSenderId", row.getId());
         transferMeta.put("at", now.toString());
         transferMeta.put("webhooks", RepointStatus.PENDING.name());
@@ -222,7 +240,7 @@ public class WhatsAppSenderTransferService {
             optOutsCopied = copied.size();
         }
 
-        if (req.profileId() != null && !req.profileId().isBlank()) {
+        if (dest != null && req.profileId() != null && !req.profileId().isBlank()) {
             int version = req.profileVersion() != null ? req.profileVersion() : latestVersion(dest, req.profileId());
             bindings.create(dest,
                     new ChannelEndpointRef.WhatsAppSenderRef(new SenderId(copy.getId())),
@@ -236,10 +254,12 @@ public class WhatsAppSenderTransferService {
         Effects effects = new Effects(optOutsCopied, sessionsClosed, parked.size(), sourceBindings.size(),
                 linked.stream().map(SystemSenderEntity::getId).toList(), templatesNotHeld);
         transfers.save(new WhatsAppSenderTransferEntity(transferId, row.getPhoneE164(), row.getTwilioSenderSid(),
-                source.value(), row.getId(), dest.value(), copy.getId(), writeJson(effects), requestedBy));
+                source == null ? null : source.value(), row.getId(), dest == null ? null : dest.value(),
+                copy.getId(), writeJson(effects), requestedBy));
 
         log.info("WhatsApp sender {} ({}) transferred {} → {} as {} by {}",
-                row.getId(), maskPhone(row.getPhoneE164()), source.value(), dest.value(), copy.getId(), requestedBy);
+                row.getId(), maskPhone(row.getPhoneE164()), ownerName(source), ownerName(dest),
+                copy.getId(), requestedBy);
         return new Applied(transferId, dest, new SenderId(copy.getId()), effects);
     }
 
@@ -261,7 +281,8 @@ public class WhatsAppSenderTransferService {
     public WhatsAppSender retryRepoint(Ids.TenantId destTenant, SenderId destSenderId) {
         WhatsAppSender sender = senders.requireForTenant(destTenant, destSenderId);
         WhatsAppSenderTransferEntity t = transfers.findFirstByDestSenderIdOrderByCreatedAtDesc(destSenderId.value())
-                .filter(found -> found.getDestTenantId().equals(destTenant.value()))
+                .filter(found -> java.util.Objects.equals(found.getDestTenantId(),
+                        destTenant == null ? null : destTenant.value()))
                 .orElseThrow(() -> AdminApiException.notFound("transfer_not_found",
                         "this sender was not transferred from another workspace"));
         if (RepointStatus.DONE.name().equals(t.getRepointStatus())) return sender;
@@ -285,7 +306,7 @@ public class WhatsAppSenderTransferService {
     /** Tries once; on failure the row stays PENDING (or turns FAILED past the give-up age). */
     private String attemptRepoint(String transferId, boolean manual) {
         WhatsAppSenderTransferEntity t = transfers.findById(transferId).orElseThrow();
-        Ids.TenantId destTenant = new Ids.TenantId(t.getDestTenantId());
+        Ids.TenantId destTenant = t.getDestTenantId() == null ? null : new Ids.TenantId(t.getDestTenantId());
         SenderId destSender = new SenderId(t.getDestSenderId());
         String error = null;
         try {
@@ -314,26 +335,50 @@ public class WhatsAppSenderTransferService {
 
     /* ---------------------------- validation ------------------------------ */
 
+    /**
+     * @param source null when the number is a platform sender moving into a
+     *               workspace (whatsapp-shared-sender-design.md §5.2)
+     */
     private WhatsAppSenderEntity validate(Ids.TenantId source, SenderId senderId, TransferRequest req) {
-        if (req == null || req.destinationTenant() == null || req.destinationTenant().isBlank()) {
+        if (req == null) {
             throw AdminApiException.badRequest("missing_destination_tenant", "destinationTenant is required");
         }
-        String dest = req.destinationTenant().trim();
-        if (dest.equals(source.value())) {
-            throw AdminApiException.badRequest("same_workspace",
-                    "the sender is already in this workspace — choose another one");
-        }
-        TenantEntity destTenant = tenants.findById(dest).orElseThrow(() ->
-                AdminApiException.badRequest("unknown_tenant", "no such workspace: " + dest));
-        if (!TenantEntity.Status.ACTIVE.name().equals(destTenant.getStatus())) {
-            throw AdminApiException.conflict("destination_not_active",
-                    "workspace '" + dest + "' is " + destTenant.getStatus().toLowerCase()
-                            + " — it can't take a WhatsApp number");
+        if (req.toPlatform()) {
+            if (source == null) {
+                throw AdminApiException.badRequest("same_workspace", "the sender is already a platform sender");
+            }
+            if (req.profileId() != null && !req.profileId().isBlank()) {
+                throw AdminApiException.badRequest("unknown_profile",
+                        "a platform sender has no assistant of its own — assign workspaces to it instead");
+            }
+        } else {
+            if (req.destinationTenant() == null || req.destinationTenant().isBlank()) {
+                throw AdminApiException.badRequest("missing_destination_tenant", "destinationTenant is required");
+            }
+            String dest = req.destinationTenant().trim();
+            if (source != null && dest.equals(source.value())) {
+                throw AdminApiException.badRequest("same_workspace",
+                        "the sender is already in this workspace — choose another one");
+            }
+            TenantEntity destTenant = tenants.findById(dest).orElseThrow(() ->
+                    AdminApiException.badRequest("unknown_tenant", "no such workspace: " + dest));
+            if (!TenantEntity.Status.ACTIVE.name().equals(destTenant.getStatus())) {
+                throw AdminApiException.conflict("destination_not_active",
+                        "workspace '" + dest + "' is " + destTenant.getStatus().toLowerCase()
+                                + " — it can't take a WhatsApp number");
+            }
         }
 
-        WhatsAppSenderEntity row = senderRepo.findByTenantIdAndId(source.value(), senderId.value())
+        WhatsAppSenderEntity row = (source == null
+                ? senderRepo.findByIdAndOwnerKind(senderId.value(), WhatsAppSenderEntity.OWNER_PLATFORM)
+                : senderRepo.findByTenantIdAndId(source.value(), senderId.value()))
                 .orElseThrow(() -> AdminApiException.notFound("sender_not_found",
-                        "no such WhatsApp sender '" + senderId.value() + "' in tenant '" + source.value() + "'"));
+                        "no such WhatsApp sender '" + senderId.value() + "'"
+                                + (source == null ? "" : " in tenant '" + source.value() + "'")));
+        if (source == null && !assignments.findLiveBySender(row.getId()).isEmpty()) {
+            throw AdminApiException.conflict("sender_has_assignments",
+                    "workspaces are still assigned to this number — end their assignments first");
+        }
         SenderStatus status = SenderStatus.valueOf(row.getStatus());
         if ((status != SenderStatus.ACTIVE && status != SenderStatus.SUSPENDED) || row.getTwilioSenderSid() == null) {
             throw AdminApiException.conflict("sender_not_transferable",
@@ -351,7 +396,8 @@ public class WhatsAppSenderTransferService {
                     "the simulated playground sender can't move between workspaces");
         }
 
-        if (req.profileId() != null && !req.profileId().isBlank()) {
+        if (!req.toPlatform() && req.profileId() != null && !req.profileId().isBlank()) {
+            String dest = req.destinationTenant().trim();
             boolean exists = req.profileVersion() != null
                     ? profiles.findByTenantIdAndIdAndVersion(dest, req.profileId(), req.profileVersion()).isPresent()
                     : !profiles.findByTenantIdAndIdOrderByVersionDesc(dest, req.profileId()).isEmpty();
@@ -368,6 +414,7 @@ public class WhatsAppSenderTransferService {
     /* ---------------------------- helpers --------------------------------- */
 
     private List<ChannelBindingEntity> liveBindings(Ids.TenantId tenant, String senderId) {
+        if (tenant == null) return List.of();
         return bindingRepo.findByTenantIdOrderByPriorityAscIdAsc(tenant.value()).stream()
                 .filter(b -> ENDPOINT_KIND.equals(b.getEndpointKind()) && senderId.equals(b.getEndpointId()))
                 .filter(b -> !BindingStatus.DEACTIVATED.name().equals(b.getStatus()))
@@ -375,7 +422,14 @@ public class WhatsAppSenderTransferService {
     }
 
     private List<SystemSenderEntity> linkedSystemSenders(Ids.TenantId tenant, String senderId) {
+        if (tenant == null) return List.of();
         return systemSenders.findByTenantIdAndWhatsappSenderId(tenant.value(), senderId);
+    }
+
+    /** Templates the source workspace held that the destination doesn't; none across a platform side. */
+    private List<String> templatesNotHeld(Ids.TenantId source, TransferRequest req) {
+        if (source == null || req.toPlatform()) return List.of();
+        return templatesNotHeld(source.value(), req.destinationTenant().trim());
     }
 
     /** Only platform-account senders transfer, so the account is always the platform's. */
@@ -402,7 +456,10 @@ public class WhatsAppSenderTransferService {
 
     private static List<String> warnings(TransferRequest req, Effects effects) {
         List<String> warnings = new ArrayList<>();
-        if (req.profileId() == null || req.profileId().isBlank()) {
+        if (req.toPlatform()) {
+            warnings.add("The number is now a platform sender with no workspace — assign workspaces to it "
+                    + "from Platform senders. Until then incoming messages get its unrouted reply.");
+        } else if (req.profileId() == null || req.profileId().isBlank()) {
             warnings.add("The destination has no route for this number yet — add one, or incoming "
                     + "messages get the unresolved reply.");
         }
@@ -423,6 +480,10 @@ public class WhatsAppSenderTransferService {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("could not encode transfer effects", e);
         }
+    }
+
+    private static String ownerName(Ids.TenantId tenant) {
+        return tenant == null ? "platform" : tenant.value();
     }
 
     private static String maskPhone(String phone) {

@@ -117,6 +117,8 @@ public final class HttpAuthResolver implements AuthResolver {
         }
         body.put("callerPhone", req.e164CallerPhone());
         body.put("channel", req.channel());
+        // Only on a shared number, so every other request keeps its exact wire shape.
+        if (req.platformSender()) body.put("platformSender", true);
         body.put("tenantId", req.tenant().value());
         body.put("reason", req.reason() == ResolveReason.REFRESH ? "refresh" : "initial");
         body.put("timestamp", req.requestedAt() == null

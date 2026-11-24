@@ -35,6 +35,21 @@ String _profileLabel(List<ProfileResponse> profiles, String id, int? version) {
   return version == null ? name : '$name v$version';
 }
 
+/// Puts `platform_sender_requires_resolver` next to the resolver picker.
+ApiErrorInfo routeFieldError(Object e) {
+  final info = ApiErrorInfo.from(e);
+  if (info.fieldErrors.isNotEmpty || info.code != 'platform_sender_requires_resolver') return info;
+  return ApiErrorInfo(
+    message: info.message,
+    code: info.code,
+    status: info.status,
+    path: info.path,
+    fieldErrors: const {
+      'authResolverId': 'A shared platform number needs an identity resolver that drops what it can’t resolve.',
+    },
+  );
+}
+
 /// The routing config for one channel endpoint (a WhatsApp/SMS sender),
 /// shown inside that sender's detail sheet: *which profile an inbound talks
 /// to*, managed right where the number is.
@@ -47,6 +62,7 @@ class SenderRoutesSection extends ConsumerWidget {
     required this.endpointKind, // 'WHATSAPP_SENDER' | 'SMS_SENDER'
     required this.endpointId,
     this.supportsResolver = true,
+    this.platformSender = false,
   });
 
   final String endpointKind;
@@ -55,6 +71,10 @@ class SenderRoutesSection extends ConsumerWidget {
   /// WhatsApp runs the auth resolver; SMS is FAQ-mode only, so the identity
   /// and override controls are hidden there.
   final bool supportsResolver;
+
+  /// The endpoint is a shared platform sender: every route needs a resolver
+  /// and drops what it can't resolve (shared-sender §7.5).
+  final bool platformSender;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -124,6 +144,7 @@ class SenderRoutesSection extends ConsumerWidget {
         endpointKind: endpointKind,
         endpointId: endpointId,
         supportsResolver: supportsResolver,
+        platformSender: platformSender,
         existing: existing,
       ),
     );
@@ -215,6 +236,7 @@ const _routeLabels = {
   'equals': 'Claim value',
   'priority': 'Priority',
   'unresolvedReplyText': 'Reply to unknown callers',
+  'authResolverId': 'Identity resolver',
 };
 
 /// Add or edit one route for a fixed endpoint, in a side sheet. Everything
@@ -227,6 +249,7 @@ class RouteEditorSheet extends ConsumerStatefulWidget {
     required this.endpointKind,
     required this.endpointId,
     required this.supportsResolver,
+    this.platformSender = false,
     this.existing,
   });
 
@@ -234,6 +257,11 @@ class RouteEditorSheet extends ConsumerStatefulWidget {
   final String endpointKind;
   final String endpointId;
   final bool supportsResolver;
+
+  /// A shared platform sender: an identity resolver is required and
+  /// `onUnresolved` is always `REJECT` — non-members get the workspace's
+  /// non-member reply instead (backend `platform_sender_requires_resolver`).
+  final bool platformSender;
   final ChannelBindingResponse? existing;
 
   @override
@@ -278,6 +306,7 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
       _onOverrideDenied = row.onOverrideDenied;
       _allowedOverrideProfiles = List.of(row.allowedOverrideProfiles);
     }
+    if (_platformSender) _onUnresolved = 'REJECT';
     _form = YFormController(
       snapshot: () => {
         'profile': _profileSlug,
@@ -314,6 +343,8 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
     super.dispose();
   }
 
+  bool get _platformSender => widget.platformSender && widget.supportsResolver;
+
   List<String> _csv(TextEditingController c) => c.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
 
   Map<String, String?> _validate() => {
@@ -323,6 +354,9 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
         'locales': _routingKind == 'Locale' && _csv(_locales).isEmpty ? 'Enter at least one locale.' : null,
         'claim': _routingKind == 'EndUserClaim' ? Validators.required(_claim.text, 'the claim name') : null,
         'equals': _routingKind == 'EndUserClaim' ? Validators.required(_claimValue.text, 'the value to match') : null,
+        'authResolverId': _platformSender && _authResolverId == null
+            ? 'Choose an identity resolver — on a shared platform number only identified staff may reach the assistant.'
+            : null,
         'unresolvedReplyText': !_autoReply
             ? null
             : _replyText.text.trim().isEmpty
@@ -367,6 +401,7 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
     final priority = int.parse(_priority.text.trim());
     // SMS never runs a resolver, so never persist resolver/override on it.
     final resolverId = widget.supportsResolver ? _authResolverId : null;
+    if (_platformSender) _onUnresolved = 'REJECT';
     final sessionPolicy = _existing?.sessionPolicy ?? SessionPolicyWire.defaults();
     _form.saving = true;
     try {
@@ -415,7 +450,7 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
       Navigator.of(context).pop();
     } catch (e) {
       _form.saving = false;
-      _form.applyServerError(e);
+      _form.applyServerError(routeFieldError(e));
     }
   }
 
@@ -525,12 +560,22 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
         },
       ),
       if (resolvers != null) ...[
+        if (_platformSender)
+          const YBanner(
+            tone: YBannerTone.info,
+            title: 'Shared platform number.',
+            message: 'Only your registered staff may talk to an assistant here, so every route identifies the caller '
+                'with a resolver and drops what it can’t resolve. Everyone else gets this workspace’s non-member reply.',
+          ),
         YResourcePicker(
           label: 'Identity resolver',
           wireKey: 'authResolverId',
-          optional: true,
+          form: _form,
+          name: 'authResolverId',
+          optional: !_platformSender,
+          required: _platformSender,
           value: _authResolverId?.toString(),
-          noneLabel: 'None — FAQ mode',
+          noneLabel: _platformSender ? null : 'None — FAQ mode',
           loading: resolvers.isLoading,
           resources: [
             for (final r in resolvers.valueOrNull?.resolvers ?? const <AuthResolverResponse>[])
@@ -542,32 +587,49 @@ class _RouteEditorSheetState extends ConsumerState<RouteEditorSheet> {
                   disabledReason: r.status == 'ACTIVE' ? null : 'Deactivated',
                 ),
           ],
-          helper: 'When set, every message runs the resolver to identify the customer before the assistant starts. '
-              'Leave empty for an FAQ bot that only sees the verified phone.',
+          helper: _platformSender
+              ? 'Every message runs the resolver to identify the caller before the assistant starts. Required on a '
+                  'shared platform number.'
+              : 'When set, every message runs the resolver to identify the customer before the assistant starts. '
+                  'Leave empty for an FAQ bot that only sees the verified phone.',
           onChanged: (v) {
             setState(() => _authResolverId = v == null ? null : int.tryParse(v));
             _form.refresh();
           },
         ),
         if (_authResolverId != null) ...[
-          YEnumCards<String>(
-            label: 'When the resolver finds no user',
-            wireKey: 'onUnresolved',
-            value: _onUnresolved,
-            onChanged: (v) {
-              setState(() => _onUnresolved = v);
-              _form.refresh();
-            },
-            options: const [
-              YEnumOption('REJECT', 'Drop the message', wire: 'REJECT', description: 'Unknown customers get no answer.'),
-              YEnumOption('AUTO_REPLY', 'Drop it, but reply once',
-                  wire: 'AUTO_REPLY',
-                  description: 'Unknown customers get one fixed message a day (e.g. where to call), then nothing.'),
-              YEnumOption('ANONYMOUS', 'Answer anonymously',
-                  wire: 'ANONYMOUS',
-                  caution: true,
-                  description: 'Falls back to the phone-only channel identity — the assistant answers without a user.'),
-            ],
+          KeyedSubtree(
+            key: const Key('route-on-unresolved'),
+            child: YEnumCards<String>(
+              label: 'When the resolver finds no user',
+              wireKey: 'onUnresolved',
+              value: _onUnresolved,
+              helper: _platformSender
+                  ? 'Fixed on a shared platform number: unknown callers never reach the assistant and get the '
+                      'workspace’s non-member reply instead.'
+                  : null,
+              onChanged: (v) {
+                setState(() => _onUnresolved = v);
+                _form.refresh();
+              },
+              options: [
+                YEnumOption('REJECT',
+                    _platformSender ? 'Drop the message (non-member reply)' : 'Drop the message',
+                    wire: 'REJECT',
+                    description: _platformSender
+                        ? 'Unknown callers get this workspace’s non-member reply, at most once a day.'
+                        : 'Unknown customers get no answer.'),
+                YEnumOption('AUTO_REPLY', 'Drop it, but reply once',
+                    wire: 'AUTO_REPLY',
+                    enabled: !_platformSender,
+                    description: 'Unknown customers get one fixed message a day (e.g. where to call), then nothing.'),
+                YEnumOption('ANONYMOUS', 'Answer anonymously',
+                    wire: 'ANONYMOUS',
+                    caution: true,
+                    enabled: !_platformSender,
+                    description: 'Falls back to the phone-only channel identity — the assistant answers without a user.'),
+              ],
+            ),
           ),
           if (_onUnresolved == 'AUTO_REPLY')
             YTextField(

@@ -133,7 +133,7 @@ public class WhatsAppTemplateService {
     /** The templates of the sender's account that this workspace holds. */
     public List<WhatsAppTemplate> listForSender(Ids.TenantId tenant, SenderId sender) {
         // The sender service throws 404 on cross-tenant.
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         return toDomain(repo.findHeld(TemplateAccounts.keyOf(s), tenant.value()));
     }
 
@@ -141,8 +141,17 @@ public class WhatsAppTemplateService {
     public WhatsAppTemplate create(Ids.TenantId tenant, SenderId sender,
                                    String name, String locale, TemplateCategory category,
                                    String body, Caller caller) {
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        return create(tenant, sender, name, locale, category, body, null, caller);
+    }
+
+    /** @param businessLabelVar the placeholder the platform fills with the business name (shared-sender §9.2) */
+    @Transactional
+    public WhatsAppTemplate create(Ids.TenantId tenant, SenderId sender,
+                                   String name, String locale, TemplateCategory category,
+                                   String body, Integer businessLabelVar, Caller caller) {
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         validate(name, locale, body);
+        validateLabelVar(businessLabelVar, body);
         String accountKey = TemplateAccounts.keyOf(s);
         Optional<WhatsAppTemplateEntity> existing =
                 repo.findByAccountKeyAndNameAndLocale(accountKey, name, locale);
@@ -161,6 +170,7 @@ public class WhatsAppTemplateService {
                 accountKey, tenant.value(), name, locale,
                 category.name(), body, countPlaceholders(body));
         entity.setContentHash(contentHash(entity));
+        entity.setBusinessLabelVar(businessLabelVar);
         try {
             entity = repo.saveAndFlush(entity);
         } catch (DataIntegrityViolationException dup) {
@@ -175,6 +185,14 @@ public class WhatsAppTemplateService {
     @Transactional
     public WhatsAppTemplate update(Ids.TenantId tenant, SenderId sender, TemplateId id,
                                    String body, TemplateCategory category, Caller caller) {
+        return update(tenant, sender, id, body, category, null, caller);
+    }
+
+    /** @param businessLabelVar null keeps the stored value, 0 clears it */
+    @Transactional
+    public WhatsAppTemplate update(Ids.TenantId tenant, SenderId sender, TemplateId id,
+                                   String body, TemplateCategory category, Integer businessLabelVar,
+                                   Caller caller) {
         WhatsAppTemplateEntity entity = requireHeld(tenant, sender, id);
         TemplateStatus current = TemplateStatus.valueOf(entity.getStatus());
         if (current == TemplateStatus.APPROVED || current == TemplateStatus.SUBMITTED) {
@@ -186,6 +204,10 @@ public class WhatsAppTemplateService {
             throw sharedNotEditable(entity.getName());
         }
         validateBody(body);
+        Integer labelVar = businessLabelVar == null ? entity.getBusinessLabelVar()
+                : businessLabelVar == 0 ? null : businessLabelVar;
+        validateLabelVar(labelVar, body);
+        entity.setBusinessLabelVar(labelVar);
         entity.setBody(body);
         entity.setCategory(category.name());
         entity.setPlaceholderCount(countPlaceholders(body));
@@ -211,7 +233,7 @@ public class WhatsAppTemplateService {
      */
     @Transactional
     public WhatsAppTemplate declare(Ids.TenantId tenant, SenderId sender, Declaration d, Caller caller) {
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         validateDeclaration(d);
         String hash = contentHash(d);
         String accountKey = TemplateAccounts.keyOf(s);
@@ -231,6 +253,13 @@ public class WhatsAppTemplateService {
         if (!held && !mayJoin(accountKey, caller)) throw nameTaken(d.name(), d.language());
         if (hash.equals(e.getContentHash())) {
             if (!held) hold(e, tenant.value(), caller);
+            // Which placeholder carries the business name is the platform's
+            // bookkeeping, not wording Meta reviewed: it converges in place.
+            if (!java.util.Objects.equals(e.getBusinessLabelVar(), d.businessLabelVar())
+                    && (others(e, held) == 0 || caller.platformAdmin())) {
+                e.setBusinessLabelVar(d.businessLabelVar());
+                e = repo.save(e);
+            }
             return toDomain(e);
         }
         requireEditable(e);
@@ -260,7 +289,7 @@ public class WhatsAppTemplateService {
     /** Pull the approval state of every template this workspace holds on the sender's account. */
     @Transactional
     public List<WhatsAppTemplate> syncSender(Ids.TenantId tenant, SenderId sender) {
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         String accountKey = TemplateAccounts.keyOf(s);
         List<WhatsAppTemplateEntity> rows = repo.findHeld(accountKey, tenant.value());
         syncAll(accountKey, rows);
@@ -305,7 +334,7 @@ public class WhatsAppTemplateService {
     @Transactional
     public List<WhatsAppTemplate> setHidden(Ids.TenantId tenant, SenderId sender, List<TemplateId> ids,
                                             boolean hidden, Caller caller) {
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         List<WhatsAppTemplateEntity> rows = pick(repo.findHeld(TemplateAccounts.keyOf(s), tenant.value()), ids);
         List<WhatsAppTemplate> out = toDomain(rows);
         if (!caller.platformAdmin()) {
@@ -587,7 +616,7 @@ public class WhatsAppTemplateService {
 
     /** The template, when it lives on the sender's account and the workspace holds it. */
     private WhatsAppTemplateEntity requireHeld(Ids.TenantId tenant, SenderId sender, TemplateId id) {
-        WhatsAppSender s = senders.requireForTenant(tenant, sender);
+        WhatsAppSender s = senders.requireUsable(tenant, sender);
         return repo.findByAccountKeyAndId(TemplateAccounts.keyOf(s), id.value())
                 .filter(e -> holders.existsByTemplateIdAndTenantId(e.getId(), tenant.value()))
                 .orElseThrow(() -> AdminApiException.notFound("template_not_found",
@@ -724,7 +753,12 @@ public class WhatsAppTemplateService {
     /** A declared template (§14.5). */
     public record Declaration(String name, String language, TemplateCategory category, String header,
                               String body, List<String> buttons, List<String> bodySamples,
-                              String mediaFilename) {
+                              String mediaFilename, Integer businessLabelVar) {
+        public Declaration(String name, String language, TemplateCategory category, String header,
+                           String body, List<String> buttons, List<String> bodySamples, String mediaFilename) {
+            this(name, language, category, header, body, buttons, bodySamples, mediaFilename, null);
+        }
+
         public Declaration {
             language = language == null || language.isBlank() ? "es" : language.trim();
             category = category == null ? TemplateCategory.UTILITY : category;
@@ -745,11 +779,28 @@ public class WhatsAppTemplateService {
         if (d.mediaFilename() != null) samples.put("mediaFilename", d.mediaFilename());
         e.setSamplesJson(write(samples));
         e.setContentHash(hash);
+        e.setBusinessLabelVar(d.businessLabelVar());
+    }
+
+    private static void validateLabelVar(Integer labelVar, String body) {
+        if (labelVar != null && (labelVar < 1 || labelVar > countPlaceholders(body))) {
+            throw AdminApiException.badRequest("bad_business_label_var",
+                    "businessLabelVar must name one of the body's placeholders ({{1}}…)");
+        }
+    }
+
+    private long others(WhatsAppTemplateEntity e, boolean held) {
+        return holders.countByTemplateId(e.getId()) - (held ? 1 : 0);
     }
 
     /** Meta's template rules, checked before anything reaches Twilio. */
     static void validateDeclaration(Declaration d) {
         if (d == null) throw AdminApiException.badRequest("missing_body", "declaration required");
+        if (d.businessLabelVar() != null
+                && (d.businessLabelVar() < 1 || d.businessLabelVar() > countPlaceholders(d.body()))) {
+            throw AdminApiException.badRequest("bad_business_label_var",
+                    "businessLabelVar must name one of the body's placeholders ({{1}}…)");
+        }
         if (d.name() == null || !TEMPLATE_NAME.matcher(d.name()).matches()) {
             throw AdminApiException.badRequest("bad_name", "name: lowercase letters, digits and _ only");
         }
@@ -926,7 +977,8 @@ public class WhatsAppTemplateService {
                 readList(entity.getButtonsJson()),
                 toInstant(entity.getHiddenAt()),
                 entity.getHiddenBy(),
-                shared
+                shared,
+                entity.getBusinessLabelVar()
         );
     }
 

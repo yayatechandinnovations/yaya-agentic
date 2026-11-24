@@ -15,6 +15,7 @@ import '../models/admin/identity_profile_mapping.dart';
 import '../models/admin/knowledge_source.dart';
 import '../models/admin/network_settings.dart';
 import '../models/admin/operator_auth_strategies.dart';
+import '../models/admin/platform_sender.dart';
 import '../models/admin/profile.dart';
 import '../models/admin/receipt_template.dart';
 import '../models/admin/recording_strategy.dart';
@@ -534,6 +535,61 @@ class AdminApi {
     return WhatsAppSenderResponse.fromJson(_asMap(res.data));
   }
 
+  // ---- Assigned platform senders (workspace side, shared-sender §17.1) --
+
+  /// Sets the calling workspace's reply to non-members on a platform sender.
+  Future<SenderAssignmentView> updateSenderAssignment(
+      String tenantId, String senderId, {required String? nonMemberReply}) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/assignment',
+        data: {'nonMemberReply': nonMemberReply ?? ''});
+    return SenderAssignmentView.fromJson(_asMap(res.data));
+  }
+
+  /// The calling workspace's registered staff phones on a platform sender.
+  Future<SenderMembers> listSenderMembers(String tenantId, String senderId) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/members');
+    return SenderMembers.fromJson(_asMap(res.data));
+  }
+
+  /// Full replace of the workspace's members.
+  Future<SenderMembers> replaceSenderMembers(
+      String tenantId, String senderId, List<String> phones) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/members',
+        data: {'phones': phones});
+    return SenderMembers.fromJson(_asMap(res.data));
+  }
+
+  Future<void> addSenderMember(String tenantId, String senderId, String phone) async {
+    await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/members/${Uri.encodeComponent(phone)}');
+  }
+
+  Future<void> removeSenderMember(String tenantId, String senderId, String phone) async {
+    await _dio.delete(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/members/${Uri.encodeComponent(phone)}');
+  }
+
+  // ---- WhatsApp keyword actions --------------------------------------
+
+  Future<List<KeywordActionItem>> listKeywordActions(String tenantId, String senderId) async {
+    final res = await _dio
+        .get('/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/keyword-actions');
+    return KeywordActionItem.listFromJson(res.data);
+  }
+
+  /// Replaces the calling workspace's keyword actions on the sender; what is
+  /// not in [actions] is gone.
+  Future<List<KeywordActionItem>> replaceKeywordActions(
+      String tenantId, String senderId, List<KeywordActionItem> actions) async {
+    final res = await _dio.put(
+        '/v1/admin/tenants/$tenantId/whatsapp-senders/$senderId/keyword-actions',
+        data: {'actions': [for (final a in actions) a.toJson()]});
+    return KeywordActionItem.listFromJson(res.data);
+  }
+
   /// Probe whether sender registration is enabled on this instance. Used
   /// by the admin UI to render an actionable banner BEFORE the operator
   /// tries to submit a sender for review.
@@ -542,6 +598,113 @@ class AdminApi {
         await _dio.get('/v1/admin/tenants/$tenantId/whatsapp/readiness');
     final map = _asMap(res.data);
     return map['submitsEnabled'] == true;
+  }
+
+  // ---- Platform senders (platform admins, shared-sender §5.1, §17.3) ---
+
+  static const _ps = '/v1/admin/platform-senders';
+
+  Future<List<PlatformSenderResponse>> listPlatformSenders() async {
+    final res = await _dio.get(_ps);
+    return (res.data as List)
+        .map((e) => PlatformSenderResponse.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  Future<PlatformSenderResponse> getPlatformSender(String senderId) async {
+    final res = await _dio.get('$_ps/$senderId');
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> createPlatformSender(PlatformSenderRequest body) async {
+    final res = await _dio.post(_ps, data: body.toJson());
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> updatePlatformSender(
+      String senderId, PlatformSenderRequest body) async {
+    final res = await _dio.put('$_ps/$senderId', data: body.toJson(includePhone: false));
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> submitPlatformSender(String senderId,
+      {String? verificationMethod}) async {
+    final res = await _dio.post('$_ps/$senderId/submit', data: {'verificationMethod': ?verificationMethod});
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> verifyPlatformSender(String senderId, String code) async {
+    final res = await _dio.post('$_ps/$senderId/verify', data: {'code': code});
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> syncPlatformSender(String senderId) async {
+    final res = await _dio.post('$_ps/$senderId/sync');
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> suspendPlatformSender(String senderId) async {
+    final res = await _dio.post('$_ps/$senderId/suspend');
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderResponse> resumePlatformSender(String senderId) async {
+    final res = await _dio.post('$_ps/$senderId/resume');
+    return PlatformSenderResponse.fromJson(_asMap(res.data));
+  }
+
+  /// Revoke. Refused with 409 `sender_has_assignments` while any assignment is live.
+  Future<void> revokePlatformSender(String senderId) async {
+    await _dio.delete('$_ps/$senderId');
+  }
+
+  /// Platform → workspace. Refused with 409 `sender_has_assignments` while
+  /// any assignment is live.
+  Future<WhatsAppSenderTransferResponse> transferPlatformSender(
+      String senderId, WhatsAppSenderTransferRequest body) async {
+    final res = await _dio.post('$_ps/$senderId/transfer', data: body.toJson());
+    return WhatsAppSenderTransferResponse.fromJson(_asMap(res.data));
+  }
+
+  Future<List<PlatformSenderAssignment>> listPlatformSenderAssignments(String senderId) async {
+    final res = await _dio.get('$_ps/$senderId/assignments');
+    return (res.data as List)
+        .map((e) => PlatformSenderAssignment.fromJson(_asMap(e)))
+        .toList();
+  }
+
+  /// Assign [tenantId] to the sender, or edit its label/cap.
+  Future<PlatformSenderAssignment> putPlatformSenderAssignment(
+      String senderId, String tenantId, PlatformSenderAssignmentRequest body) async {
+    final res = await _dio.put('$_ps/$senderId/assignments/$tenantId', data: body.toJson());
+    return PlatformSenderAssignment.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderAssignment> pausePlatformSenderAssignment(
+      String senderId, String tenantId) async {
+    final res = await _dio.post('$_ps/$senderId/assignments/$tenantId/pause');
+    return PlatformSenderAssignment.fromJson(_asMap(res.data));
+  }
+
+  Future<PlatformSenderAssignment> resumePlatformSenderAssignment(
+      String senderId, String tenantId) async {
+    final res = await _dio.post('$_ps/$senderId/assignments/$tenantId/resume');
+    return PlatformSenderAssignment.fromJson(_asMap(res.data));
+  }
+
+  /// Ends the assignment (§11). [dryRun] reports the effects without changing anything.
+  Future<AssignmentEndResult> endPlatformSenderAssignment(
+      String senderId, String tenantId, {bool dryRun = false}) async {
+    final res = await _dio.delete('$_ps/$senderId/assignments/$tenantId',
+        queryParameters: {if (dryRun) 'dryRun': true});
+    return AssignmentEndResult.fromJson(
+        res.data is Map ? _asMap(res.data) : <String, dynamic>{'dryRun': dryRun});
+  }
+
+  /// Inbound on the sender that matched no workspace, newest first.
+  Future<List<UnroutedInbound>> listPlatformSenderUnrouted(String senderId, {int limit = 50}) async {
+    final res = await _dio.get('$_ps/$senderId/unrouted', queryParameters: {'limit': limit});
+    return (res.data as List).map((e) => UnroutedInbound.fromJson(_asMap(e))).toList();
   }
 
   // ---- WhatsApp embedded signup (self-service onboarding) -------------

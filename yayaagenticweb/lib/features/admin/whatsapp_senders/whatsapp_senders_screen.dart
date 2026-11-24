@@ -26,7 +26,9 @@ import '../../auth/application/auth_controller.dart';
 import '../../auth/models/auth_state.dart';
 import '../channel_bindings/channel_ui.dart';
 import '../channel_bindings/sender_routes_section.dart';
+import '../platform_senders/platform_sender_providers.dart' show platformSendersProvider;
 import '../shared/admin_shared.dart' show TenantScopedEmptyState;
+import 'assigned_platform_sender_section.dart';
 import 'whatsapp_connect_wizard.dart';
 import 'whatsapp_sender_transfer_dialog.dart';
 import 'whatsapp_sender_wizard.dart';
@@ -185,13 +187,15 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
           highlightIds: fresh,
           searchHint: 'Search by name, number or business',
           searchTextOf: (s) =>
-              '${s.displayName} ${s.phoneE164} ${s.businessProfile.legalName} ${SenderStatusInfo.of(s.status).label}',
+              '${s.displayName} ${s.approvedDisplayName ?? ''} ${s.phoneE164} ${s.businessProfile.legalName} '
+              '${s.assignment?.label ?? ''} ${SenderStatusInfo.of(s.status).label}${s.isPlatform ? ' platform shared' : ''}',
           onRowTap: (s) => _open(tenant, s),
           filters: [
             YFilter('Needs action', _needsAction),
             YFilter('In review', (s) => s.status == 'SUBMITTING' || s.status == 'PENDING_REVIEW'),
             YFilter('Live', (s) => s.status == 'ACTIVE'),
             YFilter('Drafts', (s) => s.status == 'DRAFT'),
+            YFilter('Shared', (s) => s.isPlatform),
           ],
           empty: YEmptyState(
             icon: Icons.chat_outlined,
@@ -214,10 +218,11 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
               flex: 3,
               sortKey: (s) => s.displayName.toLowerCase(),
               cell: (context, s) => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text(s.displayName,
+                Text(s.isPlatform ? (s.approvedDisplayName ?? s.displayName) : s.displayName,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface)),
                 Text(s.phoneE164, style: monoStyle(context, size: 12.5, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                if (s.isPlatform) Padding(padding: const EdgeInsets.only(top: 4), child: PlatformSharedChip(label: s.assignment?.label)),
               ]),
             ),
             YColumn(
@@ -230,10 +235,12 @@ class _WhatsAppSendersScreenState extends ConsumerState<WhatsAppSendersScreen> {
               label: 'Business',
               flex: 3,
               sortKey: (s) => s.businessProfile.legalName.toLowerCase(),
-              cell: (context, s) => YCellStack(
-                primary: s.businessProfile.legalName,
-                secondary: s.businessProfile.vertical.isEmpty ? null : businessVerticalLabel(s.businessProfile.vertical),
-              ),
+              cell: (context, s) => s.isPlatform
+                  ? YCellStack(primary: s.assignment?.label ?? '—', secondary: 'Business name on this shared number')
+                  : YCellStack(
+                      primary: s.businessProfile.legalName,
+                      secondary: s.businessProfile.vertical.isEmpty ? null : businessVerticalLabel(s.businessProfile.vertical),
+                    ),
             ),
             YColumn(
               label: 'Locale',
@@ -273,7 +280,10 @@ class _StatusCell extends StatelessWidget {
     final status = StatusColors.of(context);
     final s = sender;
     final rejection = s.status == 'FAILED' ? s.onboarding.failureMessage : null;
-    final (String? line, Color? color) = s.needsVerificationCode
+    final pausedHere = s.isPlatform && s.assignment?.status == 'PAUSED';
+    final (String? line, Color? color) = pausedHere
+        ? ('Paused for this workspace by the platform', scheme.onSurfaceVariant)
+        : s.needsVerificationCode
         ? ('Action needed — enter the code WhatsApp sent to the phone', status.onWarningContainer)
         : s.canEnterVerificationCode
             ? ('Got a code from WhatsApp? Open to enter it', scheme.onSurfaceVariant)
@@ -335,14 +345,14 @@ class _WhatsAppSenderSheetState extends ConsumerState<WhatsAppSenderSheet> {
   }
 
   Future<void> _submit(WhatsAppSenderResponse s) async {
-    final method = await showDialog<String>(context: context, builder: (_) => _SubmitDialog(phoneE164: s.phoneE164));
+    final method = await showDialog<String>(context: context, builder: (_) => SenderSubmitDialog(phoneE164: s.phoneE164));
     if (method == null) return;
     await _run((api) => api.submitWhatsAppSender(_tenant, s.id, verificationMethod: method),
         'Submitted ${s.phoneE164}. If WhatsApp sends a code to the phone, enter it here.');
   }
 
   Future<void> _verify(WhatsAppSenderResponse s) async {
-    final code = await showDialog<String>(context: context, builder: (_) => _VerificationCodeDialog(phoneE164: s.phoneE164));
+    final code = await showDialog<String>(context: context, builder: (_) => SenderVerificationCodeDialog(phoneE164: s.phoneE164));
     if (code == null) return;
     await _run((api) => api.verifyWhatsAppSender(_tenant, s.id, code),
         'Code accepted — WhatsApp is finishing the registration.');
@@ -393,21 +403,28 @@ class _WhatsAppSenderSheetState extends ConsumerState<WhatsAppSenderSheet> {
         inFlight ? 'Registration of ${s.phoneE164} cancelled' : 'Removed ${s.phoneE164}');
   }
 
-  Future<void> _transfer(WhatsAppSenderResponse s) async {
+  Future<void> _transfer(WhatsAppSenderResponse s, {required bool platformAdmin}) async {
     final result = await showDialog<WhatsAppSenderTransferResponse>(
       context: context,
-      builder: (_) => WhatsAppSenderTransferDialog(tenant: _tenant, sender: s),
+      builder: (_) => WhatsAppSenderTransferDialog(tenant: _tenant, sender: s, allowPlatformDestination: platformAdmin),
     );
     if (result == null) return;
     final dest = result.destination;
+    final toPlatform = dest != null && (dest.isPlatform || dest.tenantId.isEmpty);
     ref.invalidate(whatsAppSendersProvider(_tenant));
-    if (dest != null) ref.invalidate(whatsAppSendersProvider(dest.tenantId));
+    if (toPlatform) {
+      ref.invalidate(platformSendersProvider);
+    } else if (dest != null) {
+      ref.invalidate(whatsAppSendersProvider(dest.tenantId));
+    }
     if (!mounted) return;
+    final where = toPlatform ? 'the platform' : dest?.tenantId;
+    final next = toPlatform ? ' Assign workspaces to it from «Platform senders».' : '';
     showToast(
         context,
         result.webhookRepoint == 'DONE'
-            ? 'Moved to ${dest?.tenantId}.'
-            : 'Moved to ${dest?.tenantId}. WhatsApp is still being pointed at it — messages arrive there in the meantime.');
+            ? 'Moved to $where.$next'
+            : 'Moved to $where. WhatsApp is still being pointed at it — messages arrive there in the meantime.$next');
   }
 
   @override
@@ -426,6 +443,15 @@ class _WhatsAppSenderSheetState extends ConsumerState<WhatsAppSenderSheet> {
     }
     final auth = ref.watch(authProvider);
     final platformAdmin = auth is AuthAuthenticated && auth.operator.platformAdmin;
+    if (sender.isPlatform) {
+      // A shared number: the platform runs its lifecycle; this workspace only
+      // manages its own members, keywords, routes and non-member reply.
+      return YSheetScaffold(
+        title: sender.approvedDisplayName ?? sender.displayName,
+        subtitle: '${sender.phoneE164} · Platform · shared',
+        body: AssignedPlatformSenderDetails(tenant: _tenant, sender: sender),
+      );
+    }
     final canSubmit = ref.watch(whatsAppSubmitEnabledProvider(_tenant)).maybeWhen(data: (r) => r, orElse: () => true);
     return YSheetScaffold(
       title: sender.displayName,
@@ -441,7 +467,7 @@ class _WhatsAppSenderSheetState extends ConsumerState<WhatsAppSenderSheet> {
           ),
       ],
       body: _SenderDetails(sender: sender, busy: _busy, platformAdmin: platformAdmin, onVerify: () => _verify(sender)),
-      footer: _SenderActions(
+      footer: SenderLifecycleActions(
         sender: sender,
         busy: _busy,
         canSubmit: canSubmit,
@@ -451,7 +477,7 @@ class _WhatsAppSenderSheetState extends ConsumerState<WhatsAppSenderSheet> {
         onSuspend: () => _suspend(sender),
         onResume: () => _run((api) => api.resumeWhatsAppSender(_tenant, sender.id), 'Resumed ${sender.phoneE164}'),
         onRevoke: () => _revoke(sender),
-        onTransfer: () => _transfer(sender),
+        onTransfer: () => _transfer(sender, platformAdmin: platformAdmin),
         onRetryRepoint: () => _run((api) => api.repointWhatsAppSenderWebhooks(_tenant, sender.id),
             'WhatsApp now delivers to this workspace directly'),
         onFinishRemoval: () => _run((api) => api.revokeWhatsAppSender(_tenant, sender.id),
@@ -470,6 +496,58 @@ class _SenderDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = sender;
+    final rejection = s.status == 'FAILED' ? s.onboarding.failureMessage : null;
+    final inFlightProblem = s.status == 'PENDING_REVIEW' ? s.onboarding.failureMessage : null;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+      children: [
+        SenderStatusSummary(sender: s, busy: busy, platformAdmin: platformAdmin, onVerify: onVerify),
+        const ChannelSheetHeading('Details'),
+        ChannelDetailRow(label: 'Phone', value: s.phoneE164, mono: true),
+        ChannelDetailRow(label: 'Display name', value: s.displayName),
+        if (s.approvedDisplayName != null) ChannelDetailRow(label: 'Approved display name', value: s.approvedDisplayName!),
+        ChannelDetailRow(
+          label: 'Business',
+          value: s.businessProfile.vertical.isEmpty
+              ? s.businessProfile.legalName
+              : '${s.businessProfile.legalName} (${businessVerticalLabel(s.businessProfile.vertical)})',
+        ),
+        ChannelDetailRow(label: 'Default locale', value: s.defaultLocale, mono: true),
+        if (s.onboarding.lastPolledAt != null)
+          ChannelDetailRow(label: 'Last checked', value: formatRelativeIso(s.onboarding.lastPolledAt)),
+        if (s.onboarding.failureMessage != null && rejection == null && inFlightProblem == null)
+          ChannelDetailRow(label: 'Review notes', value: s.onboarding.failureMessage!),
+        if (s.transferredFromTenant != null) ChannelDetailRow(label: 'Moved from', value: s.transferredFromTenant!, mono: true),
+        if (s.createdAt != null) ChannelDetailRow(label: 'Created', value: formatRelativeIso(s.createdAt)),
+        ChannelDetailRow(label: 'Sender ID', value: s.id, mono: true),
+        if (s.status != 'REVOKED') ...[
+          const SizedBox(height: Gap.sm),
+          SenderRoutesSection(endpointKind: 'WHATSAPP_SENDER', endpointId: s.id),
+        ],
+      ],
+    );
+  }
+}
+
+/// What state a sender is in, what WhatsApp said, and — while WhatsApp waits
+/// for it — the prompt to enter the verification code. Shared by the
+/// workspace and platform sender sheets.
+class SenderStatusSummary extends StatelessWidget {
+  const SenderStatusSummary({
+    super.key,
+    required this.sender,
+    required this.busy,
+    required this.platformAdmin,
+    required this.onVerify,
+  });
+  final WhatsAppSenderResponse sender;
+  final bool busy;
+  final bool platformAdmin;
+  final VoidCallback onVerify;
+
+  @override
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final s = sender;
     final info = SenderStatusInfo.of(s.status);
@@ -478,9 +556,7 @@ class _SenderDetails extends StatelessWidget {
     final rejection = s.status == 'FAILED' ? s.onboarding.failureMessage : null;
     // SUBMITTING failures are our own retries, not something WhatsApp said.
     final inFlightProblem = s.status == 'PENDING_REVIEW' ? s.onboarding.failureMessage : null;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
-      children: [
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
         Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
           YBadge(info.label, tone: toneForStatus(s.status), icon: iconForStatus(s.status)),
           if (progress != null)
@@ -522,35 +598,15 @@ class _SenderDetails extends StatelessWidget {
           ),
         if (s.canEnterVerificationCode || s.needsVerificationCode)
           _VerificationPrompt(phoneE164: s.phoneE164, confirmed: s.needsVerificationCode, busy: busy, onVerify: onVerify),
-        const ChannelSheetHeading('Details'),
-        ChannelDetailRow(label: 'Phone', value: s.phoneE164, mono: true),
-        ChannelDetailRow(label: 'Display name', value: s.displayName),
-        if (s.approvedDisplayName != null) ChannelDetailRow(label: 'Approved display name', value: s.approvedDisplayName!),
-        ChannelDetailRow(
-          label: 'Business',
-          value: s.businessProfile.vertical.isEmpty
-              ? s.businessProfile.legalName
-              : '${s.businessProfile.legalName} (${businessVerticalLabel(s.businessProfile.vertical)})',
-        ),
-        ChannelDetailRow(label: 'Default locale', value: s.defaultLocale, mono: true),
-        if (s.onboarding.lastPolledAt != null)
-          ChannelDetailRow(label: 'Last checked', value: formatRelativeIso(s.onboarding.lastPolledAt)),
-        if (s.onboarding.failureMessage != null && rejection == null && inFlightProblem == null)
-          ChannelDetailRow(label: 'Review notes', value: s.onboarding.failureMessage!),
-        if (s.transferredFromTenant != null) ChannelDetailRow(label: 'Moved from', value: s.transferredFromTenant!, mono: true),
-        if (s.createdAt != null) ChannelDetailRow(label: 'Created', value: formatRelativeIso(s.createdAt)),
-        ChannelDetailRow(label: 'Sender ID', value: s.id, mono: true),
-        if (s.status != 'REVOKED') ...[
-          const SizedBox(height: Gap.sm),
-          SenderRoutesSection(endpointKind: 'WHATSAPP_SENDER', endpointId: s.id),
-        ],
-      ],
-    );
+    ]);
   }
 }
 
-class _SenderActions extends StatelessWidget {
-  const _SenderActions({
+/// The lifecycle buttons for a sender (submit, pause, resume, remove, move…),
+/// whichever apply to its state. Shared by the workspace and platform sheets.
+class SenderLifecycleActions extends StatelessWidget {
+  const SenderLifecycleActions({
+    super.key,
     required this.sender,
     required this.busy,
     required this.canSubmit,
@@ -561,7 +617,7 @@ class _SenderActions extends StatelessWidget {
     required this.onResume,
     required this.onRevoke,
     required this.onTransfer,
-    required this.onRetryRepoint,
+    this.onRetryRepoint,
     required this.onFinishRemoval,
   });
 
@@ -575,7 +631,9 @@ class _SenderActions extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onRevoke;
   final VoidCallback onTransfer;
-  final VoidCallback onRetryRepoint;
+
+  /// Null where the route has no webhook re-point retry.
+  final VoidCallback? onRetryRepoint;
   final VoidCallback onFinishRemoval;
 
   @override
@@ -589,7 +647,7 @@ class _SenderActions extends StatelessWidget {
     final actions = <Widget>[
       if (s.status == 'REVOKED' && s.removalIncomplete)
         FilledButton.tonalIcon(onPressed: busy ? null : onFinishRemoval, icon: icon(Icons.delete_sweep_outlined), label: const Text('Finish removal')),
-      if (platformAdmin && s.transferStillForwarding)
+      if (platformAdmin && s.transferStillForwarding && onRetryRepoint != null)
         OutlinedButton.icon(onPressed: busy ? null : onRetryRepoint, icon: icon(Icons.sync), label: const Text('Retry move')),
       if (platformAdmin && s.canTransfer)
         OutlinedButton.icon(
@@ -696,15 +754,17 @@ class VerificationMethodSelector extends StatelessWidget {
   }
 }
 
-class _SubmitDialog extends StatefulWidget {
-  const _SubmitDialog({required this.phoneE164});
+/// Confirms a submit for WhatsApp review and picks how the code is delivered;
+/// pops the verification method.
+class SenderSubmitDialog extends StatefulWidget {
+  const SenderSubmitDialog({super.key, required this.phoneE164});
   final String phoneE164;
 
   @override
-  State<_SubmitDialog> createState() => _SubmitDialogState();
+  State<SenderSubmitDialog> createState() => _SenderSubmitDialogState();
 }
 
-class _SubmitDialogState extends State<_SubmitDialog> {
+class _SenderSubmitDialogState extends State<SenderSubmitDialog> {
   String _method = 'sms';
 
   @override
@@ -770,15 +830,16 @@ class _VerificationPrompt extends StatelessWidget {
   }
 }
 
-class _VerificationCodeDialog extends StatefulWidget {
-  const _VerificationCodeDialog({required this.phoneE164});
+/// Takes the one-time code WhatsApp sent to the phone; pops it.
+class SenderVerificationCodeDialog extends StatefulWidget {
+  const SenderVerificationCodeDialog({super.key, required this.phoneE164});
   final String phoneE164;
 
   @override
-  State<_VerificationCodeDialog> createState() => _VerificationCodeDialogState();
+  State<SenderVerificationCodeDialog> createState() => _SenderVerificationCodeDialogState();
 }
 
-class _VerificationCodeDialogState extends State<_VerificationCodeDialog> {
+class _SenderVerificationCodeDialogState extends State<SenderVerificationCodeDialog> {
   final _code = TextEditingController();
   late final YFormController _form = YFormController(
     snapshot: () => {'code': _code.text.trim()},

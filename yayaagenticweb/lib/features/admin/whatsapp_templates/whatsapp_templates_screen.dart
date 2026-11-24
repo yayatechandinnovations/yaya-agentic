@@ -518,7 +518,13 @@ class _TemplateDetailSheet extends ConsumerWidget {
   }
 }
 
-const _labels = {'name': 'Template name', 'locale': 'Locale', 'category': 'Category', 'body': 'Message'};
+const _labels = {
+  'name': 'Template name',
+  'locale': 'Locale',
+  'category': 'Category',
+  'body': 'Message',
+  'businessLabelVar': 'Business name variable',
+};
 
 const _fieldByCode = {
   'bad_name': 'name',
@@ -527,6 +533,7 @@ const _fieldByCode = {
   'bad_category': 'category',
   'bad_body': 'body',
   'not_editable': 'body',
+  'bad_business_label_var': 'businessLabelVar',
 };
 
 /// Create a draft template on a sender, or change a draft's wording.
@@ -544,6 +551,7 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
   final _name = TextEditingController();
   final _locale = TextEditingController();
   final _body = TextEditingController();
+  final _businessLabelVar = TextEditingController();
   String _category = 'UTILITY';
   late final YFormController _form;
 
@@ -557,12 +565,14 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
     _locale.text = _base?.locale ?? widget.sender.defaultLocale;
     _body.text = _base?.body ?? '';
     _category = _base?.category ?? 'UTILITY';
+    _businessLabelVar.text = _base?.businessLabelVar?.toString() ?? '';
     _form = YFormController(
       snapshot: () => {
         'name': _name.text.trim(),
         'locale': _locale.text.trim(),
         'category': _category,
         'body': _body.text,
+        'businessLabelVar': _businessLabelVar.text.trim(),
       },
       validate: _validate,
       labels: _labels,
@@ -580,6 +590,7 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
       _body.text = (v['body'] as String?) ?? _body.text;
       final cat = v['category'];
       if (cat is String && kTemplateCategories.contains(cat)) _category = cat;
+      _businessLabelVar.text = (v['businessLabelVar'] as String?) ?? _businessLabelVar.text;
       _form.refresh();
     });
   }
@@ -609,6 +620,7 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
       'name': nameErr,
       'locale': _editing ? null : Validators.required(_locale.text, 'a locale'),
       'body': bodyErr,
+      'businessLabelVar': businessLabelVarError(_businessLabelVar.text, body),
     };
   }
 
@@ -617,7 +629,7 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
     _form.removeListener(_rebuild);
     _body.removeListener(_rebuild);
     _form.dispose();
-    for (final c in [_name, _locale, _body]) {
+    for (final c in [_name, _locale, _body, _businessLabelVar]) {
       c.dispose();
     }
     super.dispose();
@@ -634,7 +646,11 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
           widget.tenant,
           widget.sender.id,
           _base!.id,
-          WhatsAppTemplateUpdate(body: _body.text, category: _category),
+          WhatsAppTemplateUpdate(
+            body: _body.text,
+            category: _category,
+            businessLabelVar: parseBusinessLabelVar(_businessLabelVar.text),
+          ),
         );
       } else {
         saved = await api.createWhatsAppTemplate(
@@ -645,6 +661,7 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
             locale: _locale.text.trim(),
             category: _category,
             body: _body.text,
+            businessLabelVar: parseBusinessLabelVar(_businessLabelVar.text),
           ),
         );
       }
@@ -740,6 +757,8 @@ class _WhatsAppTemplateEditorSheetState extends ConsumerState<WhatsAppTemplateEd
                 hint: 'e.g. Hola {{1}}, tu cita es mañana a las {{2}}.',
                 helper: 'Up to 1024 characters. {{1}}, {{2}}, … are filled in when the message is sent.',
               ),
+              const SizedBox(height: Gap.fieldGap),
+              BusinessLabelVarField(controller: _businessLabelVar, form: _form),
             ],
             preview: WhatsAppBodyPreview(
               body: _body.text,

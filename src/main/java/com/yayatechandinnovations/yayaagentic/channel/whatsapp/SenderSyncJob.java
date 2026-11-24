@@ -79,7 +79,7 @@ public class SenderSyncJob {
                 // will pick the row back up; meanwhile we surface enough to
                 // grep for in ops dashboards.
                 log.warn("WhatsApp sender poller: sync failed for {} ({}): {}",
-                        sender.id().value(), sender.tenant().value(), e.getMessage());
+                        sender.id().value(), sender.isPlatform() ? "platform" : sender.tenant().value(), e.getMessage());
             }
         }
     }

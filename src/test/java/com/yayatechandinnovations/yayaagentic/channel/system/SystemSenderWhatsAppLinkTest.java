@@ -9,6 +9,8 @@ import com.yayatechandinnovations.yayaagentic.persistence.ChatEntryPointReposito
 import com.yayatechandinnovations.yayaagentic.persistence.SystemSenderEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.SystemSenderRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,6 +97,24 @@ class SystemSenderWhatsAppLinkTest {
 
         service.update(TENANT, OWNER, linking(" "));
         assertNull(row.getWhatsappSenderId());
+    }
+
+    @Test
+    void aPlatformSenderTheTenantIsAssignedTo_isLinked_andOneItIsNot_isRefused() {
+        WhatsAppSenderAssignmentRepository assignments = mock(WhatsAppSenderAssignmentRepository.class);
+        service.setAssignments(assignments);
+        when(whatsappSenders.findByTenantIdAndId(any(), any())).thenReturn(Optional.empty());
+        when(assignments.findLive("snd_shared", "test")).thenReturn(Optional.of(
+                new WhatsAppSenderAssignmentEntity("wsa_1", "snd_shared", "test", "Banca Test", 1000, "admin")));
+        when(assignments.findLive("snd_shared_other", "test")).thenReturn(Optional.empty());
+
+        service.update(TENANT, OWNER, linking("snd_shared"));
+        assertEquals("snd_shared", row.getWhatsappSenderId());
+
+        AdminApiException ex = assertThrows(AdminApiException.class,
+                () -> service.update(TENANT, OWNER, linking("snd_shared_other")));
+        assertEquals("unknown_whatsapp_sender", ex.code());
+        assertEquals("snd_shared", row.getWhatsappSenderId());
     }
 
     @Test

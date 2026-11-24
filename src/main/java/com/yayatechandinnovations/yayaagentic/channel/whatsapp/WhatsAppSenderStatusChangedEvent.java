@@ -17,6 +17,7 @@ import com.yayatechandinnovations.yayaagentic.core.Ids;
  * <p>The event carries enough context for listeners to act without a fresh
  * DB read.
  */
+// tenant is null for a platform sender (whatsapp-shared-sender-design.md §4.3).
 public record WhatsAppSenderStatusChangedEvent(
         Ids.TenantId   tenant,
         SenderId       sender,
@@ -26,7 +27,6 @@ public record WhatsAppSenderStatusChangedEvent(
 ) {
 
     public WhatsAppSenderStatusChangedEvent {
-        if (tenant == null) throw new IllegalArgumentException("tenant required");
         if (sender == null) throw new IllegalArgumentException("sender required");
         if (from == null)   throw new IllegalArgumentException("from required");
         if (to == null)     throw new IllegalArgumentException("to required");

@@ -33,6 +33,10 @@ public class WhatsAppKeywordActionEntity {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    /** {@code ROUTED} or {@code REPLY} — whatsapp-shared-sender-design.md §8.2 (V99). */
+    @Column(name = "scope", nullable = false, length = 8)
+    private String scope = "ROUTED";
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -51,6 +55,8 @@ public class WhatsAppKeywordActionEntity {
     public String getPrefix() { return prefix; }
     public String getForwardUrl() { return forwardUrl; }
     public boolean isEnabled() { return enabled; }
+    public String getScope() { return scope; }
+    public void setScope(String v) { this.scope = v == null ? "ROUTED" : v; }
     public void setEnabled(boolean v) { this.enabled = v; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

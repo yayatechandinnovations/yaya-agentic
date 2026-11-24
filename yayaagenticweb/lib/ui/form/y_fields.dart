@@ -435,7 +435,7 @@ class YSwitchField extends StatelessWidget {
 }
 
 class YEnumOption<T> {
-  const YEnumOption(this.value, this.title, {this.description, this.wire, this.caution = false});
+  const YEnumOption(this.value, this.title, {this.description, this.wire, this.caution = false, this.enabled = true});
   final T value;
   final String title;
   final String? description;
@@ -443,6 +443,9 @@ class YEnumOption<T> {
 
   /// A choice with a security or cost consequence — selected, it reads amber.
   final bool caution;
+
+  /// Shown dimmed and not selectable (the field's helper says why).
+  final bool enabled;
 }
 
 /// Radio cards for consequential choices: each option spells out its effect.
@@ -510,40 +513,46 @@ class YEnumCards<T> extends StatelessWidget {
     return Semantics(
       inMutuallyExclusiveGroup: true,
       checked: selected,
-      child: Material(
-        color: selected ? (o.caution ? status.warningContainer : status.highlight) : scheme.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: BorderSide(color: selected ? accent : scheme.outlineVariant, width: selected ? 2 : 1),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: () {
-            if (form != null && name != null) form!.changed(name!);
-            onChanged(o.value);
-          },
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 10, 14, 12),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                  size: 20, color: selected ? accent : scheme.outline),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                    Text(o.title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                    if (o.wire != null)
-                      Text(o.wire!, style: monoStyle(context, size: 11, color: scheme.onSurfaceVariant)),
+      enabled: o.enabled,
+      child: Opacity(
+        opacity: o.enabled ? 1 : 0.5,
+        child: Material(
+          color: selected ? (o.caution ? status.warningContainer : status.highlight) : scheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: selected ? accent : scheme.outlineVariant, width: selected ? 2 : 1),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: !o.enabled
+                ? null
+                : () {
+                    if (form != null && name != null) form!.changed(name!);
+                    onChanged(o.value);
+                  },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 10, 14, 12),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                    size: 20, color: selected ? accent : scheme.outline),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                      Text(o.title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                      if (o.wire != null)
+                        Text(o.wire!, style: monoStyle(context, size: 11, color: scheme.onSurfaceVariant)),
+                    ]),
+                    if (o.description != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(o.description!,
+                            style: TextStyle(fontSize: 13, height: 1.4, color: scheme.onSurfaceVariant)),
+                      ),
                   ]),
-                  if (o.description != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(o.description!,
-                          style: TextStyle(fontSize: 13, height: 1.4, color: scheme.onSurfaceVariant)),
-                    ),
-                ]),
-              ),
-            ]),
+                ),
+              ]),
+            ),
           ),
         ),
       ),

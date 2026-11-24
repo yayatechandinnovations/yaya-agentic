@@ -7,6 +7,8 @@ import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderTransferService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.shared.SenderAssignmentService;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.shared.SenderMemberService;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.operator_auth.accounts.Role;
 import com.yayatechandinnovations.yayaagentic.operator_auth.workspace.WorkspaceAccessHelper;
@@ -46,17 +48,23 @@ public class WhatsAppSenderController {
     private final WhatsAppSenderService senders;
     private final WhatsAppSenderTransferService transfers;
     private final ChatLogoService logos;
+    private final SenderAssignmentService assignments;
+    private final SenderMemberService members;
 
     public WhatsAppSenderController(TenantGuard tenantGuard,
                                     WorkspaceAccessHelper workspaceAccess,
                                     WhatsAppSenderService senders,
                                     WhatsAppSenderTransferService transfers,
-                                    ChatLogoService logos) {
+                                    ChatLogoService logos,
+                                    SenderAssignmentService assignments,
+                                    SenderMemberService members) {
         this.tenantGuard = tenantGuard;
         this.workspaceAccess = workspaceAccess;
         this.senders = senders;
         this.transfers = transfers;
         this.logos = logos;
+        this.assignments = assignments;
+        this.members = members;
     }
 
     @GetMapping
@@ -64,9 +72,15 @@ public class WhatsAppSenderController {
                                                         ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.VIEWER);
         tenantGuard.requireExists(tenantId);
-        return senders.listForTenant(new Ids.TenantId(tenantId)).stream()
-                .map(WhatsAppSenderDtos.SenderResponse::of)
-                .toList();
+        Ids.TenantId tenant = new Ids.TenantId(tenantId);
+        List<WhatsAppSenderDtos.SenderResponse> out = new java.util.ArrayList<>(
+                senders.listForTenant(tenant).stream().map(WhatsAppSenderDtos.SenderResponse::of).toList());
+        // Then every platform sender this workspace is assigned to (shared-sender design §17.1).
+        for (WhatsAppSender p : senders.listPlatform()) {
+            assignments.forTenant(tenant, p.id()).ifPresent(v ->
+                    out.add(WhatsAppSenderDtos.SenderResponse.of(p, WhatsAppSenderDtos.AssignmentSummary.of(v))));
+        }
+        return out;
     }
 
     @GetMapping("/{senderId}")
@@ -75,9 +89,72 @@ public class WhatsAppSenderController {
                                                  ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.VIEWER);
         tenantGuard.requireExists(tenantId);
-        WhatsAppSender s = senders.requireForTenant(
-                new Ids.TenantId(tenantId), new SenderId(senderId));
-        return WhatsAppSenderDtos.SenderResponse.of(s);
+        Ids.TenantId tenant = new Ids.TenantId(tenantId);
+        WhatsAppSender s = senders.requireUsable(tenant, new SenderId(senderId));
+        return WhatsAppSenderDtos.SenderResponse.of(s, assignments.forTenant(tenant, s.id())
+                .map(WhatsAppSenderDtos.AssignmentSummary::of).orElse(null));
+    }
+
+    /* ------------------- assigned platform senders (§17.1) ------------------- */
+
+    /** The workspace's own reply to people who aren't its staff on a shared number. */
+    @PutMapping("/{senderId}/assignment")
+    public WhatsAppSenderDtos.AssignmentSummary updateAssignment(
+            @PathVariable("tenantId") String tenantId,
+            @PathVariable("senderId") String senderId,
+            @RequestBody WhatsAppSenderDtos.AssignmentUpdate req,
+            ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        return WhatsAppSenderDtos.AssignmentSummary.of(assignments.setNonMemberReply(
+                new Ids.TenantId(tenantId), new SenderId(senderId), req == null ? null : req.nonMemberReply()));
+    }
+
+    @GetMapping("/{senderId}/members")
+    public WhatsAppSenderDtos.MemberSet listMembers(@PathVariable("tenantId") String tenantId,
+                                                    @PathVariable("senderId") String senderId,
+                                                    ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.VIEWER);
+        tenantGuard.requireExists(tenantId);
+        List<String> phones = members.list(new Ids.TenantId(tenantId), new SenderId(senderId));
+        return new WhatsAppSenderDtos.MemberSet(phones, phones.size());
+    }
+
+    /** Full replace: the workspace's staff on the shared number are exactly these phones. */
+    @PutMapping("/{senderId}/members")
+    public WhatsAppSenderDtos.MemberSet replaceMembers(@PathVariable("tenantId") String tenantId,
+                                                       @PathVariable("senderId") String senderId,
+                                                       @RequestBody WhatsAppSenderDtos.MemberSet req,
+                                                       ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        if (req == null || req.phones() == null) {
+            throw AdminApiException.badRequest("missing_phones", "phones required (an empty list clears them)");
+        }
+        List<String> phones = members.replaceAll(new Ids.TenantId(tenantId), new SenderId(senderId), req.phones());
+        return new WhatsAppSenderDtos.MemberSet(phones, phones.size());
+    }
+
+    @PutMapping("/{senderId}/members/{phone}")
+    public ResponseEntity<Void> putMember(@PathVariable("tenantId") String tenantId,
+                                          @PathVariable("senderId") String senderId,
+                                          @PathVariable("phone") String phone,
+                                          ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        members.put(new Ids.TenantId(tenantId), new SenderId(senderId), phone);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{senderId}/members/{phone}")
+    public ResponseEntity<Void> deleteMember(@PathVariable("tenantId") String tenantId,
+                                             @PathVariable("senderId") String senderId,
+                                             @PathVariable("phone") String phone,
+                                             ServerWebExchange exchange) {
+        workspaceAccess.require(tenantId, exchange, Role.ADMIN);
+        tenantGuard.requireWritable(tenantId);
+        members.delete(new Ids.TenantId(tenantId), new SenderId(senderId), phone);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping
@@ -109,6 +186,7 @@ public class WhatsAppSenderController {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
         validateBody(req);
+        refusePlatform(tenantId, senderId);
 
         WhatsAppSender s = senders.editDraft(
                 new Ids.TenantId(tenantId),
@@ -157,6 +235,7 @@ public class WhatsAppSenderController {
         return Mono.fromCallable(() -> {
                     workspaceAccess.require(tenantId, exchange, Role.ADMIN);
                     tenantGuard.requireWritable(tenantId);
+                    refusePlatform(tenantId, senderId);
                     Optional<String> method = Optional.ofNullable(req)
                             .map(WhatsAppSenderDtos.SubmitRequest::verificationMethod)
                             .filter(m -> !m.isBlank());
@@ -176,6 +255,7 @@ public class WhatsAppSenderController {
         return Mono.fromCallable(() -> {
                     workspaceAccess.require(tenantId, exchange, Role.ADMIN);
                     tenantGuard.requireWritable(tenantId);
+                    refusePlatform(tenantId, senderId);
                     WhatsAppSender s = senders.verify(new Ids.TenantId(tenantId),
                             new SenderId(senderId), req == null ? null : req.code());
                     return WhatsAppSenderDtos.SenderResponse.of(s);
@@ -189,6 +269,7 @@ public class WhatsAppSenderController {
                                                   ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireExists(tenantId);
+        refusePlatform(tenantId, senderId);
         WhatsAppSender s = senders.forceSync(new Ids.TenantId(tenantId), new SenderId(senderId));
         return WhatsAppSenderDtos.SenderResponse.of(s);
     }
@@ -199,6 +280,7 @@ public class WhatsAppSenderController {
                                                      ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
+        refusePlatform(tenantId, senderId);
         WhatsAppSender s = senders.suspend(new Ids.TenantId(tenantId), new SenderId(senderId));
         return WhatsAppSenderDtos.SenderResponse.of(s);
     }
@@ -209,6 +291,7 @@ public class WhatsAppSenderController {
                                                     ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
+        refusePlatform(tenantId, senderId);
         WhatsAppSender s = senders.resume(new Ids.TenantId(tenantId), new SenderId(senderId));
         return WhatsAppSenderDtos.SenderResponse.of(s);
     }
@@ -219,6 +302,7 @@ public class WhatsAppSenderController {
                                                     ServerWebExchange exchange) {
         workspaceAccess.require(tenantId, exchange, Role.ADMIN);
         tenantGuard.requireWritable(tenantId);
+        refusePlatform(tenantId, senderId);
         WhatsAppSender s = senders.revoke(new Ids.TenantId(tenantId), new SenderId(senderId));
         return WhatsAppSenderDtos.SenderResponse.of(s);
     }
@@ -238,11 +322,12 @@ public class WhatsAppSenderController {
         return Mono.fromCallable(() -> {
                     workspaceAccess.requirePlatformAdmin(exchange);
                     tenantGuard.requireWritable(tenantId);
+                    refusePlatform(tenantId, senderId);
                     var outcome = transfers.transfer(
                             new Ids.TenantId(tenantId), new SenderId(senderId),
                             req == null ? null : new WhatsAppSenderTransferService.TransferRequest(
                                     req.destinationTenant(), req.profileId(), req.profileVersion(),
-                                    req.copyOptOuts()),
+                                    req.copyOptOuts(), req.destinationPlatform()),
                             workspaceAccess.actorOf(exchange), dryRun);
                     return WhatsAppSenderDtos.TransferResponse.of(outcome, dryRun);
                 })
@@ -258,6 +343,7 @@ public class WhatsAppSenderController {
         return Mono.fromCallable(() -> {
                     workspaceAccess.requirePlatformAdmin(exchange);
                     tenantGuard.requireWritable(tenantId);
+                    refusePlatform(tenantId, senderId);
                     WhatsAppSender s = transfers.retryRepoint(new Ids.TenantId(tenantId), new SenderId(senderId));
                     return WhatsAppSenderDtos.SenderResponse.of(s);
                 })
@@ -265,6 +351,19 @@ public class WhatsAppSenderController {
     }
 
     /* ---------------------------- helpers --------------------------------- */
+
+    /**
+     * A platform sender's lifecycle belongs to platform admins
+     * (/v1/admin/platform-senders); an assigned workspace sees it, never
+     * changes it (shared-sender design §6, §17.1).
+     */
+    private void refusePlatform(String tenantId, String senderId) {
+        boolean platform = senders.findById(new SenderId(senderId)).map(WhatsAppSender::isPlatform).orElse(false);
+        if (platform && assignments.forTenant(new Ids.TenantId(tenantId), new SenderId(senderId)).isPresent()) {
+            throw new AdminApiException(HttpStatus.FORBIDDEN, "platform_sender",
+                    "this shared number is managed by the platform — ask a platform admin");
+        }
+    }
 
     private static void validateBody(WhatsAppSenderDtos.SenderRequest req) {
         if (req == null) {

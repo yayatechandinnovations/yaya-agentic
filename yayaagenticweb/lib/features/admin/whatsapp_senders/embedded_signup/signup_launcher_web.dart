@@ -119,6 +119,8 @@ class _WebEmbeddedSignupLauncher implements EmbeddedSignupLauncher {
         callback,
         {
           'config_id': configurationId,
+          // A retry after the operator unticked a permission must ask again.
+          'auth_type': 'rerequest',
           'response_type': 'code',
           'override_default_response_type': true,
           'extras': extras,

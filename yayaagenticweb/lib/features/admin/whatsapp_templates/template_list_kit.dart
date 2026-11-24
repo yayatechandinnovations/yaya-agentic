@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../models/admin/whatsapp_template.dart';
 import '../../../ui/feedback/api_error.dart';
@@ -7,6 +8,7 @@ import '../../../ui/data/y_sheet.dart';
 import '../../../ui/data/y_states.dart';
 import '../../../ui/data/y_table.dart';
 import '../../../ui/form/y_fields.dart';
+import '../../../ui/form/y_form_controller.dart';
 import '../../../ui/form/y_form_layout.dart';
 import '../../../ui/tokens.dart';
 
@@ -763,4 +765,50 @@ class EditorWithPreview extends StatelessWidget {
       ]);
     });
   }
+}
+
+/// The optional «Business name variable» (`businessLabelVar`, shared-sender
+/// §9.2): blank, or the number of one of the body's `{{n}}`.
+String? businessLabelVarError(String raw, String body) {
+  final t = raw.trim();
+  if (t.isEmpty) return null;
+  final n = int.tryParse(t);
+  if (n == null || n < 1) return 'Enter the number of a variable, e.g. 1 for {{1}}.';
+  final count = placeholderCount(body);
+  if (count == 0) return 'The message has no variables — add one, e.g. {{1}}, for the business name.';
+  if (n > count) return 'The message only has {{1}} to {{$count}}.';
+  return null;
+}
+
+/// Blank → null (no business-name variable).
+int? parseBusinessLabelVar(String raw) => int.tryParse(raw.trim());
+
+/// Which `{{n}}` the platform fills with the business name. Shared by the
+/// workspace and account template editors.
+class BusinessLabelVarField extends StatelessWidget {
+  const BusinessLabelVarField({super.key, required this.controller, this.form, this.readOnly = false});
+
+  final TextEditingController controller;
+  final YFormController? form;
+  final bool readOnly;
+
+  @override
+  Widget build(BuildContext context) => YTextField(
+        key: const Key('business-label-var'),
+        label: 'Business name variable',
+        wireKey: 'businessLabelVar',
+        controller: controller,
+        form: form,
+        name: 'businessLabelVar',
+        optional: true,
+        readOnly: readOnly,
+        mono: true,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(2)],
+        hint: 'e.g. 1',
+        helper: 'The {{n}} the platform fills with the business name on every send, overwriting what the sender '
+            'passed: the assigned label on a shared platform number, the workspace’s display name otherwise. '
+            'Required to send this template on a shared number.',
+        onChanged: form == null ? null : (_) => form!.changed('businessLabelVar'),
+      );
 }

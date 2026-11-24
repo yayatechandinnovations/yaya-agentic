@@ -15,8 +15,14 @@ public final class WhatsAppTemplateDtos {
             String           name,
             String           locale,
             TemplateCategory category,
-            String           body
-    ) {}
+            String           body,
+            /** whatsapp-shared-sender-design.md §9.2 — null keeps the template off platform senders. */
+            Integer          businessLabelVar
+    ) {
+        public TemplateRequest(String name, String locale, TemplateCategory category, String body) {
+            this(name, locale, category, body, null);
+        }
+    }
 
     /** Declarative upsert by name (whatsapp-ops-integration-design.md §14.5/§14.6). */
     public record TemplateDeclaration(
@@ -26,15 +32,28 @@ public final class WhatsAppTemplateDtos {
             String           header,
             String           body,
             java.util.List<String> buttons,
-            Samples          samples
-    ) {}
+            Samples          samples,
+            /** whatsapp-shared-sender-design.md §9.2 — the placeholder the platform fills with the business name. */
+            Integer          businessLabelVar
+    ) {
+        public TemplateDeclaration(String name, String language, TemplateCategory category, String header,
+                                   String body, java.util.List<String> buttons, Samples samples) {
+            this(name, language, category, header, body, buttons, samples, null);
+        }
+    }
 
     public record Samples(java.util.List<String> body, String mediaFilename) {}
 
     public record TemplateUpdate(
             String           body,
-            TemplateCategory category
-    ) {}
+            TemplateCategory category,
+            /** Null keeps the stored value; 0 clears it (§9.2). */
+            Integer          businessLabelVar
+    ) {
+        public TemplateUpdate(String body, TemplateCategory category) {
+            this(body, category, null);
+        }
+    }
 
     /** The templates a hide or unhide applies to (whatsapp-shared-templates-design.md §10). */
     public record TemplateSelection(java.util.List<Long> templateIds) {}
@@ -65,7 +84,8 @@ public final class WhatsAppTemplateDtos {
             String           contentSid,
             Instant          lastSyncAt,
             boolean          shared,
-            boolean          hidden
+            boolean          hidden,
+            Integer          businessLabelVar
     ) {
         public static TemplateResponse of(WhatsAppTemplate t, String tenantId, String senderId) {
             return new TemplateResponse(
@@ -86,7 +106,8 @@ public final class WhatsAppTemplateDtos {
                     t.bspContentSid(),
                     t.lastSyncAt(),
                     t.shared(),
-                    t.hidden());
+                    t.hidden(),
+                    t.businessLabelVar());
         }
     }
 
@@ -129,7 +150,8 @@ public final class WhatsAppTemplateDtos {
             java.util.List<HolderResponse> holders,
             boolean          hidden,
             Instant          hiddenAt,
-            String           hiddenBy
+            String           hiddenBy,
+            Integer          businessLabelVar
     ) {
         public static AccountTemplateResponse of(WhatsAppTemplateService.AccountTemplate at) {
             WhatsAppTemplate t = at.template();
@@ -154,7 +176,8 @@ public final class WhatsAppTemplateDtos {
                             .toList(),
                     t.hidden(),
                     t.hiddenAt(),
-                    t.hiddenBy());
+                    t.hiddenBy(),
+                    t.businessLabelVar());
         }
     }
 }

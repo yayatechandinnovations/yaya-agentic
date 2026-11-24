@@ -43,6 +43,15 @@ public class SystemSenderService {
         this.playgroundSenders = playgroundSenders;
     }
 
+    // Optional for the same reason: a platform sender links only for a
+    // workspace it is assigned to (whatsapp-shared-sender-design.md §9.1).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentRepository assignments;
+
+    void setAssignments(com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentRepository assignments) {
+        this.assignments = assignments;
+    }
+
     public SystemSenderService(SystemSenderRepository repo,
                                ChatEntryPointRepository entryPoints,
                                ObjectMapper json,
@@ -134,9 +143,13 @@ public class SystemSenderService {
                 if (ownSimulator) {
                     if (playgroundSenders != null) playgroundSenders.ensureForTenant(tenant);
                 } else {
-                    whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa)
-                            .orElseThrow(() -> AdminApiException.badRequest("unknown_whatsapp_sender",
-                                    "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'"));
+                    boolean own = whatsappSenders.findByTenantIdAndId(e.getTenantId(), wa).isPresent();
+                    boolean assigned = !own && assignments != null
+                            && assignments.findLive(wa, e.getTenantId()).isPresent();
+                    if (!own && !assigned) {
+                        throw AdminApiException.badRequest("unknown_whatsapp_sender",
+                                "no WhatsApp sender '" + wa + "' in tenant '" + e.getTenantId() + "'");
+                    }
                 }
                 e.setWhatsappSenderId(wa);
             }

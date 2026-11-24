@@ -321,6 +321,7 @@ public class WorkspaceService {
         t.setStatus(TenantEntity.Status.ARCHIVED);
         t.setArchivedAt(now);
         audit.write("WORKSPACE_ARCHIVE", actor, workspace, meta, Map.of());
+        events.publishEvent(new WorkspaceArchivedEvent(workspace, actor == null ? "unknown" : String.valueOf(actor)));
     }
 
     // ------------------------------------------------------------------

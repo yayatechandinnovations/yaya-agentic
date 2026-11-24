@@ -17,6 +17,8 @@ import com.yayatechandinnovations.yayaagentic.config.YayaAgenticProperties;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.operator_auth.config.SecretCipher;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +75,7 @@ public class WhatsAppSenderService {
     private final TwilioProperties twilioProps;
     private final YayaAgenticProperties yayaProps;
     private final ApplicationEventPublisher events;
+    private final WhatsAppSenderAssignmentRepository assignments;
     private final SecureRandom random = new SecureRandom();
 
     public WhatsAppSenderService(WhatsAppSenderRepository repo,
@@ -82,7 +85,8 @@ public class WhatsAppSenderService {
                                  ProviderCredsResolver credsResolver,
                                  TwilioProperties twilioProps,
                                  YayaAgenticProperties yayaProps,
-                                 ApplicationEventPublisher events) {
+                                 ApplicationEventPublisher events,
+                                 WhatsAppSenderAssignmentRepository assignments) {
         this.repo = repo;
         this.cipher = cipher;
         this.json = json;
@@ -91,6 +95,7 @@ public class WhatsAppSenderService {
         this.twilioProps = twilioProps;
         this.yayaProps = yayaProps;
         this.events = events;
+        this.assignments = assignments;
     }
 
     /* ---------------------------- read ------------------------------------ */
@@ -101,12 +106,101 @@ public class WhatsAppSenderService {
                 .toList();
     }
 
+    /**
+     * The tenant's own sender. A null {@code tenant} addresses a platform
+     * sender (whatsapp-shared-sender-design.md §4.3): every lifecycle method
+     * below takes the same {@code (tenant, id)} pair, so the platform-admin
+     * surface reuses them with {@code tenant = null}.
+     */
     public WhatsAppSender requireForTenant(Ids.TenantId tenant, SenderId id) {
-        return repo.findByTenantIdAndId(tenant.value(), id.value())
+        return toDomain(loadEntity(tenant, id));
+    }
+
+    /**
+     * A sender the tenant may use: its own, or a platform sender it holds a
+     * live assignment to ({@code ACTIVE} or {@code PAUSED}). Outbound paths
+     * additionally check the assignment is {@code ACTIVE}
+     * ({@link #isAssignmentActive}).
+     */
+    public WhatsAppSender requireUsable(Ids.TenantId tenant, SenderId id) {
+        if (tenant == null) return requireForTenant(null, id);
+        Optional<WhatsAppSenderEntity> own = repo.findByTenantIdAndId(tenant.value(), id.value());
+        if (own.isPresent()) return toDomain(own.get());
+        return repo.findByIdAndOwnerKind(id.value(), WhatsAppSenderEntity.OWNER_PLATFORM)
+                .filter(e -> assignments.findLive(e.getId(), tenant.value()).isPresent())
                 .map(this::toDomain)
-                .orElseThrow(() -> AdminApiException.notFound(
-                        "sender_not_found",
-                        "no such WhatsApp sender '" + id.value() + "' in tenant '" + tenant.value() + "'"));
+                .orElseThrow(() -> notFound(tenant, id));
+    }
+
+    /** Whether the tenant may send on the sender right now: its own, or an ACTIVE assignment. */
+    public boolean isAssignmentActive(Ids.TenantId tenant, WhatsAppSender sender) {
+        if (!sender.isPlatform()) return true;
+        if (tenant == null) return true;
+        return assignments.findLive(sender.id().value(), tenant.value())
+                .map(a -> WhatsAppSenderAssignmentEntity.ACTIVE.equals(a.getStatus()))
+                .orElse(false);
+    }
+
+    /** The workspace's live assignment to a platform sender. */
+    public Optional<WhatsAppSenderAssignmentEntity> assignment(Ids.TenantId tenant, WhatsAppSender sender) {
+        if (tenant == null || !sender.isPlatform()) return Optional.empty();
+        return assignments.findLive(sender.id().value(), tenant.value());
+    }
+
+    /** The business name recipients see for this workspace on a platform sender (§9.2). */
+    public Optional<String> assignmentLabel(Ids.TenantId tenant, WhatsAppSender sender) {
+        if (tenant == null || !sender.isPlatform()) return Optional.empty();
+        return assignments.findLive(sender.id().value(), tenant.value())
+                .map(WhatsAppSenderAssignmentEntity::getLabel);
+    }
+
+    /**
+     * A free-form body as it goes out: on a platform sender, prefixed with the
+     * sending workspace's label, once. The platform's own lines (no tenant)
+     * and workspace senders go out unchanged.
+     */
+    public String labelled(Ids.TenantId tenant, WhatsAppSender sender, String body) {
+        if (body == null || body.isBlank()) return body;
+        return assignmentLabel(tenant, sender)
+                .map(label -> "*" + label + "*")
+                .map(head -> body.startsWith(head) ? body : head + "\n" + body)
+                .orElse(body);
+    }
+
+    /** Any live or historical sender by id, whoever owns it — the webhook's bridge from path segment to row. */
+    public Optional<WhatsAppSender> findById(SenderId id) {
+        return repo.findById(id.value()).map(this::toDomain);
+    }
+
+    /** Platform-owned senders, newest first (§5.1). */
+    public List<WhatsAppSender> listPlatform() {
+        return repo.findByOwnerKindOrderByCreatedAtDesc(WhatsAppSenderEntity.OWNER_PLATFORM).stream()
+                .map(this::toDomain)
+                .toList();
+    }
+
+    /** The generic reply an unroutable inbound on a platform sender gets (§8.3). */
+    public Optional<String> unroutedReply(SenderId id) {
+        return repo.findById(id.value())
+                .map(WhatsAppSenderEntity::getUnroutedReply)
+                .filter(s -> !s.isBlank());
+    }
+
+    @Transactional
+    public WhatsAppSender setUnroutedReply(SenderId id, String reply) {
+        WhatsAppSenderEntity entity = loadEntity(null, id);
+        String text = reply == null || reply.isBlank() ? null : reply.trim();
+        if (text != null && text.length() > 1000) {
+            throw AdminApiException.badRequest("reply_too_long", "the reply is at most 1000 characters");
+        }
+        entity.setUnroutedReply(text);
+        entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        return toDomain(repo.save(entity));
+    }
+
+    /** A live number held by a platform sender — never claimable by a workspace. */
+    public boolean isHeldByPlatform(String phoneE164) {
+        return repo.findLiveByPhoneE164(phoneE164).map(WhatsAppSenderEntity::isPlatformOwned).orElse(false);
     }
 
     /** Cross-tenant lookup used by the webhook controller to resolve which
@@ -114,7 +208,9 @@ public class WhatsAppSenderService {
      *  number is the trust root — the path-segment senderId is just a
      *  routing hint — but this lookup is the bridge from segment to tenant. */
     public Optional<Ids.TenantId> findTenantForSenderId(SenderId id) {
-        return repo.findById(id.value()).map(e -> new Ids.TenantId(e.getTenantId()));
+        return repo.findById(id.value())
+                .filter(e -> e.getTenantId() != null)
+                .map(e -> new Ids.TenantId(e.getTenantId()));
     }
 
     /* ---------------------------- create ---------------------------------- */
@@ -149,7 +245,7 @@ public class WhatsAppSenderService {
 
         WhatsAppSenderEntity entity = new WhatsAppSenderEntity(
                 id.value(),
-                tenant.value(),
+                tenant == null ? null : tenant.value(),
                 phoneE164,
                 displayName,
                 writeJson(business),
@@ -206,13 +302,15 @@ public class WhatsAppSenderService {
      *  reuse of an existing draft for the same number. */
     public Optional<WhatsAppSender> findByPhoneInTenant(Ids.TenantId tenant, String phoneE164) {
         return repo.findLiveByPhoneE164(phoneE164)
-                .filter(e -> e.getTenantId().equals(tenant.value()))
+                .filter(e -> tenant.value().equals(e.getTenantId()))
                 .map(this::toDomain);
     }
 
     /** Cross-tenant existence check for phone-conflict validation. */
     public Optional<Ids.TenantId> findTenantForPhone(String phoneE164) {
-        return repo.findLiveByPhoneE164(phoneE164).map(e -> new Ids.TenantId(e.getTenantId()));
+        return repo.findLiveByPhoneE164(phoneE164)
+                .filter(e -> e.getTenantId() != null)
+                .map(e -> new Ids.TenantId(e.getTenantId()));
     }
 
     /* ---------------------------- edit DRAFT/FAILED ----------------------- */
@@ -509,6 +607,10 @@ public class WhatsAppSenderService {
         // Revoke calls Twilio outside the DB transaction — same reasoning as
         // submit: don't hold the row lock for a remote call.
         WhatsAppSenderEntity current = loadEntity(tenant, id);
+        if (current.isPlatformOwned() && !assignments.findLiveBySender(current.getId()).isEmpty()) {
+            throw AdminApiException.conflict("sender_has_assignments",
+                    "workspaces are still assigned to this number — end their assignments first");
+        }
         boolean alreadyRevoked = SenderStatus.REVOKED.name().equals(current.getStatus());
         if (alreadyRevoked && !bspDeleteFailed(current)) {
             return toDomain(current);
@@ -573,7 +675,8 @@ public class WhatsAppSenderService {
     private void refuseIfHeldElsewhere(Ids.TenantId tenant, String phoneE164) {
         boolean heldElsewhere = repo.findByPhoneE164AndStatus(phoneE164, SenderStatus.REVOKED.name())
                 .stream()
-                .anyMatch(e -> !e.getTenantId().equals(tenant.value()) && bspDeleteFailed(e));
+                .anyMatch(e -> !java.util.Objects.equals(e.getTenantId(), tenant == null ? null : tenant.value())
+                        && bspDeleteFailed(e));
         if (heldElsewhere) {
             throw AdminApiException.conflict("phone_held_elsewhere",
                     "this number was used by another workspace and its WhatsApp registration was not "
@@ -613,7 +716,7 @@ public class WhatsAppSenderService {
         byte[] webhookSecretEnc = cipher.encrypt(mintWebhookSecret());
         WhatsAppSenderEntity copy = new WhatsAppSenderEntity(
                 mintSenderId().value(),
-                dest.value(),
+                dest == null ? null : dest.value(),
                 source.getPhoneE164(),
                 source.getDisplayName(),
                 source.getBusinessProfileJson(),
@@ -784,10 +887,16 @@ public class WhatsAppSenderService {
     }
 
     private WhatsAppSenderEntity loadEntity(Ids.TenantId tenant, SenderId id) {
-        return repo.findByTenantIdAndId(tenant.value(), id.value())
-                .orElseThrow(() -> AdminApiException.notFound(
-                        "sender_not_found",
-                        "no such WhatsApp sender '" + id.value() + "' in tenant '" + tenant.value() + "'"));
+        Optional<WhatsAppSenderEntity> row = tenant == null
+                ? repo.findByIdAndOwnerKind(id.value(), WhatsAppSenderEntity.OWNER_PLATFORM)
+                : repo.findByTenantIdAndId(tenant.value(), id.value());
+        return row.orElseThrow(() -> notFound(tenant, id));
+    }
+
+    private static AdminApiException notFound(Ids.TenantId tenant, SenderId id) {
+        return AdminApiException.notFound("sender_not_found", tenant == null
+                ? "no such platform WhatsApp sender '" + id.value() + "'"
+                : "no such WhatsApp sender '" + id.value() + "' in tenant '" + tenant.value() + "'");
     }
 
     private SenderId mintSenderId() {
@@ -856,7 +965,7 @@ public class WhatsAppSenderService {
 
         return new WhatsAppSender(
                 new SenderId(entity.getId()),
-                new Ids.TenantId(entity.getTenantId()),
+                entity.getTenantId() == null ? null : new Ids.TenantId(entity.getTenantId()),
                 entity.getPhoneE164(),
                 entity.getDisplayName(),
                 entity.getApprovedDisplayName(),

@@ -35,6 +35,16 @@ public interface InboundMessageRepository extends JpaRepository<InboundMessageEn
     List<InboundMessageEntity> findTop50ByTenantIdAndEndUserPhoneAndReceivedAtAfterOrderByReceivedAtAsc(
             String tenantId, String endUserPhone, OffsetDateTime since);
 
+    /** The router's "last inbound before this one" (whatsapp-shared-sender-design.md §7.2). */
+    @WorkspaceUnscoped("on a platform sender the phone's inbound spans workspaces; only timestamps are read")
+    java.util.Optional<InboundMessageEntity>
+        findFirstBySenderIdAndEndUserPhoneAndReceivedAtBeforeOrderByReceivedAtDesc(
+                String senderId, String endUserPhone, OffsetDateTime before);
+
+    /** Inbound on a platform sender that no workspace took (§12 «Unrouted»). */
+    @WorkspaceUnscoped("platform-admin view of a platform sender's unrouted inbound")
+    List<InboundMessageEntity> findTop200BySenderIdAndTenantIdIsNullOrderByReceivedAtDesc(String senderId);
+
     /** Wrapper to give the dispatcher a tidy method name. */
     @WorkspaceUnscoped("delegates to findFirst… above")
     default java.util.Optional<InboundMessageEntity> findLatestForSenderAndEndUserSince(

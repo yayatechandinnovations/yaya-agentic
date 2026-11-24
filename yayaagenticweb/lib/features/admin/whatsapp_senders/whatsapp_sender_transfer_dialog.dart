@@ -5,6 +5,7 @@ import '../../../api/admin_api.dart';
 import '../../../app/live/live_resource.dart';
 import '../../../app/live/resource_kind.dart';
 import '../../../models/admin/profile.dart';
+import '../../../models/admin/tenant.dart';
 import '../../../models/admin/whatsapp_sender.dart';
 import '../../../ui/feedback/api_error.dart';
 import '../../../ui/form/y_fields.dart';
@@ -25,17 +26,28 @@ final _destinationProfilesProvider =
   return latest.values.toList()..sort((a, b) => a.displayName.compareTo(b.displayName));
 });
 
+/// Destination value for «Platform (shared)» in the workspace picker.
+const kPlatformDestination = '__platform__';
+
 /// Moves a live number to another workspace (whatsapp-sender-transfer-design.md).
 /// Previews the move with a dry run first; pops the applied result.
+///
+/// [allowPlatformDestination] adds «Platform (shared)» — the number becomes a
+/// shared platform sender (shared-sender §5.2); platform admins only. With a
+/// null [tenant] the source is a platform sender moving out to a workspace:
+/// that route has no dry run, so the dialog confirms instead of previewing.
 class WhatsAppSenderTransferDialog extends ConsumerStatefulWidget {
   const WhatsAppSenderTransferDialog({
     super.key,
     required this.tenant,
     required this.sender,
+    this.allowPlatformDestination = false,
   });
 
-  final String tenant;
+  /// The source workspace; null when [sender] is a platform sender.
+  final String? tenant;
   final WhatsAppSenderResponse sender;
+  final bool allowPlatformDestination;
 
   @override
   ConsumerState<WhatsAppSenderTransferDialog> createState() =>
@@ -51,11 +63,16 @@ class _WhatsAppSenderTransferDialogState
   String? _error;
   WhatsAppSenderTransferResponse? _plan;
 
-  WhatsAppSenderTransferRequest get _request => WhatsAppSenderTransferRequest(
-        destinationTenant: _destination!,
-        profileId: _profileId,
-        copyOptOuts: _copyOptOuts,
-      );
+  bool get _fromPlatform => widget.tenant == null;
+  bool get _toPlatform => _destination == kPlatformDestination;
+
+  WhatsAppSenderTransferRequest get _request => _toPlatform
+      ? const WhatsAppSenderTransferRequest.toPlatform()
+      : WhatsAppSenderTransferRequest(
+          destinationTenant: _destination!,
+          profileId: _profileId,
+          copyOptOuts: _copyOptOuts,
+        );
 
   /// Any change invalidates the preview: the move applies what was previewed.
   void _change(VoidCallback update) => setState(() {
@@ -71,8 +88,9 @@ class _WhatsAppSenderTransferDialogState
     });
     try {
       final api = await ref.read(adminApiProvider.future);
-      final result = await api.transferWhatsAppSender(
-          widget.tenant, widget.sender.id, _request, dryRun: dryRun);
+      final result = _fromPlatform
+          ? await api.transferPlatformSender(widget.sender.id, _request)
+          : await api.transferWhatsAppSender(widget.tenant!, widget.sender.id, _request, dryRun: dryRun);
       if (!mounted) return;
       if (dryRun) {
         setState(() => _plan = result);
@@ -80,7 +98,13 @@ class _WhatsAppSenderTransferDialogState
         Navigator.pop(context, result);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = ApiErrorInfo.from(e).message);
+      final info = ApiErrorInfo.from(e);
+      if (mounted) {
+        setState(() => _error = info.code == 'sender_has_assignments'
+            ? 'Workspaces are still assigned to this number. End every assignment first, so each workspace’s '
+                'links are closed out on purpose.'
+            : info.message);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -90,7 +114,7 @@ class _WhatsAppSenderTransferDialogState
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tenants = ref.watch(tenantsProvider);
-    final destinations = tenants.maybeWhen(
+    final List<TenantResponse> destinations = tenants.maybeWhen(
       data: (list) => list
           .where((t) => t.id != widget.tenant && t.status == 'ACTIVE')
           .toList()
@@ -99,7 +123,9 @@ class _WhatsAppSenderTransferDialogState
     );
 
     return AlertDialog(
-      title: Text('Move ${widget.sender.phoneE164} to another workspace?'),
+      title: Text(_fromPlatform
+          ? 'Move ${widget.sender.phoneE164} to a workspace?'
+          : 'Move ${widget.sender.phoneE164} to another workspace?'),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -108,8 +134,15 @@ class _WhatsAppSenderTransferDialogState
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'The number keeps its WhatsApp registration and approved name — no new code and no new review. '
-                'Its conversation history stays in this workspace, and this workspace stops answering it.',
+                _fromPlatform
+                    ? 'The number keeps its WhatsApp registration and approved name — no new code and no new review. '
+                        'It stops being shared and belongs to the chosen workspace only.'
+                    : _toPlatform
+                        ? 'The number keeps its WhatsApp registration and approved name. It becomes a shared platform '
+                            'number: no workspace owns it, and this one is not assigned automatically — assign it '
+                            'from «Platform senders» afterwards. Its conversation history stays here.'
+                        : 'The number keeps its WhatsApp registration and approved name — no new code and no new review. '
+                            'Its conversation history stays in this workspace, and this workspace stops answering it.',
                 style: TextStyle(fontSize: 14, height: 1.5, color: theme.colorScheme.onSurface),
               ),
               const SizedBox(height: Gap.lg),
@@ -124,6 +157,11 @@ class _WhatsAppSenderTransferDialogState
                   isExpanded: true,
                   hint: const Text('Choose a workspace'),
                   items: [
+                    if (widget.allowPlatformDestination && !_fromPlatform)
+                      const DropdownMenuItem(
+                        value: kPlatformDestination,
+                        child: Text('Platform (shared)', overflow: TextOverflow.ellipsis),
+                      ),
                     for (final t in destinations)
                       DropdownMenuItem(
                         value: t.id,
@@ -139,22 +177,29 @@ class _WhatsAppSenderTransferDialogState
                 ),
               ),
               const SizedBox(height: Gap.fieldGap),
-              if (_destination != null) ...[
+              if (_destination != null && !_toPlatform) ...[
                 _assistantField(_destination!),
                 const SizedBox(height: Gap.fieldGap),
               ],
-              KeyedSubtree(
-                key: const Key('transfer-copy-opt-outs'),
-                child: YSwitchField(
-                  title: 'Keep opt-outs',
-                  wireKey: 'copyOptOuts',
-                  description: 'People who opted out of this number won’t hear from it in the new workspace either.',
-                  value: _copyOptOuts,
-                  onChanged: (v) {
-                    if (!_busy) _change(() => _copyOptOuts = v);
-                  },
+              // Opt-outs belong to the number; a shared number always keeps them.
+              if (!_toPlatform)
+                KeyedSubtree(
+                  key: const Key('transfer-copy-opt-outs'),
+                  child: YSwitchField(
+                    title: 'Keep opt-outs',
+                    wireKey: 'copyOptOuts',
+                    description: 'People who opted out of this number won’t hear from it in the new workspace either.',
+                    value: _copyOptOuts,
+                    onChanged: (v) {
+                      if (!_busy) _change(() => _copyOptOuts = v);
+                    },
+                  ),
+                )
+              else
+                Text(
+                  'Opt-outs come along: they belong to the number.',
+                  style: TextStyle(fontSize: 13, height: 1.45, color: theme.colorScheme.onSurfaceVariant),
                 ),
-              ),
               if (_plan != null) _PlanSummary(plan: _plan!),
               if (_error != null) ...[
                 const SizedBox(height: Gap.md),
@@ -169,7 +214,13 @@ class _WhatsAppSenderTransferDialogState
           onPressed: _busy ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        if (_plan == null)
+        if (_fromPlatform)
+          FilledButton(
+            key: const Key('transfer-apply'),
+            onPressed: _busy || _destination == null ? null : () => _run(dryRun: false),
+            child: Text('Move ${widget.sender.phoneE164}'),
+          )
+        else if (_plan == null)
           FilledButton.tonal(
             onPressed: _busy || _destination == null ? null : () => _run(dryRun: true),
             child: const Text('Preview'),

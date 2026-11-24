@@ -75,6 +75,8 @@ const navEntries = <NavEntry>[
     NavItem('Tenants', Icons.apartment_outlined, Icons.apartment, '/admin/tenants', platformOnly: true),
     NavItem('Operator auth', Icons.security_outlined, Icons.security, '/admin/operator-auth', platformOnly: true),
     NavItem('Shared WhatsApp templates', Icons.share_outlined, Icons.share, '/admin/whatsapp-shared-templates', platformOnly: true),
+    NavItem('Platform senders', Icons.hub_outlined, Icons.hub, '/admin/platform-senders',
+        platformOnly: true, keywords: ['shared number', 'whatsapp', 'assign']),
   ]),
   NavItem('Settings', Icons.tune_outlined, Icons.tune, '/settings', keywords: ['theme', 'dark', 'backend']),
 ];
@@ -84,6 +86,7 @@ const platformOnlyRoutes = <String>{
   '/admin/tenants',
   '/admin/operator-auth',
   '/admin/whatsapp-shared-templates',
+  '/admin/platform-senders',
 };
 
 List<NavEntry> visibleNavEntries({required bool platformAdmin}) {

@@ -26,8 +26,17 @@ public class WhatsAppSenderEntity {
     @Column(length = 64)
     private String id;
 
-    @Column(name = "tenant_id", nullable = false, length = 64)
+    /** Null exactly when {@link #ownerKind} is {@code PLATFORM} (V99 check constraint). */
+    @Column(name = "tenant_id", length = 64)
     private String tenantId;
+
+    /** {@code WORKSPACE} or {@code PLATFORM} — whatsapp-shared-sender-design.md §4.2. */
+    @Column(name = "owner_kind", nullable = false, length = 16)
+    private String ownerKind = OWNER_WORKSPACE;
+
+    /** The reply an inbound that matches no assigned workspace gets (§8.3); platform senders only. */
+    @Column(name = "unrouted_reply")
+    private String unroutedReply;
 
     @Column(name = "phone_e164", nullable = false, length = 20)
     private String phoneE164;
@@ -90,6 +99,9 @@ public class WhatsAppSenderEntity {
     @Column(name = "transferred_to_sender_id", length = 64)
     private String transferredToSenderId;
 
+    public static final String OWNER_WORKSPACE = "WORKSPACE";
+    public static final String OWNER_PLATFORM = "PLATFORM";
+
     protected WhatsAppSenderEntity() {}
 
     public WhatsAppSenderEntity(String id, String tenantId, String phoneE164,
@@ -97,6 +109,7 @@ public class WhatsAppSenderEntity {
                                 String status, byte[] webhookSecretEnc) {
         this.id = id;
         this.tenantId = tenantId;
+        this.ownerKind = tenantId == null ? OWNER_PLATFORM : OWNER_WORKSPACE;
         this.phoneE164 = phoneE164;
         this.displayName = displayName;
         this.businessProfileJson = businessProfileJson;
@@ -128,6 +141,10 @@ public class WhatsAppSenderEntity {
     public void setMetaPhoneNumberId(String v) { this.metaPhoneNumberId = v; }
     public String getMessagingAccountId() { return messagingAccountId; }
     public void setMessagingAccountId(String v) { this.messagingAccountId = v; }
+    public String getOwnerKind() { return ownerKind; }
+    public boolean isPlatformOwned() { return OWNER_PLATFORM.equals(ownerKind); }
+    public String getUnroutedReply() { return unroutedReply; }
+    public void setUnroutedReply(String v) { this.unroutedReply = v; }
     public String getTransferredToSenderId() { return transferredToSenderId; }
     public void setTransferredToSenderId(String v) { this.transferredToSenderId = v; }
 

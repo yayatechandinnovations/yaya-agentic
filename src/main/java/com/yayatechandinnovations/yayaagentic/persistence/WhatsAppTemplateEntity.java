@@ -74,6 +74,10 @@ public class WhatsAppTemplateEntity {
     @Column(name = "hidden_by", length = 128)
     private String hiddenBy;
 
+    /** whatsapp-shared-sender-design.md §9.2 — the placeholder the platform fills with the business name. */
+    @Column(name = "business_label_var")
+    private Integer businessLabelVar;
+
     protected WhatsAppTemplateEntity() {}
 
     public WhatsAppTemplateEntity(String accountKey, String createdByTenant, String name, String locale,
@@ -127,4 +131,6 @@ public class WhatsAppTemplateEntity {
     public void setHiddenAt(OffsetDateTime v) { this.hiddenAt = v; }
     public String getHiddenBy() { return hiddenBy; }
     public void setHiddenBy(String v) { this.hiddenBy = v; }
+    public Integer getBusinessLabelVar() { return businessLabelVar; }
+    public void setBusinessLabelVar(Integer v) { this.businessLabelVar = v; }
 }

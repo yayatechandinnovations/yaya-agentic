@@ -13,7 +13,9 @@ import java.util.Map;
  *
  * @param id                    platform-stable, minted at DRAFT, safe as
  *                              Twilio idempotency key
- * @param tenant                owning tenant — never modifiable post-create
+ * @param tenant                owning tenant — never modifiable post-create;
+ *                              null exactly when the platform owns the sender
+ *                              (whatsapp-shared-sender-design.md §4.3)
  * @param phoneE164             unique platform-wide
  * @param displayName           operator-requested
  * @param approvedDisplayName   null until ACTIVE; may differ from
@@ -64,9 +66,6 @@ public record WhatsAppSender(
         if (id == null) {
             throw new IllegalArgumentException("id required");
         }
-        if (tenant == null) {
-            throw new IllegalArgumentException("tenant required");
-        }
         if (phoneE164 == null || phoneE164.isBlank()) {
             throw new IllegalArgumentException("phoneE164 must not be blank");
         }
@@ -103,6 +102,11 @@ public record WhatsAppSender(
         this(id, tenant, phoneE164, displayName, approvedDisplayName, business, status, onboarding,
                 webhookSecret, defaultLocale, metadata, createdAt, updatedAt, lastSyncAt, startFlowId,
                 null, null, null);
+    }
+
+    /** Owned by the platform and assigned to workspaces, rather than owned by one. */
+    public boolean isPlatform() {
+        return tenant == null;
     }
 
     /** Convenience: whether an operator can edit this sender's mutable fields. */

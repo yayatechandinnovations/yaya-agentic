@@ -24,6 +24,7 @@ import '../features/admin/tools/tools_screen.dart';
 import '../features/admin/chats/chats_admin_screen.dart';
 import '../features/admin/system_senders/system_senders_screen.dart';
 import '../features/admin/sms/sms_admin_screen.dart';
+import '../features/admin/platform_senders/platform_senders_screen.dart';
 import '../features/admin/whatsapp_opt_outs/whatsapp_opt_outs_screen.dart';
 import '../features/admin/whatsapp_senders/whatsapp_senders_screen.dart';
 import '../features/admin/whatsapp_templates/whatsapp_shared_templates_screen.dart';
@@ -129,6 +130,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/admin/system-senders', onExit: _guardUnsaved, builder: (_, __) => const SystemSendersScreen()),
           GoRoute(path: '/admin/whatsapp-templates', onExit: _guardUnsaved, builder: (_, __) => const WhatsAppTemplatesScreen()),
           GoRoute(path: '/admin/whatsapp-shared-templates', onExit: _guardUnsaved, builder: (_, _) => const WhatsAppSharedTemplatesScreen()),
+          GoRoute(path: '/admin/platform-senders', onExit: _guardUnsaved, builder: (_, _) => const PlatformSendersScreen()),
           GoRoute(path: '/admin/receipt-templates', onExit: _guardUnsaved, builder: (_, _) => const ReceiptTemplatesScreen()),
           GoRoute(path: '/admin/whatsapp-opt-outs', onExit: _guardUnsaved, builder: (_, __) => const WhatsAppOptOutsScreen()),
           GoRoute(path: '/admin/recording-strategies', onExit: _guardUnsaved, builder: (_, __) => const RecordingStrategiesScreen()),

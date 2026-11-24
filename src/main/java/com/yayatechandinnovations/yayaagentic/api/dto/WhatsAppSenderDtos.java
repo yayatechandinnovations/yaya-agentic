@@ -89,10 +89,18 @@ public final class WhatsAppSenderDtos {
             Instant                lastSyncAt,
             String                 startFlowId,
             String                 wabaId,
-            String                 messagingAccountId
+            String                 messagingAccountId,
+            /** {@code WORKSPACE} or {@code PLATFORM} (whatsapp-shared-sender-design.md §17.1). */
+            String                 owner,
+            /** The calling workspace's assignment to a platform sender; null on its own senders. */
+            AssignmentSummary      assignment
     ) {
 
         public static SenderResponse of(WhatsAppSender s) {
+            return of(s, null);
+        }
+
+        public static SenderResponse of(WhatsAppSender s, AssignmentSummary assignment) {
             BusinessProfile b = s.business();
             BusinessProfileRequest bp = new BusinessProfileRequest(
                     b.legalName(), b.displayName(), b.contactEmail(), b.address(),
@@ -100,7 +108,7 @@ public final class WhatsAppSenderDtos {
 
             return new SenderResponse(
                     s.id().value(),
-                    s.tenant().value(),
+                    s.tenant() == null ? null : s.tenant().value(),
                     s.phoneE164(),
                     s.displayName(),
                     s.approvedDisplayName(),
@@ -114,10 +122,35 @@ public final class WhatsAppSenderDtos {
                     s.lastSyncAt(),
                     s.startFlowId(),
                     s.wabaId(),
-                    s.messagingAccountId()
+                    s.messagingAccountId(),
+                    s.isPlatform() ? "PLATFORM" : "WORKSPACE",
+                    assignment
             );
         }
     }
+
+    /** A workspace's view of its assignment to a platform sender (§17.1). */
+    public record AssignmentSummary(
+            String id,
+            String label,
+            String status,
+            int    dailyOutboundCap,
+            String nonMemberReply,
+            long   templateSends24h,
+            long   members
+    ) {
+        public static AssignmentSummary of(com.yayatechandinnovations.yayaagentic.channel.whatsapp.shared
+                                                   .SenderAssignmentService.View v) {
+            return new AssignmentSummary(v.id(), v.label(), v.status(), v.dailyOutboundCap(), v.nonMemberReply(),
+                    v.templateSends24h(), v.members());
+        }
+    }
+
+    /** PUT {@code …/whatsapp-senders/{s}/assignment}: the workspace's own reply to non-staff. */
+    public record AssignmentUpdate(String nonMemberReply) {}
+
+    /** {@code …/members}: GET response and full-replace PUT body. */
+    public record MemberSet(List<String> phones, Integer count) {}
 
     /** Trimmed view of {@link OnboardingState} for the wire — drops the raw
      *  Twilio failure code in favour of a single user-facing message. */
@@ -144,8 +177,15 @@ public final class WhatsAppSenderDtos {
             String  destinationTenant,
             String  profileId,
             Integer profileVersion,
-            Boolean copyOptOuts
-    ) {}
+            Boolean copyOptOuts,
+            /** whatsapp-shared-sender-design.md §5.2 — make the number a platform sender. */
+            Boolean destinationPlatform
+    ) {
+        public TransferRequest(String destinationTenant, String profileId, Integer profileVersion,
+                               Boolean copyOptOuts) {
+            this(destinationTenant, profileId, profileVersion, copyOptOuts, null);
+        }
+    }
 
     public record TransferEffectsView(
             int          optOutsCopied,

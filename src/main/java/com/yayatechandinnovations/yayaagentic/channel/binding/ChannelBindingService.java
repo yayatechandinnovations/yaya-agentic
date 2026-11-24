@@ -8,6 +8,7 @@ import com.yayatechandinnovations.yayaagentic.channel.ChannelEndpointRef;
 import com.yayatechandinnovations.yayaagentic.channel.chat.ChatEntryPointId;
 import com.yayatechandinnovations.yayaagentic.channel.sms.SmsSenderId;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.SenderId;
+import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender;
 import com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSenderService;
 import com.yayatechandinnovations.yayaagentic.core.Ids;
 import com.yayatechandinnovations.yayaagentic.core.Principal;
@@ -196,6 +197,8 @@ public class ChannelBindingService {
         validateEndpointBelongsToTenant(tenant, endpoint);
         validateProfileExists(tenant, profile, profileVersion);
         validateAutoReply(onUnresolved, unresolvedReplyText);
+        validatePlatformSenderBinding(endpoint, authResolverId,
+                onUnresolved == null ? OnUnresolvedPolicy.REJECT : onUnresolved);
 
         ChannelBindingEntity entity = new ChannelBindingEntity(
                 tenant.value(),
@@ -277,6 +280,12 @@ public class ChannelBindingService {
                 .orElseThrow(() -> AdminApiException.notFound("binding_not_found",
                         "no such binding " + id.value()));
         validateProfileExists(tenant, profile, profileVersion);
+        if ("WHATSAPP_SENDER".equals(entity.getEndpointKind())) {
+            validatePlatformSenderBinding(
+                    new ChannelEndpointRef.WhatsAppSenderRef(new SenderId(entity.getEndpointId())),
+                    authResolverId,
+                    onUnresolved == null ? OnUnresolvedPolicy.parse(entity.getOnUnresolved()) : onUnresolved);
+        }
         String effectiveText = unresolvedReplyText == null ? entity.getUnresolvedReplyText() : unresolvedReplyText;
         validateAutoReply(onUnresolved == null ? OnUnresolvedPolicy.parse(entity.getOnUnresolved()) : onUnresolved,
                 effectiveText);
@@ -339,6 +348,23 @@ public class ChannelBindingService {
 
     /* ---------------------------- validation ------------------------------ */
 
+    /**
+     * whatsapp-shared-sender-design.md §7.5 — on a platform sender only
+     * registered staff reach an assistant, so every binding there must resolve
+     * the caller and refuse anyone the resolver doesn't know. An anonymous FAQ
+     * binding would answer the public on a number many businesses share.
+     */
+    private void validatePlatformSenderBinding(ChannelEndpointRef endpoint, Long authResolverId,
+                                               OnUnresolvedPolicy onUnresolved) {
+        if (!(endpoint instanceof ChannelEndpointRef.WhatsAppSenderRef ref)) return;
+        boolean platform = senders.findById(ref.id()).map(WhatsAppSender::isPlatform).orElse(false);
+        if (platform && (authResolverId == null || onUnresolved != OnUnresolvedPolicy.REJECT)) {
+            throw AdminApiException.badRequest("platform_sender_requires_resolver",
+                    "a binding on a shared (platform) WhatsApp number needs an auth resolver and "
+                            + "onUnresolved REJECT — only registered staff may talk to an assistant there");
+        }
+    }
+
     private void validateEndpointBelongsToTenant(Ids.TenantId tenant,
                                                  ChannelEndpointRef endpoint) {
         switch (endpoint) {
@@ -347,8 +373,9 @@ public class ChannelBindingService {
                 // already filters by tenant, so cross-tenant lookups return
                 // empty and surface as not_found. The §16-mitigated risk is
                 // covered: there's no path to bind a tenant's profile to
-                // another tenant's sender.
-                senders.requireForTenant(tenant, senderRef.id());
+                // another tenant's sender. A platform sender binds only for a
+                // workspace it is assigned to.
+                senders.requireUsable(tenant, senderRef.id());
             }
             case ChannelEndpointRef.SmsSenderRef smsRef ->
                     // same cross-tenant guarantee as WhatsApp — tenant-scoped lookup

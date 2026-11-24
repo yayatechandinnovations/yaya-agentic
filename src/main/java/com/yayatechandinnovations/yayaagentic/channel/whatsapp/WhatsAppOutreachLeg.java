@@ -18,6 +18,8 @@ import com.yayatechandinnovations.yayaagentic.outreach.media.MediaTokenSigner;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -73,6 +75,15 @@ public class WhatsAppOutreachLeg {
     private final PlaygroundOutboundSink playgroundSink;
     private final PlaygroundSessionRegistry playgroundSessions;
     private final String publicBaseUrl;
+    private OutreachDeliveryRepository deliveries;
+    private TenantRepository tenants;
+
+    /** Optional wiring: the platform-sender cap (§9.4) and the business name of a workspace sender (§9.2). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSharedSenderSupport(OutreachDeliveryRepository deliveries, TenantRepository tenants) {
+        this.deliveries = deliveries;
+        this.tenants = tenants;
+    }
 
     public WhatsAppOutreachLeg(WhatsAppSenderService senders,
                                OptOutService optOuts,
@@ -140,11 +151,13 @@ public class WhatsAppOutreachLeg {
         SenderId senderId = new SenderId(r.whatsappSenderId());
         WhatsAppSender sender;
         try {
-            sender = senders.requireForTenant(r.tenant(), senderId);
+            sender = senders.requireUsable(r.tenant(), senderId);
         } catch (RuntimeException e) {
             return Outcome.fallback("no_whatsapp_sender");
         }
-        if (!sender.status().acceptsOutbound()) return Outcome.fallback("sender_inactive");
+        if (!sender.status().acceptsOutbound() || !senders.isAssignmentActive(r.tenant(), sender)) {
+            return Outcome.fallback("sender_inactive");
+        }
         if (optOuts.isOptedOut(senderId, r.phoneE164())) {
             metrics.optedOutBlocked(r.tenant().value(), senderId.value());
             return Outcome.fallback("opted_out");
@@ -200,7 +213,7 @@ public class WhatsAppOutreachLeg {
                                   com.yayatechandinnovations.yayaagentic.channel.ProviderCreds creds) {
         Map<String, Object> hints = hints(sender);
         List<String[]> buttons = buttons(r.actions());
-        String body = r.body() == null || r.body().isBlank() ? " " : r.body();
+        String body = r.body() == null || r.body().isBlank() ? " " : senders.labelled(r.tenant(), sender, r.body());
         if (body.length() > InSessionContents.MAX_BODY_CHARS) {
             body = body.substring(0, InSessionContents.MAX_BODY_CHARS - 1) + "…";
         }
@@ -263,12 +276,29 @@ public class WhatsAppOutreachLeg {
         WhatsAppTemplate t = found.get();
         boolean mediaHeader = !"NONE".equals(t.headerKind());
         if (mediaHeader && r.media().isEmpty()) return Outcome.fallback("no_template");
+        // whatsapp-shared-sender-design.md §9.2/§9.4 — on a number several
+        // businesses share, a template must name the business, and each
+        // workspace gets its fair share of business-initiated sends.
+        Integer labelVar = t.businessLabelVar();
+        if (sender.isPlatform()) {
+            if (labelVar == null) return Outcome.fallback("template_not_shared_safe");
+            if (capReached(r.tenant(), sender)) return Outcome.fallback("assignment_cap_reached");
+        }
 
         int n = t.placeholderCount();
         Map<String, String> vars = new LinkedHashMap<>();
         List<String> bodyVars = new ArrayList<>();
+        int next = 0;
         for (int i = 0; i < n; i++) {
-            String v = i < ref.variables().size() ? sanitizeParam(ref.variables().get(i)) : "—";
+            String v;
+            if (labelVar != null && labelVar == i + 1) {
+                // The platform's, never the caller's: no workspace can put
+                // another business's name here.
+                v = sanitizeParam(businessName(r.tenant(), sender));
+            } else {
+                v = next < ref.variables().size() ? sanitizeParam(ref.variables().get(next)) : "—";
+                next++;
+            }
             bodyVars.add(v);
             vars.put(String.valueOf(i + 1), v);
         }
@@ -306,6 +336,30 @@ public class WhatsAppOutreachLeg {
     }
 
     /* ------------------------------ helpers ------------------------------- */
+
+    private boolean capReached(Ids.TenantId tenant, WhatsAppSender sender) {
+        if (deliveries == null) return false;
+        int cap = senders.assignment(tenant, sender)
+                .map(com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentEntity::getDailyOutboundCap)
+                .orElse(0);
+        long sent = deliveries
+                .countByTenantIdAndWhatsappSenderIdAndTemplateNameIsNotNullAndFallbackReasonIsNullAndCreatedAtAfter(
+                        tenant.value(), sender.id().value(), OffsetDateTime.now(ZoneOffset.UTC).minusHours(24));
+        return sent >= cap;
+    }
+
+    /** The assignment label on a platform sender; the workspace's display name on its own number. */
+    private String businessName(Ids.TenantId tenant, WhatsAppSender sender) {
+        Optional<String> label = senders.assignmentLabel(tenant, sender);
+        if (label.isPresent()) return label.get();
+        if (tenants != null) {
+            Optional<String> name = tenants.findById(tenant.value())
+                    .map(com.yayatechandinnovations.yayaagentic.persistence.TenantEntity::getDisplayName)
+                    .filter(s -> !s.isBlank());
+            if (name.isPresent()) return name.get();
+        }
+        return sender.approvedDisplayName() != null ? sender.approvedDisplayName() : sender.displayName();
+    }
 
     private static List<String[]> buttons(List<ActionItem> actions) {
         List<String[]> out = new ArrayList<>();

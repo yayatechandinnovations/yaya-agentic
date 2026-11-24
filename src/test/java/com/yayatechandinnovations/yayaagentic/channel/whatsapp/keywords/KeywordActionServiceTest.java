@@ -36,7 +36,7 @@ class KeywordActionServiceTest {
     @BeforeEach
     void setUp() {
         repo = mock(WhatsAppKeywordActionRepository.class);
-        service = new KeywordActionService(repo, mock(WhatsAppSenderService.class), egress(false));
+        service = new KeywordActionService(repo, workspaceSenders(), egress(false));
         when(repo.findByTenantIdAndSenderIdOrderByIdAsc("acme", "wa_1")).thenReturn(List.of(
                 new WhatsAppKeywordActionEntity("acme", "wa_1", "TICKET", URL),
                 new WhatsAppKeywordActionEntity("acme", "wa_1", "NO ES MIO", URL),
@@ -113,7 +113,7 @@ class KeywordActionServiceTest {
 
     @Test
     void plain_http_is_admitted_only_under_the_dev_allow_private_networks_flag() {
-        KeywordActionService dev = new KeywordActionService(repo, mock(WhatsAppSenderService.class), egress(true));
+        KeywordActionService dev = new KeywordActionService(repo, workspaceSenders(), egress(true));
         List<KeywordAction> saved = dev.replaceAll(TENANT, SENDER,
                 List.of(new KeywordAction("TICKET", "http://localhost:8089/integrations/keywords")));
         assertThat(saved).hasSize(1);
@@ -127,5 +127,14 @@ class KeywordActionServiceTest {
                 new YayaAgenticProperties.HttpTools(List.of(), allowPrivate, Duration.ofSeconds(10)),
                 null, null, null);
         return new HttpEgressPolicy(props);
+    }
+
+    /** A workspace's own number: keyword rows behave as before platform senders. */
+    private static WhatsAppSenderService workspaceSenders() {
+        WhatsAppSenderService senders = mock(WhatsAppSenderService.class);
+        org.mockito.Mockito.when(senders.requireUsable(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(mock(com.yayatechandinnovations.yayaagentic.channel.whatsapp.WhatsAppSender.class));
+        return senders;
     }
 }

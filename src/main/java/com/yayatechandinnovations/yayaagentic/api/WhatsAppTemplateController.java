@@ -56,7 +56,7 @@ public class WhatsAppTemplateController {
         validateCreate(req);
         WhatsAppTemplate saved = templates.create(
                 new Ids.TenantId(tenantId), new SenderId(senderId),
-                req.name(), req.locale(), req.category(), req.body(), caller(exchange));
+                req.name(), req.locale(), req.category(), req.body(), req.businessLabelVar(), caller(exchange));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(WhatsAppTemplateDtos.TemplateResponse.of(saved, tenantId, senderId));
     }
@@ -76,7 +76,7 @@ public class WhatsAppTemplateController {
         TemplateCategory cat = req.category() == null ? TemplateCategory.UTILITY : req.category();
         WhatsAppTemplate updated = templates.update(
                 new Ids.TenantId(tenantId), new SenderId(senderId), new TemplateId(templateId),
-                req.body(), cat, caller(exchange));
+                req.body(), cat, req.businessLabelVar(), caller(exchange));
         return WhatsAppTemplateDtos.TemplateResponse.of(updated, tenantId, senderId);
     }
 
@@ -213,7 +213,8 @@ public class WhatsAppTemplateController {
         return new WhatsAppTemplateService.Declaration(name, req.language(), req.category(), req.header(),
                 req.body(), req.buttons(),
                 samples == null ? null : samples.body(),
-                samples == null ? null : samples.mediaFilename());
+                samples == null ? null : samples.mediaFilename(),
+                req.businessLabelVar());
     }
 
     private static void validateCreate(WhatsAppTemplateDtos.TemplateRequest req) {

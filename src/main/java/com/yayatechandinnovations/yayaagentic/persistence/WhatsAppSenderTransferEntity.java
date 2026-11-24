@@ -26,13 +26,13 @@ public class WhatsAppSenderTransferEntity {
     @Column(name = "twilio_sender_sid", nullable = false, length = 64)
     private String twilioSenderSid;
 
-    @Column(name = "source_tenant_id", nullable = false, length = 64)
+    @Column(name = "source_tenant_id", length = 64)
     private String sourceTenantId;
 
     @Column(name = "source_sender_id", nullable = false, length = 64)
     private String sourceSenderId;
 
-    @Column(name = "dest_tenant_id", nullable = false, length = 64)
+    @Column(name = "dest_tenant_id", length = 64)
     private String destTenantId;
 
     @Column(name = "dest_sender_id", nullable = false, length = 64)

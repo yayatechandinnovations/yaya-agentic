@@ -19,7 +19,8 @@ public class InboundMessageEntity {
     @Column(name = "message_sid", length = 64)
     private String messageSid;
 
-    @Column(name = "tenant_id", nullable = false, length = 64)
+    /** Null on a platform sender until the router picks the workspace (§7.4). */
+    @Column(name = "tenant_id", length = 64)
     private String tenantId;
 
     @Column(name = "sender_id", nullable = false, length = 64)
@@ -47,6 +48,10 @@ public class InboundMessageEntity {
 
     @Column(name = "processed_at")
     private OffsetDateTime processedAt;
+
+    /** Why the router picked {@link #tenantId} on a platform sender (§7.2). */
+    @Column(name = "route_reason", length = 32)
+    private String routeReason;
 
     @Column(name = "processing_error")
     private String processingError;
@@ -81,4 +86,7 @@ public class InboundMessageEntity {
     public void setMediaTranscriptsJson(String v) { this.mediaTranscriptsJson = v; }
     public void setProcessedAt(OffsetDateTime v) { this.processedAt = v; }
     public void setProcessingError(String v) { this.processingError = v; }
+    public void setTenantId(String v) { this.tenantId = v; }
+    public String getRouteReason() { return routeReason; }
+    public void setRouteReason(String v) { this.routeReason = v; }
 }

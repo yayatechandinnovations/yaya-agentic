@@ -656,6 +656,7 @@ const _labels = {
   'category': 'Category',
   'body': 'Message',
   'samples': 'Example values',
+  'businessLabelVar': 'Business name variable',
 };
 
 const _fieldByCode = {
@@ -666,6 +667,7 @@ const _fieldByCode = {
   'bad_body': 'body',
   'bad_placeholders': 'body',
   'bad_samples': 'samples',
+  'bad_business_label_var': 'businessLabelVar',
 };
 
 /// Declare a text-only template on an account. Templates with a document
@@ -685,6 +687,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
   final _language = TextEditingController(text: 'es');
   final _body = TextEditingController();
   final List<TextEditingController> _samples = [];
+  final _businessLabelVar = TextEditingController();
   String _category = 'UTILITY';
   late final YFormController _form;
 
@@ -702,6 +705,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
         'category': _category,
         'body': _body.text,
         'samples': _sampleValues,
+        'businessLabelVar': _businessLabelVar.text.trim(),
       },
       validate: _validate,
       labels: _labels,
@@ -717,6 +721,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
       _body.text = (v['body'] as String?) ?? _body.text;
       final cat = v['category'];
       if (cat is String && kTemplateCategories.contains(cat)) _category = cat;
+      _businessLabelVar.text = (v['businessLabelVar'] as String?) ?? _businessLabelVar.text;
       final samples = v['samples'];
       if (samples is List) {
         _syncSamples();
@@ -766,6 +771,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
       'language': Validators.required(language, 'a language'),
       'body': bodyErr,
       'samples': missing.isEmpty ? null : 'Give an example for ${missing.join(', ')} — WhatsApp reviews the template with them.',
+      'businessLabelVar': businessLabelVarError(_businessLabelVar.text, body),
     };
   }
 
@@ -774,7 +780,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
     _form.removeListener(_rebuild);
     _body.removeListener(_syncSamples);
     _form.dispose();
-    for (final c in [_name, _language, _body, ..._samples]) {
+    for (final c in [_name, _language, _body, _businessLabelVar, ..._samples]) {
       c.dispose();
     }
     super.dispose();
@@ -793,6 +799,7 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
           category: _category,
           body: _body.text,
           bodySamples: _sampleValues,
+          businessLabelVar: parseBusinessLabelVar(_businessLabelVar.text),
         ),
       );
       ref.invalidate(whatsAppAccountTemplatesProvider(widget.account.accountKey));
@@ -910,6 +917,8 @@ class _AccountTemplateEditorSheetState extends ConsumerState<AccountTemplateEdit
                   ]),
                 ),
               ],
+              const SizedBox(height: Gap.fieldGap),
+              BusinessLabelVarField(controller: _businessLabelVar, form: _form),
               const SizedBox(height: Gap.lg),
               Text(
                 'Templates with a document header or buttons are declared by the integration that sends them; '

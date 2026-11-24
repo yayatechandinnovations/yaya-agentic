@@ -145,6 +145,15 @@ public class InboundDispatchWorker {
 
     void setAutoReplies(UnresolvedAutoReplyService service) { this.autoReplies = service; }
 
+    // whatsapp-shared-sender-design.md §7 — platform (shared) senders; optional
+    // so the hand-built worker tests keep compiling.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yayatechandinnovations.yayaagentic.channel.whatsapp.shared.SharedInboundGate sharedGate;
+
+    void setSharedGate(com.yayatechandinnovations.yayaagentic.channel.whatsapp.shared.SharedInboundGate gate) {
+        this.sharedGate = gate;
+    }
+
     void setHandoffs(com.yayatechandinnovations.yayaagentic.engine.handoff.ChannelHandoffService service) {
         this.handoffs = service;
     }
@@ -262,9 +271,10 @@ public class InboundDispatchWorker {
             return;     // already processed (idempotent)
         }
 
-        // 1. sender + binding
-        WhatsAppSender sender = senders.requireForTenant(
-                new Ids.TenantId(row.getTenantId()),
+        // 1. sender + binding. A platform sender's row has no workspace until
+        //    the router (step 1r) picks one; a routed row names it.
+        WhatsAppSender sender = senders.requireUsable(
+                row.getTenantId() == null ? null : new Ids.TenantId(row.getTenantId()),
                 new SenderId(row.getSenderId()));
         if (!sender.status().acceptsInbound()) {
             markFailed(messageSid, "sender_not_accepting_inbound: " + sender.status());
@@ -287,11 +297,16 @@ public class InboundDispatchWorker {
         // policy; never run an LLM round-trip for these.
         OptOutService.Classification optClass = optOuts.classify(body);
         if (optClass == OptOutService.Classification.STOP) {
+            // On a platform sender the STOP is the number's, and it counts
+            // against the workspace that wrote last (shared-sender design §9.4).
+            String attributed = sender.isPlatform() && sharedGate != null
+                    ? sharedGate.lastWriter(sender.id(), row.getEndUserPhone()).orElse(null)
+                    : null;
             optOuts.optOut(new SenderId(row.getSenderId()),
-                    row.getEndUserPhone(), "user_stop");
+                    row.getEndUserPhone(), "user_stop", attributed);
             try {
                 outboundDispatcher.dispatchGreeting(
-                        new Ids.TenantId(row.getTenantId()),
+                        row.getTenantId() == null ? null : new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         new Ids.SessionId(java.util.UUID.randomUUID().toString()),
@@ -307,7 +322,7 @@ public class InboundDispatchWorker {
             optOuts.resubscribe(new SenderId(row.getSenderId()), row.getEndUserPhone());
             try {
                 outboundDispatcher.dispatchGreeting(
-                        new Ids.TenantId(row.getTenantId()),
+                        row.getTenantId() == null ? null : new Ids.TenantId(row.getTenantId()),
                         new SenderId(row.getSenderId()),
                         row.getEndUserPhone(),
                         new Ids.SessionId(java.util.UUID.randomUUID().toString()),
@@ -319,6 +334,28 @@ public class InboundDispatchWorker {
             inbound.save(row);
             return;
         }
+        // 1r. whatsapp-shared-sender-design.md §7 — on a platform sender the
+        // router picks the workspace first; every step below then runs in it.
+        if (sender.isPlatform() && row.getTenantId() == null) {
+            if (sharedGate == null) {
+                markFailed(messageSid, "platform_sender_router_unavailable");
+                return;
+            }
+            if (optOuts.isOptedOut(sender.id(), row.getEndUserPhone())) {
+                // Nobody may write back to them, not even to ask which business.
+                row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                row.setProcessingError("recipient_opted_out");
+                inbound.save(row);
+                return;
+            }
+            var routed = sharedGate.route(sender, row, raw, redact(body, row.getEndUserPhone()));
+            if (routed.replay().isPresent()) {
+                processInternal(routed.replay().get());
+                return;
+            }
+            if (!routed.proceed()) return;
+        }
+
         // 1a'. §15 — a code prompt may be waiting in this customer's
         // conversation. If this message is, or may hold, the code, the stored
         // row gives it up now: before any branch below can return, fail or
@@ -343,6 +380,20 @@ public class InboundDispatchWorker {
         if (!secretInbound && answerKeywordAction(row, sender, body)) {
             row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
             row.setBodyRedacted(redact(body, row.getEndUserPhone()));
+            inbound.save(row);
+            return;
+        }
+
+        // 1m. shared-sender design §7.5 — on a platform sender only the routed
+        // workspace's registered staff reach its assistant; everyone else got
+        // their keyword above, or gets the fixed non-member line here.
+        if (sender.isPlatform() && sharedGate != null
+                && !sharedGate.isMember(new Ids.TenantId(row.getTenantId()), sender, row.getEndUserPhone())) {
+            sharedGate.replyToNonMember(sender, row.getEndUserPhone(),
+                    Optional.of(new Ids.TenantId(row.getTenantId())));
+            row.setProcessedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            row.setProcessingError("not_a_member");
+            row.setBodyRedacted(secretInbound ? SecretInboundRedaction.MARKER : redact(body, row.getEndUserPhone()));
             inbound.save(row);
             return;
         }
@@ -462,6 +513,11 @@ public class InboundDispatchWorker {
         Optional<ChannelBinding> bindingOpt = bindings.findFor(
                 new Ids.TenantId(row.getTenantId()), endpoint, null, hints);
         if (bindingOpt.isEmpty()) {
+            if (sender.isPlatform() && sharedGate != null) {
+                // Staff of a workspace whose assistant isn't connected here yet.
+                sharedGate.replyToNonMember(sender, row.getEndUserPhone(),
+                        Optional.of(new Ids.TenantId(row.getTenantId())));
+            }
             markFailed(messageSid, "no_binding_matched");
             return;
         }
@@ -537,7 +593,11 @@ public class InboundDispatchWorker {
             // (same shape as no_binding_matched: no user-facing reply).
             // Under AUTO_REPLY the caller first hears the binding's fixed
             // line, once per 24 h; the drop and its audit row are the same.
-            if (autoReplies != null) {
+            if (sender.isPlatform() && sharedGate != null) {
+                // A stale staff registration: the person still hears something.
+                sharedGate.replyToNonMember(sender, row.getEndUserPhone(),
+                        Optional.of(new Ids.TenantId(row.getTenantId())));
+            } else if (autoReplies != null) {
                 autoReplies.replyIfDue(new Ids.TenantId(row.getTenantId()), new SenderId(row.getSenderId()),
                         row.getEndUserPhone(), binding);
             }

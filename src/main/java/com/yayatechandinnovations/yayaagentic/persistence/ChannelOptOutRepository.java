@@ -17,4 +17,8 @@ public interface ChannelOptOutRepository
             String senderId, String endUserPhone);
 
     List<ChannelOptOutEntity> findBySenderId(String senderId);
+
+    /** STOPs on a platform sender that followed a workspace's message (whatsapp-shared-sender-design.md §9.4). */
+    long countBySenderIdAndAttributedTenantIdAndOptedOutAtAfter(String senderId, String attributedTenantId,
+                                                               java.time.OffsetDateTime after);
 }

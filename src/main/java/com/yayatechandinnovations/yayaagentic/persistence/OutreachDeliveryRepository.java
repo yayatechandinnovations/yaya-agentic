@@ -14,6 +14,14 @@ public interface OutreachDeliveryRepository extends JpaRepository<OutreachDelive
     @WorkspaceUnscoped("signature-verified Twilio status callbacks name only the globally-unique message sid")
     Optional<OutreachDeliveryEntity> findFirstByProviderMessageSid(String providerMessageSid);
 
+    /**
+     * Templates a workspace sent on a sender since {@code after} — the
+     * business-initiated sends a platform-sender assignment's daily cap counts
+     * (whatsapp-shared-sender-design.md §9.4).
+     */
+    long countByTenantIdAndWhatsappSenderIdAndTemplateNameIsNotNullAndFallbackReasonIsNullAndCreatedAtAfter(
+            String tenantId, String whatsappSenderId, OffsetDateTime after);
+
     /** WhatsApp deliveries to a phone the open conversation has not seen yet (§6.6). */
     List<OutreachDeliveryEntity>
             findByTenantIdAndWhatsappSenderIdAndEndUserPhoneAndChannelAndCreatedAtAfterOrderByCreatedAtAsc(

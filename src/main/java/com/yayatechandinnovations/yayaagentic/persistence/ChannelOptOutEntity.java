@@ -23,6 +23,10 @@ public class ChannelOptOutEntity {
     @Column(name = "reason", length = 64)
     private String reason;
 
+    /** On a platform sender, the workspace that wrote to the phone last before the STOP (§9.4). */
+    @Column(name = "attributed_tenant_id", length = 64)
+    private String attributedTenantId;
+
     protected ChannelOptOutEntity() {}
 
     public ChannelOptOutEntity(String senderId, String endUserPhone, String reason) {
@@ -35,6 +39,8 @@ public class ChannelOptOutEntity {
     public String getEndUserPhone() { return endUserPhone; }
     public OffsetDateTime getOptedOutAt() { return optedOutAt; }
     public String getReason() { return reason; }
+    public String getAttributedTenantId() { return attributedTenantId; }
+    public void setAttributedTenantId(String v) { this.attributedTenantId = v; }
 
     public static class PK implements Serializable {
         private String senderId; private String endUserPhone;

@@ -12,6 +12,13 @@ public interface WhatsAppSenderRepository extends JpaRepository<WhatsAppSenderEn
 
     Optional<WhatsAppSenderEntity> findByTenantIdAndId(String tenantId, String id);
 
+    /** Platform-owned senders (whatsapp-shared-sender-design.md §5) — they belong to no workspace. */
+    @WorkspaceUnscoped("platform senders have no workspace; only platform admins list them")
+    List<WhatsAppSenderEntity> findByOwnerKindOrderByCreatedAtDesc(String ownerKind);
+
+    @WorkspaceUnscoped("platform senders have no workspace; looked up by id")
+    Optional<WhatsAppSenderEntity> findByIdAndOwnerKind(String id, String ownerKind);
+
     /** A phone number belongs to at most one non-revoked sender platform-wide
      *  (partial UNIQUE index, V92); revoked rows stay as history and free the
      *  number for re-registration. Cross-tenant by design — it backs the

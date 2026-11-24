@@ -34,7 +34,13 @@ public record WhatsAppTemplate(
         Instant           hiddenAt,
         String            hiddenBy,
         /** More than one workspace holds it. Not computed on the send path. */
-        boolean           shared
+        boolean           shared,
+        /**
+         * 1-based placeholder the platform fills with the business name
+         * (whatsapp-shared-sender-design.md §9.2); null when the template has
+         * none, which keeps it off platform (shared) senders.
+         */
+        Integer           businessLabelVar
 ) {
     public WhatsAppTemplate {
         if (accountKey == null || accountKey.isBlank()) throw new IllegalArgumentException("accountKey required");
@@ -45,6 +51,17 @@ public record WhatsAppTemplate(
         if (status == null) throw new IllegalArgumentException("status required");
         headerKind = headerKind == null || headerKind.isBlank() ? "NONE" : headerKind;
         buttons = buttons == null ? List.of() : List.copyOf(buttons);
+    }
+
+    /** Back-compat: a template without a business-name placeholder. */
+    public WhatsAppTemplate(TemplateId id, String accountKey, String name, String locale, TemplateCategory category,
+                            String body, int placeholderCount, String bspTemplateId, String bspContentSid,
+                            TemplateStatus status, String rejectionReason, Instant submittedAt, Instant approvedAt,
+                            Instant lastSyncAt, String headerKind, List<String> buttons, Instant hiddenAt,
+                            String hiddenBy, boolean shared) {
+        this(id, accountKey, name, locale, category, body, placeholderCount, bspTemplateId, bspContentSid,
+                status, rejectionReason, submittedAt, approvedAt, lastSyncAt, headerKind, buttons, hiddenAt,
+                hiddenBy, shared, null);
     }
 
     public boolean hidden() {

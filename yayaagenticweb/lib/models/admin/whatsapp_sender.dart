@@ -22,9 +22,13 @@ class WhatsAppSenderResponse {
     this.lastSyncAt,
     this.startFlowId,
     this.messagingAccountId,
+    this.owner = 'WORKSPACE',
+    this.assignment,
   });
 
   final String id;
+
+  /// Empty for a platform sender, which belongs to no workspace.
   final String tenantId;
   final String phoneE164;
   final String displayName;
@@ -42,6 +46,16 @@ class WhatsAppSenderResponse {
   /// Set when the number was connected with the business's own WhatsApp
   /// account (Connect WhatsApp); such a sender can't move on its own.
   final String? messagingAccountId;
+
+  /// `WORKSPACE` (the workspace owns the number) or `PLATFORM` (a shared
+  /// number the platform owns and assigns to workspaces).
+  final String owner;
+
+  /// The calling workspace's assignment, on a platform sender listed under a
+  /// workspace. Null on workspace senders.
+  final SenderAssignmentView? assignment;
+
+  bool get isPlatform => owner == 'PLATFORM';
 
   /// A platform admin may move a live or paused number to another workspace.
   bool get canTransfer =>
@@ -106,8 +120,50 @@ class WhatsAppSenderResponse {
       lastSyncAt: json['lastSyncAt']?.toString(),
       startFlowId: json['startFlowId'] as String?,
       messagingAccountId: json['messagingAccountId'] as String?,
+      owner: (json['owner'] as String?)?.toUpperCase() ?? 'WORKSPACE',
+      assignment: json['assignment'] is Map
+          ? SenderAssignmentView.fromJson(Map<String, dynamic>.from(json['assignment'] as Map))
+          : null,
     );
   }
+}
+
+/// A workspace's own view of its assignment on a platform sender
+/// (`SenderResponse.assignment`, whatsapp-shared-sender-design.md §17.1).
+/// The label and cap are set by a platform admin; the workspace edits only
+/// [nonMemberReply].
+class SenderAssignmentView {
+  const SenderAssignmentView({
+    required this.id,
+    required this.label,
+    required this.status,
+    this.dailyOutboundCap = 1000,
+    this.nonMemberReply,
+    this.templateSends24h = 0,
+    this.members = 0,
+  });
+
+  final String id;
+
+  /// The business name recipients read, e.g. «Banca La Suerte».
+  final String label;
+
+  /// `ACTIVE`, `PAUSED` or `ENDED`.
+  final String status;
+  final int dailyOutboundCap;
+  final String? nonMemberReply;
+  final int templateSends24h;
+  final int members;
+
+  factory SenderAssignmentView.fromJson(Map<String, dynamic> json) => SenderAssignmentView(
+        id: (json['id'] ?? '') as String,
+        label: (json['label'] ?? '') as String,
+        status: (json['status'] ?? 'ACTIVE') as String,
+        dailyOutboundCap: (json['dailyOutboundCap'] as num?)?.toInt() ?? 1000,
+        nonMemberReply: json['nonMemberReply'] as String?,
+        templateSends24h: (json['templateSends24h'] as num?)?.toInt() ?? 0,
+        members: (json['members'] as num?)?.toInt() ?? 0,
+      );
 }
 
 /// Meta business profile. Operator collects this in step 1 of the wizard.
@@ -382,26 +438,39 @@ class SenderStatusInfo {
   }
 }
 
-/// Body of `POST …/whatsapp-senders/{id}/transfer`.
+/// Body of `POST …/whatsapp-senders/{id}/transfer` (and of the platform
+/// sender's transfer out to a workspace).
 class WhatsAppSenderTransferRequest {
   const WhatsAppSenderTransferRequest({
-    required this.destinationTenant,
+    required String this.destinationTenant,
     this.profileId,
     this.profileVersion,
     this.copyOptOuts = true,
-  });
+  }) : destinationPlatform = false;
 
-  final String destinationTenant;
+  /// Workspace → platform: the number becomes a shared platform sender.
+  /// Opt-outs belong to the number, so they always come along.
+  const WhatsAppSenderTransferRequest.toPlatform()
+      : destinationTenant = null,
+        profileId = null,
+        profileVersion = null,
+        copyOptOuts = true,
+        destinationPlatform = true;
+
+  final String? destinationTenant;
   final String? profileId;
   final int? profileVersion;
   final bool copyOptOuts;
+  final bool destinationPlatform;
 
-  Map<String, dynamic> toJson() => {
-        'destinationTenant': destinationTenant,
-        if (profileId != null) 'profileId': profileId,
-        if (profileVersion != null) 'profileVersion': profileVersion,
-        'copyOptOuts': copyOptOuts,
-      };
+  Map<String, dynamic> toJson() => destinationPlatform
+      ? {'destinationPlatform': true, 'copyOptOuts': true}
+      : {
+          'destinationTenant': destinationTenant,
+          if (profileId != null) 'profileId': profileId,
+          if (profileVersion != null) 'profileVersion': profileVersion,
+          'copyOptOuts': copyOptOuts,
+        };
 }
 
 /// What a transfer did — or, on a dry run, would do.

@@ -9,6 +9,7 @@ import 'package:yayaagenticweb/app/selected_tenant.dart';
 import 'package:yayaagenticweb/app/theme.dart';
 import 'package:yayaagenticweb/features/admin/whatsapp_senders/whatsapp_sender_wizard.dart';
 import 'package:yayaagenticweb/models/admin/channel_binding.dart';
+import 'package:yayaagenticweb/models/admin/platform_sender.dart';
 import 'package:yayaagenticweb/models/admin/profile.dart';
 import 'package:yayaagenticweb/models/admin/start_flow.dart';
 import 'package:yayaagenticweb/models/admin/whatsapp_sender.dart';
@@ -24,6 +25,8 @@ class _FakeAdminApi extends AdminApi {
   String? submittedSenderId;
   String? submittedMethod;
   bool failSubmit = false;
+  PlatformSenderRequest? platformCreated;
+  String? platformSubmittedMethod;
 
   @override
   Future<List<ProfileResponse>> listProfiles({String tenant = 'default'}) async => [
@@ -99,9 +102,41 @@ class _FakeAdminApi extends AdminApi {
       'defaultLocale': 'en-US',
     });
   }
+
+  @override
+  Future<PlatformSenderResponse> createPlatformSender(PlatformSenderRequest body) async {
+    platformCreated = body;
+    return PlatformSenderResponse.fromJson({
+      'id': 'snd_platform',
+      'tenantId': null,
+      'owner': 'PLATFORM',
+      'phoneE164': body.phoneE164,
+      'displayName': body.displayName,
+      'businessProfile': body.businessProfile.toJson(),
+      'status': 'DRAFT',
+      'onboarding': const <String, dynamic>{},
+      'defaultLocale': body.defaultLocale ?? 'en-US',
+      'unroutedReply': body.unroutedReply,
+    });
+  }
+
+  @override
+  Future<PlatformSenderResponse> submitPlatformSender(String senderId, {String? verificationMethod}) async {
+    platformSubmittedMethod = verificationMethod;
+    return PlatformSenderResponse.fromJson({
+      'id': senderId,
+      'tenantId': null,
+      'phoneE164': platformCreated!.phoneE164,
+      'displayName': platformCreated!.displayName,
+      'businessProfile': platformCreated!.businessProfile.toJson(),
+      'status': 'PENDING_REVIEW',
+      'onboarding': {'status': 'CREATING'},
+      'defaultLocale': 'en-US',
+    });
+  }
 }
 
-Widget _wizard(_FakeAdminApi api, {WhatsAppSenderResponse? existing}) => ProviderScope(
+Widget _wizard(_FakeAdminApi api, {WhatsAppSenderResponse? existing, bool platform = false}) => ProviderScope(
       overrides: [
         adminApiProvider.overrideWith((ref) async => api),
         currentTenantOrNull.overrideWithValue('t1'),
@@ -113,7 +148,7 @@ Widget _wizard(_FakeAdminApi api, {WhatsAppSenderResponse? existing}) => Provide
             body: Center(
               child: FilledButton(
                 onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => WhatsAppSenderWizard(existing: existing))),
+                    MaterialPageRoute(builder: (_) => WhatsAppSenderWizard(existing: existing, platform: platform))),
                 child: const Text('open'),
               ),
             ),
@@ -258,6 +293,29 @@ void main() {
     expect(api.submittedSenderId, 'snd_new');
     expect(api.submittedMethod, 'voice');
     expect(find.textContaining('Submitted for WhatsApp review'), findsOneWidget);
+  });
+
+  testWidgets('the platform wizard registers on the platform routes, with no assistant and an unrouted reply',
+      (tester) async {
+    final api = _FakeAdminApi();
+    await tester.pumpWidget(_wizard(api, platform: true));
+    await tester.pumpAndSettle();
+    await _fillBusinessProfile(tester);
+    await _tapText(tester, 'Next');
+    await _type(tester, 'Phone number *', '+15024874573');
+    await _tapText(tester, 'Next');
+    await _type(tester, 'Public display name *', 'Avisos Smart Lottery');
+    expect(find.widgetWithText(YResourcePicker, 'Assistant that answers this number  Optional'), findsNothing);
+    expect(find.widgetWithText(YResourcePicker, 'Start flow  Optional'), findsNothing);
+    await _type(tester, 'Reply when no business matches  Optional', 'Solo avisos. Responde STOP para salir.');
+    await _tapText(tester, 'Next');
+    await _tapText(tester, 'Save & submit for review');
+
+    expect(api.created, isNull, reason: 'nothing goes to the workspace routes');
+    expect(api.binding, isNull);
+    expect(api.platformCreated?.phoneE164, '+15024874573');
+    expect(api.platformCreated?.unroutedReply, 'Solo avisos. Responde STOP para salir.');
+    expect(api.platformSubmittedMethod, 'sms');
   });
 
   testWidgets('a bare website domain is saved with https', (tester) async {

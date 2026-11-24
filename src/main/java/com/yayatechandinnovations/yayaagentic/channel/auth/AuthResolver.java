@@ -169,8 +169,17 @@ public interface AuthResolver {
             Ids.SessionId session,
             String channel,
             ResolveReason reason,
-            Instant requestedAt
-    ) {}
+            Instant requestedAt,
+            /** The inbound came in on a platform (shared) sender — only staff may resolve there (shared-sender design §7.5). */
+            boolean platformSender
+    ) {
+        public ResolveRequest(Ids.TenantId tenant, SenderId sender, String e164SenderPhone, String senderKey,
+                              String e164CallerPhone, Ids.SessionId session, String channel,
+                              ResolveReason reason, Instant requestedAt) {
+            this(tenant, sender, e164SenderPhone, senderKey, e164CallerPhone, session, channel, reason,
+                    requestedAt, false);
+        }
+    }
 
     enum ResolveReason { INITIAL, REFRESH }
 }

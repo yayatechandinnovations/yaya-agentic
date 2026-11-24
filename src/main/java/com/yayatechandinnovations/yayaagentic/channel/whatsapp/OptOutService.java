@@ -54,10 +54,21 @@ public class OptOutService {
 
     @Transactional
     public void optOut(SenderId sender, String endUserPhone, String reason) {
+        optOut(sender, endUserPhone, reason, null);
+    }
+
+    /**
+     * @param attributedTenant on a platform sender, the workspace that wrote
+     *                         to the phone last — a STOP counts against it
+     *                         (whatsapp-shared-sender-design.md §9.4)
+     */
+    @Transactional
+    public void optOut(SenderId sender, String endUserPhone, String reason, String attributedTenant) {
         repo.findBySenderIdAndEndUserPhone(sender.value(), endUserPhone)
                 .or(() -> {
                     ChannelOptOutEntity row = new ChannelOptOutEntity(
                             sender.value(), endUserPhone, reason);
+                    row.setAttributedTenantId(attributedTenant);
                     repo.save(row);
                     return java.util.Optional.of(row);
                 });

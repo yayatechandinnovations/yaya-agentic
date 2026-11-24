@@ -15,7 +15,8 @@ public class OutboundMessageEntity {
     @Column(name = "message_sid", length = 64)
     private String messageSid;
 
-    @Column(name = "tenant_id", nullable = false, length = 64)
+    /** Null for a platform sender's own lines (whatsapp-shared-sender-design.md §4.2). */
+    @Column(name = "tenant_id", length = 64)
     private String tenantId;
 
     @Column(name = "sender_id", nullable = false, length = 64)

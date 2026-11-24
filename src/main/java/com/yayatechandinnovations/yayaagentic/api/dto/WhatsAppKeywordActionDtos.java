@@ -12,9 +12,15 @@ public final class WhatsAppKeywordActionDtos {
     /** GET response and PUT body alike: the whole set. */
     public record ActionSet(List<ActionItem> actions) {
         public static ActionSet of(List<KeywordAction> actions) {
-            return new ActionSet(actions.stream().map(a -> new ActionItem(a.prefix(), a.forwardUrl())).toList());
+            return new ActionSet(actions.stream()
+                    .map(a -> new ActionItem(a.prefix(), a.forwardUrl(), a.scope().name())).toList());
         }
     }
 
-    public record ActionItem(String prefix, String forwardUrl) {}
+    /** {@code scope}: {@code ROUTED} (default when absent) or {@code REPLY} — shared-sender design §8.2. */
+    public record ActionItem(String prefix, String forwardUrl, String scope) {
+        public ActionItem(String prefix, String forwardUrl) {
+            this(prefix, forwardUrl, null);
+        }
+    }
 }

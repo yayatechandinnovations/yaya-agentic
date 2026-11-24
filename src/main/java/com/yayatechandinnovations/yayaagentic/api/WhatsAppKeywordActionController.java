@@ -64,12 +64,22 @@ public class WhatsAppKeywordActionController {
         List<KeywordAction> wanted;
         try {
             wanted = body.actions().stream()
-                    .map(a -> new KeywordAction(a == null ? null : a.prefix(), a == null ? null : a.forwardUrl()))
+                    .map(a -> new KeywordAction(a == null ? null : a.prefix(), a == null ? null : a.forwardUrl(),
+                            a == null ? null : scope(a.scope())))
                     .toList();
         } catch (IllegalArgumentException e) {
             throw AdminApiException.badRequest("bad_action", e.getMessage());
         }
         return WhatsAppKeywordActionDtos.ActionSet.of(
                 actions.replaceAll(new Ids.TenantId(tenantId), new SenderId(senderId), wanted));
+    }
+
+    private static KeywordAction.Scope scope(String raw) {
+        if (raw == null || raw.isBlank()) return KeywordAction.Scope.ROUTED;
+        try {
+            return KeywordAction.Scope.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("scope must be ROUTED or REPLY");
+        }
     }
 }

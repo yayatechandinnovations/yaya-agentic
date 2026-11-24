@@ -20,6 +20,10 @@ import com.yayatechandinnovations.yayaagentic.outreach.media.MediaTokenSigner;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageEntity;
 import com.yayatechandinnovations.yayaagentic.persistence.InboundMessageRepository;
 import com.yayatechandinnovations.yayaagentic.persistence.OutboundMessageRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.OutreachDeliveryRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.TenantEntity;
+import com.yayatechandinnovations.yayaagentic.persistence.TenantRepository;
+import com.yayatechandinnovations.yayaagentic.persistence.WhatsAppSenderAssignmentEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -81,7 +85,9 @@ class WhatsAppOutreachLegTest {
         when(sender.phoneE164()).thenReturn("+18455336210");
         when(sender.id()).thenReturn(new SenderId(WA));
         when(sender.onboarding()).thenReturn(OnboardingState.empty());
-        when(senders.requireForTenant(TENANT, new SenderId(WA))).thenReturn(sender);
+        when(senders.requireUsable(TENANT, new SenderId(WA))).thenReturn(sender);
+        when(senders.isAssignmentActive(any(), any())).thenReturn(true);
+        when(senders.labelled(any(), any(), anyString())).thenAnswer(inv -> inv.getArgument(2));
         when(creds.isReady()).thenReturn(true);
         when(creds.resolve(sender)).thenReturn(mock(ProviderCreds.class));
         when(signer.mint(eq(TENANT), anyString())).thenReturn("TOKEN.sig");
@@ -226,6 +232,118 @@ class WhatsAppOutreachLegTest {
         assertThat(leg.deliver(foreign).fallbackReason()).isEqualTo("no_whatsapp_sender");
         assertThat(sink.size(new Ids.SessionId("wa-other"))).isZero();
         assertThat(sink.size(new Ids.SessionId("wa-1"))).isZero();
+    }
+
+    /* ---------------- platform (shared) senders — shared-sender design §9 ---------------- */
+
+    @Test
+    void on_a_platform_sender_the_platform_fills_the_business_name_and_the_caller_keeps_its_list() {
+        when(sender.isPlatform()).thenReturn(true);
+        when(senders.assignmentLabel(TENANT, sender)).thenReturn(Optional.of("Banca La Suerte"));
+        when(senders.assignment(TENANT, sender)).thenReturn(Optional.of(assignment(1000)));
+        OutreachDeliveryRepository deliveries = mock(OutreachDeliveryRepository.class);
+        leg.setSharedSenderSupport(deliveries, mock(TenantRepository.class));
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(templates.findApproved(TENANT, sender, "sl_undo_request_v1", "es"))
+                .thenReturn(Optional.of(labelled(template("NONE", 7, List.of()), 1)));
+
+        var outcome = leg.deliver(request(List.of()));
+
+        assertThat(outcome.delivered()).isTrue();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
+        verify(twilio).sendContent(eq(PHONE), eq("HXtemplate"), vars.capture(), anyMap(), any());
+        assertThat(vars.getValue())
+                .containsEntry("1", "Banca La Suerte")
+                .containsEntry("2", "UR-1")
+                .containsEntry("7", "El cliente se equivocó de número");
+        assertThat(outcome.deliveredBody()).contains("Banca La Suerte").contains("UR-1");
+    }
+
+    @Test
+    void a_caller_cannot_put_another_business_name_where_the_label_goes() {
+        when(sender.isPlatform()).thenReturn(false);
+        TenantRepository tenants = mock(TenantRepository.class);
+        when(tenants.findById("acme")).thenReturn(Optional.of(new TenantEntity("acme", "Acme Bancas")));
+        leg.setSharedSenderSupport(mock(OutreachDeliveryRepository.class), tenants);
+        when(senders.assignmentLabel(TENANT, sender)).thenReturn(Optional.empty());
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(templates.findApproved(TENANT, sender, "sl_undo_request_v1", "es"))
+                .thenReturn(Optional.of(labelled(template("NONE", 3, List.of()), 2)));
+
+        leg.deliver(request(List.of()));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> vars = ArgumentCaptor.forClass(Map.class);
+        verify(twilio).sendContent(eq(PHONE), eq("HXtemplate"), vars.capture(), anyMap(), any());
+        // On the workspace's own number the name is the workspace's display name.
+        assertThat(vars.getValue()).containsEntry("1", "UR-1").containsEntry("2", "Acme Bancas")
+                .containsEntry("3", "B-04");
+    }
+
+    @Test
+    void on_a_platform_sender_a_template_that_does_not_name_the_business_falls_back() {
+        when(sender.isPlatform()).thenReturn(true);
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(templates.findApproved(TENANT, sender, "sl_undo_request_v1", "es"))
+                .thenReturn(Optional.of(template("NONE", 6, List.of())));
+
+        var outcome = leg.deliver(request(List.of()));
+
+        assertThat(outcome.delivered()).isFalse();
+        assertThat(outcome.fallbackReason()).isEqualTo("template_not_shared_safe");
+        verify(twilio, never()).sendContent(anyString(), anyString(), anyMap(), anyMap(), any());
+    }
+
+    @Test
+    void a_workspace_over_its_daily_share_of_template_sends_falls_back() {
+        when(sender.isPlatform()).thenReturn(true);
+        when(senders.assignment(TENANT, sender)).thenReturn(Optional.of(assignment(5)));
+        OutreachDeliveryRepository deliveries = mock(OutreachDeliveryRepository.class);
+        when(deliveries.countByTenantIdAndWhatsappSenderIdAndTemplateNameIsNotNullAndFallbackReasonIsNullAndCreatedAtAfter(
+                eq("acme"), eq(WA), any())).thenReturn(5L);
+        leg.setSharedSenderSupport(deliveries, mock(TenantRepository.class));
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(templates.findApproved(TENANT, sender, "sl_undo_request_v1", "es"))
+                .thenReturn(Optional.of(labelled(template("NONE", 7, List.of()), 1)));
+
+        var outcome = leg.deliver(request(List.of()));
+
+        assertThat(outcome.fallbackReason()).isEqualTo("assignment_cap_reached");
+        verify(twilio, never()).sendContent(anyString(), anyString(), anyMap(), anyMap(), any());
+    }
+
+    @Test
+    void a_paused_assignment_sends_nothing() {
+        when(senders.isAssignmentActive(TENANT, sender)).thenReturn(false);
+
+        var outcome = leg.deliver(request(List.of()));
+
+        assertThat(outcome.fallbackReason()).isEqualTo("sender_inactive");
+    }
+
+    @Test
+    void in_session_text_goes_out_as_the_sender_service_labels_it() {
+        when(inbound.findLatestForSenderAndEndUserSince(anyString(), anyString(), any()))
+                .thenReturn(Optional.of(mock(InboundMessageEntity.class)));
+        when(senders.labelled(TENANT, sender, "Solicitud UR-1 pendiente"))
+                .thenReturn("*Banca La Suerte*\nSolicitud UR-1 pendiente");
+        when(inSession.quickReply(eq(3), any())).thenReturn(Optional.of("HXqr3"));
+
+        var outcome = leg.deliver(request(List.of()));
+
+        assertThat(outcome.deliveredBody()).startsWith("*Banca La Suerte*");
+    }
+
+    private static WhatsAppTemplate labelled(WhatsAppTemplate t, int labelVar) {
+        return new WhatsAppTemplate(t.id(), t.accountKey(), t.name(), t.locale(), t.category(), t.body(),
+                t.placeholderCount(), t.bspTemplateId(), t.bspContentSid(), t.status(), t.rejectionReason(),
+                t.submittedAt(), t.approvedAt(), t.lastSyncAt(), t.headerKind(), t.buttons(), t.hiddenAt(),
+                t.hiddenBy(), t.shared(), labelVar);
+    }
+
+    private static WhatsAppSenderAssignmentEntity assignment(int cap) {
+        return new WhatsAppSenderAssignmentEntity("wsa_1", WA, "acme", "Banca La Suerte", cap, "test");
     }
 
     @Test

@@ -174,6 +174,6 @@ public class OfferedOptionsStore {
     }
 
     private static String key(Ids.TenantId tenant, SenderId sender, String phone) {
-        return KEY_PREFIX + tenant.value() + ":" + sender.value() + ":" + phone;
+        return KEY_PREFIX + (tenant == null ? "platform" : tenant.value()) + ":" + sender.value() + ":" + phone;
     }
 }

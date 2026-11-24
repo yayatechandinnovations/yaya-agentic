@@ -334,6 +334,37 @@ void main() {
     expect(find.text('Moved to t2.'), findsOneWidget);
   });
 
+  testWidgets('a platform admin can move a number in as a shared platform sender', (tester) async {
+    final api = _FakeAdminApi('ACTIVE', 'ONLINE');
+    await tester.pumpWidget(_screen(api, platformAdmin: true));
+    await tester.pumpAndSettle();
+    await _expand(tester);
+    final move = find.byKey(const Key('sender-transfer'));
+    await tester.ensureVisible(move);
+    await tester.tap(move);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('transfer-destination')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Platform (shared)').last);
+    await tester.pumpAndSettle();
+    // No assistant and no opt-out choice: the number is shared, opt-outs are the number's.
+    expect(find.byKey(const Key('transfer-assistant-__platform__')), findsNothing);
+    expect(find.byKey(const Key('transfer-copy-opt-outs')), findsNothing);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Preview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('transfer-apply')));
+    await tester.pumpAndSettle();
+
+    expect(api.transfers, hasLength(2));
+    for (final t in api.transfers) {
+      expect(t.body.toJson(), {'destinationPlatform': true, 'copyOptOuts': true});
+    }
+    expect(api.transfers.first.dryRun, isTrue);
+    expect(api.transfers.last.dryRun, isFalse);
+  });
+
   testWidgets('changing the move after a preview asks for a new preview', (tester) async {
     final api = _FakeAdminApi('ACTIVE', 'ONLINE');
     await tester.pumpWidget(_screen(api, platformAdmin: true));

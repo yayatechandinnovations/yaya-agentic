@@ -19,8 +19,10 @@ import '../../../ui/tokens.dart';
 import '../channel_bindings/channel_ui.dart';
 import '../channel_bindings/sender_routes_section.dart' show channelBindingsProvider;
 import '../flows/flows_admin_screen.dart' show startFlowsProvider;
+import '../platform_senders/platform_sender_providers.dart' show platformSendersProvider;
 import '../profiles/profiles_screen.dart' show profilesProvider;
 import 'sender_logo_picker.dart';
+import 'sender_registration_repository.dart';
 import 'whatsapp_senders_screen.dart' show VerificationMethodSelector, whatsAppSendersProvider, whatsAppSubmitEnabledProvider;
 
 const _labels = {
@@ -34,6 +36,7 @@ const _labels = {
   'phoneE164': 'Phone number',
   'displayName': 'Public display name',
   'defaultLocale': 'Default locale',
+  'unroutedReply': 'Reply when no business matches',
 };
 
 /// Which step owns each field — a step's fields are only checked once the
@@ -53,10 +56,12 @@ const _stepOf = {
   'defaultLocale': 2,
   'assistant': 2,
   'startFlowId': 2,
+  'unroutedReply': 2,
 };
 
 const _maxAbout = 139;
 const _maxDisplayName = 128;
+const _maxUnroutedReply = 1000;
 
 /// 4-step sender registration. Tenants describe their business, pick a phone
 /// number, choose a display name and the assistant that answers it, and
@@ -68,10 +73,19 @@ const _maxDisplayName = 128;
 /// Optional [existing] turns the wizard into an editor for a DRAFT/FAILED
 /// sender. Routes on an existing sender are managed in its detail sheet, so
 /// the assistant picker only appears for new ones.
+///
+/// [platform] registers a shared platform sender instead (shared-sender §5,
+/// platform admins): the same steps against `/v1/admin/platform-senders`,
+/// with no workspace, assistant or start flow, plus the reply sent when no
+/// assigned business matches a message.
 class WhatsAppSenderWizard extends ConsumerStatefulWidget {
-  const WhatsAppSenderWizard({super.key, this.existing});
+  const WhatsAppSenderWizard({super.key, this.existing, this.platform = false, this.unroutedReply});
 
   final WhatsAppSenderResponse? existing;
+  final bool platform;
+
+  /// The stored reply of an [existing] platform sender.
+  final String? unroutedReply;
 
   @override
   ConsumerState<WhatsAppSenderWizard> createState() => _WhatsAppSenderWizardState();
@@ -99,11 +113,13 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   final _locale = TextEditingController();
   String? _startFlowId;
   String? _profileSlug; // "<id>@<version>"
+  final _unroutedReply = TextEditingController();
 
   late final YFormController _form;
   DateTime? _restoredDraftAt;
 
   bool get _isNew => widget.existing == null;
+  bool get _platform => widget.platform;
 
   @override
   void initState() {
@@ -114,7 +130,9 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
       snapshot: _snapshot,
       validate: _validate,
       labels: _labels,
-      draftKey: 'yaya.draft.whatsappSender.$tenant.${widget.existing?.id ?? 'new'}',
+      draftKey: _platform
+          ? 'yaya.draft.platformSender.${widget.existing?.id ?? 'new'}'
+          : 'yaya.draft.whatsappSender.$tenant.${widget.existing?.id ?? 'new'}',
     );
     _form.addListener(_rebuild);
     _form.loadDraft().then((d) {
@@ -145,6 +163,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     _startFlowId = existing?.startFlowId;
     _profileSlug = null;
     _verificationMethod = 'sms';
+    _unroutedReply.text = widget.unroutedReply ?? '';
   }
 
   FormSnapshot _snapshot() => {
@@ -162,6 +181,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
         'defaultLocale': _locale.text.trim(),
         'startFlowId': _startFlowId,
         'assistant': _profileSlug,
+        if (_platform) 'unroutedReply': _unroutedReply.text.trim(),
       };
 
   void _apply(FormSnapshot v) {
@@ -180,6 +200,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     _locale.text = s('defaultLocale', _locale);
     _startFlowId = v.containsKey('startFlowId') ? v['startFlowId'] as String? : _startFlowId;
     if (_isNew) _profileSlug = v['assistant'] as String?;
+    if (_platform) _unroutedReply.text = s('unroutedReply', _unroutedReply);
   }
 
   Future<void> _discardDraft() async {
@@ -205,6 +226,9 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
               ? 'Keep it to $_maxDisplayName characters.'
               : null,
       'defaultLocale': ChannelValidators.locale(_locale.text),
+      'unroutedReply': _platform && _unroutedReply.text.trim().length > _maxUnroutedReply
+          ? 'Keep it to $_maxUnroutedReply characters.'
+          : null,
     };
     return {for (final e in all.entries) e.key: (_stepOf[e.key] ?? 0) <= _gate ? e.value : null};
   }
@@ -213,7 +237,10 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   void dispose() {
     _form.removeListener(_rebuild);
     _form.dispose();
-    for (final c in [_legalName, _businessDisplayName, _contactEmail, _address, _website, _about, _phone, _displayName, _locale]) {
+    for (final c in [
+      _legalName, _businessDisplayName, _contactEmail, _address, _website, _about, _phone, _displayName, _locale,
+      _unroutedReply,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -246,7 +273,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
 
   Future<void> _save({required bool submitForReview}) async {
     final tenant = ref.read(currentTenantOrNull);
-    if (tenant == null) return;
+    if (tenant == null && !_platform) return;
     if (!_checkThrough(2)) return;
     _form.saving = true;
 
@@ -254,7 +281,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
       phoneE164: _phone.text.trim(),
       displayName: _displayName.text.trim(),
       defaultLocale: _locale.text.trim(),
-      startFlowId: _startFlowId,
+      startFlowId: _platform ? null : _startFlowId,
       businessProfile: BusinessProfileFields(
         legalName: _legalName.text.trim(),
         displayName: _businessDisplayName.text.trim(),
@@ -268,12 +295,15 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     );
 
     final AdminApi api;
+    final SenderRegistrationRepository repo;
     final WhatsAppSenderResponse saved;
+    final unrouted = _platform ? _unroutedReply.text.trim() : null;
     try {
       api = await ref.read(adminApiProvider.future);
+      repo = _platform ? PlatformSenderRepository(api) : WorkspaceSenderRepository(api, tenant!);
       saved = _isNew
-          ? await api.createWhatsAppSender(tenant, body)
-          : await api.updateWhatsAppSender(tenant, widget.existing!.id, body);
+          ? await repo.create(body, unroutedReply: unrouted)
+          : await repo.update(widget.existing!.id, body, unroutedReply: unrouted);
     } catch (e) {
       _form.saving = false;
       _form.applyServerError(e);
@@ -283,9 +313,9 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     // Past this point the sender exists, so a follow-up failure is reported
     // with what still needs doing instead of rolling the save back.
     final followUps = <String>[];
-    if (_isNew && _profileSlug != null) {
+    if (_isNew && !_platform && _profileSlug != null) {
       try {
-        await api.createChannelBinding(tenant, _matchEverythingRoute(saved.id));
+        await api.createChannelBinding(tenant!, _matchEverythingRoute(saved.id));
         ref.invalidate(channelBindingsProvider(tenant));
       } catch (e) {
         followUps.add('the assistant route could not be added (${ApiErrorInfo.from(e).message}) — add it from the sender');
@@ -294,14 +324,18 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
     var submitted = false;
     if (submitForReview) {
       try {
-        await api.submitWhatsAppSender(tenant, saved.id, verificationMethod: _verificationMethod);
+        await repo.submit(saved.id, verificationMethod: _verificationMethod);
         submitted = true;
       } catch (e) {
         followUps.add('submitting for review failed (${ApiErrorInfo.from(e).message}) — submit it from the list');
       }
     }
 
-    ref.invalidate(whatsAppSendersProvider(tenant));
+    if (_platform) {
+      ref.invalidate(platformSendersProvider);
+    } else {
+      ref.invalidate(whatsAppSendersProvider(tenant!));
+    }
     _form.saving = false;
     _form.markClean();
     if (!mounted) return;
@@ -418,13 +452,15 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           helper: 'Short description on your WhatsApp Business profile · ${_about.text.length}/$_maxAbout characters.',
           onChanged: (_) => setState(() {}),
         ),
-        SenderLogoPicker(
-          url: _logoUrl,
-          onChanged: (url) {
-            setState(() => _logoUrl = url);
-            _form.refresh();
-          },
-        ),
+        // Photos are hosted per workspace; a platform sender has none to host them.
+        if (!_platform)
+          SenderLogoPicker(
+            url: _logoUrl,
+            onChanged: (url) {
+              setState(() => _logoUrl = url);
+              _form.refresh();
+            },
+          ),
       ]);
 
   Widget _phoneStep() => _spaced([
@@ -448,9 +484,12 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           message: 'Use a number you control that isn’t already on WhatsApp (personal or business). If it is, delete '
               'that WhatsApp account before registering it here.',
         ),
-        const YBanner(
+        YBanner(
           tone: YBannerTone.warning,
-          message: 'Each number can be registered to only one workspace across the whole platform.',
+          message: _platform
+              ? 'A platform number is shared: the workspaces you assign send on it, and only their registered staff '
+                  'can talk to their assistants. It can’t also belong to a workspace.'
+              : 'Each number can be registered to only one workspace across the whole platform.',
         ),
         VerificationMethodSelector(
           form: _form,
@@ -459,10 +498,10 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
         ),
       ]);
 
-  Widget _displayNameStep(String tenant) {
+  Widget _displayNameStep(String? tenant) {
     final scheme = Theme.of(context).colorScheme;
     final display = _displayName.text.trim();
-    final flows = ref.watch(startFlowsProvider(tenant));
+    final flows = tenant == null ? const AsyncValue<List<StartFlowResponse>>.data([]) : ref.watch(startFlowsProvider(tenant));
     final flowIds = <String, StartFlowResponse>{};
     for (final f in flows.valueOrNull ?? const <StartFlowResponse>[]) {
       final cur = flowIds[f.id];
@@ -493,23 +532,38 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
         hint: 'e.g. es-DO',
         helper: 'Language tag used to pick message templates, e.g. en-US or es-DO.',
       ),
-      if (_isNew) _assistantPicker(),
-      YResourcePicker(
-        label: 'Start flow',
-        wireKey: 'startFlowId',
-        optional: true,
-        value: _startFlowId,
-        noneLabel: 'None',
-        loading: flows.isLoading,
-        resources: [
-          for (final f in flowIds.values) YResource(id: f.id, name: f.name, meta: 'v${f.version} · ${humanizeWire(f.status)}'),
-        ],
-        helper: 'Runs when a customer starts a conversation on this number — e.g. look them up and greet them by name.',
-        onChanged: (v) {
-          setState(() => _startFlowId = v);
-          _form.refresh();
-        },
-      ),
+      if (_isNew && !_platform) _assistantPicker(),
+      if (_platform)
+        YTextField(
+          label: 'Reply when no business matches',
+          wireKey: 'unroutedReply',
+          controller: _unroutedReply,
+          form: _form,
+          name: 'unroutedReply',
+          optional: true,
+          minLines: 2,
+          maxLines: 4,
+          inputFormatters: [LengthLimitingTextInputFormatter(_maxUnroutedReply)],
+          hint: 'e.g. Este número solo envía avisos de los negocios que lo usan. Responde STOP para no recibir más.',
+          helper: 'Sent at most once a day to someone no assigned business can claim. Never name a business here.',
+        ),
+      if (!_platform)
+        YResourcePicker(
+          label: 'Start flow',
+          wireKey: 'startFlowId',
+          optional: true,
+          value: _startFlowId,
+          noneLabel: 'None',
+          loading: flows.isLoading,
+          resources: [
+            for (final f in flowIds.values) YResource(id: f.id, name: f.name, meta: 'v${f.version} · ${humanizeWire(f.status)}'),
+          ],
+          helper: 'Runs when a customer starts a conversation on this number — e.g. look them up and greet them by name.',
+          onChanged: (v) {
+            setState(() => _startFlowId = v);
+            _form.refresh();
+          },
+        ),
       Card(
         color: scheme.surfaceContainerHigh,
         child: Padding(
@@ -582,8 +636,10 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           _ReviewRow(label: 'Verification code by', value: _verificationMethod == 'voice' ? 'Voice call' : 'SMS'),
           _ReviewRow(label: 'Display name', value: _displayName.text.trim()),
           _ReviewRow(label: 'Default locale', value: _locale.text.trim(), mono: true),
-          if (_isNew) _ReviewRow(label: 'Assistant', value: _assistantLabel()),
-          _ReviewRow(label: 'Start flow', value: _startFlowId ?? '', placeholder: 'None'),
+          if (_isNew && !_platform) _ReviewRow(label: 'Assistant', value: _assistantLabel()),
+          if (!_platform) _ReviewRow(label: 'Start flow', value: _startFlowId ?? '', placeholder: 'None'),
+          if (_platform)
+            _ReviewRow(label: 'Reply when no business matches', value: _unroutedReply.text.trim(), placeholder: 'None'),
           const Divider(height: 24),
           _ReviewRow(label: 'Legal business name', value: _legalName.text.trim()),
           _ReviewRow(label: 'Business display name', value: _businessDisplayName.text.trim()),
@@ -592,7 +648,7 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
           if (_address.text.trim().isNotEmpty) _ReviewRow(label: 'Address', value: _address.text.trim()),
           if (_website.text.trim().isNotEmpty) _ReviewRow(label: 'Website', value: _website.text.trim()),
           if (_about.text.trim().isNotEmpty) _ReviewRow(label: 'About', value: _about.text.trim()),
-          _ReviewRow(label: 'Profile photo', value: _logoUrl.isEmpty ? '' : 'Uploaded', placeholder: 'None'),
+          if (!_platform) _ReviewRow(label: 'Profile photo', value: _logoUrl.isEmpty ? '' : 'Uploaded', placeholder: 'None'),
           const SizedBox(height: 12),
           const YBanner(
             tone: YBannerTone.info,
@@ -605,14 +661,20 @@ class _WhatsAppSenderWizardState extends ConsumerState<WhatsAppSenderWizard> {
   @override
   Widget build(BuildContext context) {
     final tenant = ref.watch(currentTenantOrNull);
-    final title = _isNew ? 'Register a WhatsApp sender' : 'Edit ${widget.existing!.phoneE164}';
-    if (tenant == null) {
+    final title = _isNew
+        ? (_platform ? 'Register a platform sender' : 'Register a WhatsApp sender')
+        : 'Edit ${widget.existing!.phoneE164}';
+    if (tenant == null && !_platform) {
       return Scaffold(
         appBar: AppBar(title: Text(title)),
         body: const Center(child: Text('Select a workspace first.')),
       );
     }
-    final canSubmit = ref.watch(whatsAppSubmitEnabledProvider(tenant)).maybeWhen(data: (r) => r, orElse: () => true);
+    // The readiness probe is per workspace; a platform sender is optimistic
+    // and the server refuses a submit it can't make.
+    final canSubmit = _platform || tenant == null
+        ? true
+        : ref.watch(whatsAppSubmitEnabledProvider(tenant)).maybeWhen(data: (r) => r, orElse: () => true);
     final onReview = _stepIndex == 3;
     final draftLabel = _isNew ? 'Save as draft' : 'Save changes';
     final String primaryLabel;

@@ -129,13 +129,12 @@ public class WhatsAppTwilioWebhookController {
         // §14.1 path segment is a routing hint — we still derive sender by
         // the To= field and verify via the trust material. A wrong-sender
         // hint falls through and the controller 404s without doing LLM work.
-        WhatsAppSender sender = senders.requireForTenant(
-                /* tenant lookup */ tenantOf(senderIdSegment), new SenderId(senderIdSegment));
+        WhatsAppSender sender = senderOf(senderIdSegment);
 
         // §16 rate limit — per-sender token bucket. Stops one tenant's
         // viral abuse from saturating the engine for everyone.
         if (!rateLimiter.allowSender(sender.id().value())) {
-            metrics.rateLimited(sender.tenant().value(), sender.id().value(), "sender");
+            metrics.rateLimited(tag(sender), sender.id().value(), "sender");
             return ResponseEntity.status(429).build();
         }
 
@@ -144,8 +143,8 @@ public class WhatsAppTwilioWebhookController {
         if (trust == null) {
             // The sender's subaccount signing token couldn't be resolved —
             // fail closed rather than falling back to the platform token.
-            metrics.signatureFailure(sender.tenant().value(), sender.id().value());
-            metrics.inbound(sender.tenant().value(), sender.id().value(),
+            metrics.signatureFailure(tag(sender), sender.id().value());
+            metrics.inbound(tag(sender), sender.id().value(),
                     "whatsapp", "signature_rejected");
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
@@ -154,8 +153,8 @@ public class WhatsAppTwilioWebhookController {
         if (validation instanceof InboundValidation.Invalid bad) {
             log.warn("WhatsApp webhook signature rejection sender={} code={} ({})",
                     sender.id().value(), bad.code(), bad.message());
-            metrics.signatureFailure(sender.tenant().value(), sender.id().value());
-            metrics.inbound(sender.tenant().value(), sender.id().value(),
+            metrics.signatureFailure(tag(sender), sender.id().value());
+            metrics.inbound(tag(sender), sender.id().value(),
                     "whatsapp", "signature_rejected");
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
@@ -177,7 +176,7 @@ public class WhatsAppTwilioWebhookController {
         }
         if (inbound.existsById(messageSid)) {
             // Already processed (or queued); idempotent ack.
-            metrics.inbound(target.tenant().value(), target.id().value(),
+            metrics.inbound(tag(target), target.id().value(),
                     "whatsapp", "duplicate");
             return ResponseEntity.ok().build();
         }
@@ -189,8 +188,8 @@ public class WhatsAppTwilioWebhookController {
             return ResponseEntity.badRequest().build();
         }
         if (!rateLimiter.allowEndUser(target.id().value(), from)) {
-            metrics.rateLimited(target.tenant().value(), target.id().value(), "end_user");
-            metrics.inbound(target.tenant().value(), target.id().value(),
+            metrics.rateLimited(tag(target), target.id().value(), "end_user");
+            metrics.inbound(tag(target), target.id().value(),
                     "whatsapp", "end_user_rate_limited");
             return ResponseEntity.ok().build();
         }
@@ -202,7 +201,9 @@ public class WhatsAppTwilioWebhookController {
         try {
             InboundMessageEntity row = new InboundMessageEntity(
                     messageSid,
-                    target.tenant().value(),
+                    // A platform sender's inbound has no workspace until the
+                    // router picks one (whatsapp-shared-sender-design.md §7.4).
+                    target.tenant() == null ? null : target.tenant().value(),
                     target.id().value(),
                     from,
                     numMedia,
@@ -214,7 +215,7 @@ public class WhatsAppTwilioWebhookController {
         }
 
         worker.schedule(messageSid);
-        metrics.inbound(target.tenant().value(), target.id().value(),
+        metrics.inbound(tag(target), target.id().value(),
                 "whatsapp", "enqueued");
         return ResponseEntity.ok().build();
     }
@@ -225,8 +226,7 @@ public class WhatsAppTwilioWebhookController {
         // Signature verify only — actual status-row update is W5 territory.
         WhatsAppSender sender;
         try {
-            sender = senders.requireForTenant(
-                    tenantOf(senderIdSegment), new SenderId(senderIdSegment));
+            sender = senderOf(senderIdSegment);
         } catch (AdminApiException notFound) {
             return ResponseEntity.notFound().build();
         }
@@ -325,15 +325,19 @@ public class WhatsAppTwilioWebhookController {
                 signingToken);
     }
 
-    private Ids.TenantId tenantOf(String senderIdSegment) {
-        // Look up via the WhatsApp sender service — it scopes by tenant
-        // internally. We need the tenant id before we can call the
-        // tenant-scoped require; do a cross-tenant find. Avoid a separate
-        // method by using the service's listing API via the repository
-        // pattern; we use a direct lookup helper.
-        return senders.findTenantForSenderId(new SenderId(senderIdSegment))
+    /**
+     * The row the path segment names, whoever owns it — a workspace, or the
+     * platform for a shared number. The signature check that follows is what
+     * trusts it.
+     */
+    private WhatsAppSender senderOf(String senderIdSegment) {
+        return senders.findById(new SenderId(senderIdSegment))
                 .orElseThrow(() -> AdminApiException.notFound("sender_not_found",
                         "no such sender: " + senderIdSegment));
+    }
+
+    private static String tag(WhatsAppSender sender) {
+        return sender.tenant() == null ? "platform" : sender.tenant().value();
     }
 
     private RawInboundRequest buildRawRequest(ServerWebExchange exchange,

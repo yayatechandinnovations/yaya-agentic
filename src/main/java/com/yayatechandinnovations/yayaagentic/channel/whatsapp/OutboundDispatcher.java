@@ -252,6 +252,7 @@ public class OutboundDispatcher {
     public void releasePending(Ids.TenantId tenant,
                                SenderId sender,
                                String endUserPhone) {
+        if (tenant == null) return;     // the platform's own lines are never parked
         List<OutboundPendingEntity> parked =
                 pending.findByTenantIdAndSenderIdAndEndUserPhoneAndReleasedAtIsNullOrderByQueuedAtAsc(
                         tenant.value(), sender.value(), endUserPhone);
@@ -289,12 +290,12 @@ public class OutboundDispatcher {
         if (optOuts.isOptedOut(sender, endUserPhone)) {
             log.info("Outbound dropped — {} is opted out from sender {}",
                     endUserPhone, sender.value());
-            metrics.optedOutBlocked(tenant.value(), sender.value());
+            metrics.optedOutBlocked(tag(tenant), sender.value());
             return;
         }
         if (!isInsideServiceWindow(sender.value(), endUserPhone)) {
             park(tenant, sender, endUserPhone, sessionId, body, hint);
-            metrics.serviceWindowBlocked(tenant.value(), sender.value());
+            metrics.serviceWindowBlocked(tag(tenant), sender.value());
             return;
         }
         sendNow(tenant, sender, endUserPhone, sessionId, body, hint);
@@ -315,7 +316,7 @@ public class OutboundDispatcher {
                     .map(Ids.SessionId::new)
                     .orElse(sessionId);
             playgroundSink.append(sinkKey, renderedBody, payload);
-            metrics.outbound(tenant.value(), sender.value(), "freeform", "playground");
+            metrics.outbound(tag(tenant), sender.value(), "freeform", "playground");
             rememberOffered(tenant, sender, endUserPhone, sessionId, hint, true, 0);
             return;
         }
@@ -324,12 +325,19 @@ public class OutboundDispatcher {
                     endUserPhone);
             return;
         }
-        WhatsAppSender resolved = senders.requireForTenant(tenant, sender);
+        WhatsAppSender resolved = senders.requireUsable(tenant, sender);
         if (!resolved.status().acceptsOutbound()) {
             log.warn("Sender {} not accepting outbound (status={}), dropping reply", sender.value(),
                     resolved.status());
             return;
         }
+        if (!senders.isAssignmentActive(tenant, resolved)) {
+            log.warn("Assignment of {} to shared sender {} is paused, dropping reply", tag(tenant), sender.value());
+            return;
+        }
+        // whatsapp-shared-sender-design.md §9.2 — on a number several
+        // businesses share, every message says whose it is.
+        body = senders.labelled(tenant, resolved, body);
         SenderRef ref = new SenderRef(twilio.id(),
                 resolved.onboarding().twilioSenderSid() == null
                         ? resolved.id().value()
@@ -364,8 +372,8 @@ public class OutboundDispatcher {
             return;
         }
         if (!credsResolver.isReady()) return;
-        WhatsAppSender resolved = senders.requireForTenant(tenant, sender);
-        if (!resolved.status().acceptsOutbound()) return;
+        WhatsAppSender resolved = senders.requireUsable(tenant, sender);
+        if (!resolved.status().acceptsOutbound() || !senders.isAssignmentActive(tenant, resolved)) return;
         SenderRef ref = new SenderRef(twilio.id(),
                 resolved.onboarding().twilioSenderSid() == null
                         ? resolved.id().value()
@@ -390,7 +398,7 @@ public class OutboundDispatcher {
 
         List<String> chunks = splitIntoChunks(textFallback(payload, hint), MAX_BODY_CHARS);
         if (chunks.size() > 1) {
-            metrics.splitOutbound(tenant.value(), sender.value(), chunks.size());
+            metrics.splitOutbound(tag(tenant), sender.value(), chunks.size());
         }
         for (int i = 0; i < chunks.size(); i++) {
             String chunkBody = i < chunks.size() - 1
@@ -413,7 +421,7 @@ public class OutboundDispatcher {
                 case OutboundResult.OptedOut oo            -> "opted_out";
                 case OutboundResult.ProviderFailure p   -> "provider_failure";
             };
-            metrics.outbound(tenant.value(), sender.value(), "freeform", resultLabel);
+            metrics.outbound(tag(tenant), sender.value(), "freeform", resultLabel);
         }
 
         // For multi-chunk sends, the interactive payload (if any) was
@@ -472,7 +480,7 @@ public class OutboundDispatcher {
             return false;
         }
         recordResult(tenant, sender, endUserPhone, sessionId, text, result);
-        metrics.outbound(tenant.value(), sender.value(), "interactive", "sent");
+        metrics.outbound(tag(tenant), sender.value(), "interactive", "sent");
         return true;
     }
 
@@ -502,7 +510,7 @@ public class OutboundDispatcher {
             return false;
         }
         recordResult(tenant, sender, endUserPhone, sessionId, text, result);
-        metrics.outbound(tenant.value(), sender.value(), "interactive", "sent");
+        metrics.outbound(tag(tenant), sender.value(), "interactive", "sent");
         return true;
     }
 
@@ -615,6 +623,13 @@ public class OutboundDispatcher {
                 log.warn("Failed to encode interactive payload for parked outbound: {}", e.getMessage());
             }
         }
+        if (tenant == null) {
+            // A platform sender's own lines (STOP confirmation, the «¿Con cuál
+            // negocio?» question, the unrouted reply) answer an inbound that
+            // just arrived; outside the window there is no one to answer.
+            log.info("Platform line for {} dropped (outside 24h service window)", endUserPhone);
+            return;
+        }
         OutboundPendingEntity row = new OutboundPendingEntity(
                 tenant.value(), sender.value(), endUserPhone, sessionId.value(),
                 body, interactive);
@@ -627,7 +642,7 @@ public class OutboundDispatcher {
         if (result instanceof OutboundResult.Sent sent) {
             OutboundMessageEntity row = new OutboundMessageEntity(
                     sent.messageSid(),
-                    tenant.value(),
+                    tenant == null ? null : tenant.value(),
                     sender.value(),
                     endUserPhone,
                     sessionId == null ? null : sessionId.value(),
@@ -642,7 +657,7 @@ public class OutboundDispatcher {
             // exists when a send actually succeeds.
             String pendingSid = "PNDF_" + java.util.UUID.randomUUID();
             OutboundMessageEntity row = new OutboundMessageEntity(
-                    pendingSid, tenant.value(), sender.value(), endUserPhone,
+                    pendingSid, tenant == null ? null : tenant.value(), sender.value(), endUserPhone,
                     sessionId == null ? null : sessionId.value(), body);
             row.setStatus(f.retriable() ? "QUEUED" : "FAILED");
             row.setFailureCode(f.code());
@@ -662,8 +677,8 @@ public class OutboundDispatcher {
             return new OutboundResult.ProviderFailure(
                     "provider_not_ready", "Twilio not configured", true);
         }
-        WhatsAppSender resolved = senders.requireForTenant(
-                new Ids.TenantId(row.getTenantId()),
+        WhatsAppSender resolved = senders.requireUsable(
+                row.getTenantId() == null ? null : new Ids.TenantId(row.getTenantId()),
                 new SenderId(row.getSenderId()));
         SenderRef ref = new SenderRef(twilio.id(),
                 resolved.onboarding().twilioSenderSid() == null
@@ -676,6 +691,11 @@ public class OutboundDispatcher {
                 Optional.empty(),
                 providerHints);
         return twilio.sendFreeform(ref, freeform, credsResolver.resolve(resolved));
+    }
+
+    /** Metrics/log tag for the workspace a send is for; a platform sender's own lines have none. */
+    static String tag(Ids.TenantId tenant) {
+        return tenant == null ? "platform" : tenant.value();
     }
 
     /** Hint kinds whose buttons are the turn's only question. */
@@ -726,7 +746,7 @@ public class OutboundDispatcher {
     private void dispatchAttachments(Ids.TenantId tenant, SenderId sender, String endUserPhone,
                                      Ids.SessionId sessionId, List<TurnEvent.UiHint> attachments) {
         if (optOuts.isOptedOut(sender, endUserPhone)) {
-            metrics.optedOutBlocked(tenant.value(), sender.value());
+            metrics.optedOutBlocked(tag(tenant), sender.value());
             return;
         }
         if (PlaygroundSenders.isPlayground(sender.value())) {
@@ -737,13 +757,13 @@ public class OutboundDispatcher {
                         .orElse(sessionId);
                 playgroundSink.append(sinkKey, "[attachment] " + filename, null);
             }
-            metrics.outbound(tenant.value(), sender.value(), "media", "playground");
+            metrics.outbound(tag(tenant), sender.value(), "media", "playground");
             return;
         }
         if (!isInsideServiceWindow(sender.value(), endUserPhone)) {
             log.warn("Dropping {} attachment(s) for {} — outside the 24h service window "
                     + "and outbound_pending is text-only", attachments.size(), endUserPhone);
-            metrics.serviceWindowBlocked(tenant.value(), sender.value());
+            metrics.serviceWindowBlocked(tag(tenant), sender.value());
             return;
         }
         if (publicBaseUrl.isBlank()) {
@@ -757,10 +777,10 @@ public class OutboundDispatcher {
                     endUserPhone);
             return;
         }
-        WhatsAppSender resolved = senders.requireForTenant(tenant, sender);
-        if (!resolved.status().acceptsOutbound()) {
-            log.warn("Sender {} not accepting outbound (status={}), dropping attachments",
-                    sender.value(), resolved.status());
+        WhatsAppSender resolved = senders.requireUsable(tenant, sender);
+        if (!resolved.status().acceptsOutbound() || !senders.isAssignmentActive(tenant, resolved)) {
+            log.warn("Sender {} not accepting outbound for {} (status={}), dropping attachments",
+                    sender.value(), tag(tenant), resolved.status());
             return;
         }
         SenderRef ref = new SenderRef(twilio.id(),
@@ -798,7 +818,7 @@ public class OutboundDispatcher {
                 log.warn("Attachment send {} for {} → {}: {}", resultLabel, filename,
                         endUserPhone, result);
             }
-            metrics.outbound(tenant.value(), sender.value(), "media", resultLabel);
+            metrics.outbound(tag(tenant), sender.value(), "media", resultLabel);
         }
     }
 }

@@ -55,6 +55,8 @@ public class TenantController {
     private final ObjectMapper json;
     private final CloneService cloneService;
     private final WorkspaceAccessHelper workspaceAccess;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher events;
 
     public TenantController(TenantRepository tenants,
                             AuthBindingRepository authBindings,
@@ -194,6 +196,11 @@ public class TenantController {
         entity.setStatus(TenantEntity.Status.ARCHIVED);
         entity.setArchivedAt(java.time.OffsetDateTime.now());
         tenants.save(entity);
+        if (events != null) {
+            events.publishEvent(new com.yayatechandinnovations.yayaagentic.operator_auth.workspace
+                    .WorkspaceArchivedEvent(new com.yayatechandinnovations.yayaagentic.core.Ids.TenantId(id),
+                    workspaceAccess.actorOf(exchange)));
+        }
         return toResponse(entity);
     }
 

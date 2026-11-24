@@ -37,6 +37,7 @@ class WhatsAppTemplateResponse implements TemplateListRow {
     this.buttons = const [],
     this.contentSid,
     this.lastSyncAt,
+    this.businessLabelVar,
   });
 
   @override
@@ -74,6 +75,10 @@ class WhatsAppTemplateResponse implements TemplateListRow {
   /// When the review status was last read from WhatsApp.
   final String? lastSyncAt;
 
+  /// The `{{n}}` the platform fills with the business name (whatsapp-shared-
+  /// sender-design.md §9.2). Required to send on a shared platform number.
+  final int? businessLabelVar;
+
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
   bool get isEditable => status == 'DRAFT' || status == 'REJECTED';
 
@@ -101,6 +106,7 @@ class WhatsAppTemplateResponse implements TemplateListRow {
         buttons: ((json['buttons'] as List?) ?? const []).map((e) => e.toString()).toList(),
         contentSid: json['contentSid'] as String?,
         lastSyncAt: json['lastSyncAt']?.toString(),
+        businessLabelVar: (json['businessLabelVar'] as num?)?.toInt(),
       );
 }
 
@@ -176,6 +182,7 @@ class WhatsAppAccountTemplate implements TemplateListRow {
     this.hiddenBy,
     this.contentSid,
     this.lastSyncAt,
+    this.businessLabelVar,
   });
 
   @override
@@ -204,6 +211,9 @@ class WhatsAppAccountTemplate implements TemplateListRow {
   final String? hiddenBy;
   final String? contentSid;
   final String? lastSyncAt;
+
+  /// The `{{n}}` the platform fills with the business name.
+  final int? businessLabelVar;
 
   bool get canSubmit => status == 'DRAFT' || status == 'REJECTED';
 
@@ -236,6 +246,7 @@ class WhatsAppAccountTemplate implements TemplateListRow {
         hiddenBy: json['hiddenBy'] as String?,
         contentSid: json['contentSid'] as String?,
         lastSyncAt: json['lastSyncAt']?.toString(),
+        businessLabelVar: (json['businessLabelVar'] as num?)?.toInt(),
       );
 }
 
@@ -247,6 +258,7 @@ class WhatsAppTemplateDeclaration {
     required this.category,
     required this.body,
     required this.bodySamples,
+    this.businessLabelVar,
   });
 
   final String name;
@@ -257,6 +269,9 @@ class WhatsAppTemplateDeclaration {
   /// One example value per placeholder, in order — WhatsApp reviews with them.
   final List<String> bodySamples;
 
+  /// 1-based `{{n}}` the platform fills with the business name.
+  final int? businessLabelVar;
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'language': language,
@@ -265,6 +280,7 @@ class WhatsAppTemplateDeclaration {
         'body': body,
         'buttons': const <String>[],
         'samples': {'body': bodySamples},
+        if (businessLabelVar != null) 'businessLabelVar': businessLabelVar,
       };
 }
 
@@ -274,27 +290,35 @@ class WhatsAppTemplateRequest {
     required this.locale,
     required this.category,
     required this.body,
+    this.businessLabelVar,
   });
 
   final String name;
   final String locale;
   final String category;
   final String body;
+  final int? businessLabelVar;
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'locale': locale,
         'category': category,
         'body': body,
+        if (businessLabelVar != null) 'businessLabelVar': businessLabelVar,
       };
 }
 
 class WhatsAppTemplateUpdate {
-  WhatsAppTemplateUpdate({required this.body, required this.category});
+  WhatsAppTemplateUpdate({required this.body, required this.category, this.businessLabelVar});
   final String body;
   final String category;
+  final int? businessLabelVar;
 
-  Map<String, dynamic> toJson() => {'body': body, 'category': category};
+  Map<String, dynamic> toJson() => {
+        'body': body,
+        'category': category,
+        if (businessLabelVar != null) 'businessLabelVar': businessLabelVar,
+      };
 }
 
 /// Meta's three template categories.
